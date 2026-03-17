@@ -1,3 +1,21 @@
+"""TCP header construction (RFC 9293).
+
+This module builds the minimum 20-byte TCP header (data offset = 5, no
+options) and computes the TCP checksum over the appropriate IPv4 or IPv6
+pseudo-header as required by the respective RFCs.
+
+Pseudo-header formats used for checksum calculation:
+
+* **IPv4** (RFC 793, 12 bytes)::
+
+      Source IP (4) | Dest IP (4) | Zero (1) | Protocol=6 (1) | TCP length (2)
+
+* **IPv6** (RFC 8200 §8.1, 40 bytes)::
+
+      Source IP (16) | Dest IP (16) | TCP length (4) | Zeros (3) | Next Header=6 (1)
+"""
+from __future__ import annotations
+
 import socket
 import struct
 from dataclasses import dataclass
@@ -7,6 +25,29 @@ from .checksum import ones_complement_checksum
 
 @dataclass
 class TCPHeader:
+    """Fields of a TCP segment header.
+
+    Attributes:
+        src_port: Source port number (0–65535).
+        dst_port: Destination port number (0–65535).
+        seq: 32-bit sequence number.  Defaults to ``0``.
+        ack: 32-bit acknowledgement number.  Defaults to ``0``.
+        flags: 8-bit control flags bitmask.  Common bit values:
+
+            * ``0x001`` FIN
+            * ``0x002`` SYN  *(default)*
+            * ``0x004`` RST
+            * ``0x008`` PSH
+            * ``0x010`` ACK
+            * ``0x018`` PSH + ACK (data segments)
+
+            Defaults to ``0x002`` (SYN).
+        window: Receive-window size in bytes advertised by the sender.
+            Defaults to ``65535``.
+        urgent_ptr: Urgent pointer; only meaningful when the URG flag is set.
+            Defaults to ``0``.
+    """
+
     src_port: int
     dst_port: int
     seq: int = 0
@@ -17,6 +58,16 @@ class TCPHeader:
 
 
 def _pseudo_header_v4(src_ip: str, dst_ip: str, tcp_length: int) -> bytes:
+    """Build the 12-byte IPv4 TCP pseudo-header used for checksum calculation.
+
+    Args:
+        src_ip: Source IPv4 address in dotted-decimal notation.
+        dst_ip: Destination IPv4 address in dotted-decimal notation.
+        tcp_length: Total length of the TCP segment (header + payload) in bytes.
+
+    Returns:
+        12 bytes: src(4) + dst(4) + zero(1) + protocol=6(1) + tcp_length(2).
+    """
     return (
         socket.inet_aton(src_ip)
         + socket.inet_aton(dst_ip)
@@ -25,6 +76,17 @@ def _pseudo_header_v4(src_ip: str, dst_ip: str, tcp_length: int) -> bytes:
 
 
 def _pseudo_header_v6(src_ip: str, dst_ip: str, tcp_length: int) -> bytes:
+    """Build the 40-byte IPv6 TCP pseudo-header used for checksum calculation.
+
+    Args:
+        src_ip: Source IPv6 address in any notation accepted by
+            :func:`socket.inet_pton`.
+        dst_ip: Destination IPv6 address in the same format.
+        tcp_length: Total length of the TCP segment (header + payload) in bytes.
+
+    Returns:
+        40 bytes: src(16) + dst(16) + tcp_length(4) + zeros(3) + next_header=6(1).
+    """
     return (
         socket.inet_pton(socket.AF_INET6, src_ip)
         + socket.inet_pton(socket.AF_INET6, dst_ip)
@@ -39,7 +101,41 @@ def build_tcp_header(
     dst_ip: str,
     ip_version: int = 4,
 ) -> bytes:
-    """Build a 20-byte TCP header with correct checksum."""
+    """Build a 20-byte TCP header with a correct checksum.
+
+    The data offset is fixed at 5 (20-byte header, no TCP options).
+    The checksum is computed over the appropriate pseudo-header (IPv4 or
+    IPv6) concatenated with the TCP header and *payload*, as required by
+    RFC 793 / RFC 8200.
+
+    Args:
+        hdr: A :class:`TCPHeader` instance with the desired field values.
+        payload: Application-layer payload bytes that will follow this TCP
+            header.  Included in the checksum calculation but **not** in the
+            returned bytes.
+        src_ip: Source IP address (IPv4 dotted-decimal or IPv6 colon-hex),
+            used to build the pseudo-header.
+        dst_ip: Destination IP address in the same format as *src_ip*.
+        ip_version: ``4`` for IPv4 pseudo-header (default) or ``6`` for
+            IPv6 pseudo-header.
+
+    Returns:
+        Exactly 20 bytes representing the TCP header in network byte order,
+        with a valid checksum.
+
+    Raises:
+        OSError: If *src_ip* or *dst_ip* is not a valid address for the
+            specified *ip_version*.
+
+    Example:
+        >>> from packet_generator.tcp import TCPHeader, build_tcp_header
+        >>> hdr = TCPHeader(src_port=12345, dst_port=80)
+        >>> raw = build_tcp_header(hdr, b"GET / HTTP/1.0\\r\\n", "10.0.0.1", "10.0.0.2")
+        >>> len(raw)
+        20
+        >>> (raw[12] >> 4)  # data offset (should be 5)
+        5
+    """
     data_offset_reserved = (5 << 4)  # 20-byte header, no options
     tcp_length = 20 + len(payload)
 
