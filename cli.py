@@ -33,6 +33,14 @@ def main():
     parser.add_argument("--dst-mac", default="00:00:00:00:00:02", help="Destination MAC address")
     parser.add_argument("--ttl", type=int, default=64, help="TTL / Hop Limit (default: 64)")
     parser.add_argument("--no-ethernet", action="store_true", help="Omit Ethernet header")
+    parser.add_argument(
+        "--mtu", type=int, default=None,
+        help=(
+            "Fragment the packet so each IP datagram is at most MTU bytes "
+            "(excludes Ethernet header). Common values: 1500 (Ethernet), "
+            "576 (IPv4 minimum, RFC 791), 1280 (IPv6 minimum, RFC 8200)."
+        ),
+    )
     parser.add_argument("--output", help="Write raw bytes to file (default: print hex to stdout)")
     args = parser.parse_args()
 
@@ -55,22 +63,33 @@ def main():
             ttl=args.ttl,
             include_ethernet=not args.no_ethernet,
         )
-        packet = builder.build()
-    except OSError as e:
+        if args.mtu is not None:
+            packets = builder.fragment(mtu=args.mtu)
+        else:
+            packets = [builder.build()]
+    except (OSError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
     if args.output:
         with open(args.output, "wb") as f:
-            f.write(packet)
-        print(f"Wrote {len(packet)} bytes to {args.output}")
+            for pkt in packets:
+                f.write(pkt)
+        total = sum(len(p) for p in packets)
+        if len(packets) > 1:
+            print(f"Wrote {len(packets)} fragments ({total} bytes total) to {args.output}")
+        else:
+            print(f"Wrote {total} bytes to {args.output}")
     else:
-        print(f"Packet ({len(packet)} bytes):")
-        # Print hex in groups of 16 bytes per line
-        for i in range(0, len(packet), 16):
-            chunk = packet[i:i + 16]
-            hex_part = ' '.join(f'{b:02x}' for b in chunk)
-            print(f"  {i:04x}  {hex_part}")
+        for idx, pkt in enumerate(packets):
+            if len(packets) > 1:
+                print(f"Fragment {idx + 1}/{len(packets)} ({len(pkt)} bytes):")
+            else:
+                print(f"Packet ({len(pkt)} bytes):")
+            for i in range(0, len(pkt), 16):
+                chunk = pkt[i:i + 16]
+                hex_part = ' '.join(f'{b:02x}' for b in chunk)
+                print(f"  {i:04x}  {hex_part}")
 
 
 if __name__ == "__main__":

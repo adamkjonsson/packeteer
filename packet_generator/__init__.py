@@ -10,6 +10,9 @@ This package constructs byte-accurate network packets at all layers:
 All IP and transport-layer checksums are computed automatically per their
 respective RFCs (RFC 791, RFC 8200, RFC 768, RFC 793, RFC 792, RFC 4443).
 
+Fragmentation is supported via :meth:`PacketBuilder.fragment` (high-level)
+or the low-level :func:`fragment_ipv4` and :func:`fragment_ipv6` functions.
+
 The recommended entry point is :class:`PacketBuilder`, which wires all
 layers together and exposes a clean, high-level API:
 
@@ -58,6 +61,7 @@ from __future__ import annotations
 
 from .builder import PacketBuilder, Protocol
 from .ethernet import EthernetHeader
+from .fragmentation import fragment_ipv4, fragment_ipv6
 from .ip import IPHeader
 from .ipv6 import IPv6Header
 from .tcp import TCPHeader
@@ -75,4 +79,6 @@ __all__ = [
     "UDPHeader",
     "ICMPHeader",
     "ICMPv6Header",
+    "fragment_ipv4",
+    "fragment_ipv6",
 ]

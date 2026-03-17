@@ -1,9 +1,10 @@
 # packet-generator
 
-A pure-Python library for building complete, byte-accurate raw network packets.
-Construct Ethernet II frames containing IPv4 or IPv6 headers, TCP, UDP, ICMPv4,
-and ICMPv6 transport layers — all with correct checksums computed automatically
-per RFC.
+A pure-Python library for building and fragmenting complete, byte-accurate raw
+network packets. Construct Ethernet II frames containing IPv4 or IPv6 headers,
+TCP, UDP, ICMPv4, and ICMPv6 transport layers — all with correct checksums
+computed automatically per RFC. Large payloads can be split into RFC-compliant
+IP fragments in one call.
 
 No external dependencies. Python 3.10+ and the standard library only.
 
@@ -19,9 +20,12 @@ No external dependencies. Python 3.10+ and the standard library only.
 - **ICMPv4** (RFC 792) Echo Request/Reply — no pseudo-header
 - **ICMPv6** (RFC 4443) Echo Request/Reply — mandatory IPv6 pseudo-header checksum
 - IP version **auto-detected** from address strings (no explicit flag needed)
+- **IPv4 fragmentation** (RFC 791) — Flags/Fragment Offset in IP header, MF flag, shared identification
+- **IPv6 fragmentation** (RFC 8200 §4.5) — Fragment Extension Header (next header = 44), 32-bit identification
+- High-level `PacketBuilder.fragment(mtu)` and low-level `fragment_ipv4` / `fragment_ipv6` functions
 - Payload: random bytes of a given size, or supply your own
 - Optional Ethernet header — produce raw IP packets when not needed
-- CLI for quick packet inspection and binary output
+- CLI for quick packet inspection and binary output, with `--mtu` for on-the-fly fragmentation
 
 ---
 
@@ -74,6 +78,80 @@ pkt = PacketBuilder(
 
 ---
 
+## Fragmentation
+
+### High-level — `PacketBuilder.fragment(mtu)`
+
+```python
+from packet_generator import PacketBuilder, Protocol
+
+# Split a 4000-byte UDP payload across ~3 IPv4 fragments (MTU 1500)
+fragments = PacketBuilder(
+    src_ip="10.0.0.1",
+    dst_ip="10.0.0.2",
+    protocol=Protocol.UDP,
+    payload_size=4000,
+).fragment(mtu=1500)
+
+print(f"{len(fragments)} fragments")
+for i, frag in enumerate(fragments):
+    print(f"  fragment {i+1}: {len(frag)} bytes")
+
+# IPv6 fragmentation uses the Fragment Extension Header (RFC 8200 §4.5)
+fragments = PacketBuilder(
+    src_ip="fe80::1",
+    dst_ip="fe80::2",
+    protocol=Protocol.TCP,
+    payload_size=3000,
+).fragment(mtu=1280)   # IPv6 minimum MTU
+
+# No Ethernet header on each fragment
+fragments = PacketBuilder(
+    src_ip="::1",
+    dst_ip="::2",
+    protocol=Protocol.UDP,
+    payload_size=2000,
+    include_ethernet=False,
+).fragment(mtu=576)    # IPv4 minimum reassembly buffer
+```
+
+`fragment()` always returns a list. When the payload fits within one datagram
+the list has a single element.
+
+### Low-level — `fragment_ipv4` / `fragment_ipv6`
+
+For fine-grained control, call the underlying functions directly:
+
+```python
+import socket
+from packet_generator import fragment_ipv4, fragment_ipv6
+from packet_generator.ip import IPHeader
+from packet_generator.ipv6 import IPv6Header
+from packet_generator.ethernet import EthernetHeader, ETHERTYPE_IPV4, ETHERTYPE_IPV6
+
+# IPv4
+ip_hdr = IPHeader("10.0.0.1", "10.0.0.2", socket.IPPROTO_UDP, ttl=64)
+eth_hdr = EthernetHeader("aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66", ETHERTYPE_IPV4)
+frags = fragment_ipv4(ip_hdr, transport_data, mtu=576, eth_header=eth_hdr)
+
+# IPv6
+ip_hdr = IPv6Header("::1", "::2", next_header=17, hop_limit=64)  # 17 = UDP
+frags = fragment_ipv6(ip_hdr, transport_data, mtu=1280, eth_header=None)
+```
+
+### RFC behaviour
+
+| Detail | IPv4 (RFC 791) | IPv6 (RFC 8200 §4.5) |
+|--------|---------------|----------------------|
+| Fragment header | IP Flags + Fragment Offset fields | Fragment Extension Header (8 bytes, next header = 44) |
+| DF flag | Always cleared (0) on fragments | N/A |
+| MF flag | Set on all but the last fragment | M flag in extension header |
+| Offset units | 8 bytes | 8 bytes |
+| Identification | 16-bit, shared across all fragments | 32-bit, shared across all fragments |
+| Min fragment data | 8 bytes (except last) | 8 bytes (except last) |
+
+---
+
 ## API reference
 
 ### `PacketBuilder`
@@ -114,8 +192,9 @@ PacketBuilder(
 #### Methods
 
 ```python
-pkt: bytes = builder.build()     # assemble and return the complete packet
-data: bytes = builder.payload    # the payload bytes (lazily generated, then cached)
+pkt: bytes          = builder.build()             # assemble and return the complete packet
+frags: list[bytes]  = builder.fragment(mtu=1500)  # fragment into ≤ mtu-byte IP datagrams
+data: bytes         = builder.payload             # the payload bytes (lazily generated, then cached)
 ```
 
 ---
@@ -259,6 +338,7 @@ python cli.py --src <ip> --dst <ip> --protocol <proto> [options]
 | `--dst-mac` | `00:00:00:00:00:02` | Destination MAC address |
 | `--ttl` | `64` | TTL / Hop Limit |
 | `--no-ethernet` | — | Omit the Ethernet header |
+| `--mtu` | — | Fragment the packet; each IP datagram will be at most MTU bytes |
 | `--output` | — | Write raw bytes to a file instead of printing hex |
 
 ### Examples
@@ -275,6 +355,12 @@ python cli.py --src fe80::1 --dst fe80::2 --protocol icmpv6 --no-ethernet --outp
 
 # IPv4 UDP DNS query skeleton — custom ports
 python cli.py --src 10.0.0.1 --dst 8.8.8.8 --protocol udp --src-port 5000 --dst-port 53 --size 0
+
+# Fragment a large IPv4 UDP payload at MTU 576 — print each fragment
+python cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol udp --size 2000 --mtu 576
+
+# Fragment a large IPv6 TCP payload and save all fragments to a file
+python cli.py --src ::1 --dst ::2 --protocol tcp --size 4000 --mtu 1280 --output frags.bin
 ```
 
 ---
@@ -284,20 +370,22 @@ python cli.py --src 10.0.0.1 --dst 8.8.8.8 --protocol udp --src-port 5000 --dst-
 ```
 packet-generator/
   packet_generator/
-    __init__.py     # public API re-exports
-    builder.py      # PacketBuilder and Protocol — main entry point
-    checksum.py     # RFC 1071 one's-complement checksum utility
-    ethernet.py     # Ethernet II header (14 bytes)
-    ip.py           # IPv4 header (20 bytes)
-    ipv6.py         # IPv6 header (40 bytes)
-    tcp.py          # TCP header (20 bytes)
-    udp.py          # UDP header (8 bytes)
-    icmp.py         # ICMPv4 header (8 bytes)
-    icmpv6.py       # ICMPv6 header (8 bytes)
+    __init__.py        # public API re-exports
+    builder.py         # PacketBuilder and Protocol — main entry point
+    checksum.py        # RFC 1071 one's-complement checksum utility
+    ethernet.py        # Ethernet II header (14 bytes)
+    fragmentation.py   # fragment_ipv4 and fragment_ipv6
+    ip.py              # IPv4 header (20 bytes)
+    ipv6.py            # IPv6 header (40 bytes)
+    tcp.py             # TCP header (20 bytes)
+    udp.py             # UDP header (8 bytes)
+    icmp.py            # ICMPv4 header (8 bytes)
+    icmpv6.py          # ICMPv6 header (8 bytes)
   tests/
     test_builder.py
     test_checksum.py
     test_ethernet.py
+    test_fragmentation.py
     test_icmp.py
     test_icmpv6.py
     test_ip.py
@@ -316,7 +404,7 @@ packet-generator/
 python -m unittest discover tests/ -v
 ```
 
-All 58 tests run in under a second and require no third-party packages.
+All 103 tests run in under a second and require no third-party packages.
 
 ---
 
@@ -324,11 +412,11 @@ All 58 tests run in under a second and require no third-party packages.
 
 | Standard | Scope |
 |----------|-------|
-| RFC 791  | Internet Protocol (IPv4) |
+| RFC 791  | Internet Protocol (IPv4) — including fragmentation |
 | RFC 768  | User Datagram Protocol (UDP) |
 | RFC 792  | Internet Control Message Protocol (ICMPv4) |
 | RFC 793 / RFC 9293 | Transmission Control Protocol (TCP) |
 | RFC 1071 | Computing the Internet Checksum |
 | RFC 4443 | Internet Control Message Protocol for IPv6 (ICMPv6) |
-| RFC 8200 | Internet Protocol, Version 6 (IPv6) Specification |
+| RFC 8200 | Internet Protocol, Version 6 (IPv6) — including §4.5 Fragment Extension Header |
 | IEEE 802.3 | Ethernet |

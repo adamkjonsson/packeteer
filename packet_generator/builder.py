@@ -1,7 +1,8 @@
 """High-level packet builder API.
 
 This module exposes :class:`PacketBuilder` and :class:`Protocol` — the
-primary entry points for constructing complete raw network packets.
+primary entry points for constructing and fragmenting complete raw network
+packets.
 
 Typical usage::
 
@@ -270,3 +271,90 @@ class PacketBuilder:
             packet = eth + packet
 
         return packet
+
+    def fragment(self, mtu: int = 1500) -> list[bytes]:
+        """Fragment the packet to fit within *mtu* bytes per IP datagram.
+
+        Builds the complete transport layer (header + payload) and then splits
+        it across as many IP datagrams as needed so that no IP packet exceeds
+        *mtu* bytes.  Checksums in all transport headers are computed before
+        fragmentation, exactly as :meth:`build` would produce them.
+
+        IPv4 uses native Flags / Fragment Offset fragmentation (RFC 791).
+        IPv6 inserts a Fragment Extension Header (next header = 44) into each
+        output packet per RFC 8200 §4.5.
+
+        Args:
+            mtu: Maximum IP packet size in bytes, *excluding* any Ethernet
+                header.  Defaults to ``1500`` (standard Ethernet payload).
+                Use ``576`` for the IPv4 minimum reassembly buffer (RFC 791)
+                or ``1280`` for the IPv6 minimum MTU (RFC 8200).
+
+        Returns:
+            A list of fully assembled packet bytes, one entry per fragment.
+            When the payload fits within a single datagram the list contains
+            exactly one element (equivalent to :meth:`build`).
+
+        Raises:
+            OSError: If *src_ip* or *dst_ip* is not a valid IP address.
+            ValueError: If *mtu* is too small to hold even one 8-byte
+                fragment.
+
+        Example::
+
+            from packet_generator import PacketBuilder, Protocol
+
+            fragments = PacketBuilder(
+                "10.0.0.1", "10.0.0.2", Protocol.UDP, payload_size=4000,
+            ).fragment(mtu=1500)
+            print(f"{len(fragments)} fragments")
+        """
+        import socket as _socket
+        from .fragmentation import fragment_ipv4, fragment_ipv6
+
+        data = self.payload
+        ip_version = _detect_ip_version(self.src_ip)
+
+        # Build the complete transport layer identical to build()
+        if self.protocol == Protocol.TCP:
+            transport = build_tcp_header(
+                TCPHeader(self.src_port, self.dst_port),
+                data, self.src_ip, self.dst_ip, ip_version,
+            )
+        elif self.protocol == Protocol.UDP:
+            transport = build_udp_header(
+                UDPHeader(self.src_port, self.dst_port),
+                data, self.src_ip, self.dst_ip, ip_version,
+            )
+        elif self.protocol == Protocol.ICMP:
+            transport = build_icmp_header(ICMPHeader(), data)
+        elif self.protocol == Protocol.ICMPv6:
+            transport = build_icmpv6_header(ICMPv6Header(), data, self.src_ip, self.dst_ip)
+        else:
+            raise ValueError(f"Unsupported protocol: {self.protocol}")
+
+        transport_data = transport + data
+
+        eth_header = None
+        if self.include_ethernet:
+            ethertype = ETHERTYPE_IPV6 if ip_version == 6 else ETHERTYPE_IPV4
+            eth_header = EthernetHeader(self.dst_mac, self.src_mac, ethertype)
+
+        if ip_version == 6:
+            next_header = {
+                Protocol.TCP: 6,
+                Protocol.UDP: 17,
+                Protocol.ICMPv6: 58,
+            }[self.protocol]
+            ip_hdr = IPv6Header(
+                self.src_ip, self.dst_ip, next_header, hop_limit=self.ttl,
+            )
+            return fragment_ipv6(ip_hdr, transport_data, mtu, eth_header=eth_header)
+        else:
+            proto_num = {
+                Protocol.TCP: _socket.IPPROTO_TCP,
+                Protocol.UDP: _socket.IPPROTO_UDP,
+                Protocol.ICMP: _socket.IPPROTO_ICMP,
+            }[self.protocol]
+            ip_hdr = IPHeader(self.src_ip, self.dst_ip, proto_num, ttl=self.ttl)
+            return fragment_ipv4(ip_hdr, transport_data, mtu, eth_header=eth_header)
