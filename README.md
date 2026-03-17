@@ -172,6 +172,7 @@ PacketBuilder(
     ttl: int = 64,
     payload: bytes | None = None,
     include_ethernet: bool = True,
+    tcp_seq: int = 0,
 )
 ```
 
@@ -188,6 +189,7 @@ PacketBuilder(
 | `ttl` | IPv4 Time-To-Live or IPv6 Hop Limit. |
 | `payload` | Explicit payload bytes. Overrides `payload_size`. |
 | `include_ethernet` | Prepend an Ethernet II header when `True` (default). |
+| `tcp_seq` | 32-bit TCP sequence number. Ignored for UDP and ICMP. Defaults to `0`. |
 
 #### Methods
 
@@ -271,6 +273,10 @@ from packet_generator.tcp import build_tcp_header
 hdr = TCPHeader(src_port=12345, dst_port=80, flags=0x002)  # SYN
 raw: bytes = build_tcp_header(hdr, payload=b"", src_ip="10.0.0.1", dst_ip="10.0.0.2")
 # For IPv6: ip_version=6
+
+# Custom sequence number
+hdr = TCPHeader(src_port=12345, dst_port=80, seq=0xDEADBEEF)
+raw: bytes = build_tcp_header(hdr, payload=b"", src_ip="10.0.0.1", dst_ip="10.0.0.2")
 ```
 
 #### `UDPHeader`
@@ -334,6 +340,7 @@ python cli.py --src <ip> --dst <ip> --protocol <proto> [options]
 | `--size` | `0` | Payload size in bytes |
 | `--src-port` | `12345` | Source port (TCP/UDP) |
 | `--dst-port` | `80` | Destination port (TCP/UDP) |
+| `--tcp-seq` | `0` | TCP sequence number |
 | `--src-mac` | `00:00:00:00:00:01` | Source MAC address |
 | `--dst-mac` | `00:00:00:00:00:02` | Destination MAC address |
 | `--ttl` | `64` | TTL / Hop Limit |
@@ -346,6 +353,9 @@ python cli.py --src <ip> --dst <ip> --protocol <proto> [options]
 ```bash
 # IPv4 TCP — print hex to stdout
 python cli.py --src 192.168.1.1 --dst 8.8.8.8 --protocol tcp --size 20
+
+# TCP with a specific sequence number
+python cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol tcp --tcp-seq 3735928559 --size 0
 
 # IPv6 UDP — print hex
 python cli.py --src ::1 --dst ::2 --protocol udp --size 10
