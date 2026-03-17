@@ -29,6 +29,7 @@ def main():
     parser.add_argument("--size", type=int, default=0, help="Payload size in bytes (default: 0)")
     parser.add_argument("--src-port", type=int, default=12345, help="Source port (TCP/UDP)")
     parser.add_argument("--dst-port", type=int, default=80, help="Destination port (TCP/UDP)")
+    parser.add_argument("--tcp-seq", type=int, default=0, help="TCP sequence number (default: 0)")
     parser.add_argument("--src-mac", default="00:00:00:00:00:01", help="Source MAC address")
     parser.add_argument("--dst-mac", default="00:00:00:00:00:02", help="Destination MAC address")
     parser.add_argument("--ttl", type=int, default=64, help="TTL / Hop Limit (default: 64)")
@@ -62,6 +63,7 @@ def main():
             dst_port=args.dst_port,
             ttl=args.ttl,
             include_ethernet=not args.no_ethernet,
+            tcp_seq=args.tcp_seq,
         )
         if args.mtu is not None:
             packets = builder.fragment(mtu=args.mtu)

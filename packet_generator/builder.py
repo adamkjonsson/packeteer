@@ -121,6 +121,7 @@ class PacketBuilder:
         ttl: int = 64,
         payload: bytes | None = None,
         include_ethernet: bool = True,
+        tcp_seq: int = 0,
     ) -> None:
         """Initialise the builder with packet parameters.
 
@@ -152,6 +153,8 @@ class PacketBuilder:
             include_ethernet: If ``True`` (default), prepend a 14-byte
                 Ethernet II header to the packet.  Set to ``False`` to
                 produce a raw IP packet without any layer-2 framing.
+            tcp_seq: 32-bit TCP sequence number.  Ignored for UDP and ICMP.
+                Defaults to ``0``.
         """
         self.src_ip = src_ip
         self.dst_ip = dst_ip
@@ -163,6 +166,7 @@ class PacketBuilder:
         self.dst_port = dst_port
         self.ttl = ttl
         self.include_ethernet = include_ethernet
+        self.tcp_seq = tcp_seq
         self._explicit_payload = payload
         self._payload: bytes | None = None
 
@@ -220,7 +224,7 @@ class PacketBuilder:
         # Build transport layer
         if self.protocol == Protocol.TCP:
             transport = build_tcp_header(
-                TCPHeader(self.src_port, self.dst_port),
+                TCPHeader(self.src_port, self.dst_port, seq=self.tcp_seq),
                 data, self.src_ip, self.dst_ip, ip_version,
             )
         elif self.protocol == Protocol.UDP:
@@ -318,7 +322,7 @@ class PacketBuilder:
         # Build the complete transport layer identical to build()
         if self.protocol == Protocol.TCP:
             transport = build_tcp_header(
-                TCPHeader(self.src_port, self.dst_port),
+                TCPHeader(self.src_port, self.dst_port, seq=self.tcp_seq),
                 data, self.src_ip, self.dst_ip, ip_version,
             )
         elif self.protocol == Protocol.UDP:
