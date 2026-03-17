@@ -1,3 +1,29 @@
+"""High-level packet builder API.
+
+This module exposes :class:`PacketBuilder` and :class:`Protocol` — the
+primary entry points for constructing complete raw network packets.
+
+Typical usage::
+
+    from packet_generator import PacketBuilder, Protocol
+
+    # IPv4 TCP packet with Ethernet header and 64 bytes of random payload
+    pkt = PacketBuilder("192.168.1.10", "8.8.8.8", Protocol.TCP, payload_size=64).build()
+
+    # IPv6 UDP packet without Ethernet framing
+    pkt = PacketBuilder(
+        "fe80::1", "fe80::2", Protocol.UDP, payload_size=20,
+        include_ethernet=False,
+    ).build()
+
+    # ICMPv6 ping with explicit payload
+    pkt = PacketBuilder(
+        "::1", "::2", Protocol.ICMPv6,
+        payload=b"hello ipv6",
+    ).build()
+"""
+from __future__ import annotations
+
 import os
 import socket
 from enum import Enum
@@ -12,6 +38,21 @@ from .icmpv6 import ICMPv6Header, build_icmpv6_header
 
 
 class Protocol(Enum):
+    """Supported transport-layer protocols.
+
+    Members:
+        TCP: Transmission Control Protocol (RFC 9293).  Works with both IPv4
+            and IPv6 — the IP version is inferred from the address strings
+            passed to :class:`PacketBuilder`.
+        UDP: User Datagram Protocol (RFC 768).  Works with both IPv4 and
+            IPv6.
+        ICMP: Internet Control Message Protocol v4 (RFC 792).  **Requires
+            IPv4 addresses.**  Use :attr:`ICMPv6` for IPv6.
+        ICMPv6: Internet Control Message Protocol v6 (RFC 4443).  **Requires
+            IPv6 addresses.**  The checksum pseudo-header is computed
+            automatically.
+    """
+
     TCP = "TCP"
     UDP = "UDP"
     ICMP = "ICMP"       # ICMPv4, requires IPv4 addresses
@@ -19,6 +60,18 @@ class Protocol(Enum):
 
 
 def _detect_ip_version(addr: str) -> int:
+    """Return ``4`` or ``6`` depending on whether *addr* is IPv4 or IPv6.
+
+    Args:
+        addr: An IP address string in any format accepted by the socket
+            module (dotted-decimal for IPv4, colon-hex for IPv6).
+
+    Returns:
+        ``6`` if *addr* is a valid IPv6 address, otherwise ``4``.
+
+    Raises:
+        OSError: If *addr* is neither a valid IPv4 nor a valid IPv6 address.
+    """
     try:
         socket.inet_pton(socket.AF_INET6, addr)
         return 6
@@ -28,7 +81,30 @@ def _detect_ip_version(addr: str) -> int:
 
 
 class PacketBuilder:
-    """Builds complete raw network packets (Ethernet + IP + transport + payload)."""
+    """Assembles complete raw network packets layer by layer.
+
+    A :class:`PacketBuilder` combines an optional Ethernet II header, an
+    IPv4 or IPv6 header, a transport-layer header (TCP / UDP / ICMP /
+    ICMPv6), and a payload into a single :class:`bytes` object that can be
+    written to a raw socket or saved to a file.
+
+    The IP version (4 or 6) is detected automatically from *src_ip*.  All
+    checksums — IP header, TCP, UDP, ICMPv6 — are computed correctly per
+    their respective RFCs.
+
+    Example::
+
+        from packet_generator import PacketBuilder, Protocol
+
+        pkt = PacketBuilder(
+            src_ip="10.0.0.1",
+            dst_ip="10.0.0.2",
+            protocol=Protocol.TCP,
+            payload_size=40,
+            dst_port=443,
+        ).build()
+        print(f"Built {len(pkt)}-byte packet")
+    """
 
     def __init__(
         self,
@@ -44,7 +120,38 @@ class PacketBuilder:
         ttl: int = 64,
         payload: bytes | None = None,
         include_ethernet: bool = True,
-    ):
+    ) -> None:
+        """Initialise the builder with packet parameters.
+
+        Args:
+            src_ip: Source IP address.  Dotted-decimal for IPv4
+                (e.g. ``"192.168.1.1"``) or colon-hex for IPv6
+                (e.g. ``"fe80::1"``).  The IP version is auto-detected.
+            dst_ip: Destination IP address in the same format as *src_ip*.
+            protocol: Transport-layer protocol.  Use :class:`Protocol` enum
+                values: ``Protocol.TCP``, ``Protocol.UDP``, ``Protocol.ICMP``
+                (IPv4 only), or ``Protocol.ICMPv6`` (IPv6 only).
+            payload_size: Number of random payload bytes to generate when
+                *payload* is ``None``.  Ignored if *payload* is provided.
+                Defaults to ``0`` (empty payload).
+            src_mac: Source MAC address for the Ethernet header, as a
+                colon- or hyphen-separated hex string.
+                Defaults to ``"00:00:00:00:00:01"``.
+            dst_mac: Destination MAC address for the Ethernet header.
+                Defaults to ``"00:00:00:00:00:02"``.
+            src_port: Source port number for TCP/UDP headers.  Ignored for
+                ICMP/ICMPv6.  Defaults to ``12345``.
+            dst_port: Destination port number for TCP/UDP headers.  Ignored
+                for ICMP/ICMPv6.  Defaults to ``80``.
+            ttl: Time-To-Live (IPv4) or Hop Limit (IPv6).  Defaults to
+                ``64``.
+            payload: Explicit payload bytes.  When provided, *payload_size*
+                is ignored and these exact bytes are used as the packet body.
+                Defaults to ``None`` (generate random bytes).
+            include_ethernet: If ``True`` (default), prepend a 14-byte
+                Ethernet II header to the packet.  Set to ``False`` to
+                produce a raw IP packet without any layer-2 framing.
+        """
         self.src_ip = src_ip
         self.dst_ip = dst_ip
         self.protocol = protocol
@@ -60,6 +167,17 @@ class PacketBuilder:
 
     @property
     def payload(self) -> bytes:
+        """The payload bytes that will be placed after the transport header.
+
+        On the first access the payload is generated (either the explicit
+        bytes supplied at construction, or ``os.urandom(payload_size)``).
+        The result is cached so that repeated calls to :meth:`build` always
+        use the same payload.
+
+        Returns:
+            The payload as a :class:`bytes` object.  May be empty (``b""``)
+            when *payload_size* is ``0`` and no explicit payload was given.
+        """
         if self._payload is None:
             self._payload = (
                 self._explicit_payload
@@ -69,7 +187,32 @@ class PacketBuilder:
         return self._payload
 
     def build(self) -> bytes:
-        """Assemble and return the complete packet bytes."""
+        """Assemble and return the complete packet bytes.
+
+        Assembly order (outermost to innermost)::
+
+            [Ethernet header (14 B, optional)]
+            [IPv4 (20 B) or IPv6 (40 B) header]
+            [TCP (20 B) / UDP (8 B) / ICMP (8 B) / ICMPv6 (8 B) header]
+            [payload (variable)]
+
+        All checksums are computed automatically.  The Ethernet EtherType is
+        set to ``0x0800`` for IPv4 or ``0x86DD`` for IPv6.
+
+        Returns:
+            A :class:`bytes` object containing the fully assembled packet.
+
+        Raises:
+            OSError: If *src_ip* or *dst_ip* is not a valid IP address.
+            ValueError: If the :attr:`protocol` value is not supported
+                (should not happen with the public :class:`Protocol` enum).
+
+        Example:
+            >>> from packet_generator import PacketBuilder, Protocol
+            >>> pkt = PacketBuilder("1.2.3.4", "5.6.7.8", Protocol.UDP, payload_size=0).build()
+            >>> len(pkt)  # 14 (eth) + 20 (ip) + 8 (udp)
+            42
+        """
         data = self.payload
         ip_version = _detect_ip_version(self.src_ip)
 
