@@ -57,6 +57,27 @@ class TestTCPHeader(unittest.TestCase):
         self.assertEqual(src, 12345)
         self.assertEqual(dst, 8080)
 
+    def test_seq_default_is_zero(self):
+        raw = build_tcp_header(TCPHeader(1234, 80), b'', "1.2.3.4", "5.6.7.8")
+        seq = struct.unpack('!I', raw[4:8])[0]
+        self.assertEqual(seq, 0)
+
+    def test_seq_custom_value(self):
+        raw = build_tcp_header(TCPHeader(1234, 80, seq=0xDEADBEEF), b'', "1.2.3.4", "5.6.7.8")
+        seq = struct.unpack('!I', raw[4:8])[0]
+        self.assertEqual(seq, 0xDEADBEEF)
+
+    def test_seq_via_packet_builder(self):
+        from packet_generator import PacketBuilder, Protocol
+        pkt = PacketBuilder(
+            "10.0.0.1", "10.0.0.2", Protocol.TCP,
+            include_ethernet=False,
+            tcp_seq=0x12345678,
+        ).build()
+        # 20-byte IP header, then TCP seq at bytes 4–7
+        seq = struct.unpack('!I', pkt[20 + 4: 20 + 8])[0]
+        self.assertEqual(seq, 0x12345678)
+
 
 if __name__ == '__main__':
     unittest.main()
