@@ -29,7 +29,7 @@ import os
 import socket
 from enum import Enum
 
-from .ethernet import EthernetHeader, ETHERTYPE_IPV4, ETHERTYPE_IPV6, build_ethernet_header
+from .ethernet import EthernetHeader, VLANTag, ETHERTYPE_IPV4, ETHERTYPE_IPV6, build_ethernet_header
 from .ip import IPHeader, build_ip_header
 from .ipv6 import IPv6Header, build_ipv6_header
 from .tcp import TCPHeader, build_tcp_header
@@ -122,6 +122,9 @@ class PacketBuilder:
         payload: bytes | None = None,
         include_ethernet: bool = True,
         tcp_seq: int = 0,
+        vlan_id: int | None = None,
+        vlan_pcp: int = 0,
+        vlan_dei: int = 0,
     ) -> None:
         """Initialise the builder with packet parameters.
 
@@ -155,6 +158,15 @@ class PacketBuilder:
                 produce a raw IP packet without any layer-2 framing.
             tcp_seq: 32-bit TCP sequence number.  Ignored for UDP and ICMP.
                 Defaults to ``0``.
+            vlan_id: IEEE 802.1Q VLAN identifier (1–4094).  When set, a
+                4-byte 802.1Q tag is inserted in the Ethernet header (TPID
+                ``0x8100`` + TCI), expanding it from 14 to 18 bytes.
+                Ignored when *include_ethernet* is ``False``.
+                Defaults to ``None`` (no VLAN tag).
+            vlan_pcp: Priority Code Point — 3-bit value (0–7) for the VLAN
+                tag.  Ignored when *vlan_id* is ``None``.  Defaults to ``0``.
+            vlan_dei: Drop Eligible Indicator — 0 or 1 for the VLAN tag.
+                Ignored when *vlan_id* is ``None``.  Defaults to ``0``.
         """
         self.src_ip = src_ip
         self.dst_ip = dst_ip
@@ -167,6 +179,9 @@ class PacketBuilder:
         self.ttl = ttl
         self.include_ethernet = include_ethernet
         self.tcp_seq = tcp_seq
+        self.vlan_id = vlan_id
+        self.vlan_pcp = vlan_pcp
+        self.vlan_dei = vlan_dei
         self._explicit_payload = payload
         self._payload: bytes | None = None
 
@@ -269,8 +284,13 @@ class PacketBuilder:
         packet = network + ip_payload
 
         if self.include_ethernet:
+            vlan_tag = (
+                VLANTag(self.vlan_id, self.vlan_pcp, self.vlan_dei)
+                if self.vlan_id is not None
+                else None
+            )
             eth = build_ethernet_header(
-                EthernetHeader(self.dst_mac, self.src_mac, ethertype)
+                EthernetHeader(self.dst_mac, self.src_mac, ethertype, vlan_tag)
             )
             packet = eth + packet
 
@@ -342,7 +362,12 @@ class PacketBuilder:
         eth_header = None
         if self.include_ethernet:
             ethertype = ETHERTYPE_IPV6 if ip_version == 6 else ETHERTYPE_IPV4
-            eth_header = EthernetHeader(self.dst_mac, self.src_mac, ethertype)
+            vlan_tag = (
+                VLANTag(self.vlan_id, self.vlan_pcp, self.vlan_dei)
+                if self.vlan_id is not None
+                else None
+            )
+            eth_header = EthernetHeader(self.dst_mac, self.src_mac, ethertype, vlan_tag)
 
         if ip_version == 6:
             next_header = {

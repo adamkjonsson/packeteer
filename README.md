@@ -13,6 +13,7 @@ No external dependencies. Python 3.10+ and the standard library only.
 ## Features
 
 - **Ethernet II** framing with configurable MAC addresses and automatic EtherType
+- **IEEE 802.1Q VLAN tagging** — inserts a 4-byte VLAN tag (TPID `0x8100` + TCI) into the Ethernet header; configurable VID (1–4094), PCP (0–7), and DEI
 - **IPv4** headers (RFC 791) with RFC 1071 header checksum
 - **IPv6** fixed headers (RFC 8200) — no header checksum, 40 bytes
 - **TCP** (RFC 9293) with pseudo-header checksum for IPv4 and IPv6
@@ -74,6 +75,17 @@ pkt = PacketBuilder(
     protocol=Protocol.ICMPv6,
     payload=b"hello ipv6",
 ).build()
+
+# IPv4 UDP packet on VLAN 100 with priority 5
+pkt = PacketBuilder(
+    src_ip="10.0.0.1",
+    dst_ip="10.0.0.2",
+    protocol=Protocol.UDP,
+    payload_size=32,
+    vlan_id=100,
+    vlan_pcp=5,
+).build()
+# Ethernet header is now 18 bytes (TPID 0x8100 + TCI + inner EtherType)
 ```
 
 ---
@@ -173,6 +185,9 @@ PacketBuilder(
     payload: bytes | None = None,
     include_ethernet: bool = True,
     tcp_seq: int = 0,
+    vlan_id: int | None = None,
+    vlan_pcp: int = 0,
+    vlan_dei: int = 0,
 )
 ```
 
@@ -190,6 +205,9 @@ PacketBuilder(
 | `payload` | Explicit payload bytes. Overrides `payload_size`. |
 | `include_ethernet` | Prepend an Ethernet II header when `True` (default). |
 | `tcp_seq` | 32-bit TCP sequence number. Ignored for UDP and ICMP. Defaults to `0`. |
+| `vlan_id` | IEEE 802.1Q VLAN ID (1–4094). When set, a 4-byte 802.1Q tag is inserted in the Ethernet header, expanding it from 14 to 18 bytes. Ignored when `include_ethernet=False`. Defaults to `None` (no tag). |
+| `vlan_pcp` | VLAN Priority Code Point (0–7, IEEE 802.1p). Ignored when `vlan_id` is `None`. Defaults to `0`. |
+| `vlan_dei` | VLAN Drop Eligible Indicator (0 or 1). Ignored when `vlan_id` is `None`. Defaults to `0`. |
 
 #### Methods
 
@@ -219,19 +237,38 @@ Protocol.ICMPv6  # ICMPv6 — requires IPv6 addresses
 Each header type is also available for direct use when you need fine-grained
 control over individual fields.
 
-#### `EthernetHeader`
+#### `EthernetHeader` and `VLANTag`
 
 ```python
-from packet_generator import EthernetHeader
+from packet_generator import EthernetHeader, VLANTag
 from packet_generator.ethernet import build_ethernet_header, ETHERTYPE_IPV4, ETHERTYPE_IPV6
 
+# Plain Ethernet II header — 14 bytes
 hdr = EthernetHeader(
     dst_mac="aa:bb:cc:dd:ee:ff",
     src_mac="11:22:33:44:55:66",
     ethertype=ETHERTYPE_IPV4,   # 0x0800
 )
 raw: bytes = build_ethernet_header(hdr)  # 14 bytes
+
+# IEEE 802.1Q tagged header — 18 bytes
+#   dst_mac (6) | src_mac (6) | TPID 0x8100 (2) | TCI (2) | inner EtherType (2)
+hdr = EthernetHeader(
+    dst_mac="aa:bb:cc:dd:ee:ff",
+    src_mac="11:22:33:44:55:66",
+    ethertype=ETHERTYPE_IPV4,
+    vlan_tag=VLANTag(vid=100, pcp=3, dei=0),
+)
+raw: bytes = build_ethernet_header(hdr)  # 18 bytes
 ```
+
+`VLANTag` fields:
+
+| Field | Range | Description |
+|-------|-------|-------------|
+| `vid` | 0–4095 | VLAN Identifier. Values 1–4094 identify a specific VLAN; 0 = priority tag only; 4095 reserved. |
+| `pcp` | 0–7 | Priority Code Point (IEEE 802.1p class of service). |
+| `dei` | 0–1 | Drop Eligible Indicator — frame may be dropped under congestion. |
 
 #### `IPHeader` (IPv4)
 
@@ -313,16 +350,16 @@ raw: bytes = build_icmpv6_header(hdr, payload=b"ping", src_ip="::1", dst_ip="::2
 
 ## Packet sizes
 
-| Protocol | IP version | With Ethernet | Without Ethernet |
-|----------|-----------|--------------|-----------------|
-| TCP      | IPv4      | 14 + 20 + 20 + N | 20 + 20 + N |
-| UDP      | IPv4      | 14 + 20 + 8 + N  | 20 + 8 + N  |
-| ICMP     | IPv4      | 14 + 20 + 8 + N  | 20 + 8 + N  |
-| TCP      | IPv6      | 14 + 40 + 20 + N | 40 + 20 + N |
-| UDP      | IPv6      | 14 + 40 + 8 + N  | 40 + 8 + N  |
-| ICMPv6   | IPv6      | 14 + 40 + 8 + N  | 40 + 8 + N  |
+| Protocol | IP version | With Ethernet | With Ethernet + VLAN | Without Ethernet |
+|----------|-----------|--------------|---------------------|-----------------|
+| TCP      | IPv4      | 14 + 20 + 20 + N | 18 + 20 + 20 + N | 20 + 20 + N |
+| UDP      | IPv4      | 14 + 20 + 8 + N  | 18 + 20 + 8 + N  | 20 + 8 + N  |
+| ICMP     | IPv4      | 14 + 20 + 8 + N  | 18 + 20 + 8 + N  | 20 + 8 + N  |
+| TCP      | IPv6      | 14 + 40 + 20 + N | 18 + 40 + 20 + N | 40 + 20 + N |
+| UDP      | IPv6      | 14 + 40 + 8 + N  | 18 + 40 + 8 + N  | 40 + 8 + N  |
+| ICMPv6   | IPv6      | 14 + 40 + 8 + N  | 18 + 40 + 8 + N  | 40 + 8 + N  |
 
-*N = payload size in bytes*
+*N = payload size in bytes. The 802.1Q VLAN tag adds 4 bytes to the Ethernet header (14 → 18 bytes).*
 
 ---
 
@@ -341,6 +378,9 @@ python cli.py --src <ip> --dst <ip> --protocol <proto> [options]
 | `--src-port` | `12345` | Source port (TCP/UDP) |
 | `--dst-port` | `80` | Destination port (TCP/UDP) |
 | `--tcp-seq` | `0` | TCP sequence number |
+| `--vlan-id` | — | IEEE 802.1Q VLAN ID (1–4094). Adds a 4-byte 802.1Q tag to the Ethernet header. |
+| `--vlan-pcp` | `0` | VLAN Priority Code Point (0–7) |
+| `--vlan-dei` | `0` | VLAN Drop Eligible Indicator (0 or 1) |
 | `--src-mac` | `00:00:00:00:00:01` | Source MAC address |
 | `--dst-mac` | `00:00:00:00:00:02` | Destination MAC address |
 | `--ttl` | `64` | TTL / Hop Limit |
@@ -371,6 +411,9 @@ python cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol udp --size 2000 --mtu 576
 
 # Fragment a large IPv6 TCP payload and save all fragments to a file
 python cli.py --src ::1 --dst ::2 --protocol tcp --size 4000 --mtu 1280 --output frags.bin
+
+# IPv4 UDP on VLAN 200, priority 6 — 18-byte Ethernet header
+python cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol udp --size 32 --vlan-id 200 --vlan-pcp 6
 ```
 
 ---
@@ -383,7 +426,7 @@ packet-generator/
     __init__.py        # public API re-exports
     builder.py         # PacketBuilder and Protocol — main entry point
     checksum.py        # RFC 1071 one's-complement checksum utility
-    ethernet.py        # Ethernet II header (14 bytes)
+    ethernet.py        # Ethernet II header (14 bytes, 18 with 802.1Q VLAN tag)
     fragmentation.py   # fragment_ipv4 and fragment_ipv6
     ip.py              # IPv4 header (20 bytes)
     ipv6.py            # IPv6 header (40 bytes)
@@ -430,3 +473,4 @@ All 103 tests run in under a second and require no third-party packages.
 | RFC 4443 | Internet Control Message Protocol for IPv6 (ICMPv6) |
 | RFC 8200 | Internet Protocol, Version 6 (IPv6) — including §4.5 Fragment Extension Header |
 | IEEE 802.3 | Ethernet |
+| IEEE 802.1Q | Virtual LANs (VLAN tagging) |

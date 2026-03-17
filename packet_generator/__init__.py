@@ -50,6 +50,7 @@ Public API:
     PacketBuilder: High-level packet assembly class.
     Protocol: Enum of supported transport protocols (TCP, UDP, ICMP, ICMPv6).
     EthernetHeader: Dataclass for Ethernet II header fields.
+    VLANTag: Dataclass for IEEE 802.1Q VLAN tag fields.
     IPHeader: Dataclass for IPv4 header fields.
     IPv6Header: Dataclass for IPv6 header fields.
     TCPHeader: Dataclass for TCP header fields.
@@ -60,7 +61,7 @@ Public API:
 from __future__ import annotations
 
 from .builder import PacketBuilder, Protocol
-from .ethernet import EthernetHeader
+from .ethernet import EthernetHeader, VLANTag
 from .fragmentation import fragment_ipv4, fragment_ipv6
 from .ip import IPHeader
 from .ipv6 import IPv6Header
@@ -73,6 +74,7 @@ __all__ = [
     "PacketBuilder",
     "Protocol",
     "EthernetHeader",
+    "VLANTag",
     "IPHeader",
     "IPv6Header",
     "TCPHeader",

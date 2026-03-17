@@ -30,6 +30,12 @@ def main():
     parser.add_argument("--src-port", type=int, default=12345, help="Source port (TCP/UDP)")
     parser.add_argument("--dst-port", type=int, default=80, help="Destination port (TCP/UDP)")
     parser.add_argument("--tcp-seq", type=int, default=0, help="TCP sequence number (default: 0)")
+    parser.add_argument(
+        "--vlan-id", type=int, default=None,
+        help="IEEE 802.1Q VLAN ID (1–4094). Adds a 4-byte 802.1Q tag to the Ethernet header.",
+    )
+    parser.add_argument("--vlan-pcp", type=int, default=0, help="VLAN Priority Code Point 0–7 (default: 0)")
+    parser.add_argument("--vlan-dei", type=int, default=0, help="VLAN Drop Eligible Indicator 0 or 1 (default: 0)")
     parser.add_argument("--src-mac", default="00:00:00:00:00:01", help="Source MAC address")
     parser.add_argument("--dst-mac", default="00:00:00:00:00:02", help="Destination MAC address")
     parser.add_argument("--ttl", type=int, default=64, help="TTL / Hop Limit (default: 64)")
@@ -64,6 +70,9 @@ def main():
             ttl=args.ttl,
             include_ethernet=not args.no_ethernet,
             tcp_seq=args.tcp_seq,
+            vlan_id=args.vlan_id,
+            vlan_pcp=args.vlan_pcp,
+            vlan_dei=args.vlan_dei,
         )
         if args.mtu is not None:
             packets = builder.fragment(mtu=args.mtu)
