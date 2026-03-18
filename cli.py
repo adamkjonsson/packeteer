@@ -7,10 +7,46 @@ Examples:
   python cli.py --src ::1 --dst ::2 --protocol udp --size 10
   python cli.py --src fe80::1 --dst fe80::2 --protocol icmpv6 --size 0 --no-ethernet
   python cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol icmp --size 4 --output packet.bin
+  python cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol tcp --size 64 --pcap capture.pcap
 """
 import argparse
+import struct
 import sys
+import time
 from packet_generator import PacketBuilder, Protocol
+
+# PCAP link-layer types
+_LINKTYPE_ETHERNET = 1    # Ethernet II (with header)
+_LINKTYPE_RAW      = 101  # Raw IP (no Ethernet header)
+
+
+def _write_pcap(f, packets: list[bytes], link_type: int) -> None:
+    """Write packets to *f* in libpcap format (little-endian, µs timestamps).
+
+    Global header layout (24 bytes):
+        magic (4) | major (2) | minor (2) | thiszone (4) |
+        sigfigs (4) | snaplen (4) | network (4)
+
+    Per-packet record (16 bytes + data):
+        ts_sec (4) | ts_usec (4) | incl_len (4) | orig_len (4) | data
+    """
+    # Global header
+    f.write(struct.pack(
+        '<IHHiIII',
+        0xA1B2C3D4,  # magic — little-endian, microsecond timestamps
+        2, 4,        # version 2.4
+        0,           # UTC (no timezone offset)
+        0,           # timestamp accuracy (always 0)
+        65535,       # snaplen
+        link_type,
+    ))
+    ts = time.time()
+    ts_sec = int(ts)
+    ts_usec = int((ts - ts_sec) * 1_000_000)
+    for pkt in packets:
+        length = len(pkt)
+        f.write(struct.pack('<IIII', ts_sec, ts_usec, length, length))
+        f.write(pkt)
 
 
 def main():
@@ -49,7 +85,12 @@ def main():
         ),
     )
     parser.add_argument("--output", help="Write raw bytes to file (default: print hex to stdout)")
+    parser.add_argument("--pcap", metavar="FILE", help="Write packets to a libpcap (.pcap) file")
     args = parser.parse_args()
+
+    if args.output and args.pcap:
+        print("Error: --output and --pcap are mutually exclusive", file=sys.stderr)
+        sys.exit(1)
 
     try:
         proto = Protocol[args.protocol.upper()]
@@ -82,7 +123,12 @@ def main():
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    if args.output:
+    if args.pcap:
+        link_type = _LINKTYPE_RAW if args.no_ethernet else _LINKTYPE_ETHERNET
+        with open(args.pcap, "wb") as f:
+            _write_pcap(f, packets, link_type)
+        print(f"Wrote {len(packets)} packet(s) to {args.pcap} (link type: {link_type})")
+    elif args.output:
         with open(args.output, "wb") as f:
             for pkt in packets:
                 f.write(pkt)
