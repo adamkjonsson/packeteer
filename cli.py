@@ -7,10 +7,44 @@ Examples:
   python cli.py --src ::1 --dst ::2 --protocol udp --size 10
   python cli.py --src fe80::1 --dst fe80::2 --protocol icmpv6 --size 0 --no-ethernet
   python cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol icmp --size 4 --output packet.bin
+  python cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol tcp --size 64 --output capture.pcap
 """
 import argparse
+import struct
 import sys
+import time
 from packet_generator import PacketBuilder, Protocol
+
+
+def write_pcap(path: str, packets: list[bytes], link_type: int) -> None:
+    """Write packets to a pcap file.
+
+    Args:
+        path: Output file path.
+        packets: List of raw packet bytes.
+        link_type: PCAP link-layer type (1=Ethernet, 101=raw IP).
+    """
+    PCAP_MAGIC = 0xA1B2C3D4
+    now = time.time()
+    ts_sec = int(now)
+    ts_usec = int((now - ts_sec) * 1_000_000)
+
+    global_header = struct.pack(
+        "<IHHiIII",
+        PCAP_MAGIC,   # magic number (little-endian, microseconds)
+        2,            # major version
+        4,            # minor version
+        0,            # GMT offset
+        0,            # timestamp accuracy
+        65535,        # snaplen
+        link_type,    # link-layer type
+    )
+    with open(path, "wb") as f:
+        f.write(global_header)
+        for pkt in packets:
+            rec_hdr = struct.pack("<IIII", ts_sec, ts_usec, len(pkt), len(pkt))
+            f.write(rec_hdr)
+            f.write(pkt)
 
 
 def main():
@@ -83,14 +117,22 @@ def main():
         sys.exit(1)
 
     if args.output:
-        with open(args.output, "wb") as f:
-            for pkt in packets:
-                f.write(pkt)
         total = sum(len(p) for p in packets)
-        if len(packets) > 1:
-            print(f"Wrote {len(packets)} fragments ({total} bytes total) to {args.output}")
+        if args.output.endswith(".pcap"):
+            link_type = 1 if not args.no_ethernet else 101  # 1=Ethernet, 101=raw IP
+            write_pcap(args.output, packets, link_type)
+            if len(packets) > 1:
+                print(f"Wrote {len(packets)} packets ({total} bytes total) to {args.output} (pcap)")
+            else:
+                print(f"Wrote {total} bytes to {args.output} (pcap)")
         else:
-            print(f"Wrote {total} bytes to {args.output}")
+            with open(args.output, "wb") as f:
+                for pkt in packets:
+                    f.write(pkt)
+            if len(packets) > 1:
+                print(f"Wrote {len(packets)} fragments ({total} bytes total) to {args.output}")
+            else:
+                print(f"Wrote {total} bytes to {args.output}")
     else:
         for idx, pkt in enumerate(packets):
             if len(packets) > 1:
