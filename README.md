@@ -26,7 +26,7 @@ No external dependencies. Python 3.10+ and the standard library only.
 - High-level `PacketBuilder.fragment(mtu)` and low-level `fragment_ipv4` / `fragment_ipv6` functions
 - Payload: random bytes of a given size, or supply your own
 - Optional Ethernet header — produce raw IP packets when not needed
-- CLI for quick packet inspection and binary output, with `--mtu` for on-the-fly fragmentation
+- CLI for quick packet inspection and binary output, with `--mtu` for on-the-fly fragmentation and `--config` for JSON-driven packet definitions
 
 ---
 
@@ -367,14 +367,17 @@ raw: bytes = build_icmpv6_header(hdr, payload=b"ping", src_ip="::1", dst_ip="::2
 
 ```
 python cli.py --src <ip> --dst <ip> --protocol <proto> [options]
+python cli.py --config <file.json> [options]
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
+| `--config` | — | Load packet parameters from a JSON file; CLI flags override file values |
 | `--src` | *(required)* | Source IP address (IPv4 or IPv6) |
 | `--dst` | *(required)* | Destination IP address |
 | `--protocol` | *(required)* | `tcp`, `udp`, `icmp`, or `icmpv6` |
-| `--size` | `0` | Payload size in bytes |
+| `--size` | `0` | Payload size in bytes (random bytes) |
+| `--payload-data` | — | Explicit payload as a hex string (e.g. `48656c6c6f`); overrides `--size` |
 | `--src-port` | `12345` | Source port (TCP/UDP) |
 | `--dst-port` | `80` | Destination port (TCP/UDP) |
 | `--tcp-seq` | `0` | TCP sequence number |
@@ -388,6 +391,8 @@ python cli.py --src <ip> --dst <ip> --protocol <proto> [options]
 | `--mtu` | — | Fragment the packet; each IP datagram will be at most MTU bytes |
 | `--output` | — | Write raw bytes to a file instead of printing hex |
 | `--pcap` | — | Write packets to a libpcap (`.pcap`) file openable by Wireshark/tcpdump |
+| `--timestamp-s` | *(current time)* | Capture timestamp — whole seconds (`ts_sec` in pcap record header) |
+| `--timestamp-us` | `0` | Capture timestamp — microseconds fraction 0–999999 (`ts_usec` in pcap record header) |
 
 ### Examples
 
@@ -424,7 +429,114 @@ python cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol udp --size 4000 --mtu 150
 
 # Raw IPv6 TCP packet (no Ethernet header) — link type 101 = raw IP
 python cli.py --src ::1 --dst ::2 --protocol tcp --size 40 --no-ethernet --pcap raw.pcap
+
+# Explicit payload as hex bytes ("Hello")
+python cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol udp --payload-data 48656c6c6f
+
+# Build from a JSON config file
+python cli.py --config packet.json
+
+# JSON config file with a CLI override
+python cli.py --config packet.json --dst-port 443
+
+# pcap with a fixed capture timestamp (ts_sec=0, ts_usec=123456)
+python cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol tcp --pcap out.pcap --timestamp-s 0 --timestamp-us 123456
 ```
+
+---
+
+## JSON config file
+
+All CLI options can be specified in a JSON file and loaded with `--config`. CLI
+flags override values from the file when both are present. Only `network.src`,
+`network.dst`, and `network.protocol` are required; everything else is optional
+and falls back to the same defaults as the CLI.
+
+```json
+{
+  "ethernet": {
+    "src_mac": "00:00:00:00:00:01",
+    "dst_mac": "00:00:00:00:00:02",
+    "enabled": true,
+    "vlan": {
+      "id": 100,
+      "pcp": 0,
+      "dei": 0
+    }
+  },
+  "network": {
+    "src": "192.168.1.1",
+    "dst": "10.0.0.1",
+    "protocol": "tcp",
+    "ttl": 64
+  },
+  "transport": {
+    "src_port": 12345,
+    "dst_port": 80,
+    "seq": 0
+  },
+  "payload": {
+    "size": 100
+  },
+  "output": {
+    "pcap": "out.pcap",
+    "timestamp_s": 0,
+    "timestamp_us": 123456
+  }
+}
+```
+
+### Field reference
+
+#### `ethernet`
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `src_mac` | `"00:00:00:00:00:01"` | Source MAC address |
+| `dst_mac` | `"00:00:00:00:00:02"` | Destination MAC address |
+| `enabled` | `true` | Set to `false` to omit the Ethernet header (equivalent to `--no-ethernet`) |
+| `vlan.id` | — | VLAN ID 1–4094; omit the `vlan` key entirely to disable VLAN tagging |
+| `vlan.pcp` | `0` | VLAN Priority Code Point (0–7) |
+| `vlan.dei` | `0` | VLAN Drop Eligible Indicator (0 or 1) |
+
+#### `network`
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `src` | yes | Source IP address (IPv4 or IPv6) |
+| `dst` | yes | Destination IP address |
+| `protocol` | yes | `"tcp"`, `"udp"`, `"icmp"`, or `"icmpv6"` |
+| `ttl` | no (default `64`) | TTL / Hop Limit |
+
+#### `transport`
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `src_port` | `12345` | Source port (TCP/UDP) |
+| `dst_port` | `80` | Destination port (TCP/UDP) |
+| `seq` | `0` | TCP sequence number |
+
+#### `payload`
+
+`size` and `data` are mutually exclusive; `data` takes precedence.
+
+| Field | Description |
+|-------|-------------|
+| `size` | Generate N random bytes as the payload |
+| `data` | Explicit payload as a hex string (e.g. `"48656c6c6f"` = `Hello`) |
+
+#### `output`
+
+`file` and `pcap` are mutually exclusive. `timestamp_s` and `timestamp_us`
+only affect pcap output.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `mtu` | — | Fragment the packet; each IP datagram will be at most this many bytes |
+| `file` | — | Write raw bytes to this path |
+| `pcap` | — | Write a libpcap `.pcap` file to this path |
+| `timestamp_s` | *(current time)* | Capture timestamp — whole seconds written to `ts_sec` in each pcap packet record header; 32-bit unsigned integer |
+| `timestamp_us` | `0` | Capture timestamp — microseconds fraction (0–999999) written to `ts_usec` in each pcap packet record header |
 
 ---
 

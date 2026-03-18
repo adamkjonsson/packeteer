@@ -8,8 +8,10 @@ Examples:
   python cli.py --src fe80::1 --dst fe80::2 --protocol icmpv6 --size 0 --no-ethernet
   python cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol icmp --size 4 --output packet.bin
   python cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol tcp --size 64 --pcap capture.pcap
+  python cli.py --config packet.json
 """
 import argparse
+import json
 import struct
 import sys
 import time
@@ -20,7 +22,13 @@ _LINKTYPE_ETHERNET = 1    # Ethernet II (with header)
 _LINKTYPE_RAW      = 101  # Raw IP (no Ethernet header)
 
 
-def _write_pcap(f, packets: list[bytes], link_type: int) -> None:
+def _write_pcap(
+    f,
+    packets: list[bytes],
+    link_type: int,
+    ts_sec: int | None = None,
+    ts_usec: int = 0,
+) -> None:
     """Write packets to *f* in libpcap format (little-endian, µs timestamps).
 
     Global header layout (24 bytes):
@@ -40,13 +48,70 @@ def _write_pcap(f, packets: list[bytes], link_type: int) -> None:
         65535,       # snaplen
         link_type,
     ))
-    ts = time.time()
-    ts_sec = int(ts)
-    ts_usec = int((ts - ts_sec) * 1_000_000)
+    if ts_sec is None:
+        ts = time.time()
+        ts_sec = int(ts)
+        ts_usec = int((ts - ts_sec) * 1_000_000)
     for pkt in packets:
         length = len(pkt)
         f.write(struct.pack('<IIII', ts_sec, ts_usec, length, length))
         f.write(pkt)
+
+
+def _load_config(path: str) -> dict:
+    """Load a JSON config file and return a flat dict of argparse defaults."""
+    with open(path) as f:
+        cfg = json.load(f)
+
+    defaults = {}
+
+    eth = cfg.get("ethernet", {})
+    if "src_mac" in eth:
+        defaults["src_mac"] = eth["src_mac"]
+    if "dst_mac" in eth:
+        defaults["dst_mac"] = eth["dst_mac"]
+    if "enabled" in eth:
+        defaults["no_ethernet"] = not eth["enabled"]
+    vlan = eth.get("vlan", {})
+    if "id" in vlan:
+        defaults["vlan_id"] = vlan["id"]
+    if "pcp" in vlan:
+        defaults["vlan_pcp"] = vlan["pcp"]
+    if "dei" in vlan:
+        defaults["vlan_dei"] = vlan["dei"]
+
+    net = cfg.get("network", {})
+    for key in ("src", "dst", "protocol", "ttl"):
+        if key in net:
+            defaults[key] = net[key]
+
+    transport = cfg.get("transport", {})
+    if "src_port" in transport:
+        defaults["src_port"] = transport["src_port"]
+    if "dst_port" in transport:
+        defaults["dst_port"] = transport["dst_port"]
+    if "seq" in transport:
+        defaults["tcp_seq"] = transport["seq"]
+
+    payload = cfg.get("payload", {})
+    if "data" in payload:
+        defaults["payload_data"] = payload["data"]
+    elif "size" in payload:
+        defaults["size"] = payload["size"]
+
+    output = cfg.get("output", {})
+    if "mtu" in output:
+        defaults["mtu"] = output["mtu"]
+    if "file" in output:
+        defaults["output"] = output["file"]
+    if "pcap" in output:
+        defaults["pcap"] = output["pcap"]
+    if "timestamp_s" in output:
+        defaults["timestamp_s"] = output["timestamp_s"]
+    if "timestamp_us" in output:
+        defaults["timestamp_us"] = output["timestamp_us"]
+
+    return defaults
 
 
 def main():
@@ -55,14 +120,19 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("--src", required=True, help="Source IP address (IPv4 or IPv6)")
-    parser.add_argument("--dst", required=True, help="Destination IP address (IPv4 or IPv6)")
+    parser.add_argument("--config", metavar="FILE", help="JSON config file (CLI flags override values from the file)")
+    parser.add_argument("--src", help="Source IP address (IPv4 or IPv6)")
+    parser.add_argument("--dst", help="Destination IP address (IPv4 or IPv6)")
     parser.add_argument(
-        "--protocol", required=True,
+        "--protocol",
         choices=["tcp", "udp", "icmp", "icmpv6"],
         help="Transport protocol",
     )
     parser.add_argument("--size", type=int, default=0, help="Payload size in bytes (default: 0)")
+    parser.add_argument(
+        "--payload-data", metavar="HEX",
+        help="Explicit payload as a hex string (e.g. 48656c6c6f); overrides --size",
+    )
     parser.add_argument("--src-port", type=int, default=12345, help="Source port (TCP/UDP)")
     parser.add_argument("--dst-port", type=int, default=80, help="Destination port (TCP/UDP)")
     parser.add_argument("--tcp-seq", type=int, default=0, help="TCP sequence number (default: 0)")
@@ -86,7 +156,32 @@ def main():
     )
     parser.add_argument("--output", help="Write raw bytes to file (default: print hex to stdout)")
     parser.add_argument("--pcap", metavar="FILE", help="Write packets to a libpcap (.pcap) file")
+    parser.add_argument(
+        "--timestamp-s", type=int, default=None, metavar="SEC",
+        help="Capture timestamp seconds (ts_sec in pcap record; default: current time)",
+    )
+    parser.add_argument(
+        "--timestamp-us", type=int, default=0, metavar="USEC",
+        help="Capture timestamp microseconds fraction 0–999999 (ts_usec in pcap record; default: 0)",
+    )
+
+    # Pre-parse to find --config before setting argparse defaults
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument("--config", metavar="FILE")
+    pre_args, _ = pre_parser.parse_known_args()
+
+    if pre_args.config:
+        try:
+            defaults = _load_config(pre_args.config)
+        except (OSError, json.JSONDecodeError, ValueError) as e:
+            print(f"Error loading config '{pre_args.config}': {e}", file=sys.stderr)
+            sys.exit(1)
+        parser.set_defaults(**defaults)
+
     args = parser.parse_args()
+
+    if not args.src or not args.dst or not args.protocol:
+        parser.error("--src, --dst, and --protocol are required (or provide them via --config)")
 
     if args.output and args.pcap:
         print("Error: --output and --pcap are mutually exclusive", file=sys.stderr)
@@ -98,12 +193,21 @@ def main():
         print(f"Unknown protocol: {args.protocol}", file=sys.stderr)
         sys.exit(1)
 
+    explicit_payload: bytes | None = None
+    if args.payload_data is not None:
+        try:
+            explicit_payload = bytes.fromhex(args.payload_data)
+        except ValueError as e:
+            print(f"Error: --payload-data is not valid hex: {e}", file=sys.stderr)
+            sys.exit(1)
+
     try:
         builder = PacketBuilder(
             src_ip=args.src,
             dst_ip=args.dst,
             protocol=proto,
             payload_size=args.size,
+            payload=explicit_payload,
             src_mac=args.src_mac,
             dst_mac=args.dst_mac,
             src_port=args.src_port,
@@ -126,7 +230,7 @@ def main():
     if args.pcap:
         link_type = _LINKTYPE_RAW if args.no_ethernet else _LINKTYPE_ETHERNET
         with open(args.pcap, "wb") as f:
-            _write_pcap(f, packets, link_type)
+            _write_pcap(f, packets, link_type, ts_sec=args.timestamp_s, ts_usec=args.timestamp_us)
         print(f"Wrote {len(packets)} packet(s) to {args.pcap} (link type: {link_type})")
     elif args.output:
         with open(args.output, "wb") as f:
