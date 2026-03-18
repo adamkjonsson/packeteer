@@ -387,6 +387,7 @@ python cli.py --src <ip> --dst <ip> --protocol <proto> [options]
 | `--no-ethernet` | — | Omit the Ethernet header |
 | `--mtu` | — | Fragment the packet; each IP datagram will be at most MTU bytes |
 | `--output` | — | Write raw bytes to a file instead of printing hex |
+| `--pcap` | — | Write packets to a libpcap (`.pcap`) file openable by Wireshark/tcpdump |
 
 ### Examples
 
@@ -414,6 +415,15 @@ python cli.py --src ::1 --dst ::2 --protocol tcp --size 4000 --mtu 1280 --output
 
 # IPv4 UDP on VLAN 200, priority 6 — 18-byte Ethernet header
 python cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol udp --size 32 --vlan-id 200 --vlan-pcp 6
+
+# Write a single TCP packet as a pcap file (link type 1 = Ethernet)
+python cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol tcp --size 64 --pcap capture.pcap
+
+# Write fragmented UDP as a pcap (each fragment becomes a separate record)
+python cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol udp --size 4000 --mtu 1500 --pcap frags.pcap
+
+# Raw IPv6 TCP packet (no Ethernet header) — link type 101 = raw IP
+python cli.py --src ::1 --dst ::2 --protocol tcp --size 40 --no-ethernet --pcap raw.pcap
 ```
 
 ---
@@ -443,6 +453,7 @@ packet-generator/
     test_icmpv6.py
     test_ip.py
     test_ipv6.py
+    test_pcap.py
     test_tcp.py
     test_udp.py
   cli.py            # command-line interface
@@ -457,7 +468,7 @@ packet-generator/
 python -m unittest discover tests/ -v
 ```
 
-All 103 tests run in under a second and require no third-party packages.
+All tests run in under a second and require no third-party packages.
 
 ---
 
