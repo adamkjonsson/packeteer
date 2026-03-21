@@ -35,9 +35,9 @@ class TestTCPHeader(unittest.TestCase):
         data_offset = (raw[12] >> 4) & 0xF
         self.assertEqual(data_offset, 5)
 
-    def test_syn_flag_default(self):
+    def test_ack_flag_default(self):
         raw = build_tcp_header(TCPHeader(1234, 80), b'', "1.2.3.4", "5.6.7.8")
-        self.assertEqual(raw[13], 0x02)
+        self.assertEqual(raw[13], 0x10)
 
     def test_checksum_v4(self):
         payload = b'hello'

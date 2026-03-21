@@ -135,6 +135,20 @@ def _run_multi_packet(cfg: dict) -> None:
                 vlan_id=vlan.get("id"),
                 vlan_pcp=vlan.get("pcp", 0),
                 vlan_dei=vlan.get("dei", 0),
+                tcp_ack=transport.get("ack", 0),
+                tcp_flags=transport.get("flags", 0x002),
+                tcp_window=transport.get("window", 65535),
+                tcp_urgent_ptr=transport.get("urgent_ptr", 0),
+                icmp_type=transport.get("type"),
+                icmp_code=transport.get("code", 0),
+                icmp_identifier=transport.get("identifier", 1),
+                icmp_sequence=transport.get("sequence", 1),
+                ip_tos=net.get("tos", 0),
+                ip_identification=net.get("identification", 0),
+                ip_flags=net.get("flags", 0b010),
+                ip_fragment_offset=net.get("fragment_offset", 0),
+                ipv6_traffic_class=net.get("traffic_class", 0),
+                ipv6_flow_label=net.get("flow_label", 0),
             )
             mtu = out.get("mtu")
             pkts = builder.fragment(mtu=mtu) if mtu is not None else [builder.build()]

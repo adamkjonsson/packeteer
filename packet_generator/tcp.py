@@ -22,6 +22,14 @@ from dataclasses import dataclass
 
 from .checksum import ones_complement_checksum
 
+# TCP control flag bit masks (RFC 9293 §3.1)
+TCP_FIN: int = 0x001  # No more data from sender
+TCP_SYN: int = 0x002  # Synchronise sequence numbers
+TCP_RST: int = 0x004  # Reset the connection
+TCP_PSH: int = 0x008  # Push buffered data to the application
+TCP_ACK: int = 0x010  # Acknowledgement field is significant
+TCP_URG: int = 0x020  # Urgent pointer field is significant
+
 
 @dataclass
 class TCPHeader:
@@ -32,16 +40,14 @@ class TCPHeader:
         dst_port: Destination port number (0–65535).
         seq: 32-bit sequence number.  Defaults to ``0``.
         ack: 32-bit acknowledgement number.  Defaults to ``0``.
-        flags: 8-bit control flags bitmask.  Common bit values:
+        flags: 8-bit control flags bitmask.  Use the module-level flag
+            constants — :data:`TCP_FIN`, :data:`TCP_SYN`, :data:`TCP_RST`,
+            :data:`TCP_PSH`, :data:`TCP_ACK`, :data:`TCP_URG` — or combine
+            them with ``|``::
 
-            * ``0x001`` FIN
-            * ``0x002`` SYN  *(default)*
-            * ``0x004`` RST
-            * ``0x008`` PSH
-            * ``0x010`` ACK
-            * ``0x018`` PSH + ACK (data segments)
+                TCPHeader(src_port=1234, dst_port=80, flags=TCP_PSH | TCP_ACK)
 
-            Defaults to ``0x002`` (SYN).
+            Defaults to :data:`TCP_ACK` (``0x010``).
         window: Receive-window size in bytes advertised by the sender.
             Defaults to ``65535``.
         urgent_ptr: Urgent pointer; only meaningful when the URG flag is set.
@@ -52,7 +58,7 @@ class TCPHeader:
     dst_port: int
     seq: int = 0
     ack: int = 0
-    flags: int = 0x002      # SYN
+    flags: int = TCP_ACK
     window: int = 65535
     urgent_ptr: int = 0
 
