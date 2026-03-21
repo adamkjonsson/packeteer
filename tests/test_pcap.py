@@ -1,7 +1,8 @@
 import io
 import struct
 import unittest
-from cli import _write_pcap, _LINKTYPE_ETHERNET, _LINKTYPE_RAW
+#from cli import _write_pcap, _LINKTYPE_ETHERNET, _LINKTYPE_RAW
+from packet_generator.pcap import write_pcap, LINKTYPE_ETHERNET, LINKTYPE_RAW
 
 _PCAP_MAGIC    = 0xA1B2C3D4
 _PCAP_MAJOR    = 2
@@ -22,45 +23,45 @@ class TestWritePcap(unittest.TestCase):
 
     def test_global_header_magic(self):
         buf = io.BytesIO()
-        _write_pcap(buf, [b'\x00' * 10], _LINKTYPE_ETHERNET)
+        write_pcap([(b'\x00' * 10, 0, 0)], file_object = buf, link_type=LINKTYPE_ETHERNET)
         hdr = self._parse_global(buf.getvalue())
         self.assertEqual(hdr['magic'], _PCAP_MAGIC)
 
     def test_global_header_version(self):
         buf = io.BytesIO()
-        _write_pcap(buf, [b'\x00' * 10], _LINKTYPE_ETHERNET)
+        write_pcap([(b'\x00' * 10, 0, 0)], file_object=buf, link_type=LINKTYPE_ETHERNET)
         hdr = self._parse_global(buf.getvalue())
         self.assertEqual(hdr['major'], _PCAP_MAJOR)
         self.assertEqual(hdr['minor'], _PCAP_MINOR)
 
     def test_global_header_snaplen(self):
         buf = io.BytesIO()
-        _write_pcap(buf, [b'\x00' * 10], _LINKTYPE_ETHERNET)
+        write_pcap( [(b'\x00' * 10, 0, 0)], file_object=buf, link_type=LINKTYPE_ETHERNET)
         hdr = self._parse_global(buf.getvalue())
         self.assertEqual(hdr['snaplen'], 65535)
 
     def test_global_header_link_type_ethernet(self):
         buf = io.BytesIO()
-        _write_pcap(buf, [b'\x00' * 10], _LINKTYPE_ETHERNET)
+        write_pcap([(b'\x00' * 10, 0, 0)], file_object=buf, link_type=LINKTYPE_ETHERNET)
         hdr = self._parse_global(buf.getvalue())
-        self.assertEqual(hdr['network'], _LINKTYPE_ETHERNET)
+        self.assertEqual(hdr['network'], LINKTYPE_ETHERNET)
 
     def test_global_header_link_type_raw(self):
         buf = io.BytesIO()
-        _write_pcap(buf, [b'\x00' * 10], _LINKTYPE_RAW)
+        write_pcap( [(b'\x00' * 10, 0, 0)], file_object=buf, link_type=LINKTYPE_RAW)
         hdr = self._parse_global(buf.getvalue())
-        self.assertEqual(hdr['network'], _LINKTYPE_RAW)
+        self.assertEqual(hdr['network'], LINKTYPE_RAW)
 
     def test_single_packet_total_size(self):
         payload = b'\xAB' * 20
         buf = io.BytesIO()
-        _write_pcap(buf, [payload], _LINKTYPE_ETHERNET)
+        write_pcap([(payload, 0, 0)], file_object=buf, link_type=LINKTYPE_ETHERNET)
         self.assertEqual(len(buf.getvalue()), _GLOBAL_HDR_SZ + _PKT_HDR_SZ + len(payload))
 
     def test_packet_header_lengths_match(self):
         payload = b'\x01\x02\x03\x04\x05'
         buf = io.BytesIO()
-        _write_pcap(buf, [payload], _LINKTYPE_ETHERNET)
+        write_pcap([(payload, 0, 0)], file_object=buf, link_type=LINKTYPE_ETHERNET)
         phdr = self._parse_pkt_hdr(buf.getvalue(), _GLOBAL_HDR_SZ)
         self.assertEqual(phdr['incl_len'], len(payload))
         self.assertEqual(phdr['orig_len'], len(payload))
@@ -68,35 +69,35 @@ class TestWritePcap(unittest.TestCase):
     def test_packet_data_preserved(self):
         payload = bytes(range(256))
         buf = io.BytesIO()
-        _write_pcap(buf, [payload], _LINKTYPE_ETHERNET)
+        write_pcap([(payload, 0, 0)], file_object=buf, link_type=LINKTYPE_ETHERNET)
         raw = buf.getvalue()
         data_offset = _GLOBAL_HDR_SZ + _PKT_HDR_SZ
         self.assertEqual(raw[data_offset:data_offset + len(payload)], payload)
 
     def test_multiple_packets(self):
-        pkts = [b'\xAA' * 10, b'\xBB' * 20, b'\xCC' * 5]
+        pkts = [(b'\xAA' * 10, 0, 0), (b'\xBB' * 20, 0, 1), (b'\xCC' * 5, 0, 2)]
         buf = io.BytesIO()
-        _write_pcap(buf, pkts, _LINKTYPE_ETHERNET)
+        write_pcap(pkts, file_object=buf, link_type=LINKTYPE_ETHERNET)
         raw = buf.getvalue()
-        expected = _GLOBAL_HDR_SZ + sum(_PKT_HDR_SZ + len(p) for p in pkts)
+        expected = _GLOBAL_HDR_SZ + sum(_PKT_HDR_SZ + len(p[0]) for p in pkts)
         self.assertEqual(len(raw), expected)
 
     def test_multiple_packets_data_intact(self):
-        pkts = [b'\xAA' * 10, b'\xBB' * 20]
+        pkts = [(b'\xAA' * 10, 0, 0), (b'\xBB' * 20, 0, 1)]
         buf = io.BytesIO()
-        _write_pcap(buf, pkts, _LINKTYPE_ETHERNET)
+        write_pcap(pkts, file_object=buf, link_type=LINKTYPE_ETHERNET)
         raw = buf.getvalue()
         offset = _GLOBAL_HDR_SZ
         for pkt in pkts:
             phdr = self._parse_pkt_hdr(raw, offset)
-            self.assertEqual(phdr['incl_len'], len(pkt))
+            self.assertEqual(phdr['incl_len'], len(pkt[0]))
             offset += _PKT_HDR_SZ
-            self.assertEqual(raw[offset:offset + len(pkt)], pkt)
-            offset += len(pkt)
+            self.assertEqual(raw[offset:offset + len(pkt[0])], pkt[0])
+            offset += len(pkt[0])
 
     def test_empty_packet_list(self):
         buf = io.BytesIO()
-        _write_pcap(buf, [], _LINKTYPE_ETHERNET)
+        write_pcap([], file_object=buf, link_type=LINKTYPE_ETHERNET)
         self.assertEqual(len(buf.getvalue()), _GLOBAL_HDR_SZ)
 
 

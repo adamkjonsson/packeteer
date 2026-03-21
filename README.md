@@ -121,12 +121,11 @@ def build(src, dst, smac, dmac, proto, seq=0, ack=0, flags=TCP_ACK,
     ).build()
 
 pkts = []
-ts   = []
+collection = []
 t = int(time.time())
 
 def append(pkt, usec):
-    pkts.append(pkt)
-    ts.append((t, usec))
+    collection.append((pkt, t, usec))
 
 # ── TCP three-way handshake ──────────────────────────────────────────────────
 # SYN  (client → server)
@@ -182,7 +181,7 @@ append(PacketBuilder(
     payload_size=32,
 ).build(), 800_000)
 
-write_pcap("session.pcap", pkts, timestamps=ts)
+write_pcap(collection, path="session.pcap", link_type=LINKTYPE_ETHERNET)
 print(f"Wrote {len(pkts)} packets to session.pcap")
 ```
 

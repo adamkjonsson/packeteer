@@ -32,95 +32,78 @@ from __future__ import annotations
 import os
 import struct
 import time
+import io
 
 LINKTYPE_ETHERNET: int = 1    # Ethernet II
 LINKTYPE_RAW: int = 101       # Raw IP (no Ethernet header)
 
 
+def _write_pcap(
+    file_obj: io.IOBase,
+    packets: list[tuple[bytes, int, int]],
+    link_type: int) -> None:
+    """Low level function
+    """
+    # Global header
+    file_obj.write(struct.pack(
+        "<IHHiIII",
+        0xA1B2C3D4,  # magic — little-endian, microsecond timestamps
+        2, 4,        # version 2.4
+        0,           # UTC
+        0,           # timestamp accuracy (always 0)
+        65535,       # snaplen
+        link_type,
+    ))
+    for idx, pkt_tuple in enumerate(packets):
+        pkt = pkt_tuple[0]
+        sec = pkt_tuple[1]
+        usec = pkt_tuple[2]
+        length = len(pkt)
+        file_obj.write(struct.pack("<IIII", sec, usec, length, length))
+        file_obj.write(pkt)
+
+
+
 def write_pcap(
-    path: str | os.PathLike,
-    packets: list[bytes],
+    packets: list[tuple[bytes, int, int]],
     *,
-    link_type: int = LINKTYPE_ETHERNET,
-    ts_sec: int | None = None,
-    ts_usec: int = 0,
-    timestamps: list[tuple[int, int]] | None = None,
+    path: str | os.PathLike | None = None,
+    file_object: io.IOBase | None = None,
+    link_type: int = LINKTYPE_ETHERNET
 ) -> None:
     """Write raw packet bytes to a libpcap (``.pcap``) file.
 
     Args:
-        path: Destination file path.  Created or overwritten.
-        packets: Ordered list of raw packet byte strings — one per pcap
-            record.  Each element is typically the return value of
+        packets: Ordered list of ``(raw packet byte strings, ts_sec, ts_usec)`` 
+        — one per pcap record.  Each byte string is typically the return value of
             :meth:`PacketBuilder.build` or one fragment from
             :meth:`PacketBuilder.fragment`.
+        path: Destination file path.  Created or overwritten.
+        file_object: Destination file object.
         link_type: PCAP link-layer type written into the global header.
             Use :data:`LINKTYPE_ETHERNET` (``1``, default) for packets that
             include an Ethernet header, or :data:`LINKTYPE_RAW` (``101``) for
             raw IP packets built with ``include_ethernet=False``.
-        ts_sec: Capture timestamp — whole seconds — applied to every record.
-            Defaults to the current wall-clock time.  Ignored when
-            *timestamps* is provided.
-        ts_usec: Capture timestamp — microseconds fraction (0–999 999) —
-            applied to every record alongside *ts_sec*.  Defaults to ``0``.
-            Ignored when *timestamps* is provided.
-        timestamps: Per-packet list of ``(ts_sec, ts_usec)`` tuples.  When
-            supplied it must have the same length as *packets* and takes
-            precedence over *ts_sec* / *ts_usec*.  Use this to assign
-            distinct capture times to each packet.
 
     Raises:
         ValueError: If *timestamps* is provided but its length differs from
             that of *packets*.
         OSError: If *path* cannot be opened for writing.
 
-    Example — shared timestamp::
+    Example::
 
         from packet_generator import PacketBuilder, Protocol, write_pcap
 
+        now = time.time()
+        now_sec, now_usec = (int(now), int((now -int(now)) * 1_000_000))
         pkts = [
-            PacketBuilder("10.0.0.1", "10.0.0.2", Protocol.TCP).build(),
-            PacketBuilder("10.0.0.2", "10.0.0.1", Protocol.TCP).build(),
+            (PacketBuilder("10.0.0.1", "10.0.0.2", Protocol.TCP).build(), now_sec, now_usec),
+            (PacketBuilder("10.0.0.2", "10.0.0.1", Protocol.TCP).build(), now_sec, now_usec + 1000)
         ]
         write_pcap("out.pcap", pkts)
-
-    Example — per-packet timestamps::
-
-        from packet_generator import (
-            PacketBuilder, Protocol,
-            write_pcap, LINKTYPE_ETHERNET,
-        )
-
-        pkts = [...]          # list[bytes]
-        ts   = [(1000, 0), (1000, 500_000), (1001, 0)]
-        write_pcap("out.pcap", pkts, timestamps=ts)
     """
-    if timestamps is not None and len(timestamps) != len(packets):
-        raise ValueError(
-            f"timestamps length ({len(timestamps)}) must match "
-            f"packets length ({len(packets)})"
-        )
-
-    # Resolve shared timestamp (used when timestamps is not provided)
-    if ts_sec is None:
-        t = time.time()
-        ts_sec = int(t)
-        ts_usec = int((t - ts_sec) * 1_000_000)
-    shared = (ts_sec, ts_usec)
-
-    with open(path, "wb") as f:
-        # Global header
-        f.write(struct.pack(
-            "<IHHiIII",
-            0xA1B2C3D4,  # magic — little-endian, microsecond timestamps
-            2, 4,        # version 2.4
-            0,           # UTC
-            0,           # timestamp accuracy (always 0)
-            65535,       # snaplen
-            link_type,
-        ))
-        for idx, pkt in enumerate(packets):
-            sec, usec = timestamps[idx] if timestamps is not None else shared
-            length = len(pkt)
-            f.write(struct.pack("<IIII", sec, usec, length, length))
-            f.write(pkt)
+    if path is not None:
+        with open(path, "wb") as f:
+            _write_pcap(f, packets, link_type)
+    if file_object is not None:
+        _write_pcap(file_object, packets, link_type)            
