@@ -32,7 +32,7 @@ from enum import Enum
 from .ethernet import EthernetHeader, VLANTag, ETHERTYPE_IPV4, ETHERTYPE_IPV6, build_ethernet_header
 from .ip import IPHeader, build_ip_header
 from .ipv6 import IPv6Header, build_ipv6_header
-from .tcp import TCPHeader, build_tcp_header
+from .tcp import TCPHeader, TCP_ACK, build_tcp_header
 from .udp import UDPHeader, build_udp_header
 from .icmp import ICMPHeader, build_icmp_header
 from .icmpv6 import ICMPv6Header, build_icmpv6_header
@@ -125,6 +125,24 @@ class PacketBuilder:
         vlan_id: int | None = None,
         vlan_pcp: int = 0,
         vlan_dei: int = 0,
+        # TCP-specific fields
+        tcp_ack: int = 0,
+        tcp_flags: int = TCP_ACK,
+        tcp_window: int = 65535,
+        tcp_urgent_ptr: int = 0,
+        # ICMP/ICMPv6-specific fields
+        icmp_type: int | None = None,   # None → 8 for ICMP, 128 for ICMPv6
+        icmp_code: int = 0,
+        icmp_identifier: int = 1,
+        icmp_sequence: int = 1,
+        # IPv4-specific fields
+        ip_tos: int = 0,
+        ip_identification: int = 0,
+        ip_flags: int = 0b010,          # DF bit
+        ip_fragment_offset: int = 0,
+        # IPv6-specific fields
+        ipv6_traffic_class: int = 0,
+        ipv6_flow_label: int = 0,
     ) -> None:
         """Initialise the builder with packet parameters.
 
@@ -182,6 +200,20 @@ class PacketBuilder:
         self.vlan_id = vlan_id
         self.vlan_pcp = vlan_pcp
         self.vlan_dei = vlan_dei
+        self.tcp_ack = tcp_ack
+        self.tcp_flags = tcp_flags
+        self.tcp_window = tcp_window
+        self.tcp_urgent_ptr = tcp_urgent_ptr
+        self.icmp_type = icmp_type
+        self.icmp_code = icmp_code
+        self.icmp_identifier = icmp_identifier
+        self.icmp_sequence = icmp_sequence
+        self.ip_tos = ip_tos
+        self.ip_identification = ip_identification
+        self.ip_flags = ip_flags
+        self.ip_fragment_offset = ip_fragment_offset
+        self.ipv6_traffic_class = ipv6_traffic_class
+        self.ipv6_flow_label = ipv6_flow_label
         self._explicit_payload = payload
         self._payload: bytes | None = None
 
@@ -239,7 +271,14 @@ class PacketBuilder:
         # Build transport layer
         if self.protocol == Protocol.TCP:
             transport = build_tcp_header(
-                TCPHeader(self.src_port, self.dst_port, seq=self.tcp_seq),
+                TCPHeader(
+                    self.src_port, self.dst_port,
+                    seq=self.tcp_seq,
+                    ack=self.tcp_ack,
+                    flags=self.tcp_flags,
+                    window=self.tcp_window,
+                    urgent_ptr=self.tcp_urgent_ptr,
+                ),
                 data, self.src_ip, self.dst_ip, ip_version,
             )
         elif self.protocol == Protocol.UDP:
@@ -248,9 +287,19 @@ class PacketBuilder:
                 data, self.src_ip, self.dst_ip, ip_version,
             )
         elif self.protocol == Protocol.ICMP:
-            transport = build_icmp_header(ICMPHeader(), data)
+            transport = build_icmp_header(ICMPHeader(
+                type=self.icmp_type if self.icmp_type is not None else 8,
+                code=self.icmp_code,
+                identifier=self.icmp_identifier,
+                sequence=self.icmp_sequence,
+            ), data)
         elif self.protocol == Protocol.ICMPv6:
-            transport = build_icmpv6_header(ICMPv6Header(), data, self.src_ip, self.dst_ip)
+            transport = build_icmpv6_header(ICMPv6Header(
+                type=self.icmp_type if self.icmp_type is not None else 128,
+                code=self.icmp_code,
+                identifier=self.icmp_identifier,
+                sequence=self.icmp_sequence,
+            ), data, self.src_ip, self.dst_ip)
         else:
             raise ValueError(f"Unsupported protocol: {self.protocol}")
 
@@ -264,7 +313,12 @@ class PacketBuilder:
                 Protocol.ICMPv6: 58,
             }[self.protocol]
             network = build_ipv6_header(
-                IPv6Header(self.src_ip, self.dst_ip, next_header, hop_limit=self.ttl),
+                IPv6Header(
+                    self.src_ip, self.dst_ip, next_header,
+                    hop_limit=self.ttl,
+                    traffic_class=self.ipv6_traffic_class,
+                    flow_label=self.ipv6_flow_label,
+                ),
                 ip_payload,
             )
             ethertype = ETHERTYPE_IPV6
@@ -276,7 +330,14 @@ class PacketBuilder:
                 Protocol.ICMP: _socket.IPPROTO_ICMP,
             }[self.protocol]
             network = build_ip_header(
-                IPHeader(self.src_ip, self.dst_ip, proto_num, ttl=self.ttl),
+                IPHeader(
+                    self.src_ip, self.dst_ip, proto_num,
+                    ttl=self.ttl,
+                    tos=self.ip_tos,
+                    identification=self.ip_identification,
+                    flags=self.ip_flags,
+                    fragment_offset=self.ip_fragment_offset,
+                ),
                 ip_payload,
             )
             ethertype = ETHERTYPE_IPV4
@@ -342,7 +403,14 @@ class PacketBuilder:
         # Build the complete transport layer identical to build()
         if self.protocol == Protocol.TCP:
             transport = build_tcp_header(
-                TCPHeader(self.src_port, self.dst_port, seq=self.tcp_seq),
+                TCPHeader(
+                    self.src_port, self.dst_port,
+                    seq=self.tcp_seq,
+                    ack=self.tcp_ack,
+                    flags=self.tcp_flags,
+                    window=self.tcp_window,
+                    urgent_ptr=self.tcp_urgent_ptr,
+                ),
                 data, self.src_ip, self.dst_ip, ip_version,
             )
         elif self.protocol == Protocol.UDP:
@@ -351,9 +419,19 @@ class PacketBuilder:
                 data, self.src_ip, self.dst_ip, ip_version,
             )
         elif self.protocol == Protocol.ICMP:
-            transport = build_icmp_header(ICMPHeader(), data)
+            transport = build_icmp_header(ICMPHeader(
+                type=self.icmp_type if self.icmp_type is not None else 8,
+                code=self.icmp_code,
+                identifier=self.icmp_identifier,
+                sequence=self.icmp_sequence,
+            ), data)
         elif self.protocol == Protocol.ICMPv6:
-            transport = build_icmpv6_header(ICMPv6Header(), data, self.src_ip, self.dst_ip)
+            transport = build_icmpv6_header(ICMPv6Header(
+                type=self.icmp_type if self.icmp_type is not None else 128,
+                code=self.icmp_code,
+                identifier=self.icmp_identifier,
+                sequence=self.icmp_sequence,
+            ), data, self.src_ip, self.dst_ip)
         else:
             raise ValueError(f"Unsupported protocol: {self.protocol}")
 
@@ -376,7 +454,10 @@ class PacketBuilder:
                 Protocol.ICMPv6: 58,
             }[self.protocol]
             ip_hdr = IPv6Header(
-                self.src_ip, self.dst_ip, next_header, hop_limit=self.ttl,
+                self.src_ip, self.dst_ip, next_header,
+                hop_limit=self.ttl,
+                traffic_class=self.ipv6_traffic_class,
+                flow_label=self.ipv6_flow_label,
             )
             return fragment_ipv6(ip_hdr, transport_data, mtu, eth_header=eth_header)
         else:
@@ -385,5 +466,12 @@ class PacketBuilder:
                 Protocol.UDP: _socket.IPPROTO_UDP,
                 Protocol.ICMP: _socket.IPPROTO_ICMP,
             }[self.protocol]
-            ip_hdr = IPHeader(self.src_ip, self.dst_ip, proto_num, ttl=self.ttl)
+            ip_hdr = IPHeader(
+                self.src_ip, self.dst_ip, proto_num,
+                ttl=self.ttl,
+                tos=self.ip_tos,
+                identification=self.ip_identification,
+                flags=self.ip_flags,
+                fragment_offset=self.ip_fragment_offset,
+            )
             return fragment_ipv4(ip_hdr, transport_data, mtu, eth_header=eth_header)

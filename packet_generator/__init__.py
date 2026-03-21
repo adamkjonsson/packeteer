@@ -54,18 +54,23 @@ Public API:
     IPHeader: Dataclass for IPv4 header fields.
     IPv6Header: Dataclass for IPv6 header fields.
     TCPHeader: Dataclass for TCP header fields.
+    TCP_FIN, TCP_SYN, TCP_RST, TCP_PSH, TCP_ACK, TCP_URG: TCP flag bit-mask constants.
     UDPHeader: Dataclass for UDP header fields.
     ICMPHeader: Dataclass for ICMPv4 header fields.
     ICMPv6Header: Dataclass for ICMPv6 header fields.
+    write_pcap: Write raw packet bytes to a libpcap (.pcap) file.
+    LINKTYPE_ETHERNET: pcap link-layer type 1 — Ethernet II.
+    LINKTYPE_RAW: pcap link-layer type 101 — raw IP (no Ethernet header).
 """
 from __future__ import annotations
 
 from .builder import PacketBuilder, Protocol
 from .ethernet import EthernetHeader, VLANTag
+from .pcap import write_pcap, LINKTYPE_ETHERNET, LINKTYPE_RAW
 from .fragmentation import fragment_ipv4, fragment_ipv6
 from .ip import IPHeader
 from .ipv6 import IPv6Header
-from .tcp import TCPHeader
+from .tcp import TCPHeader, TCP_FIN, TCP_SYN, TCP_RST, TCP_PSH, TCP_ACK, TCP_URG
 from .udp import UDPHeader
 from .icmp import ICMPHeader
 from .icmpv6 import ICMPv6Header
@@ -78,9 +83,18 @@ __all__ = [
     "IPHeader",
     "IPv6Header",
     "TCPHeader",
+    "TCP_FIN",
+    "TCP_SYN",
+    "TCP_RST",
+    "TCP_PSH",
+    "TCP_ACK",
+    "TCP_URG",
     "UDPHeader",
     "ICMPHeader",
     "ICMPv6Header",
     "fragment_ipv4",
     "fragment_ipv6",
+    "write_pcap",
+    "LINKTYPE_ETHERNET",
+    "LINKTYPE_RAW",
 ]

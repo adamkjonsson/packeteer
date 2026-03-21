@@ -90,6 +90,107 @@ pkt = PacketBuilder(
 
 ---
 
+## Multi-protocol example
+
+The following example builds a realistic packet capture containing a full TCP
+session (three-way handshake, one data exchange, and a FIN teardown), a UDP
+DNS query, and an ICMPv4 Echo Request. All packets are written to a single
+`.pcap` file that can be opened in Wireshark or replayed with `tcpreplay`.
+
+```python
+import time
+from packet_generator import PacketBuilder, Protocol, write_pcap
+from packet_generator import TCP_SYN, TCP_ACK, TCP_PSH, TCP_FIN
+
+CLIENT = "10.0.0.1"
+SERVER = "10.0.0.2"
+C_MAC  = "00:00:00:00:00:01"
+S_MAC  = "00:00:00:00:00:02"
+C_PORT = 54321
+S_PORT = 80
+
+def build(src, dst, smac, dmac, proto, seq=0, ack=0, flags=TCP_ACK,
+          sport=C_PORT, dport=S_PORT, payload=None, size=0):
+    return PacketBuilder(
+        src_ip=src, dst_ip=dst,
+        src_mac=smac, dst_mac=dmac,
+        protocol=proto,
+        src_port=sport, dst_port=dport,
+        tcp_seq=seq, tcp_ack=ack, tcp_flags=flags,
+        payload=payload, payload_size=size,
+    ).build()
+
+pkts = []
+ts   = []
+t = int(time.time())
+
+def append(pkt, usec):
+    pkts.append(pkt)
+    ts.append((t, usec))
+
+# ── TCP three-way handshake ──────────────────────────────────────────────────
+# SYN  (client → server)
+append(build(CLIENT, SERVER, C_MAC, S_MAC, Protocol.TCP,
+             seq=1000, ack=0, flags=TCP_SYN), 0)
+# SYN-ACK  (server → client)
+append(build(SERVER, CLIENT, S_MAC, C_MAC, Protocol.TCP,
+             seq=5000, ack=1001, flags=TCP_SYN | TCP_ACK,
+             sport=S_PORT, dport=C_PORT), 100_000)
+# ACK  (client → server)
+append(build(CLIENT, SERVER, C_MAC, S_MAC, Protocol.TCP,
+             seq=1001, ack=5001, flags=TCP_ACK), 200_000)
+
+# ── TCP data exchange ────────────────────────────────────────────────────────
+request  = b"GET / HTTP/1.1\r\nHost: 10.0.0.2\r\n\r\n"
+response = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nHello"
+
+# PSH+ACK carrying the HTTP request  (client → server)
+append(build(CLIENT, SERVER, C_MAC, S_MAC, Protocol.TCP,
+             seq=1001, ack=5001, flags=TCP_PSH | TCP_ACK,
+             payload=request), 300_000)
+# PSH+ACK carrying the HTTP response  (server → client)
+append(build(SERVER, CLIENT, S_MAC, C_MAC, Protocol.TCP,
+             seq=5001, ack=1001 + len(request), flags=TCP_PSH | TCP_ACK,
+             sport=S_PORT, dport=C_PORT, payload=response), 400_000)
+
+# ── TCP teardown  (FIN-ACK exchange) ────────────────────────────────────────
+append(build(CLIENT, SERVER, C_MAC, S_MAC, Protocol.TCP,
+             seq=1001 + len(request), ack=5001 + len(response),
+             flags=TCP_FIN | TCP_ACK), 500_000)
+append(build(SERVER, CLIENT, S_MAC, C_MAC, Protocol.TCP,
+             seq=5001 + len(response), ack=1001 + len(request) + 1,
+             flags=TCP_FIN | TCP_ACK, sport=S_PORT, dport=C_PORT), 600_000)
+
+# ── UDP DNS query ────────────────────────────────────────────────────────────
+dns_query = bytes.fromhex(
+    "0001010000010000000000000377777706676f6f676c6503636f6d0000010001"
+)
+append(PacketBuilder(
+    src_ip=CLIENT, dst_ip="8.8.8.8",
+    src_mac=C_MAC, dst_mac=S_MAC,
+    protocol=Protocol.UDP,
+    src_port=54400, dst_port=53,
+    payload=dns_query,
+).build(), 700_000)
+
+# ── ICMPv4 Echo Request (ping) ───────────────────────────────────────────────
+append(PacketBuilder(
+    src_ip=CLIENT, dst_ip=SERVER,
+    src_mac=C_MAC, dst_mac=S_MAC,
+    protocol=Protocol.ICMP,
+    icmp_identifier=1, icmp_sequence=1,
+    payload_size=32,
+).build(), 800_000)
+
+write_pcap("session.pcap", pkts, timestamps=ts)
+print(f"Wrote {len(pkts)} packets to session.pcap")
+```
+
+Open `session.pcap` in Wireshark and you will see the complete exchange across
+all three protocols in the correct order with accurate timestamps.
+
+---
+
 ## Fragmentation
 
 ### High-level — `PacketBuilder.fragment(mtu)`
@@ -301,15 +402,42 @@ hdr = IPv6Header(
 raw: bytes = build_ipv6_header(hdr, payload=b"\x00" * 20)  # 40 bytes, no checksum
 ```
 
+#### TCP flag constants
+
+```python
+from packet_generator import TCP_FIN, TCP_SYN, TCP_RST, TCP_PSH, TCP_ACK, TCP_URG
+```
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `TCP_FIN` | `0x001` | No more data from sender |
+| `TCP_SYN` | `0x002` | Synchronise sequence numbers |
+| `TCP_RST` | `0x004` | Reset the connection |
+| `TCP_PSH` | `0x008` | Push buffered data to the application |
+| `TCP_ACK` | `0x010` | Acknowledgement field is significant |
+| `TCP_URG` | `0x020` | Urgent pointer field is significant |
+
+Combine flags with `|`:
+
+```python
+flags=TCP_PSH | TCP_ACK   # 0x018 — data segment
+flags=TCP_SYN | TCP_ACK   # 0x012 — SYN-ACK handshake reply
+flags=TCP_FIN | TCP_ACK   # 0x011 — graceful close
+```
+
 #### `TCPHeader`
 
 ```python
-from packet_generator import TCPHeader
+from packet_generator import TCPHeader, TCP_SYN, TCP_ACK, TCP_PSH, TCP_RST, TCP_FIN, TCP_URG
 from packet_generator.tcp import build_tcp_header
 
-hdr = TCPHeader(src_port=12345, dst_port=80, flags=0x002)  # SYN
+hdr = TCPHeader(src_port=12345, dst_port=80, flags=TCP_SYN)
 raw: bytes = build_tcp_header(hdr, payload=b"", src_ip="10.0.0.1", dst_ip="10.0.0.2")
 # For IPv6: ip_version=6
+
+# Combine flags with |
+hdr = TCPHeader(src_port=12345, dst_port=80, flags=TCP_PSH | TCP_ACK)
+raw: bytes = build_tcp_header(hdr, payload=b"hello", src_ip="10.0.0.1", dst_ip="10.0.0.2")
 
 # Custom sequence number
 hdr = TCPHeader(src_port=12345, dst_port=80, seq=0xDEADBEEF)
@@ -344,6 +472,54 @@ from packet_generator.icmpv6 import build_icmpv6_header
 
 hdr = ICMPv6Header(type=128, code=0, identifier=1, sequence=1)  # Echo Request
 raw: bytes = build_icmpv6_header(hdr, payload=b"ping", src_ip="::1", dst_ip="::2")
+```
+
+---
+
+### `write_pcap`
+
+Write one or more raw packet byte strings to a libpcap (`.pcap`) file.
+
+```python
+from packet_generator import write_pcap, LINKTYPE_ETHERNET, LINKTYPE_RAW
+```
+
+```python
+write_pcap(
+    path: str | os.PathLike,
+    packets: list[bytes],
+    *,
+    link_type: int = LINKTYPE_ETHERNET,
+    ts_sec: int | None = None,   # default: current time
+    ts_usec: int = 0,
+    timestamps: list[tuple[int, int]] | None = None,
+)
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `path` | Destination file path. Created or overwritten. |
+| `packets` | List of raw packet byte strings, one per pcap record. Typically the return value of `PacketBuilder.build()` or fragments from `PacketBuilder.fragment()`. |
+| `link_type` | pcap link-layer type written into the global header. `LINKTYPE_ETHERNET` (`1`, default) for packets with an Ethernet header; `LINKTYPE_RAW` (`101`) for raw IP packets built with `include_ethernet=False`. |
+| `ts_sec` | Capture timestamp whole seconds applied to every record. Defaults to the current wall-clock time. Ignored when `timestamps` is provided. |
+| `ts_usec` | Capture timestamp microseconds fraction (0–999 999) applied to every record. Defaults to `0`. Ignored when `timestamps` is provided. |
+| `timestamps` | Per-packet list of `(ts_sec, ts_usec)` tuples. Must be the same length as `packets`. Takes precedence over `ts_sec` / `ts_usec`. |
+
+```python
+from packet_generator import PacketBuilder, Protocol, write_pcap, LINKTYPE_RAW
+
+# Shared timestamp — current time
+pkts = [PacketBuilder("10.0.0.1", "10.0.0.2", Protocol.TCP).build()]
+write_pcap("out.pcap", pkts)
+
+# Per-packet timestamps
+pkts = [...]
+ts   = [(1000, 0), (1000, 500_000), (1001, 0)]
+write_pcap("out.pcap", pkts, timestamps=ts)
+
+# Raw IP packets (no Ethernet header)
+pkts = [PacketBuilder("::1", "::2", Protocol.UDP, include_ethernet=False).build()]
+write_pcap("raw.pcap", pkts, link_type=LINKTYPE_RAW)
 ```
 
 ---
@@ -461,7 +637,8 @@ Per-packet `output` supports `mtu`, `timestamp_s`, and `timestamp_us`.
       "transport": {
         "src_port": 12345,
         "dst_port": 80,
-        "seq": 100
+        "seq": 100,
+        "flags": 2
       },
       "payload": { "size": 64 },
       "output": { "timestamp_s": 1000, "timestamp_us": 0 }
@@ -512,7 +689,13 @@ is used. CLI flags are ignored for multi-packet configs.
 | `src` | yes | Source IP address (IPv4 or IPv6) |
 | `dst` | yes | Destination IP address |
 | `protocol` | yes | `"tcp"`, `"udp"`, `"icmp"`, or `"icmpv6"` |
-| `ttl` | no (default `64`) | TTL / Hop Limit |
+| `ttl` | no (default `64`) | TTL (IPv4) / Hop Limit (IPv6) |
+| `tos` | no (default `0`) | IPv4 Type of Service / DSCP byte |
+| `identification` | no (default `0`) | IPv4 16-bit packet identification field |
+| `flags` | no (default `2`) | IPv4 3-bit flags field — bit 1 is the Don't Fragment (DF) bit |
+| `fragment_offset` | no (default `0`) | IPv4 13-bit fragment offset (in 8-byte units) |
+| `traffic_class` | no (default `0`) | IPv6 Traffic Class — 8-bit DSCP + ECN field |
+| `flow_label` | no (default `0`) | IPv6 20-bit Flow Label for QoS |
 
 #### `transport`
 
@@ -521,6 +704,14 @@ is used. CLI flags are ignored for multi-packet configs.
 | `src_port` | `12345` | Source port (TCP/UDP) |
 | `dst_port` | `80` | Destination port (TCP/UDP) |
 | `seq` | `0` | TCP sequence number |
+| `ack` | `0` | TCP acknowledgement number |
+| `flags` | `16` | TCP 8-bit control flags bitmask integer — `TCP_SYN`=2, `TCP_ACK`=16, `TCP_PSH`=8, `TCP_RST`=4, `TCP_FIN`=1, `TCP_URG`=32; combine with `\|` in Python or add in JSON (e.g. `24` for PSH+ACK) |
+| `window` | `65535` | TCP receive-window size in bytes |
+| `urgent_ptr` | `0` | TCP urgent pointer (relevant only when URG flag is set) |
+| `type` | `8` / `128` | ICMP/ICMPv6 message type — default `8` (Echo Request) for ICMP, `128` for ICMPv6 |
+| `code` | `0` | ICMP/ICMPv6 sub-type code |
+| `identifier` | `1` | ICMP/ICMPv6 16-bit identifier used to match replies to requests |
+| `sequence` | `1` | ICMP/ICMPv6 16-bit sequence number |
 
 #### `payload`
 
