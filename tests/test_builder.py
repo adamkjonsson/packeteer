@@ -8,12 +8,14 @@ class TestPacketBuilderSizes(unittest.TestCase):
         self.assertEqual(len(pkt), 14 + 20 + 20 + 10)
 
     def test_udp_ipv4_with_ethernet(self):
+        # 14+20+8 = 42 bytes — padded to 60 by default
         pkt = PacketBuilder("1.2.3.4", "5.6.7.8", Protocol.UDP, payload_size=0).build()
-        self.assertEqual(len(pkt), 14 + 20 + 8 + 0)
+        self.assertEqual(len(pkt), 60)
 
     def test_icmp_ipv4_with_ethernet(self):
+        # 14+20+8+4 = 46 bytes — padded to 60 by default
         pkt = PacketBuilder("1.2.3.4", "5.6.7.8", Protocol.ICMP, payload_size=4).build()
-        self.assertEqual(len(pkt), 14 + 20 + 8 + 4)
+        self.assertEqual(len(pkt), 60)
 
     def test_tcp_ipv6_with_ethernet(self):
         pkt = PacketBuilder("::1", "::2", Protocol.TCP, payload_size=10).build()
@@ -48,7 +50,8 @@ class TestPacketBuilderPayload(unittest.TestCase):
         builder = PacketBuilder("1.2.3.4", "5.6.7.8", Protocol.UDP, payload=explicit)
         pkt = builder.build()
         self.assertEqual(builder.payload, explicit)
-        self.assertTrue(pkt.endswith(explicit))
+        # payload sits at bytes 42–45 (14 eth + 20 ip + 8 udp); remainder is padding
+        self.assertIn(explicit, pkt)
 
     def test_payload_property_stable(self):
         builder = PacketBuilder("1.2.3.4", "5.6.7.8", Protocol.TCP, payload_size=8)

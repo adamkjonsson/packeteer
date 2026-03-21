@@ -20,6 +20,11 @@ ETHERTYPE_IPV4: int = 0x0800
 ETHERTYPE_IPV6: int = 0x86DD
 ETHERTYPE_8021Q: int = 0x8100
 
+# IEEE 802.3 minimum frame size (excluding the 4-byte FCS that NICs append
+# in hardware).  Frames shorter than this must be zero-padded to reach 60 bytes
+# of header + payload before the FCS is added by the hardware.
+ETHERNET_MIN_FRAME_SIZE: int = 60
+
 
 @dataclass
 class VLANTag:
