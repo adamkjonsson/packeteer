@@ -29,7 +29,10 @@ import os
 import socket
 from enum import Enum
 
-from .ethernet import EthernetHeader, VLANTag, ETHERTYPE_IPV4, ETHERTYPE_IPV6, build_ethernet_header
+from .ethernet import (
+    EthernetHeader, VLANTag, ETHERTYPE_IPV4, ETHERTYPE_IPV6,
+    ETHERNET_MIN_FRAME_SIZE, build_ethernet_header,
+)
 from .ip import IPHeader, build_ip_header
 from .ipv6 import IPv6Header, build_ipv6_header
 from .tcp import TCPHeader, TCPOptions, TCP_ACK, build_tcp_header
@@ -145,6 +148,8 @@ class PacketBuilder:
         # IPv6-specific fields
         ipv6_traffic_class: int = 0,
         ipv6_flow_label: int = 0,
+        # Ethernet padding
+        pad_ethernet: bool = True,
     ) -> None:
         """Initialise the builder with packet parameters.
 
@@ -173,9 +178,10 @@ class PacketBuilder:
             payload: Explicit payload bytes.  When provided, *payload_size*
                 is ignored and these exact bytes are used as the packet body.
                 Defaults to ``None`` (generate random bytes).
-            include_ethernet: If ``True`` (default), prepend a 14-byte
-                Ethernet II header to the packet.  Set to ``False`` to
-                produce a raw IP packet without any layer-2 framing.
+            include_ethernet: If ``True`` (default), prepend an Ethernet II
+                header (14 bytes, or 18 bytes with a VLAN tag) to the packet.
+                Set to ``False`` to produce a raw IP packet without any
+                layer-2 framing.
             tcp_seq: 32-bit TCP sequence number.  Ignored for UDP and ICMP.
                 Defaults to ``0``.
             vlan_id: IEEE 802.1Q VLAN identifier (1–4094).  When set, a
@@ -187,6 +193,50 @@ class PacketBuilder:
                 tag.  Ignored when *vlan_id* is ``None``.  Defaults to ``0``.
             vlan_dei: Drop Eligible Indicator — 0 or 1 for the VLAN tag.
                 Ignored when *vlan_id* is ``None``.  Defaults to ``0``.
+            tcp_ack: 32-bit TCP acknowledgement number.  Ignored for UDP and
+                ICMP.  Defaults to ``0``.
+            tcp_flags: 8-bit TCP control flags bitmask.  Combine the
+                module-level constants (``TCP_FIN``, ``TCP_SYN``, ``TCP_RST``,
+                ``TCP_PSH``, ``TCP_ACK``, ``TCP_URG``, ``TCP_ECE``,
+                ``TCP_CWR``) with ``|``.  Defaults to ``TCP_ACK``.
+            tcp_window: Receive-window size advertised in the TCP header.
+                Defaults to ``65535``.
+            tcp_urgent_ptr: TCP urgent pointer; meaningful only when the URG
+                flag is set.  Defaults to ``0``.
+            tcp_reserved: 4-bit reserved nibble in the TCP header between
+                Data Offset and the flags byte (RFC 9293 §3.1).  Must be
+                ``0`` in normal traffic.  Defaults to ``0``.
+            tcp_options: Optional TCP header options encoded as a
+                :class:`~packet_generator.TCPOptions` instance (MSS, Window
+                Scale, SACK Permitted, Timestamps, SACK blocks).  When set,
+                the Data Offset field is updated automatically.  Defaults to
+                ``None`` (no options, 20-byte TCP header).
+            icmp_type: ICMP / ICMPv6 type field.  Defaults to ``8``
+                (Echo Request) for ``Protocol.ICMP`` and ``128`` (Echo
+                Request) for ``Protocol.ICMPv6`` when ``None``.
+            icmp_code: ICMP / ICMPv6 code field.  Defaults to ``0``.
+            icmp_identifier: Identifier field in ICMP Echo messages.
+                Defaults to ``1``.
+            icmp_sequence: Sequence number field in ICMP Echo messages.
+                Defaults to ``1``.
+            ip_tos: IPv4 Type of Service / DSCP+ECN byte.  Defaults to
+                ``0``.
+            ip_identification: IPv4 Identification field used for
+                reassembly.  Defaults to ``0``.
+            ip_flags: IPv4 Flags field (3 bits).  Bit 1 is the Don't
+                Fragment (DF) flag; bit 2 is More Fragments (MF).
+                Defaults to ``0b010`` (DF set, MF clear).
+            ip_fragment_offset: IPv4 Fragment Offset in 8-byte units.
+                Defaults to ``0``.
+            ipv6_traffic_class: IPv6 Traffic Class byte (DSCP + ECN).
+                Defaults to ``0``.
+            ipv6_flow_label: IPv6 Flow Label (20-bit value).  Defaults to
+                ``0``.
+            pad_ethernet: If ``True``, zero-pad the assembled Ethernet frame
+                to the IEEE 802.3 minimum of ``60`` bytes (excludes the
+                4-byte FCS appended by the NIC in hardware) when the frame
+                would otherwise be shorter.  Has no effect when
+                *include_ethernet* is ``False``.  Defaults to ``True``.
         """
         self.src_ip = src_ip
         self.dst_ip = dst_ip
@@ -218,6 +268,7 @@ class PacketBuilder:
         self.ip_fragment_offset = ip_fragment_offset
         self.ipv6_traffic_class = ipv6_traffic_class
         self.ipv6_flow_label = ipv6_flow_label
+        self.pad_ethernet = pad_ethernet
         self._explicit_payload = payload
         self._payload: bytes | None = None
 
@@ -247,13 +298,16 @@ class PacketBuilder:
 
         Assembly order (outermost to innermost)::
 
-            [Ethernet header (14 B, optional)]
+            [Ethernet header (14 B without VLAN, 18 B with VLAN tag — optional)]
             [IPv4 (20 B) or IPv6 (40 B) header]
-            [TCP (20 B) / UDP (8 B) / ICMP (8 B) / ICMPv6 (8 B) header]
+            [TCP (≥20 B) / UDP (8 B) / ICMP (8 B) / ICMPv6 (8 B) header]
             [payload (variable)]
+            [zero padding to 60 B if pad_ethernet=True and frame is short]
 
         All checksums are computed automatically.  The Ethernet EtherType is
-        set to ``0x0800`` for IPv4 or ``0x86DD`` for IPv6.
+        set to ``0x0800`` for IPv4 or ``0x86DD`` for IPv6.  When *pad_ethernet*
+        is ``True`` the frame is zero-padded to the IEEE 802.3 minimum of
+        60 bytes if necessary.
 
         Returns:
             A :class:`bytes` object containing the fully assembled packet.
@@ -360,6 +414,8 @@ class PacketBuilder:
                 EthernetHeader(self.dst_mac, self.src_mac, ethertype, vlan_tag)
             )
             packet = eth + packet
+            if self.pad_ethernet and len(packet) < ETHERNET_MIN_FRAME_SIZE:
+                packet += b'\x00' * (ETHERNET_MIN_FRAME_SIZE - len(packet))
 
         return packet
 
@@ -384,7 +440,9 @@ class PacketBuilder:
         Returns:
             A list of fully assembled packet bytes, one entry per fragment.
             When the payload fits within a single datagram the list contains
-            exactly one element (equivalent to :meth:`build`).
+            exactly one element (equivalent to :meth:`build`).  If
+            *pad_ethernet* is ``True`` each fragment is zero-padded to the
+            IEEE 802.3 minimum of 60 bytes when necessary.
 
         Raises:
             OSError: If *src_ip* or *dst_ip* is not a valid IP address.
@@ -467,7 +525,7 @@ class PacketBuilder:
                 traffic_class=self.ipv6_traffic_class,
                 flow_label=self.ipv6_flow_label,
             )
-            return fragment_ipv6(ip_hdr, transport_data, mtu, eth_header=eth_header)
+            frags = fragment_ipv6(ip_hdr, transport_data, mtu, eth_header=eth_header)
         else:
             proto_num = {
                 Protocol.TCP: _socket.IPPROTO_TCP,
@@ -482,4 +540,12 @@ class PacketBuilder:
                 flags=self.ip_flags,
                 fragment_offset=self.ip_fragment_offset,
             )
-            return fragment_ipv4(ip_hdr, transport_data, mtu, eth_header=eth_header)
+            frags = fragment_ipv4(ip_hdr, transport_data, mtu, eth_header=eth_header)
+
+        if self.pad_ethernet and self.include_ethernet:
+            frags = [
+                f + b'\x00' * (ETHERNET_MIN_FRAME_SIZE - len(f))
+                if len(f) < ETHERNET_MIN_FRAME_SIZE else f
+                for f in frags
+            ]
+        return frags

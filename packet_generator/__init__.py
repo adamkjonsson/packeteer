@@ -66,7 +66,7 @@ Public API:
 from __future__ import annotations
 
 from .builder import PacketBuilder, Protocol
-from .ethernet import EthernetHeader, VLANTag
+from .ethernet import EthernetHeader, VLANTag, ETHERNET_MIN_FRAME_SIZE
 from .pcap import write_pcap, LINKTYPE_ETHERNET, LINKTYPE_RAW
 from .fragmentation import fragment_ipv4, fragment_ipv6
 from .ip import IPHeader
@@ -84,6 +84,7 @@ __all__ = [
     "Protocol",
     "EthernetHeader",
     "VLANTag",
+    "ETHERNET_MIN_FRAME_SIZE",
     "IPHeader",
     "IPv6Header",
     "TCPHeader",

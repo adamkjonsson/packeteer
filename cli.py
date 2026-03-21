@@ -156,6 +156,7 @@ def _run_multi_packet(cfg: dict) -> None:
                 tcp_urgent_ptr=transport.get("urgent_ptr", 0),
                 tcp_reserved=transport.get("reserved", 0),
                 tcp_options=_parse_tcp_options(transport.get("options")),
+                pad_ethernet=eth.get("pad", False),
                 icmp_type=transport.get("type"),
                 icmp_code=transport.get("code", 0),
                 icmp_identifier=transport.get("identifier", 1),
