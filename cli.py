@@ -8,8 +8,7 @@ Examples:
   python cli.py --src fe80::1 --dst fe80::2 --protocol icmpv6 --size 0 --no-ethernet
   python cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol icmp --size 4 --output packet.bin
   python cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol tcp --size 64 --pcap capture.pcap
-  python cli.py --config packet.json
-  python cli.py --config multi.json
+  python cli.py --config packets.json
 """
 import argparse
 import json
@@ -59,68 +58,19 @@ def _write_pcap(
         f.write(pkt)
 
 
-def _single_packet_defaults(cfg: dict) -> dict:
-    """Convert a single-packet JSON config object to a flat dict of argparse defaults."""
-    defaults = {}
-
-    eth = cfg.get("ethernet", {})
-    if "src_mac" in eth:
-        defaults["src_mac"] = eth["src_mac"]
-    if "dst_mac" in eth:
-        defaults["dst_mac"] = eth["dst_mac"]
-    if "enabled" in eth:
-        defaults["no_ethernet"] = not eth["enabled"]
-    vlan = eth.get("vlan", {})
-    if "id" in vlan:
-        defaults["vlan_id"] = vlan["id"]
-    if "pcp" in vlan:
-        defaults["vlan_pcp"] = vlan["pcp"]
-    if "dei" in vlan:
-        defaults["vlan_dei"] = vlan["dei"]
-
-    net = cfg.get("network", {})
-    for key in ("src", "dst", "protocol", "ttl"):
-        if key in net:
-            defaults[key] = net[key]
-
-    transport = cfg.get("transport", {})
-    if "src_port" in transport:
-        defaults["src_port"] = transport["src_port"]
-    if "dst_port" in transport:
-        defaults["dst_port"] = transport["dst_port"]
-    if "seq" in transport:
-        defaults["tcp_seq"] = transport["seq"]
-
-    payload = cfg.get("payload", {})
-    if "data" in payload:
-        defaults["payload_data"] = payload["data"]
-    elif "size" in payload:
-        defaults["size"] = payload["size"]
-
-    output = cfg.get("output", {})
-    if "mtu" in output:
-        defaults["mtu"] = output["mtu"]
-    if "file" in output:
-        defaults["output"] = output["file"]
-    if "pcap" in output:
-        defaults["pcap"] = output["pcap"]
-    if "timestamp_s" in output:
-        defaults["timestamp_s"] = output["timestamp_s"]
-    if "timestamp_us" in output:
-        defaults["timestamp_us"] = output["timestamp_us"]
-
-    return defaults
-
-
 
 def _run_multi_packet(cfg: dict) -> None:
-    """Build and output all packets defined in a multi-packet JSON config."""
+    """Build and output all packets defined in a JSON config."""
     global_output = cfg.get("output", {})
     pcap_path = global_output.get("pcap")
     file_path = global_output.get("file")
 
     if pcap_path and file_path:
         print("Error: output.pcap and output.file are mutually exclusive", file=sys.stderr)
+        sys.exit(1)
+
+    if "packets" not in cfg:
+        print("Error: config file must have a top-level 'packets' array", file=sys.stderr)
         sys.exit(1)
 
     specs = cfg["packets"]
@@ -235,7 +185,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("--config", metavar="FILE", help="JSON config file (CLI flags override values from the file)")
+    parser.add_argument("--config", metavar="FILE", help="JSON config file with a 'packets' array; builds all packets and writes to the configured output")
     parser.add_argument("--src", help="Source IP address (IPv4 or IPv6)")
     parser.add_argument("--dst", help="Destination IP address (IPv4 or IPv6)")
     parser.add_argument(
@@ -280,7 +230,7 @@ def main():
         help="Capture timestamp microseconds fraction 0–999999 (ts_usec in pcap record; default: 0)",
     )
 
-    # Pre-parse to find --config before setting argparse defaults
+    # Pre-parse to detect --config before full argument parsing
     pre_parser = argparse.ArgumentParser(add_help=False)
     pre_parser.add_argument("--config", metavar="FILE")
     pre_args, _ = pre_parser.parse_known_args()
@@ -292,19 +242,8 @@ def main():
         except (OSError, json.JSONDecodeError) as e:
             print(f"Error loading config '{pre_args.config}': {e}", file=sys.stderr)
             sys.exit(1)
-
-        # Multi-packet format: dispatch and exit
-        if "packets" in raw_cfg:
-            _run_multi_packet(raw_cfg)
-            return
-
-        # Single-packet format: inject values as argparse defaults
-        try:
-            defaults = _single_packet_defaults(raw_cfg)
-        except (ValueError) as e:
-            print(f"Error in config '{pre_args.config}': {e}", file=sys.stderr)
-            sys.exit(1)
-        parser.set_defaults(**defaults)
+        _run_multi_packet(raw_cfg)
+        return
 
     args = parser.parse_args()
 
