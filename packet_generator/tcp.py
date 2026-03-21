@@ -18,17 +18,83 @@ from __future__ import annotations
 
 import socket
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .checksum import ones_complement_checksum
 
 # TCP control flag bit masks (RFC 9293 §3.1)
+# Bit order within the flags byte (MSB → LSB): CWR ECE URG ACK PSH RST SYN FIN
 TCP_FIN: int = 0x001  # No more data from sender
 TCP_SYN: int = 0x002  # Synchronise sequence numbers
 TCP_RST: int = 0x004  # Reset the connection
 TCP_PSH: int = 0x008  # Push buffered data to the application
 TCP_ACK: int = 0x010  # Acknowledgement field is significant
 TCP_URG: int = 0x020  # Urgent pointer field is significant
+TCP_ECE: int = 0x040  # ECN-Echo: SYN=1 → sender is ECN-capable; SYN=0 → congestion experienced (RFC 3168)
+TCP_CWR: int = 0x080  # Congestion Window Reduced — sender reduced its congestion window (RFC 3168)
+
+
+@dataclass
+class TCPOptions:
+    """Optional fields carried in the TCP header Options area (RFC 9293 §3.2).
+
+    Each attribute corresponds to one well-known TCP option.  Set an attribute
+    to a non-None / non-False value to include that option in the header.
+    Options are encoded in the order MSS → Window Scale → SACK Permitted →
+    Timestamps → SACK, followed by NOP (0x01) padding to the nearest 4-byte
+    boundary.
+
+    Attributes:
+        mss: Maximum Segment Size (kind 2, length 4).  16-bit value in bytes.
+            Typical values: ``1460`` (Ethernet IPv4), ``1440`` (Ethernet IPv6).
+        window_scale: Window Scale shift count (kind 3, length 3).  Scales the
+            ``window`` field by ``2**window_scale``.  Valid range 0–14
+            (RFC 7323 §2).
+        sack_permitted: SACK Permitted option (kind 4, length 2).  When
+            ``True``, signals that the sender is willing to receive SACK blocks.
+            Typically sent on SYN and SYN-ACK segments only.
+        sack_blocks: Selective Acknowledgement blocks (kind 5).  List of
+            ``(left_edge, right_edge)`` sequence-number pairs, each a 32-bit
+            unsigned integer.  Up to four blocks per segment (RFC 2018).
+        timestamps: TCP Timestamps option (kind 8, length 10).  Tuple of
+            ``(TSval, TSecr)`` — the sender's timestamp value and the most
+            recent timestamp received from the remote end.  Both are 32-bit
+            unsigned integers (RFC 7323 §3).
+    """
+
+    mss: int | None = None
+    window_scale: int | None = None
+    sack_permitted: bool = False
+    sack_blocks: list[tuple[int, int]] = field(default_factory=list)
+    timestamps: tuple[int, int] | None = None
+
+
+def _build_options(opts: TCPOptions) -> bytes:
+    """Encode *opts* as bytes padded to a 4-byte boundary with NOP (0x01).
+
+    Options are emitted in the order:
+    MSS (2) → Window Scale (3) → SACK Permitted (4) → Timestamps (8) → SACK (5).
+    """
+    raw = b""
+    if opts.mss is not None:
+        raw += struct.pack("!BBH", 2, 4, opts.mss)
+    if opts.window_scale is not None:
+        raw += struct.pack("!BBB", 3, 3, opts.window_scale)
+    if opts.sack_permitted:
+        raw += struct.pack("!BB", 4, 2)
+    if opts.timestamps is not None:
+        tsval, tsecr = opts.timestamps
+        raw += struct.pack("!BBII", 8, 10, tsval, tsecr)
+    if opts.sack_blocks:
+        sack_len = 2 + 8 * len(opts.sack_blocks)
+        raw += struct.pack("!BB", 5, sack_len)
+        for left, right in opts.sack_blocks:
+            raw += struct.pack("!II", left, right)
+    # Pad to 4-byte boundary with NOP (kind 1)
+    remainder = len(raw) % 4
+    if remainder:
+        raw += b"\x01" * (4 - remainder)
+    return raw
 
 
 @dataclass
@@ -40,10 +106,13 @@ class TCPHeader:
         dst_port: Destination port number (0–65535).
         seq: 32-bit sequence number.  Defaults to ``0``.
         ack: 32-bit acknowledgement number.  Defaults to ``0``.
+        reserved: 4-bit reserved field between Data Offset and the flags byte.
+            Must be zero per RFC 9293; exposed here for completeness.
+            Defaults to ``0``.
         flags: 8-bit control flags bitmask.  Use the module-level flag
             constants — :data:`TCP_FIN`, :data:`TCP_SYN`, :data:`TCP_RST`,
-            :data:`TCP_PSH`, :data:`TCP_ACK`, :data:`TCP_URG` — or combine
-            them with ``|``::
+            :data:`TCP_PSH`, :data:`TCP_ACK`, :data:`TCP_URG`,
+            :data:`TCP_ECE`, :data:`TCP_CWR` — or combine them with ``|``::
 
                 TCPHeader(src_port=1234, dst_port=80, flags=TCP_PSH | TCP_ACK)
 
@@ -52,15 +121,20 @@ class TCPHeader:
             Defaults to ``65535``.
         urgent_ptr: Urgent pointer; only meaningful when the URG flag is set.
             Defaults to ``0``.
+        options: Optional TCP header options.  When set, the Data Offset field
+            is adjusted automatically to reflect the extended header length.
+            Defaults to ``None`` (no options, 20-byte header).
     """
 
     src_port: int
     dst_port: int
     seq: int = 0
     ack: int = 0
+    reserved: int = 0
     flags: int = TCP_ACK
     window: int = 65535
     urgent_ptr: int = 0
+    options: TCPOptions | None = None
 
 
 def _pseudo_header_v4(src_ip: str, dst_ip: str, tcp_length: int) -> bytes:
@@ -142,8 +216,10 @@ def build_tcp_header(
         >>> (raw[12] >> 4)  # data offset (should be 5)
         5
     """
-    data_offset_reserved = (5 << 4)  # 20-byte header, no options
-    tcp_length = 20 + len(payload)
+    options_bytes = _build_options(hdr.options) if hdr.options is not None else b""
+    data_offset = 5 + len(options_bytes) // 4   # in 32-bit words
+    data_offset_reserved = (data_offset << 4) | (hdr.reserved & 0xF)
+    tcp_length = 20 + len(options_bytes) + len(payload)
 
     raw = struct.pack(
         '!HHIIBBHHH',
@@ -156,7 +232,7 @@ def build_tcp_header(
         hdr.window,
         0,                  # checksum placeholder
         hdr.urgent_ptr,
-    )
+    ) + options_bytes
 
     if ip_version == 6:
         pseudo = _pseudo_header_v6(src_ip, dst_ip, tcp_length)

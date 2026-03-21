@@ -416,19 +416,23 @@ from packet_generator import TCP_FIN, TCP_SYN, TCP_RST, TCP_PSH, TCP_ACK, TCP_UR
 | `TCP_PSH` | `0x008` | Push buffered data to the application |
 | `TCP_ACK` | `0x010` | Acknowledgement field is significant |
 | `TCP_URG` | `0x020` | Urgent pointer field is significant |
+| `TCP_ECE` | `0x040` | ECN-Echo — SYN=1: sender is ECN-capable; SYN=0: congestion experienced (RFC 3168) |
+| `TCP_CWR` | `0x080` | Congestion Window Reduced — sender reduced its congestion window (RFC 3168) |
 
 Combine flags with `|`:
 
 ```python
-flags=TCP_PSH | TCP_ACK   # 0x018 — data segment
-flags=TCP_SYN | TCP_ACK   # 0x012 — SYN-ACK handshake reply
-flags=TCP_FIN | TCP_ACK   # 0x011 — graceful close
+flags=TCP_PSH | TCP_ACK          # 0x018 — data segment
+flags=TCP_SYN | TCP_ACK          # 0x012 — SYN-ACK handshake reply
+flags=TCP_FIN | TCP_ACK          # 0x011 — graceful close
+flags=TCP_SYN | TCP_ECE | TCP_CWR  # ECN-capable SYN
 ```
 
 #### `TCPHeader`
 
 ```python
-from packet_generator import TCPHeader, TCP_SYN, TCP_ACK, TCP_PSH, TCP_RST, TCP_FIN, TCP_URG
+from packet_generator import TCPHeader, TCPOptions
+from packet_generator import TCP_SYN, TCP_ACK, TCP_PSH, TCP_RST, TCP_FIN, TCP_URG, TCP_ECE, TCP_CWR
 from packet_generator.tcp import build_tcp_header
 
 hdr = TCPHeader(src_port=12345, dst_port=80, flags=TCP_SYN)
@@ -439,10 +443,41 @@ raw: bytes = build_tcp_header(hdr, payload=b"", src_ip="10.0.0.1", dst_ip="10.0.
 hdr = TCPHeader(src_port=12345, dst_port=80, flags=TCP_PSH | TCP_ACK)
 raw: bytes = build_tcp_header(hdr, payload=b"hello", src_ip="10.0.0.1", dst_ip="10.0.0.2")
 
+# SYN with MSS, Window Scale, SACK Permitted, and Timestamps options
+hdr = TCPHeader(
+    src_port=12345, dst_port=80, flags=TCP_SYN,
+    options=TCPOptions(mss=1460, window_scale=7, sack_permitted=True, timestamps=(0, 0)),
+)
+raw: bytes = build_tcp_header(hdr, payload=b"", src_ip="10.0.0.1", dst_ip="10.0.0.2")
+
 # Custom sequence number
 hdr = TCPHeader(src_port=12345, dst_port=80, seq=0xDEADBEEF)
 raw: bytes = build_tcp_header(hdr, payload=b"", src_ip="10.0.0.1", dst_ip="10.0.0.2")
 ```
+
+#### `TCPOptions`
+
+```python
+from packet_generator import TCPOptions
+
+TCPOptions(
+    mss: int | None = None,
+    window_scale: int | None = None,
+    sack_permitted: bool = False,
+    sack_blocks: list[tuple[int, int]] = [],
+    timestamps: tuple[int, int] | None = None,
+)
+```
+
+| Field | Description |
+|-------|-------------|
+| `mss` | Maximum Segment Size in bytes (kind 2). Typical: `1460` (Ethernet/IPv4), `1440` (Ethernet/IPv6). |
+| `window_scale` | Window Scale shift count 0–14 (kind 3, RFC 7323). Scales `window` by `2**window_scale`. |
+| `sack_permitted` | SACK Permitted flag (kind 4). Send on SYN/SYN-ACK to enable selective acknowledgement. |
+| `sack_blocks` | List of `(left_edge, right_edge)` 32-bit sequence-number pairs (kind 5, RFC 2018). Up to 4 blocks. |
+| `timestamps` | `(TSval, TSecr)` tuple of 32-bit values (kind 8, RFC 7323). |
+
+Options are encoded in the order MSS → Window Scale → SACK Permitted → Timestamps → SACK, padded to a 4-byte boundary with NOP bytes. The Data Offset field is updated automatically.
 
 #### `UDPHeader`
 
@@ -705,9 +740,15 @@ is used. CLI flags are ignored for multi-packet configs.
 | `dst_port` | `80` | Destination port (TCP/UDP) |
 | `seq` | `0` | TCP sequence number |
 | `ack` | `0` | TCP acknowledgement number |
-| `flags` | `16` | TCP 8-bit control flags bitmask integer — `TCP_SYN`=2, `TCP_ACK`=16, `TCP_PSH`=8, `TCP_RST`=4, `TCP_FIN`=1, `TCP_URG`=32; combine with `\|` in Python or add in JSON (e.g. `24` for PSH+ACK) |
+| `reserved` | `0` | TCP 4-bit reserved field (RFC 9293 §3.1); should be `0` |
+| `flags` | `16` | TCP 8-bit control flags integer — `TCP_CWR`=128, `TCP_ECE`=64, `TCP_URG`=32, `TCP_ACK`=16, `TCP_PSH`=8, `TCP_RST`=4, `TCP_SYN`=2, `TCP_FIN`=1; add values to combine (e.g. `24` for PSH+ACK) |
 | `window` | `65535` | TCP receive-window size in bytes |
 | `urgent_ptr` | `0` | TCP urgent pointer (relevant only when URG flag is set) |
+| `options.mss` | — | TCP MSS option — Maximum Segment Size in bytes |
+| `options.window_scale` | — | TCP Window Scale option — shift count 0–14 |
+| `options.sack_permitted` | `false` | TCP SACK Permitted option |
+| `options.sack` | `[]` | TCP SACK blocks — array of `[left_edge, right_edge]` pairs |
+| `options.timestamps` | — | TCP Timestamps option — `[TSval, TSecr]` array |
 | `type` | `8` / `128` | ICMP/ICMPv6 message type — default `8` (Echo Request) for ICMP, `128` for ICMPv6 |
 | `code` | `0` | ICMP/ICMPv6 sub-type code |
 | `identifier` | `1` | ICMP/ICMPv6 16-bit identifier used to match replies to requests |

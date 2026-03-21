@@ -54,7 +54,8 @@ Public API:
     IPHeader: Dataclass for IPv4 header fields.
     IPv6Header: Dataclass for IPv6 header fields.
     TCPHeader: Dataclass for TCP header fields.
-    TCP_FIN, TCP_SYN, TCP_RST, TCP_PSH, TCP_ACK, TCP_URG: TCP flag bit-mask constants.
+    TCP_FIN, TCP_SYN, TCP_RST, TCP_PSH, TCP_ACK, TCP_URG, TCP_ECE, TCP_CWR: TCP flag bit-mask constants.
+    TCPOptions: Dataclass for TCP header options (MSS, Window Scale, SACK, Timestamps).
     UDPHeader: Dataclass for UDP header fields.
     ICMPHeader: Dataclass for ICMPv4 header fields.
     ICMPv6Header: Dataclass for ICMPv6 header fields.
@@ -70,7 +71,10 @@ from .pcap import write_pcap, LINKTYPE_ETHERNET, LINKTYPE_RAW
 from .fragmentation import fragment_ipv4, fragment_ipv6
 from .ip import IPHeader
 from .ipv6 import IPv6Header
-from .tcp import TCPHeader, TCP_FIN, TCP_SYN, TCP_RST, TCP_PSH, TCP_ACK, TCP_URG
+from .tcp import (
+    TCPHeader, TCPOptions,
+    TCP_FIN, TCP_SYN, TCP_RST, TCP_PSH, TCP_ACK, TCP_URG, TCP_ECE, TCP_CWR,
+)
 from .udp import UDPHeader
 from .icmp import ICMPHeader
 from .icmpv6 import ICMPv6Header
@@ -83,12 +87,15 @@ __all__ = [
     "IPHeader",
     "IPv6Header",
     "TCPHeader",
+    "TCPOptions",
     "TCP_FIN",
     "TCP_SYN",
     "TCP_RST",
     "TCP_PSH",
     "TCP_ACK",
     "TCP_URG",
+    "TCP_ECE",
+    "TCP_CWR",
     "UDPHeader",
     "ICMPHeader",
     "ICMPv6Header",
