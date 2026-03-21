@@ -8,7 +8,7 @@ Examples:
   python cli.py --src fe80::1 --dst fe80::2 --protocol icmpv6 --size 0 --no-ethernet
   python cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol icmp --size 4 --output packet.bin
   python cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol tcp --size 64 --pcap capture.pcap
-  python cli.py --config packet.json
+  python cli.py --config packets.json
 """
 import argparse
 import json
@@ -58,60 +58,125 @@ def _write_pcap(
         f.write(pkt)
 
 
-def _load_config(path: str) -> dict:
-    """Load a JSON config file and return a flat dict of argparse defaults."""
-    with open(path) as f:
-        cfg = json.load(f)
 
-    defaults = {}
+def _run_multi_packet(cfg: dict) -> None:
+    """Build and output all packets defined in a JSON config."""
+    global_output = cfg.get("output", {})
+    pcap_path = global_output.get("pcap")
+    file_path = global_output.get("file")
 
-    eth = cfg.get("ethernet", {})
-    if "src_mac" in eth:
-        defaults["src_mac"] = eth["src_mac"]
-    if "dst_mac" in eth:
-        defaults["dst_mac"] = eth["dst_mac"]
-    if "enabled" in eth:
-        defaults["no_ethernet"] = not eth["enabled"]
-    vlan = eth.get("vlan", {})
-    if "id" in vlan:
-        defaults["vlan_id"] = vlan["id"]
-    if "pcp" in vlan:
-        defaults["vlan_pcp"] = vlan["pcp"]
-    if "dei" in vlan:
-        defaults["vlan_dei"] = vlan["dei"]
+    if pcap_path and file_path:
+        print("Error: output.pcap and output.file are mutually exclusive", file=sys.stderr)
+        sys.exit(1)
 
-    net = cfg.get("network", {})
-    for key in ("src", "dst", "protocol", "ttl"):
-        if key in net:
-            defaults[key] = net[key]
+    if "packets" not in cfg:
+        print("Error: config file must have a top-level 'packets' array", file=sys.stderr)
+        sys.exit(1)
 
-    transport = cfg.get("transport", {})
-    if "src_port" in transport:
-        defaults["src_port"] = transport["src_port"]
-    if "dst_port" in transport:
-        defaults["dst_port"] = transport["dst_port"]
-    if "seq" in transport:
-        defaults["tcp_seq"] = transport["seq"]
+    specs = cfg["packets"]
+    if not specs:
+        print("Error: 'packets' array is empty", file=sys.stderr)
+        sys.exit(1)
 
-    payload = cfg.get("payload", {})
-    if "data" in payload:
-        defaults["payload_data"] = payload["data"]
-    elif "size" in payload:
-        defaults["size"] = payload["size"]
+    # Use LINKTYPE_RAW only when every packet disables ethernet
+    all_no_eth = all(not spec.get("ethernet", {}).get("enabled", True) for spec in specs)
+    link_type = _LINKTYPE_RAW if all_no_eth else _LINKTYPE_ETHERNET
 
-    output = cfg.get("output", {})
-    if "mtu" in output:
-        defaults["mtu"] = output["mtu"]
-    if "file" in output:
-        defaults["output"] = output["file"]
-    if "pcap" in output:
-        defaults["pcap"] = output["pcap"]
-    if "timestamp_s" in output:
-        defaults["timestamp_s"] = output["timestamp_s"]
-    if "timestamp_us" in output:
-        defaults["timestamp_us"] = output["timestamp_us"]
+    # collected: list of (pkt_bytes, ts_sec | None, ts_usec)
+    collected: list[tuple[bytes, int | None, int]] = []
 
-    return defaults
+    for i, spec in enumerate(specs, 1):
+        net = spec.get("network", {})
+        src = net.get("src")
+        dst = net.get("dst")
+        protocol_str = net.get("protocol")
+
+        if not src or not dst or not protocol_str:
+            print(
+                f"Error: packet {i} missing network.src, network.dst, or network.protocol",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        try:
+            proto = Protocol[protocol_str.upper()]
+        except KeyError:
+            print(f"Error: packet {i} unknown protocol '{protocol_str}'", file=sys.stderr)
+            sys.exit(1)
+
+        eth = spec.get("ethernet", {})
+        vlan = eth.get("vlan", {})
+        transport = spec.get("transport", {})
+        payload_spec = spec.get("payload", {})
+        out = spec.get("output", {})
+
+        explicit_payload: bytes | None = None
+        if "data" in payload_spec:
+            try:
+                explicit_payload = bytes.fromhex(payload_spec["data"])
+            except ValueError as e:
+                print(f"Error: packet {i} payload.data is not valid hex: {e}", file=sys.stderr)
+                sys.exit(1)
+
+        try:
+            builder = PacketBuilder(
+                src_ip=src,
+                dst_ip=dst,
+                protocol=proto,
+                payload_size=payload_spec.get("size", 0),
+                payload=explicit_payload,
+                src_mac=eth.get("src_mac", "00:00:00:00:00:01"),
+                dst_mac=eth.get("dst_mac", "00:00:00:00:00:02"),
+                src_port=transport.get("src_port", 12345),
+                dst_port=transport.get("dst_port", 80),
+                ttl=net.get("ttl", 64),
+                include_ethernet=eth.get("enabled", True),
+                tcp_seq=transport.get("seq", 0),
+                vlan_id=vlan.get("id"),
+                vlan_pcp=vlan.get("pcp", 0),
+                vlan_dei=vlan.get("dei", 0),
+            )
+            mtu = out.get("mtu")
+            pkts = builder.fragment(mtu=mtu) if mtu is not None else [builder.build()]
+        except (OSError, ValueError) as e:
+            print(f"Error building packet {i}: {e}", file=sys.stderr)
+            sys.exit(1)
+
+        ts_sec: int | None = out.get("timestamp_s")
+        ts_usec: int = out.get("timestamp_us", 0)
+        for pkt in pkts:
+            collected.append((pkt, ts_sec, ts_usec))
+
+    if pcap_path:
+        # Resolve None timestamps to the current time, consistent within this call
+        now: tuple[int, int] | None = None
+        with open(pcap_path, "wb") as f:
+            f.write(struct.pack('<IHHiIII', 0xA1B2C3D4, 2, 4, 0, 0, 65535, link_type))
+            for pkt, ts_sec, ts_usec in collected:
+                if ts_sec is None:
+                    if now is None:
+                        t = time.time()
+                        now = (int(t), int((t - int(t)) * 1_000_000))
+                    sec, usec = now
+                else:
+                    sec, usec = ts_sec, ts_usec
+                length = len(pkt)
+                f.write(struct.pack('<IIII', sec, usec, length, length))
+                f.write(pkt)
+        print(f"Wrote {len(collected)} packet(s) to {pcap_path} (link type: {link_type})")
+    elif file_path:
+        with open(file_path, "wb") as f:
+            for pkt, _, _ in collected:
+                f.write(pkt)
+        total = sum(len(p) for p, _, _ in collected)
+        print(f"Wrote {len(collected)} packet(s) ({total} bytes total) to {file_path}")
+    else:
+        for idx, (pkt, _, _) in enumerate(collected):
+            print(f"Packet {idx + 1}/{len(collected)} ({len(pkt)} bytes):")
+            for i in range(0, len(pkt), 16):
+                chunk = pkt[i:i + 16]
+                hex_part = ' '.join(f'{b:02x}' for b in chunk)
+                print(f"  {i:04x}  {hex_part}")
 
 
 def main():
@@ -120,7 +185,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("--config", metavar="FILE", help="JSON config file (CLI flags override values from the file)")
+    parser.add_argument("--config", metavar="FILE", help="JSON config file with a 'packets' array; builds all packets and writes to the configured output")
     parser.add_argument("--src", help="Source IP address (IPv4 or IPv6)")
     parser.add_argument("--dst", help="Destination IP address (IPv4 or IPv6)")
     parser.add_argument(
@@ -165,18 +230,20 @@ def main():
         help="Capture timestamp microseconds fraction 0–999999 (ts_usec in pcap record; default: 0)",
     )
 
-    # Pre-parse to find --config before setting argparse defaults
+    # Pre-parse to detect --config before full argument parsing
     pre_parser = argparse.ArgumentParser(add_help=False)
     pre_parser.add_argument("--config", metavar="FILE")
     pre_args, _ = pre_parser.parse_known_args()
 
     if pre_args.config:
         try:
-            defaults = _load_config(pre_args.config)
-        except (OSError, json.JSONDecodeError, ValueError) as e:
+            with open(pre_args.config) as f:
+                raw_cfg = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
             print(f"Error loading config '{pre_args.config}': {e}", file=sys.stderr)
             sys.exit(1)
-        parser.set_defaults(**defaults)
+        _run_multi_packet(raw_cfg)
+        return
 
     args = parser.parse_args()
 

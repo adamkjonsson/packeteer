@@ -26,7 +26,7 @@ No external dependencies. Python 3.10+ and the standard library only.
 - High-level `PacketBuilder.fragment(mtu)` and low-level `fragment_ipv4` / `fragment_ipv6` functions
 - Payload: random bytes of a given size, or supply your own
 - Optional Ethernet header — produce raw IP packets when not needed
-- CLI for quick packet inspection and binary output, with `--mtu` for on-the-fly fragmentation and `--config` for JSON-driven packet definitions
+- CLI for quick packet inspection and binary output, with `--mtu` for on-the-fly fragmentation and `--config` for JSON-driven multi-packet definitions
 
 ---
 
@@ -372,7 +372,7 @@ python cli.py --config <file.json> [options]
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--config` | — | Load packet parameters from a JSON file; CLI flags override file values |
+| `--config` | — | Load a JSON config file with a `packets` array; builds all packets and writes to the configured output |
 | `--src` | *(required)* | Source IP address (IPv4 or IPv6) |
 | `--dst` | *(required)* | Destination IP address |
 | `--protocol` | *(required)* | `tcp`, `udp`, `icmp`, or `icmpv6` |
@@ -433,11 +433,8 @@ python cli.py --src ::1 --dst ::2 --protocol tcp --size 40 --no-ethernet --pcap 
 # Explicit payload as hex bytes ("Hello")
 python cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol udp --payload-data 48656c6c6f
 
-# Build from a JSON config file
-python cli.py --config packet.json
-
-# JSON config file with a CLI override
-python cli.py --config packet.json --dst-port 443
+# Build packets from a JSON config file
+python cli.py --config packets.json
 
 # pcap with a fixed capture timestamp (ts_sec=0, ts_usec=123456)
 python cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol tcp --pcap out.pcap --timestamp-s 0 --timestamp-us 123456
@@ -447,44 +444,53 @@ python cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol tcp --pcap out.pcap --tim
 
 ## JSON config file
 
-All CLI options can be specified in a JSON file and loaded with `--config`. CLI
-flags override values from the file when both are present. Only `network.src`,
-`network.dst`, and `network.protocol` are required; everything else is optional
-and falls back to the same defaults as the CLI.
+A JSON config file is loaded with `--config`. It must contain a top-level
+`packets` array with one object per packet to build. A top-level `output`
+block sets the shared output destination (`pcap` or `file`) for all packets.
+Per-packet `output` supports `mtu`, `timestamp_s`, and `timestamp_us`.
 
 ```json
 {
-  "ethernet": {
-    "src_mac": "00:00:00:00:00:01",
-    "dst_mac": "00:00:00:00:00:02",
-    "enabled": true,
-    "vlan": {
-      "id": 100,
-      "pcp": 0,
-      "dei": 0
+  "packets": [
+    {
+      "network": {
+        "src": "10.0.0.1",
+        "dst": "10.0.0.2",
+        "protocol": "tcp"
+      },
+      "transport": {
+        "src_port": 12345,
+        "dst_port": 80,
+        "seq": 100
+      },
+      "payload": { "size": 64 },
+      "output": { "timestamp_s": 1000, "timestamp_us": 0 }
+    },
+    {
+      "network": {
+        "src": "10.0.0.2",
+        "dst": "10.0.0.1",
+        "protocol": "tcp"
+      },
+      "transport": {
+        "src_port": 80,
+        "dst_port": 12345,
+        "seq": 1
+      },
+      "payload": { "size": 128 },
+      "output": { "timestamp_s": 1000, "timestamp_us": 500000 }
     }
-  },
-  "network": {
-    "src": "192.168.1.1",
-    "dst": "10.0.0.1",
-    "protocol": "tcp",
-    "ttl": 64
-  },
-  "transport": {
-    "src_port": 12345,
-    "dst_port": 80,
-    "seq": 0
-  },
-  "payload": {
-    "size": 100
-  },
+  ],
   "output": {
-    "pcap": "out.pcap",
-    "timestamp_s": 0,
-    "timestamp_us": 123456
+    "pcap": "conversation.pcap"
   }
 }
 ```
+
+All packets in a multi-packet pcap must use the same link layer type (either
+all with Ethernet or all without). If every packet sets `ethernet.enabled:
+false` the file uses link type 101 (raw IP); otherwise link type 1 (Ethernet)
+is used. CLI flags are ignored for multi-packet configs.
 
 ### Field reference
 
@@ -525,16 +531,22 @@ and falls back to the same defaults as the CLI.
 | `size` | Generate N random bytes as the payload |
 | `data` | Explicit payload as a hex string (e.g. `"48656c6c6f"` = `Hello`) |
 
-#### `output`
+#### `output` (top-level, shared across all packets)
 
-`file` and `pcap` are mutually exclusive. `timestamp_s` and `timestamp_us`
-only affect pcap output.
+`file` and `pcap` are mutually exclusive.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `file` | — | Write raw bytes to this path |
+| `pcap` | — | Write a libpcap `.pcap` file to this path |
+
+#### `output` (per-packet)
+
+`timestamp_s` and `timestamp_us` only affect pcap output.
 
 | Field | Default | Description |
 |-------|---------|-------------|
 | `mtu` | — | Fragment the packet; each IP datagram will be at most this many bytes |
-| `file` | — | Write raw bytes to this path |
-| `pcap` | — | Write a libpcap `.pcap` file to this path |
 | `timestamp_s` | *(current time)* | Capture timestamp — whole seconds written to `ts_sec` in each pcap packet record header; 32-bit unsigned integer |
 | `timestamp_us` | `0` | Capture timestamp — microseconds fraction (0–999999) written to `ts_usec` in each pcap packet record header |
 
