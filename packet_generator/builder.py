@@ -32,7 +32,7 @@ from enum import Enum
 from .ethernet import EthernetHeader, VLANTag, ETHERTYPE_IPV4, ETHERTYPE_IPV6, build_ethernet_header
 from .ip import IPHeader, build_ip_header
 from .ipv6 import IPv6Header, build_ipv6_header
-from .tcp import TCPHeader, TCP_ACK, build_tcp_header
+from .tcp import TCPHeader, TCPOptions, TCP_ACK, build_tcp_header
 from .udp import UDPHeader, build_udp_header
 from .icmp import ICMPHeader, build_icmp_header
 from .icmpv6 import ICMPv6Header, build_icmpv6_header
@@ -130,6 +130,8 @@ class PacketBuilder:
         tcp_flags: int = TCP_ACK,
         tcp_window: int = 65535,
         tcp_urgent_ptr: int = 0,
+        tcp_reserved: int = 0,
+        tcp_options: TCPOptions | None = None,
         # ICMP/ICMPv6-specific fields
         icmp_type: int | None = None,   # None → 8 for ICMP, 128 for ICMPv6
         icmp_code: int = 0,
@@ -204,6 +206,8 @@ class PacketBuilder:
         self.tcp_flags = tcp_flags
         self.tcp_window = tcp_window
         self.tcp_urgent_ptr = tcp_urgent_ptr
+        self.tcp_reserved = tcp_reserved
+        self.tcp_options = tcp_options
         self.icmp_type = icmp_type
         self.icmp_code = icmp_code
         self.icmp_identifier = icmp_identifier
@@ -278,6 +282,8 @@ class PacketBuilder:
                     flags=self.tcp_flags,
                     window=self.tcp_window,
                     urgent_ptr=self.tcp_urgent_ptr,
+                    reserved=self.tcp_reserved,
+                    options=self.tcp_options,
                 ),
                 data, self.src_ip, self.dst_ip, ip_version,
             )
@@ -410,6 +416,8 @@ class PacketBuilder:
                     flags=self.tcp_flags,
                     window=self.tcp_window,
                     urgent_ptr=self.tcp_urgent_ptr,
+                    reserved=self.tcp_reserved,
+                    options=self.tcp_options,
                 ),
                 data, self.src_ip, self.dst_ip, ip_version,
             )

@@ -16,6 +16,7 @@ import struct
 import sys
 import time
 from packet_generator import PacketBuilder, Protocol
+from packet_generator.tcp import TCPOptions
 
 # PCAP link-layer types
 _LINKTYPE_ETHERNET = 1    # Ethernet II (with header)
@@ -57,6 +58,20 @@ def _write_pcap(
         f.write(struct.pack('<IIII', ts_sec, ts_usec, length, length))
         f.write(pkt)
 
+
+
+def _parse_tcp_options(spec: dict | None) -> TCPOptions | None:
+    """Convert a JSON ``transport.options`` object to a :class:`TCPOptions`."""
+    if not spec:
+        return None
+    sack_raw = spec.get("sack", [])
+    return TCPOptions(
+        mss=spec.get("mss"),
+        window_scale=spec.get("window_scale"),
+        sack_permitted=spec.get("sack_permitted", False),
+        sack_blocks=[tuple(b) for b in sack_raw],
+        timestamps=tuple(spec["timestamps"]) if "timestamps" in spec else None,
+    )
 
 
 def _run_multi_packet(cfg: dict) -> None:
@@ -139,6 +154,8 @@ def _run_multi_packet(cfg: dict) -> None:
                 tcp_flags=transport.get("flags", 0x002),
                 tcp_window=transport.get("window", 65535),
                 tcp_urgent_ptr=transport.get("urgent_ptr", 0),
+                tcp_reserved=transport.get("reserved", 0),
+                tcp_options=_parse_tcp_options(transport.get("options")),
                 icmp_type=transport.get("type"),
                 icmp_code=transport.get("code", 0),
                 icmp_identifier=transport.get("identifier", 1),
