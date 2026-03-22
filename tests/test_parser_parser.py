@@ -351,11 +351,11 @@ class TestParsePcapFile(unittest.TestCase):
         self.assertEqual(t["src_port"], 1234)
         self.assertEqual(t["dst_port"], 443)
 
-    def test_timestamps_in_per_packet_output(self):
+    def test_timestamps_in_per_packet_metadata(self):
         import json
         buf = self._make_buf([(_tcp(), 1000, 500_000)])
         result = json.loads(parse_pcap_file(file_object=buf))
-        out = result["packets"][0]["output"]
+        out = result["packets"][0]["metadata"]
         self.assertEqual(out["timestamp_s"], 1000)
         self.assertEqual(out["timestamp_us"], 500_000)
 
@@ -363,35 +363,35 @@ class TestParsePcapFile(unittest.TestCase):
         import json
         buf = self._make_buf([(_tcp(), 1000, 999_999_999)], nanoseconds=True)
         result = json.loads(parse_pcap_file(file_object=buf))
-        out = result["packets"][0]["output"]
+        out = result["packets"][0]["metadata"]
         self.assertIn("timestamp_ns", out)
         self.assertNotIn("timestamp_us", out)
         self.assertEqual(out["timestamp_ns"], 999_999_999)
 
-    def test_nanoseconds_flag_in_global_output(self):
+    def test_nanoseconds_flag_in_file_metadata(self):
         import json
         buf = self._make_buf([(_tcp(), 0, 0)], nanoseconds=True)
         result = json.loads(parse_pcap_file(file_object=buf))
-        self.assertTrue(result["output"]["nanoseconds"])
+        self.assertTrue(result["file_metadata"]["nanoseconds"])
 
-    def test_no_global_output_block_for_usec_without_extra(self):
+    def test_nanoseconds_false_in_file_metadata_for_usec(self):
         import json
         buf = self._make_buf([(_tcp(), 0, 0)], nanoseconds=False)
         result = json.loads(parse_pcap_file(file_object=buf))
-        self.assertNotIn("output", result)
+        self.assertFalse(result["file_metadata"]["nanoseconds"])
 
-    def test_extra_output_fields_merged(self):
+    def test_extra_file_metadata_fields_merged(self):
         import json
         buf = self._make_buf([(_tcp(), 0, 0)])
-        result = json.loads(parse_pcap_file(file_object=buf, output={"pcap": "out.pcap"}))
-        self.assertEqual(result["output"]["pcap"], "out.pcap")
+        result = json.loads(parse_pcap_file(file_object=buf, output={"from_file": "capture.pcap"}))
+        self.assertEqual(result["file_metadata"]["from_file"], "capture.pcap")
 
-    def test_nanoseconds_and_extra_output_merged(self):
+    def test_nanoseconds_and_extra_file_metadata_merged(self):
         import json
         buf = self._make_buf([(_tcp(), 0, 0)], nanoseconds=True)
-        result = json.loads(parse_pcap_file(file_object=buf, output={"pcap": "out.pcap"}))
-        self.assertTrue(result["output"]["nanoseconds"])
-        self.assertEqual(result["output"]["pcap"], "out.pcap")
+        result = json.loads(parse_pcap_file(file_object=buf, output={"from_file": "capture.pcap"}))
+        self.assertTrue(result["file_metadata"]["nanoseconds"])
+        self.assertEqual(result["file_metadata"]["from_file"], "capture.pcap")
 
     def test_empty_pcap(self):
         import json

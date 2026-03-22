@@ -8,6 +8,7 @@ Examples:
   python build_cli.py --src fe80::1 --dst fe80::2 --protocol icmpv6 --size 0 --no-ethernet
   python build_cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol icmp --size 4 --output packet.bin
   python build_cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol tcp --size 64 --pcap capture.pcap
+  python build_cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol tcp --size 64 --pcapng capture.pcapng
   python build_cli.py --config packets.json
 """
 import argparse
@@ -15,7 +16,7 @@ import json
 import sys
 from packet_generator import PacketBuilder, Protocol
 from packet_generator.tcp import TCPOptions
-from packet_generator.pcap import write_pcap, LINKTYPE_ETHERNET, LINKTYPE_RAW
+from packet_generator.pcap import write_pcap, write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW
 
 def _parse_tcp_options(spec: dict | None) -> TCPOptions | None:
     """Convert a JSON ``transport.options`` object to a :class:`TCPOptions`."""
@@ -33,14 +34,9 @@ def _parse_tcp_options(spec: dict | None) -> TCPOptions | None:
 
 def _run_multi_packet(cfg: dict) -> None:
     """Build and output all packets defined in a JSON config."""
-    global_output = cfg.get("output", {})
-    pcap_path = global_output.get("pcap")
-    file_path = global_output.get("file")
-    nanoseconds: bool = global_output.get("nanoseconds", False)
-
-    if pcap_path and file_path:
-        print("Error: output.pcap and output.file are mutually exclusive", file=sys.stderr)
-        sys.exit(1)
+    file_metadata = cfg.get("file_metadata", {})
+    out_type    = file_metadata.get("type")
+    nanoseconds: bool = file_metadata.get("nanoseconds", False)
 
     if "packets" not in cfg:
         print("Error: config file must have a top-level 'packets' array", file=sys.stderr)
@@ -81,7 +77,7 @@ def _run_multi_packet(cfg: dict) -> None:
         vlan = eth.get("vlan", {})
         transport = spec.get("transport", {})
         payload_spec = spec.get("payload", {})
-        out = spec.get("output", {})
+        out = spec.get("metadata", {})
 
         explicit_payload: bytes | None = None
         if "data" in payload_spec:
@@ -137,22 +133,12 @@ def _run_multi_packet(cfg: dict) -> None:
         for pkt in pkts:
             collected.append((pkt, ts_sec, ts_frac))
 
-    if pcap_path:
-        write_pcap(collected, path=pcap_path, link_type=link_type, nanoseconds=nanoseconds)
-        print(f"Wrote {len(collected)} packet(s) to {pcap_path} (link type: {link_type})")
-    elif file_path:
-        with open(file_path, "wb") as f:
-            for pkt, _, _ in collected:
-                f.write(pkt)
-        total = sum(len(p) for p, _, _ in collected)
-        print(f"Wrote {len(collected)} packet(s) ({total} bytes total) to {file_path}")
-    else:
-        for idx, (pkt, _, _) in enumerate(collected):
-            print(f"Packet {idx + 1}/{len(collected)} ({len(pkt)} bytes):")
-            for i in range(0, len(pkt), 16):
-                chunk = pkt[i:i + 16]
-                hex_part = ' '.join(f'{b:02x}' for b in chunk)
-                print(f"  {i:04x}  {hex_part}")
+    for idx, (pkt, _, _) in enumerate(collected):
+        print(f"Packet {idx + 1}/{len(collected)} ({len(pkt)} bytes):")
+        for i in range(0, len(pkt), 16):
+            chunk = pkt[i:i + 16]
+            hex_part = ' '.join(f'{b:02x}' for b in chunk)
+            print(f"  {i:04x}  {hex_part}")
 
 
 def main():
@@ -197,6 +183,7 @@ def main():
     )
     parser.add_argument("--output", help="Write raw bytes to file (default: print hex to stdout)")
     parser.add_argument("--pcap", metavar="FILE", help="Write packets to a libpcap (.pcap) file")
+    parser.add_argument("--pcapng", metavar="FILE", help="Write packets to a pcapng (.pcapng) file")
     parser.add_argument(
         "--timestamp-s", type=int, default=0, metavar="SEC",
         help="Capture timestamp seconds (ts_sec in pcap record; default: current time)",
@@ -226,8 +213,8 @@ def main():
     if not args.src or not args.dst or not args.protocol:
         parser.error("--src, --dst, and --protocol are required (or provide them via --config)")
 
-    if args.output and args.pcap:
-        print("Error: --output and --pcap are mutually exclusive", file=sys.stderr)
+    if sum(bool(p) for p in (args.output, args.pcap, args.pcapng)) > 1:
+        print("Error: --output, --pcap, and --pcapng are mutually exclusive", file=sys.stderr)
         sys.exit(1)
 
     try:
@@ -270,13 +257,15 @@ def main():
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
+    link_type  = LINKTYPE_RAW if args.no_ethernet else LINKTYPE_ETHERNET
+    collection = [(pac, args.timestamp_s, args.timestamp_us) for pac in packets]
+
     if args.pcap:
-        collection = []
-        for pac in packets:
-            collection.append((pac, args.timestamp_s, args.timestamp_us))
-        link_type = LINKTYPE_RAW if args.no_ethernet else LINKTYPE_ETHERNET
         write_pcap(collection, path=args.pcap, link_type=link_type)
         print(f"Wrote {len(packets)} packet(s) to {args.pcap} (link type: {link_type})")
+    elif args.pcapng:
+        write_pcapng(collection, path=args.pcapng, link_type=link_type)
+        print(f"Wrote {len(packets)} packet(s) to {args.pcapng} (link type: {link_type})")
     elif args.output:
         with open(args.output, "wb") as f:
             for pkt in packets:

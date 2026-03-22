@@ -32,10 +32,10 @@ No external dependencies. Python 3.10+ and the standard library only.
 - **`packet_parser` module** — parse each layer back to its header dataclass; roundtrip-compatible with all `packet_generator` builders
   - Parsers for Ethernet II (with optional 802.1Q VLAN tag), IPv4, IPv6, ICMP, ICMPv6, UDP, and TCP
   - Each parser returns `(header_size, next_layer_id, HeaderObject)` — chain parsers by slicing `data[header_size:]`
-  - `read_pcap` reads libpcap files (microsecond and nanosecond timestamp variants, little-endian and big-endian)
+  - `read_pcap` reads both libpcap (`.pcap`) and pcapng (`.pcapng`) files, auto-detected from the file magic (microsecond and nanosecond timestamps, little- and big-endian)
   - `parse_packet(data)` — parse a raw `bytes` object through all layers at once, returning a `ParsedPacket` dataclass
   - `parse_pcap_packet(record, file_header)` — parse one record from a `PcapFile`, with `link_type` and timestamps filled in automatically
-  - `parse_pcap_file(path=…)` — parse every packet in a pcap file and return a ready-to-use JSON config string
+  - `parse_pcap_file(path=…)` — parse every packet in a pcap or pcapng file and return a ready-to-use JSON config string
   - `packet_parser.to_config` — convert parsed headers to a JSON config dict accepted by `build_cli.py --config`; build up the config one protocol layer at a time with `update_config`
 
 ---
@@ -65,6 +65,9 @@ python build_cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol tcp
 # UDP packet with a 64-byte payload, saved to a pcap file
 python build_cli.py --src 10.0.0.1 --dst 8.8.8.8 --protocol udp --size 64 --pcap out.pcap
 
+# Same packet as a pcapng file
+python build_cli.py --src 10.0.0.1 --dst 8.8.8.8 --protocol udp --size 64 --pcapng out.pcapng
+
 # TCP SYN on VLAN 10
 python build_cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol tcp --vlan-id 10 --tcp-flags 2
 
@@ -84,6 +87,10 @@ python parse_cli.py capture.pcap --output replay.json
 # Round-trip: parse a capture and rebuild it as a new pcap
 python parse_cli.py capture.pcap --output replay.json --replay-pcap replayed.pcap
 python build_cli.py --config replay.json
+
+# Parse a pcapng file and rebuild it as pcapng
+python parse_cli.py capture.pcapng --output replay.json --replay-pcapng replayed.pcapng
+python build_cli.py --config replay.json
 ```
 
 ---
@@ -91,10 +98,10 @@ python build_cli.py --config replay.json
 ## JSON config file
 
 A JSON config file is loaded with `--config`. It must contain a top-level
-`packets` array with one object per packet to build. A top-level `output`
-block sets the shared output destination (`pcap` or `file`) for all packets.
-Per-packet `output` supports `mtu`, `timestamp_s`, `timestamp_us`, and
-`timestamp_ns` (when `output.nanoseconds` is `true`).
+`packets` array with one object per packet to build. A top-level `file_metadata`
+block records information about the file the config was parsed from (`from_file`,
+`type`, `nanoseconds`). Per-packet `metadata` supports `mtu`, `timestamp_s`,
+`timestamp_us`, and `timestamp_ns` (when `file_metadata.nanoseconds` is `true`).
 
 ```json
 {
@@ -112,7 +119,7 @@ Per-packet `output` supports `mtu`, `timestamp_s`, `timestamp_us`, and
         "flags": 2
       },
       "payload": { "size": 64 },
-      "output": { "timestamp_s": 1000, "timestamp_us": 0 }
+      "metadata": { "timestamp_s": 1000, "timestamp_us": 0 }
     },
     {
       "network": {
@@ -126,20 +133,21 @@ Per-packet `output` supports `mtu`, `timestamp_s`, `timestamp_us`, and
         "seq": 1
       },
       "payload": { "size": 128 },
-      "output": { "timestamp_s": 1000, "timestamp_us": 500000 }
+      "metadata": { "timestamp_s": 1000, "timestamp_us": 500000 }
     }
   ],
-  "output": {
-    "pcap": "conversation.pcap",
+  "file_metadata": {
+    "from_file": "conversation.pcap",
+    "type": "pcap",
     "nanoseconds": false
   }
 }
 ```
 
-All packets in a multi-packet pcap must use the same link layer type (either
-all with Ethernet or all without). If every packet sets `ethernet.enabled:
-false` the file uses link type 101 (raw IP); otherwise link type 1 (Ethernet)
-is used. CLI flags are ignored for multi-packet configs.
+All packets in a multi-packet pcap or pcapng must use the same link layer type
+(either all with Ethernet or all without). If every packet sets
+`ethernet.enabled: false` the file uses link type 101 (raw IP); otherwise
+link type 1 (Ethernet) is used. CLI flags are ignored for multi-packet configs.
 
 ### Field reference
 
@@ -201,28 +209,29 @@ is used. CLI flags are ignored for multi-packet configs.
 | `size` | Generate N random bytes as the payload |
 | `data` | Explicit payload as a hex string (e.g. `"48656c6c6f"` = `Hello`) |
 
-#### `output` (top-level, shared across all packets)
+#### `file_metadata` (top-level, set by `parse_cli.py`)
 
-`file` and `pcap` are mutually exclusive.
+Read-only metadata about the file the config was parsed from.
+`build_cli.py` uses `type` and `nanoseconds` for format settings but ignores `from_file`.
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `file` | — | Write raw bytes to this path |
-| `pcap` | — | Write a libpcap `.pcap` file to this path |
-| `nanoseconds` | `false` | When `true`, write pcap magic `0xA1B23C4D` so readers interpret per-packet `timestamp_ns` as nanoseconds instead of microseconds |
+| `from_file` | — | Path of the pcap or pcapng file the config was parsed from |
+| `type` | — | Format of the source file: `pcap` or `pcapng` |
+| `nanoseconds` | `false` | When `true`, timestamps are nanosecond-resolution — use `timestamp_ns` per-packet; for pcap magic `0xA1B23C4D`, for pcapng `if_tsresol=9` |
 
-#### `output` (per-packet)
+#### `metadata` (per-packet)
 
-Timestamp fields only affect pcap output. Use `timestamp_us` when the
-top-level `nanoseconds` is `false` (default); use `timestamp_ns` when it is
-`true`.
+Timestamp fields only affect pcap and pcapng output. Use `timestamp_us` when
+the top-level `nanoseconds` is `false` (default); use `timestamp_ns` when it
+is `true`.
 
 | Field | Default | Description |
 |-------|---------|-------------|
 | `mtu` | — | Fragment the packet; each IP datagram will be at most this many bytes |
 | `timestamp_s` | `0` | Capture timestamp — whole seconds written to `ts_sec` in the pcap packet record header |
-| `timestamp_us` | `0` | Capture timestamp — microseconds fraction (0–999999); used when `output.nanoseconds` is `false` |
-| `timestamp_ns` | `0` | Capture timestamp — nanoseconds fraction (0–999999999); used when `output.nanoseconds` is `true` |
+| `timestamp_us` | `0` | Capture timestamp — microseconds fraction (0–999999); used when `file_metadata.nanoseconds` is `false` |
+| `timestamp_ns` | `0` | Capture timestamp — nanoseconds fraction (0–999999999); used when `file_metadata.nanoseconds` is `true` |
 
 ---
 
@@ -720,7 +729,7 @@ when `nanoseconds=True`.
 | `packets` | List of `(raw_bytes, ts_sec, ts_frac)` tuples, one per pcap record. |
 | `path` | Destination file path. Created or overwritten. |
 | `file_object` | Destination file object (open in binary mode). |
-| `link_type` | pcap link-layer type written into the global header. `LINKTYPE_ETHERNET` (`1`, default) for packets with an Ethernet header; `LINKTYPE_RAW` (`101`) for raw IP packets built with `include_ethernet=False`. |
+| `link_type` | Link-layer type written into the global header. `LINKTYPE_ETHERNET` (`1`, default) or `LINKTYPE_RAW` (`101`). |
 | `nanoseconds` | When `True`, writes magic `0xA1B23C4D` so readers interpret `ts_frac` as nanoseconds. Default `False` writes magic `0xA1B2C3D4` (microseconds). |
 
 ```python
@@ -748,9 +757,49 @@ write_pcap(pkts, path="raw.pcap", link_type=LINKTYPE_RAW)
 
 ---
 
+### `write_pcapng`
+
+Write one or more raw packet byte strings to a pcapng (`.pcapng`) file.
+pcapng is the successor to libpcap and is supported by Wireshark, tcpdump,
+and most modern packet analysis tools.
+
+```python
+from packet_generator.pcap import write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW
+```
+
+```python
+write_pcapng(
+    packets: list[tuple[bytes, int, int]],
+    *,
+    path: str | os.PathLike | None = None,
+    file_object: io.IOBase | None = None,
+    link_type: int = LINKTYPE_ETHERNET,
+    nanoseconds: bool = False,
+)
+```
+
+The call signature is identical to `write_pcap`.  The output file contains one
+Section Header Block, one Interface Description Block (with the appropriate
+`if_tsresol` option), and one Enhanced Packet Block per packet.
+
+```python
+import time
+from packet_generator import PacketBuilder, Protocol
+from packet_generator.pcap import write_pcapng
+
+now_ns = time.time_ns()
+sec, nsec = divmod(now_ns, 1_000_000_000)
+pkt = PacketBuilder("10.0.0.1", "10.0.0.2", Protocol.TCP).build()
+write_pcapng([(pkt, sec, nsec)], path="out.pcapng", nanoseconds=True)
+```
+
+---
+
 ### `read_pcap`
 
-Read a libpcap (`.pcap`) file written by Wireshark, tcpdump, or `write_pcap`.
+Read a libpcap (`.pcap`) **or pcapng (`.pcapng`)** file.  The format is
+detected automatically from the file's first four bytes — no extension
+checking, no extra arguments needed.
 
 ```python
 from packet_parser.pcap import read_pcap
@@ -775,12 +824,15 @@ read_pcap(
 
 | Field | Description |
 |-------|-------------|
-| `link_type` | Link-layer type from the global header |
-| `version_major` / `version_minor` | pcap format version (usually `2` / `4`) |
+| `link_type` | Link-layer type |
+| `version_major` / `version_minor` | Format version — `2`/`4` for pcap, `1`/`0` for pcapng |
 | `snaplen` | Maximum capture length |
-| `nanoseconds` | `True` when the file uses nanosecond timestamps (magic `0xA1B23C4D`) |
+| `nanoseconds` | `True` when the file uses nanosecond timestamps |
 
-Supports little-endian and big-endian files and both the microsecond (`0xA1B2C3D4`) and nanosecond (`0xA1B23C4D`) magic variants.
+For pcap: supports little-endian and big-endian files and both the microsecond
+(`0xA1B2C3D4`) and nanosecond (`0xA1B23C4D`) magic variants.
+For pcapng: link type and timestamp resolution are read from the Interface
+Description Block; EPB and Obsolete Packet Block records are supported.
 
 ```python
 from packet_parser.pcap import read_pcap
@@ -889,12 +941,14 @@ for record in pcap.packets:
 Reads a pcap file, parses every packet through all layers, and returns a JSON
 string in the format accepted by `build_cli.py --config`.
 
-- Per-packet `output` block contains `timestamp_s` and `timestamp_us` (or
+- Per-packet `metadata` block contains `timestamp_s` and `timestamp_us` (or
   `timestamp_ns` for nanosecond-resolution files).
 - When the source file uses nanosecond timestamps, `"nanoseconds": true` is
   added to the top-level `output` block automatically.
-- Pass `output={"pcap": "replay.pcap"}` (or any other fields) to populate the
-  top-level output block; they are merged with the auto-detected fields.
+- The top-level `file_metadata` block always includes `from_file` (set to the
+  source path) and `type` (auto-detected as `pcap` or `pcapng`).
+- Pass `output={…}` to pre-populate or override fields; they are merged with
+  the auto-detected fields.
 
 ```python
 from packet_parser.parser import parse_pcap_file
@@ -902,8 +956,8 @@ from packet_parser.parser import parse_pcap_file
 # Parse and print
 print(parse_pcap_file(path="capture.pcap"))
 
-# Parse and replay with build_cli.py
-json_cfg = parse_pcap_file(path="capture.pcap", output={"pcap": "replay.pcap"})
+# Parse with explicit from_file metadata
+json_cfg = parse_pcap_file(path="capture.pcap", output={"from_file": "capture.pcap"})
 with open("replay.json", "w") as f:
     f.write(json_cfg)
 # python build_cli.py --config replay.json
@@ -960,11 +1014,11 @@ for raw, ts_sec, ts_frac in pcap.packets:
     payload = raw[eth_size + ip_size + tcp_size:]
     if payload:
         update_config(cfg, payload)
-    cfg.setdefault("output", {}).update({"timestamp_s": ts_sec, "timestamp_us": ts_frac})
+    cfg.setdefault("metadata", {}).update({"timestamp_s": ts_sec, "timestamp_us": ts_frac})
     packet_configs.append(cfg)
 
 # Write config JSON that can be replayed with: python build_cli.py --config replay.json
-replay = to_json_config(packet_configs, output={"pcap": "replay.pcap"})
+replay = to_json_config(packet_configs, file_metadata={"from_file": "capture.pcap", "type": "pcap"})
 with open("replay.json", "w") as f:
     f.write(to_json_string(replay))
 ```
@@ -1021,8 +1075,9 @@ python build_cli.py --config <file.json> [options]
 | `--mtu` | — | Fragment the packet; each IP datagram will be at most MTU bytes |
 | `--output` | — | Write raw bytes to a file instead of printing hex |
 | `--pcap` | — | Write packets to a libpcap (`.pcap`) file openable by Wireshark/tcpdump |
-| `--timestamp-s` | *(current time)* | Capture timestamp — whole seconds (`ts_sec` in pcap record header) |
-| `--timestamp-us` | `0` | Capture timestamp — microseconds fraction 0–999999 (`ts_usec` in pcap record header) |
+| `--pcapng` | — | Write packets to a pcapng (`.pcapng`) file |
+| `--timestamp-s` | `0` | Capture timestamp — whole seconds (`ts_sec` in pcap/pcapng record) |
+| `--timestamp-us` | `0` | Capture timestamp — microseconds fraction 0–999999 (`ts_usec` in pcap record) |
 
 ### Examples
 
@@ -1054,6 +1109,9 @@ python build_cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol udp --size 32 --vla
 # Write a single TCP packet as a pcap file (link type 1 = Ethernet)
 python build_cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol tcp --size 64 --pcap capture.pcap
 
+# Write a single TCP packet as a pcapng file
+python build_cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol tcp --size 64 --pcapng capture.pcapng
+
 # Write fragmented UDP as a pcap (each fragment becomes a separate record)
 python build_cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol udp --size 4000 --mtu 1500 --pcap frags.pcap
 
@@ -1072,7 +1130,8 @@ python build_cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol tcp --pcap out.pcap
 
 ### `parse_cli.py`
 
-Parses every packet in a pcap file and writes the corresponding JSON config.
+Parses every packet in a pcap or pcapng file and writes the corresponding
+JSON config.  Both formats are accepted transparently.
 
 ```
 python parse_cli.py <pcap-file> [options]
@@ -1080,9 +1139,10 @@ python parse_cli.py <pcap-file> [options]
 
 | Option | Description |
 |--------|-------------|
-| `pcap` | *(required)* Input `.pcap` file to parse |
+| `pcap` | *(required)* Input `.pcap` or `.pcapng` file to parse |
 | `--output FILE`, `-o FILE` | Write the JSON config to FILE instead of printing to stdout |
-| `--replay-pcap FILE` | Set `output.pcap` in the generated config to FILE so the result can be replayed directly |
+| `--replay-pcap FILE` | Set `file_metadata.type` to `pcap` in the generated config |
+| `--replay-pcapng FILE` | Set `file_metadata.type` to `pcapng` in the generated config (mutually exclusive with `--replay-pcap`) |
 
 #### Examples
 
@@ -1096,9 +1156,16 @@ python parse_cli.py capture.pcap --output replay.json
 # Save and embed a replay pcap path in the config
 python parse_cli.py capture.pcap --output replay.json --replay-pcap replayed.pcap
 
-# Round-trip: capture → config → rebuild
-python parse_cli.py capture.pcap --replay-pcap out.pcap --output replay.json
+# Parse a pcapng file (auto-detected)
+python parse_cli.py capture.pcapng --output replay.json
+
+# Round-trip: parse pcapng → config → rebuild as pcapng
+python parse_cli.py capture.pcapng --replay-pcapng out.pcapng --output replay.json
 python build_cli.py --config replay.json
+
+# Round-trip: capture → config → rebuild as pcap
+python parse_cli.py capture.pcap --replay-pcap out.pcap --output relay.json
+python build_cli.py --config relay.json
 ```
 
 ---
@@ -1119,7 +1186,7 @@ packet-generator/
     udp.py             # UDP header (8 bytes)
     icmp.py            # ICMPv4 header (8 bytes)
     icmpv6.py          # ICMPv6 header (8 bytes)
-    pcap.py            # write_pcap — libpcap file writer (usec and nsec)
+    pcap.py            # write_pcap / write_pcapng — libpcap and pcapng file writers
   packet_parser/
     __init__.py        # exports all parsers with distinct names
     ethernet.py        # parse Ethernet II + optional 802.1Q VLAN tag
@@ -1129,7 +1196,7 @@ packet-generator/
     icmpv6.py          # parse ICMPv6 header (8 bytes)
     udp.py             # parse UDP header (8 bytes)
     tcp.py             # parse TCP header (variable length)
-    pcap.py            # read_pcap — libpcap file reader
+    pcap.py            # read_pcap — libpcap and pcapng file reader (auto-detect)
     to_config.py       # update_config / to_json_config / to_json_string
     parser.py          # parse_packet / parse_pcap_packet / parse_pcap_file / ParsedPacket
   tests/
@@ -1141,12 +1208,14 @@ packet-generator/
     test_generator_ip.py
     test_generator_ipv6.py
     test_generator_pcap.py
+    test_generator_pcapng.py
     test_generator_tcp.py
     test_generator_udp.py
     test_parser_ethernet.py
     test_parser_icmp.py
     test_parser_ip.py
     test_parser_pcap.py
+    test_parser_pcapng.py
     test_parser_tcp.py
     test_parser_udp.py
     test_parser_parser.py
