@@ -1,10 +1,12 @@
 # packet-generator
 
-A pure-Python library for building and fragmenting complete, byte-accurate raw
-network packets. Construct Ethernet II frames containing IPv4 or IPv6 headers,
-TCP, UDP, ICMPv4, and ICMPv6 transport layers — all with correct checksums
-computed automatically per RFC. Large payloads can be split into RFC-compliant
-IP fragments in one call.
+A pure-Python library for building, fragmenting, and parsing complete,
+byte-accurate raw network packets. Construct Ethernet II frames containing IPv4
+or IPv6 headers, TCP, UDP, ICMPv4, and ICMPv6 transport layers — all with
+correct checksums computed automatically per RFC. Large payloads can be split
+into RFC-compliant IP fragments in one call. The companion `packet_parser`
+module can decode each layer back to its header dataclass and read libpcap
+files written by any tool.
 
 No external dependencies. Python 3.10+ and the standard library only.
 
@@ -27,6 +29,14 @@ No external dependencies. Python 3.10+ and the standard library only.
 - Payload: random bytes of a given size, or supply your own
 - Optional Ethernet header — produce raw IP packets when not needed
 - CLI for quick packet inspection and binary output, with `--mtu` for on-the-fly fragmentation and `--config` for JSON-driven multi-packet definitions
+- **`packet_parser` module** — parse each layer back to its header dataclass; roundtrip-compatible with all `packet_generator` builders
+  - Parsers for Ethernet II (with optional 802.1Q VLAN tag), IPv4, IPv6, ICMP, ICMPv6, UDP, and TCP
+  - Each parser returns `(header_size, next_layer_id, HeaderObject)` — chain parsers by slicing `data[header_size:]`
+  - `read_pcap` reads libpcap files (microsecond and nanosecond timestamp variants, little-endian and big-endian)
+  - `parse_packet(data)` — parse a raw `bytes` object through all layers at once, returning a `ParsedPacket` dataclass
+  - `parse_pcap_packet(record, file_header)` — parse one record from a `PcapFile`, with `link_type` and timestamps filled in automatically
+  - `parse_pcap_file(path=…)` — parse every packet in a pcap file and return a ready-to-use JSON config string
+  - `packet_parser.to_config` — convert parsed headers to a JSON config dict accepted by `build_cli.py --config`; build up the config one protocol layer at a time with `update_config`
 
 ---
 
@@ -46,148 +56,173 @@ Python 3.10 or later is required (uses the `X | Y` union type syntax).
 
 ## Quick start
 
-```python
-from packet_generator import PacketBuilder, Protocol
+### Build packets with `build_cli.py`
 
-# IPv4 TCP packet — Ethernet + IP + TCP + 64 random payload bytes
-pkt = PacketBuilder(
-    src_ip="192.168.1.10",
-    dst_ip="8.8.8.8",
-    protocol=Protocol.TCP,
-    payload_size=64,
-    dst_port=443,
-).build()
-print(f"Built {len(pkt)}-byte packet: {pkt.hex()}")
+```bash
+# IPv4 TCP packet — print hex to stdout
+python build_cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol tcp
 
-# IPv6 UDP packet — no Ethernet header
-pkt = PacketBuilder(
-    src_ip="fe80::1",
-    dst_ip="fe80::2",
-    protocol=Protocol.UDP,
-    payload_size=20,
-    include_ethernet=False,
-).build()
+# UDP packet with a 64-byte payload, saved to a pcap file
+python build_cli.py --src 10.0.0.1 --dst 8.8.8.8 --protocol udp --size 64 --pcap out.pcap
 
-# ICMPv6 Echo Request with an explicit payload
-pkt = PacketBuilder(
-    src_ip="::1",
-    dst_ip="::2",
-    protocol=Protocol.ICMPv6,
-    payload=b"hello ipv6",
-).build()
+# TCP SYN on VLAN 10
+python build_cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol tcp --vlan-id 10 --tcp-flags 2
 
-# IPv4 UDP packet on VLAN 100 with priority 5
-pkt = PacketBuilder(
-    src_ip="10.0.0.1",
-    dst_ip="10.0.0.2",
-    protocol=Protocol.UDP,
-    payload_size=32,
-    vlan_id=100,
-    vlan_pcp=5,
-).build()
-# Ethernet header is now 18 bytes (TPID 0x8100 + TCI + inner EtherType)
+# Build multiple packets at once from a JSON config
+python build_cli.py --config packets.json
+```
+
+### Parse a pcap file with `parse_cli.py`
+
+```bash
+# Print the JSON config for every packet in a capture
+python parse_cli.py capture.pcap
+
+# Save the JSON config to a file
+python parse_cli.py capture.pcap --output replay.json
+
+# Round-trip: parse a capture and rebuild it as a new pcap
+python parse_cli.py capture.pcap --output replay.json --replay-pcap replayed.pcap
+python build_cli.py --config replay.json
 ```
 
 ---
 
-## Multi-protocol example
+## JSON config file
 
-The following example builds a realistic packet capture containing a full TCP
-session (three-way handshake, one data exchange, and a FIN teardown), a UDP
-DNS query, and an ICMPv4 Echo Request. All packets are written to a single
-`.pcap` file that can be opened in Wireshark or replayed with `tcpreplay`.
+A JSON config file is loaded with `--config`. It must contain a top-level
+`packets` array with one object per packet to build. A top-level `output`
+block sets the shared output destination (`pcap` or `file`) for all packets.
+Per-packet `output` supports `mtu`, `timestamp_s`, `timestamp_us`, and
+`timestamp_ns` (when `output.nanoseconds` is `true`).
 
-```python
-import time
-from packet_generator import PacketBuilder, Protocol, write_pcap
-from packet_generator import TCP_SYN, TCP_ACK, TCP_PSH, TCP_FIN
-
-CLIENT = "10.0.0.1"
-SERVER = "10.0.0.2"
-C_MAC  = "00:00:00:00:00:01"
-S_MAC  = "00:00:00:00:00:02"
-C_PORT = 54321
-S_PORT = 80
-
-def build(src, dst, smac, dmac, proto, seq=0, ack=0, flags=TCP_ACK,
-          sport=C_PORT, dport=S_PORT, payload=None, size=0):
-    return PacketBuilder(
-        src_ip=src, dst_ip=dst,
-        src_mac=smac, dst_mac=dmac,
-        protocol=proto,
-        src_port=sport, dst_port=dport,
-        tcp_seq=seq, tcp_ack=ack, tcp_flags=flags,
-        payload=payload, payload_size=size,
-    ).build()
-
-pkts = []
-ts   = []
-t = int(time.time())
-
-def append(pkt, usec):
-    pkts.append(pkt)
-    ts.append((t, usec))
-
-# ── TCP three-way handshake ──────────────────────────────────────────────────
-# SYN  (client → server)
-append(build(CLIENT, SERVER, C_MAC, S_MAC, Protocol.TCP,
-             seq=1000, ack=0, flags=TCP_SYN), 0)
-# SYN-ACK  (server → client)
-append(build(SERVER, CLIENT, S_MAC, C_MAC, Protocol.TCP,
-             seq=5000, ack=1001, flags=TCP_SYN | TCP_ACK,
-             sport=S_PORT, dport=C_PORT), 100_000)
-# ACK  (client → server)
-append(build(CLIENT, SERVER, C_MAC, S_MAC, Protocol.TCP,
-             seq=1001, ack=5001, flags=TCP_ACK), 200_000)
-
-# ── TCP data exchange ────────────────────────────────────────────────────────
-request  = b"GET / HTTP/1.1\r\nHost: 10.0.0.2\r\n\r\n"
-response = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nHello"
-
-# PSH+ACK carrying the HTTP request  (client → server)
-append(build(CLIENT, SERVER, C_MAC, S_MAC, Protocol.TCP,
-             seq=1001, ack=5001, flags=TCP_PSH | TCP_ACK,
-             payload=request), 300_000)
-# PSH+ACK carrying the HTTP response  (server → client)
-append(build(SERVER, CLIENT, S_MAC, C_MAC, Protocol.TCP,
-             seq=5001, ack=1001 + len(request), flags=TCP_PSH | TCP_ACK,
-             sport=S_PORT, dport=C_PORT, payload=response), 400_000)
-
-# ── TCP teardown  (FIN-ACK exchange) ────────────────────────────────────────
-append(build(CLIENT, SERVER, C_MAC, S_MAC, Protocol.TCP,
-             seq=1001 + len(request), ack=5001 + len(response),
-             flags=TCP_FIN | TCP_ACK), 500_000)
-append(build(SERVER, CLIENT, S_MAC, C_MAC, Protocol.TCP,
-             seq=5001 + len(response), ack=1001 + len(request) + 1,
-             flags=TCP_FIN | TCP_ACK, sport=S_PORT, dport=C_PORT), 600_000)
-
-# ── UDP DNS query ────────────────────────────────────────────────────────────
-dns_query = bytes.fromhex(
-    "0001010000010000000000000377777706676f6f676c6503636f6d0000010001"
-)
-append(PacketBuilder(
-    src_ip=CLIENT, dst_ip="8.8.8.8",
-    src_mac=C_MAC, dst_mac=S_MAC,
-    protocol=Protocol.UDP,
-    src_port=54400, dst_port=53,
-    payload=dns_query,
-).build(), 700_000)
-
-# ── ICMPv4 Echo Request (ping) ───────────────────────────────────────────────
-append(PacketBuilder(
-    src_ip=CLIENT, dst_ip=SERVER,
-    src_mac=C_MAC, dst_mac=S_MAC,
-    protocol=Protocol.ICMP,
-    icmp_identifier=1, icmp_sequence=1,
-    payload_size=32,
-).build(), 800_000)
-
-write_pcap("session.pcap", pkts, timestamps=ts)
-print(f"Wrote {len(pkts)} packets to session.pcap")
+```json
+{
+  "packets": [
+    {
+      "network": {
+        "src": "10.0.0.1",
+        "dst": "10.0.0.2",
+        "protocol": "tcp"
+      },
+      "transport": {
+        "src_port": 12345,
+        "dst_port": 80,
+        "seq": 100,
+        "flags": 2
+      },
+      "payload": { "size": 64 },
+      "output": { "timestamp_s": 1000, "timestamp_us": 0 }
+    },
+    {
+      "network": {
+        "src": "10.0.0.2",
+        "dst": "10.0.0.1",
+        "protocol": "tcp"
+      },
+      "transport": {
+        "src_port": 80,
+        "dst_port": 12345,
+        "seq": 1
+      },
+      "payload": { "size": 128 },
+      "output": { "timestamp_s": 1000, "timestamp_us": 500000 }
+    }
+  ],
+  "output": {
+    "pcap": "conversation.pcap",
+    "nanoseconds": false
+  }
+}
 ```
 
-Open `session.pcap` in Wireshark and you will see the complete exchange across
-all three protocols in the correct order with accurate timestamps.
+All packets in a multi-packet pcap must use the same link layer type (either
+all with Ethernet or all without). If every packet sets `ethernet.enabled:
+false` the file uses link type 101 (raw IP); otherwise link type 1 (Ethernet)
+is used. CLI flags are ignored for multi-packet configs.
+
+### Field reference
+
+#### `ethernet`
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `src_mac` | `"00:00:00:00:00:01"` | Source MAC address |
+| `dst_mac` | `"00:00:00:00:00:02"` | Destination MAC address |
+| `enabled` | `true` | Set to `false` to omit the Ethernet header (equivalent to `--no-ethernet`) |
+| `pad` | `false` | Pad the frame to the IEEE 802.3 minimum of 60 bytes (before FCS) when `true` |
+| `vlan.id` | — | VLAN ID 1–4094; omit the `vlan` key entirely to disable VLAN tagging |
+| `vlan.pcp` | `0` | VLAN Priority Code Point (0–7) |
+| `vlan.dei` | `0` | VLAN Drop Eligible Indicator (0 or 1) |
+
+#### `network`
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `src` | yes | Source IP address (IPv4 or IPv6) |
+| `dst` | yes | Destination IP address |
+| `protocol` | yes | `"tcp"`, `"udp"`, `"icmp"`, or `"icmpv6"` |
+| `ttl` | no (default `64`) | TTL (IPv4) / Hop Limit (IPv6) |
+| `tos` | no (default `0`) | IPv4 Type of Service / DSCP byte |
+| `identification` | no (default `0`) | IPv4 16-bit packet identification field |
+| `flags` | no (default `2`) | IPv4 3-bit flags field — bit 1 is the Don't Fragment (DF) bit |
+| `fragment_offset` | no (default `0`) | IPv4 13-bit fragment offset (in 8-byte units) |
+| `traffic_class` | no (default `0`) | IPv6 Traffic Class — 8-bit DSCP + ECN field |
+| `flow_label` | no (default `0`) | IPv6 20-bit Flow Label for QoS |
+
+#### `transport`
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `src_port` | `12345` | Source port (TCP/UDP) |
+| `dst_port` | `80` | Destination port (TCP/UDP) |
+| `seq` | `0` | TCP sequence number |
+| `ack` | `0` | TCP acknowledgement number |
+| `reserved` | `0` | TCP 4-bit reserved field (RFC 9293 §3.1); should be `0` |
+| `flags` | `2` | TCP 8-bit control flags integer — `TCP_CWR`=128, `TCP_ECE`=64, `TCP_URG`=32, `TCP_ACK`=16, `TCP_PSH`=8, `TCP_RST`=4, `TCP_SYN`=2, `TCP_FIN`=1; add values to combine (e.g. `24` for PSH+ACK) |
+| `window` | `65535` | TCP receive-window size in bytes |
+| `urgent_ptr` | `0` | TCP urgent pointer (relevant only when URG flag is set) |
+| `options.mss` | — | TCP MSS option — Maximum Segment Size in bytes |
+| `options.window_scale` | — | TCP Window Scale option — shift count 0–14 |
+| `options.sack_permitted` | `false` | TCP SACK Permitted option |
+| `options.sack` | `[]` | TCP SACK blocks — array of `[left_edge, right_edge]` pairs |
+| `options.timestamps` | — | TCP Timestamps option — `[TSval, TSecr]` array |
+| `type` | `8` / `128` | ICMP/ICMPv6 message type — default `8` (Echo Request) for ICMP, `128` for ICMPv6 |
+| `code` | `0` | ICMP/ICMPv6 sub-type code |
+| `identifier` | `1` | ICMP/ICMPv6 16-bit identifier used to match replies to requests |
+| `sequence` | `1` | ICMP/ICMPv6 16-bit sequence number |
+
+#### `payload`
+
+`size` and `data` are mutually exclusive; `data` takes precedence.
+
+| Field | Description |
+|-------|-------------|
+| `size` | Generate N random bytes as the payload |
+| `data` | Explicit payload as a hex string (e.g. `"48656c6c6f"` = `Hello`) |
+
+#### `output` (top-level, shared across all packets)
+
+`file` and `pcap` are mutually exclusive.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `file` | — | Write raw bytes to this path |
+| `pcap` | — | Write a libpcap `.pcap` file to this path |
+| `nanoseconds` | `false` | When `true`, write pcap magic `0xA1B23C4D` so readers interpret per-packet `timestamp_ns` as nanoseconds instead of microseconds |
+
+#### `output` (per-packet)
+
+Timestamp fields only affect pcap output. Use `timestamp_us` when the
+top-level `nanoseconds` is `false` (default); use `timestamp_ns` when it is
+`true`.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `mtu` | — | Fragment the packet; each IP datagram will be at most this many bytes |
+| `timestamp_s` | `0` | Capture timestamp — whole seconds written to `ts_sec` in the pcap packet record header |
+| `timestamp_us` | `0` | Capture timestamp — microseconds fraction (0–999999); used when `output.nanoseconds` is `false` |
+| `timestamp_ns` | `0` | Capture timestamp — nanoseconds fraction (0–999999999); used when `output.nanoseconds` is `true` |
 
 ---
 
@@ -266,6 +301,152 @@ frags = fragment_ipv6(ip_hdr, transport_data, mtu=1280, eth_header=None)
 ---
 
 ## API reference
+
+### Quick start
+
+```python
+from packet_generator import PacketBuilder, Protocol
+
+# IPv4 TCP packet — Ethernet + IP + TCP + 64 random payload bytes
+pkt = PacketBuilder(
+    src_ip="192.168.1.10",
+    dst_ip="8.8.8.8",
+    protocol=Protocol.TCP,
+    payload_size=64,
+    dst_port=443,
+).build()
+print(f"Built {len(pkt)}-byte packet: {pkt.hex()}")
+
+# IPv6 UDP packet — no Ethernet header
+pkt = PacketBuilder(
+    src_ip="fe80::1",
+    dst_ip="fe80::2",
+    protocol=Protocol.UDP,
+    payload_size=20,
+    include_ethernet=False,
+).build()
+
+# ICMPv6 Echo Request with an explicit payload
+pkt = PacketBuilder(
+    src_ip="::1",
+    dst_ip="::2",
+    protocol=Protocol.ICMPv6,
+    payload=b"hello ipv6",
+).build()
+
+# IPv4 UDP packet on VLAN 100 with priority 5
+pkt = PacketBuilder(
+    src_ip="10.0.0.1",
+    dst_ip="10.0.0.2",
+    protocol=Protocol.UDP,
+    payload_size=32,
+    vlan_id=100,
+    vlan_pcp=5,
+).build()
+# Ethernet header is now 18 bytes (TPID 0x8100 + TCI + inner EtherType)
+```
+
+---
+
+### Multi-protocol example
+
+The following example builds a realistic packet capture containing a full TCP
+session (three-way handshake, one data exchange, and a FIN teardown), a UDP
+DNS query, and an ICMPv4 Echo Request. All packets are written to a single
+`.pcap` file that can be opened in Wireshark or replayed with `tcpreplay`.
+
+```python
+import time
+from packet_generator import PacketBuilder, Protocol, write_pcap
+from packet_generator import TCP_SYN, TCP_ACK, TCP_PSH, TCP_FIN
+
+CLIENT = "10.0.0.1"
+SERVER = "10.0.0.2"
+C_MAC  = "00:00:00:00:00:01"
+S_MAC  = "00:00:00:00:00:02"
+C_PORT = 54321
+S_PORT = 80
+
+def build(src, dst, smac, dmac, proto, seq=0, ack=0, flags=TCP_ACK,
+          sport=C_PORT, dport=S_PORT, payload=None, size=0):
+    return PacketBuilder(
+        src_ip=src, dst_ip=dst,
+        src_mac=smac, dst_mac=dmac,
+        protocol=proto,
+        src_port=sport, dst_port=dport,
+        tcp_seq=seq, tcp_ack=ack, tcp_flags=flags,
+        payload=payload, payload_size=size,
+    ).build()
+
+pkts = []
+collection = []
+t = int(time.time())
+
+def append(pkt, usec):
+    collection.append((pkt, t, usec))
+
+# ── TCP three-way handshake ──────────────────────────────────────────────────
+# SYN  (client → server)
+append(build(CLIENT, SERVER, C_MAC, S_MAC, Protocol.TCP,
+             seq=1000, ack=0, flags=TCP_SYN), 0)
+# SYN-ACK  (server → client)
+append(build(SERVER, CLIENT, S_MAC, C_MAC, Protocol.TCP,
+             seq=5000, ack=1001, flags=TCP_SYN | TCP_ACK,
+             sport=S_PORT, dport=C_PORT), 100_000)
+# ACK  (client → server)
+append(build(CLIENT, SERVER, C_MAC, S_MAC, Protocol.TCP,
+             seq=1001, ack=5001, flags=TCP_ACK), 200_000)
+
+# ── TCP data exchange ────────────────────────────────────────────────────────
+request  = b"GET / HTTP/1.1\r\nHost: 10.0.0.2\r\n\r\n"
+response = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nHello"
+
+# PSH+ACK carrying the HTTP request  (client → server)
+append(build(CLIENT, SERVER, C_MAC, S_MAC, Protocol.TCP,
+             seq=1001, ack=5001, flags=TCP_PSH | TCP_ACK,
+             payload=request), 300_000)
+# PSH+ACK carrying the HTTP response  (server → client)
+append(build(SERVER, CLIENT, S_MAC, C_MAC, Protocol.TCP,
+             seq=5001, ack=1001 + len(request), flags=TCP_PSH | TCP_ACK,
+             sport=S_PORT, dport=C_PORT, payload=response), 400_000)
+
+# ── TCP teardown  (FIN-ACK exchange) ────────────────────────────────────────
+append(build(CLIENT, SERVER, C_MAC, S_MAC, Protocol.TCP,
+             seq=1001 + len(request), ack=5001 + len(response),
+             flags=TCP_FIN | TCP_ACK), 500_000)
+append(build(SERVER, CLIENT, S_MAC, C_MAC, Protocol.TCP,
+             seq=5001 + len(response), ack=1001 + len(request) + 1,
+             flags=TCP_FIN | TCP_ACK, sport=S_PORT, dport=C_PORT), 600_000)
+
+# ── UDP DNS query ────────────────────────────────────────────────────────────
+dns_query = bytes.fromhex(
+    "0001010000010000000000000377777706676f6f676c6503636f6d0000010001"
+)
+append(PacketBuilder(
+    src_ip=CLIENT, dst_ip="8.8.8.8",
+    src_mac=C_MAC, dst_mac=S_MAC,
+    protocol=Protocol.UDP,
+    src_port=54400, dst_port=53,
+    payload=dns_query,
+).build(), 700_000)
+
+# ── ICMPv4 Echo Request (ping) ───────────────────────────────────────────────
+append(PacketBuilder(
+    src_ip=CLIENT, dst_ip=SERVER,
+    src_mac=C_MAC, dst_mac=S_MAC,
+    protocol=Protocol.ICMP,
+    icmp_identifier=1, icmp_sequence=1,
+    payload_size=32,
+).build(), 800_000)
+
+write_pcap(collection, path="session.pcap", link_type=LINKTYPE_ETHERNET)
+print(f"Wrote {len(pkts)} packets to session.pcap")
+```
+
+Open `session.pcap` in Wireshark and you will see the complete exchange across
+all three protocols in the correct order with accurate timestamps.
+
+---
 
 ### `PacketBuilder`
 
@@ -521,40 +702,271 @@ from packet_generator import write_pcap, LINKTYPE_ETHERNET, LINKTYPE_RAW
 
 ```python
 write_pcap(
-    path: str | os.PathLike,
-    packets: list[bytes],
+    packets: list[tuple[bytes, int, int]],
     *,
+    path: str | os.PathLike | None = None,
+    file_object: io.IOBase | None = None,
     link_type: int = LINKTYPE_ETHERNET,
-    ts_sec: int | None = None,   # default: current time
-    ts_usec: int = 0,
-    timestamps: list[tuple[int, int]] | None = None,
+    nanoseconds: bool = False,
 )
 ```
 
+Each element of `packets` is a `(raw_bytes, ts_sec, ts_frac)` tuple where
+`ts_frac` is microseconds when `nanoseconds=False` (default) or nanoseconds
+when `nanoseconds=True`.
+
 | Parameter | Description |
 |-----------|-------------|
+| `packets` | List of `(raw_bytes, ts_sec, ts_frac)` tuples, one per pcap record. |
 | `path` | Destination file path. Created or overwritten. |
-| `packets` | List of raw packet byte strings, one per pcap record. Typically the return value of `PacketBuilder.build()` or fragments from `PacketBuilder.fragment()`. |
+| `file_object` | Destination file object (open in binary mode). |
 | `link_type` | pcap link-layer type written into the global header. `LINKTYPE_ETHERNET` (`1`, default) for packets with an Ethernet header; `LINKTYPE_RAW` (`101`) for raw IP packets built with `include_ethernet=False`. |
-| `ts_sec` | Capture timestamp whole seconds applied to every record. Defaults to the current wall-clock time. Ignored when `timestamps` is provided. |
-| `ts_usec` | Capture timestamp microseconds fraction (0–999 999) applied to every record. Defaults to `0`. Ignored when `timestamps` is provided. |
-| `timestamps` | Per-packet list of `(ts_sec, ts_usec)` tuples. Must be the same length as `packets`. Takes precedence over `ts_sec` / `ts_usec`. |
+| `nanoseconds` | When `True`, writes magic `0xA1B23C4D` so readers interpret `ts_frac` as nanoseconds. Default `False` writes magic `0xA1B2C3D4` (microseconds). |
 
 ```python
+import time
 from packet_generator import PacketBuilder, Protocol, write_pcap, LINKTYPE_RAW
 
-# Shared timestamp — current time
-pkts = [PacketBuilder("10.0.0.1", "10.0.0.2", Protocol.TCP).build()]
-write_pcap("out.pcap", pkts)
+# Microsecond timestamps (default)
+t = int(time.time())
+pkts = [
+    (PacketBuilder("10.0.0.1", "10.0.0.2", Protocol.TCP).build(), t, 0),
+    (PacketBuilder("10.0.0.2", "10.0.0.1", Protocol.TCP).build(), t, 500_000),
+]
+write_pcap(pkts, path="out.pcap")
 
-# Per-packet timestamps
-pkts = [...]
-ts   = [(1000, 0), (1000, 500_000), (1001, 0)]
-write_pcap("out.pcap", pkts, timestamps=ts)
+# Nanosecond timestamps
+now_ns = time.time_ns()
+sec, nsec = divmod(now_ns, 1_000_000_000)
+pkts = [(PacketBuilder("10.0.0.1", "10.0.0.2", Protocol.UDP).build(), sec, nsec)]
+write_pcap(pkts, path="out_ns.pcap", nanoseconds=True)
 
 # Raw IP packets (no Ethernet header)
-pkts = [PacketBuilder("::1", "::2", Protocol.UDP, include_ethernet=False).build()]
-write_pcap("raw.pcap", pkts, link_type=LINKTYPE_RAW)
+pkts = [(PacketBuilder("::1", "::2", Protocol.UDP, include_ethernet=False).build(), 0, 0)]
+write_pcap(pkts, path="raw.pcap", link_type=LINKTYPE_RAW)
+```
+
+---
+
+### `read_pcap`
+
+Read a libpcap (`.pcap`) file written by Wireshark, tcpdump, or `write_pcap`.
+
+```python
+from packet_parser.pcap import read_pcap
+```
+
+```python
+read_pcap(
+    *,
+    path: str | os.PathLike | None = None,
+    file_object: io.IOBase | None = None,
+) -> PcapFile
+```
+
+`PcapFile` has two fields:
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `header` | `PcapFileHeader` | Global pcap header metadata |
+| `packets` | `list[tuple[bytes, int, int]]` | `(raw_bytes, ts_sec, ts_frac)` per record |
+
+`PcapFileHeader` fields:
+
+| Field | Description |
+|-------|-------------|
+| `link_type` | Link-layer type from the global header |
+| `version_major` / `version_minor` | pcap format version (usually `2` / `4`) |
+| `snaplen` | Maximum capture length |
+| `nanoseconds` | `True` when the file uses nanosecond timestamps (magic `0xA1B23C4D`) |
+
+Supports little-endian and big-endian files and both the microsecond (`0xA1B2C3D4`) and nanosecond (`0xA1B23C4D`) magic variants.
+
+```python
+from packet_parser.pcap import read_pcap
+from packet_parser import ethernet_packet_parser, ip_packet_parser, tcp_packet_parser
+
+pcap = read_pcap(path="capture.pcap")
+print(f"link type {pcap.header.link_type}, nanoseconds={pcap.header.nanoseconds}")
+
+for raw, ts_sec, ts_frac in pcap.packets:
+    eth_size, ethertype, eth_hdr = ethernet_packet_parser(raw)
+    ip_size,  proto,     ip_hdr  = ip_packet_parser(raw[eth_size:])
+    tcp_size, dst_port,  tcp_hdr = tcp_packet_parser(raw[eth_size + ip_size:])
+    print(f"  {ts_sec}.{ts_frac:06d}  {ip_hdr.src} → {ip_hdr.dst}:{dst_port}")
+```
+
+---
+
+## `packet_parser`
+
+Each parser function lives in its own module and follows the same calling
+convention:
+
+```
+(header_size, next_layer_id, HeaderObject | None) = parser(data: bytes)
+```
+
+On success `header_size > 0` and the next layer's bytes start at
+`data[header_size:]`. On failure all three fields are `(0, None, None)`.
+
+```python
+from packet_parser import (
+    ethernet_packet_parser,
+    vlan_packet_parser,
+    ip_packet_parser,
+    icmp_packet_parser,
+    icmpv6_packet_parser,
+    udp_packet_parser,
+    tcp_packet_parser,
+)
+```
+
+| Parser | Module | Returns `next_layer_id` as | `HeaderObject` type |
+|--------|--------|---------------------------|---------------------|
+| `ethernet_packet_parser` | `packet_parser.ethernet` | EtherType | `EthernetHeader` |
+| `vlan_packet_parser` | `packet_parser.vlan` | Inner EtherType | `VLANTag` |
+| `ip_packet_parser` | `packet_parser.ip` | IP protocol number | `IPHeader` or `IPv6Header` |
+| `icmp_packet_parser` | `packet_parser.icmp` | ICMP type | `ICMPHeader` |
+| `icmpv6_packet_parser` | `packet_parser.icmpv6` | ICMPv6 type | `ICMPv6Header` |
+| `udp_packet_parser` | `packet_parser.udp` | Destination port | `UDPHeader` |
+| `tcp_packet_parser` | `packet_parser.tcp` | Destination port | `TCPHeader` |
+
+The returned `HeaderObject` is the same dataclass produced by the corresponding
+`packet_generator` builder, so all fields are directly comparable.
+
+### `parse_packet` and `parse_pcap_packet`
+
+`packet_parser.parser` provides a high-level entry point that chains all layer
+parsers automatically and returns a single `ParsedPacket` dataclass.
+
+#### `ParsedPacket`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ethernet` | `EthernetHeader \| None` | Ethernet II header (VLAN tag included when present) |
+| `ip` | `IPHeader \| IPv6Header \| None` | IPv4 or IPv6 header |
+| `transport` | `TCPHeader \| UDPHeader \| ICMPHeader \| ICMPv6Header \| None` | Transport-layer header |
+| `payload` | `bytes` | Bytes after the deepest parsed header |
+| `ts_sec` | `int` | Capture timestamp whole seconds (populated by `parse_pcap_packet`) |
+| `ts_frac` | `int` | Capture timestamp sub-second fraction — µs or ns (populated by `parse_pcap_packet`) |
+
+#### `parse_packet(data, *, link_type=LINKTYPE_ETHERNET)`
+
+```python
+from packet_parser.parser import parse_packet
+from packet_generator import PacketBuilder, Protocol
+
+raw = PacketBuilder("10.0.0.1", "10.0.0.2", Protocol.TCP, dst_port=443).build()
+pkt = parse_packet(raw)
+
+print(pkt.ip.src, "→", pkt.ip.dst)
+print("dst_port:", pkt.transport.dst_port)
+```
+
+Pass `link_type=LINKTYPE_RAW` for packets without an Ethernet header.
+
+#### `parse_pcap_packet(record, file_header)`
+
+Parses one `(data, ts_sec, ts_frac)` record from `PcapFile.packets`, using the
+`link_type` from `file_header` and copying the timestamps into the result.
+
+```python
+from packet_parser.pcap import read_pcap
+from packet_parser.parser import parse_pcap_packet
+
+pcap = read_pcap(path="capture.pcap")
+for record in pcap.packets:
+    pkt = parse_pcap_packet(record, pcap.header)
+    if pkt.transport:
+        frac_label = "ns" if pcap.header.nanoseconds else "µs"
+        print(f"{pkt.ts_sec}.{pkt.ts_frac:09d} {frac_label}  "
+              f"{pkt.ip.src} → {pkt.ip.dst}:{pkt.transport.dst_port}")
+```
+
+#### `parse_pcap_file(*, path=…, file_object=…, output=…)`
+
+Reads a pcap file, parses every packet through all layers, and returns a JSON
+string in the format accepted by `build_cli.py --config`.
+
+- Per-packet `output` block contains `timestamp_s` and `timestamp_us` (or
+  `timestamp_ns` for nanosecond-resolution files).
+- When the source file uses nanosecond timestamps, `"nanoseconds": true` is
+  added to the top-level `output` block automatically.
+- Pass `output={"pcap": "replay.pcap"}` (or any other fields) to populate the
+  top-level output block; they are merged with the auto-detected fields.
+
+```python
+from packet_parser.parser import parse_pcap_file
+
+# Parse and print
+print(parse_pcap_file(path="capture.pcap"))
+
+# Parse and replay with build_cli.py
+json_cfg = parse_pcap_file(path="capture.pcap", output={"pcap": "replay.pcap"})
+with open("replay.json", "w") as f:
+    f.write(json_cfg)
+# python build_cli.py --config replay.json
+```
+
+### Chaining parsers
+
+```python
+from packet_parser import ethernet_packet_parser, ip_packet_parser, tcp_packet_parser
+
+raw = b"..."  # bytes from a pcap record or socket
+
+eth_size, ethertype, eth_hdr = ethernet_packet_parser(raw)
+ip_size,  proto,     ip_hdr  = ip_packet_parser(raw[eth_size:])
+tcp_size, dst_port,  tcp_hdr = tcp_packet_parser(raw[eth_size + ip_size:])
+
+if tcp_hdr:
+    print(f"{ip_hdr.src}:{tcp_hdr.src_port} → {ip_hdr.dst}:{tcp_hdr.dst_port}")
+    print(f"  seq={tcp_hdr.seq}  ack={tcp_hdr.ack}  flags=0x{tcp_hdr.flags:02x}")
+```
+
+### `update_config` — convert parsed headers to a JSON config
+
+`packet_parser.to_config` converts parsed header objects into the JSON config
+format accepted by `build_cli.py --config`. Call `update_config(config, layer)` once
+per parsed layer; it dispatches on the header type, fills the matching section
+of the dict, and returns the same dict for optional chaining.
+
+| *layer* type | Section written |
+|---|---|
+| `EthernetHeader` | `ethernet` (src_mac, dst_mac, enabled, optional vlan) |
+| `IPHeader` / `IPv6Header` | `network` (src, dst, protocol, ttl; non-default fields only) |
+| `TCPHeader` | `transport` (src_port, dst_port, seq, ack, flags, window; optional options) |
+| `UDPHeader` | `transport` (src_port, dst_port) |
+| `ICMPHeader` / `ICMPv6Header` | `transport` (type, code, identifier, sequence) |
+| `bytes` | `payload` (hex-encoded) |
+
+```python
+from packet_parser import ethernet_packet_parser, ip_packet_parser, tcp_packet_parser
+from packet_parser.pcap import read_pcap
+from packet_parser.to_config import update_config, to_json_config, to_json_string
+
+pcap = read_pcap(path="capture.pcap")
+packet_configs = []
+
+for raw, ts_sec, ts_frac in pcap.packets:
+    cfg = {}
+    eth_size, _, eth_hdr = ethernet_packet_parser(raw)
+    update_config(cfg, eth_hdr)
+    ip_size,  _, ip_hdr  = ip_packet_parser(raw[eth_size:])
+    update_config(cfg, ip_hdr)
+    tcp_size, _, tcp_hdr = tcp_packet_parser(raw[eth_size + ip_size:])
+    update_config(cfg, tcp_hdr)
+    payload = raw[eth_size + ip_size + tcp_size:]
+    if payload:
+        update_config(cfg, payload)
+    cfg.setdefault("output", {}).update({"timestamp_s": ts_sec, "timestamp_us": ts_frac})
+    packet_configs.append(cfg)
+
+# Write config JSON that can be replayed with: python build_cli.py --config replay.json
+replay = to_json_config(packet_configs, output={"pcap": "replay.pcap"})
+with open("replay.json", "w") as f:
+    f.write(to_json_string(replay))
 ```
 
 ---
@@ -576,9 +988,16 @@ write_pcap("raw.pcap", pkts, link_type=LINKTYPE_RAW)
 
 ## CLI
 
+Two command-line tools are provided: `build_cli.py` builds packets and writes
+them to stdout, a binary file, or a pcap file; `parse_cli.py` does the reverse
+— it reads a pcap file and produces a JSON config that can be fed back to
+`build_cli.py --config`.
+
+### `build_cli.py`
+
 ```
-python cli.py --src <ip> --dst <ip> --protocol <proto> [options]
-python cli.py --config <file.json> [options]
+python build_cli.py --src <ip> --dst <ip> --protocol <proto> [options]
+python build_cli.py --config <file.json> [options]
 ```
 
 | Option | Default | Description |
@@ -609,178 +1028,78 @@ python cli.py --config <file.json> [options]
 
 ```bash
 # IPv4 TCP — print hex to stdout
-python cli.py --src 192.168.1.1 --dst 8.8.8.8 --protocol tcp --size 20
+python build_cli.py --src 192.168.1.1 --dst 8.8.8.8 --protocol tcp --size 20
 
 # TCP with a specific sequence number
-python cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol tcp --tcp-seq 3735928559 --size 0
+python build_cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol tcp --tcp-seq 3735928559 --size 0
 
 # IPv6 UDP — print hex
-python cli.py --src ::1 --dst ::2 --protocol udp --size 10
+python build_cli.py --src ::1 --dst ::2 --protocol udp --size 10
 
 # ICMPv6 ping — no Ethernet header, write binary to file
-python cli.py --src fe80::1 --dst fe80::2 --protocol icmpv6 --no-ethernet --output ping.bin
+python build_cli.py --src fe80::1 --dst fe80::2 --protocol icmpv6 --no-ethernet --output ping.bin
 
 # IPv4 UDP DNS query skeleton — custom ports
-python cli.py --src 10.0.0.1 --dst 8.8.8.8 --protocol udp --src-port 5000 --dst-port 53 --size 0
+python build_cli.py --src 10.0.0.1 --dst 8.8.8.8 --protocol udp --src-port 5000 --dst-port 53 --size 0
 
 # Fragment a large IPv4 UDP payload at MTU 576 — print each fragment
-python cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol udp --size 2000 --mtu 576
+python build_cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol udp --size 2000 --mtu 576
 
 # Fragment a large IPv6 TCP payload and save all fragments to a file
-python cli.py --src ::1 --dst ::2 --protocol tcp --size 4000 --mtu 1280 --output frags.bin
+python build_cli.py --src ::1 --dst ::2 --protocol tcp --size 4000 --mtu 1280 --output frags.bin
 
 # IPv4 UDP on VLAN 200, priority 6 — 18-byte Ethernet header
-python cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol udp --size 32 --vlan-id 200 --vlan-pcp 6
+python build_cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol udp --size 32 --vlan-id 200 --vlan-pcp 6
 
 # Write a single TCP packet as a pcap file (link type 1 = Ethernet)
-python cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol tcp --size 64 --pcap capture.pcap
+python build_cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol tcp --size 64 --pcap capture.pcap
 
 # Write fragmented UDP as a pcap (each fragment becomes a separate record)
-python cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol udp --size 4000 --mtu 1500 --pcap frags.pcap
+python build_cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol udp --size 4000 --mtu 1500 --pcap frags.pcap
 
 # Raw IPv6 TCP packet (no Ethernet header) — link type 101 = raw IP
-python cli.py --src ::1 --dst ::2 --protocol tcp --size 40 --no-ethernet --pcap raw.pcap
+python build_cli.py --src ::1 --dst ::2 --protocol tcp --size 40 --no-ethernet --pcap raw.pcap
 
 # Explicit payload as hex bytes ("Hello")
-python cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol udp --payload-data 48656c6c6f
+python build_cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol udp --payload-data 48656c6c6f
 
 # Build packets from a JSON config file
-python cli.py --config packets.json
+python build_cli.py --config packets.json
 
 # pcap with a fixed capture timestamp (ts_sec=0, ts_usec=123456)
-python cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol tcp --pcap out.pcap --timestamp-s 0 --timestamp-us 123456
+python build_cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol tcp --pcap out.pcap --timestamp-s 0 --timestamp-us 123456
 ```
 
----
+### `parse_cli.py`
 
-## JSON config file
+Parses every packet in a pcap file and writes the corresponding JSON config.
 
-A JSON config file is loaded with `--config`. It must contain a top-level
-`packets` array with one object per packet to build. A top-level `output`
-block sets the shared output destination (`pcap` or `file`) for all packets.
-Per-packet `output` supports `mtu`, `timestamp_s`, and `timestamp_us`.
-
-```json
-{
-  "packets": [
-    {
-      "network": {
-        "src": "10.0.0.1",
-        "dst": "10.0.0.2",
-        "protocol": "tcp"
-      },
-      "transport": {
-        "src_port": 12345,
-        "dst_port": 80,
-        "seq": 100,
-        "flags": 2
-      },
-      "payload": { "size": 64 },
-      "output": { "timestamp_s": 1000, "timestamp_us": 0 }
-    },
-    {
-      "network": {
-        "src": "10.0.0.2",
-        "dst": "10.0.0.1",
-        "protocol": "tcp"
-      },
-      "transport": {
-        "src_port": 80,
-        "dst_port": 12345,
-        "seq": 1
-      },
-      "payload": { "size": 128 },
-      "output": { "timestamp_s": 1000, "timestamp_us": 500000 }
-    }
-  ],
-  "output": {
-    "pcap": "conversation.pcap"
-  }
-}
+```
+python parse_cli.py <pcap-file> [options]
 ```
 
-All packets in a multi-packet pcap must use the same link layer type (either
-all with Ethernet or all without). If every packet sets `ethernet.enabled:
-false` the file uses link type 101 (raw IP); otherwise link type 1 (Ethernet)
-is used. CLI flags are ignored for multi-packet configs.
+| Option | Description |
+|--------|-------------|
+| `pcap` | *(required)* Input `.pcap` file to parse |
+| `--output FILE`, `-o FILE` | Write the JSON config to FILE instead of printing to stdout |
+| `--replay-pcap FILE` | Set `output.pcap` in the generated config to FILE so the result can be replayed directly |
 
-### Field reference
+#### Examples
 
-#### `ethernet`
+```bash
+# Print JSON config to stdout
+python parse_cli.py capture.pcap
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `src_mac` | `"00:00:00:00:00:01"` | Source MAC address |
-| `dst_mac` | `"00:00:00:00:00:02"` | Destination MAC address |
-| `enabled` | `true` | Set to `false` to omit the Ethernet header (equivalent to `--no-ethernet`) |
-| `vlan.id` | — | VLAN ID 1–4094; omit the `vlan` key entirely to disable VLAN tagging |
-| `vlan.pcp` | `0` | VLAN Priority Code Point (0–7) |
-| `vlan.dei` | `0` | VLAN Drop Eligible Indicator (0 or 1) |
+# Save JSON config to a file
+python parse_cli.py capture.pcap --output replay.json
 
-#### `network`
+# Save and embed a replay pcap path in the config
+python parse_cli.py capture.pcap --output replay.json --replay-pcap replayed.pcap
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `src` | yes | Source IP address (IPv4 or IPv6) |
-| `dst` | yes | Destination IP address |
-| `protocol` | yes | `"tcp"`, `"udp"`, `"icmp"`, or `"icmpv6"` |
-| `ttl` | no (default `64`) | TTL (IPv4) / Hop Limit (IPv6) |
-| `tos` | no (default `0`) | IPv4 Type of Service / DSCP byte |
-| `identification` | no (default `0`) | IPv4 16-bit packet identification field |
-| `flags` | no (default `2`) | IPv4 3-bit flags field — bit 1 is the Don't Fragment (DF) bit |
-| `fragment_offset` | no (default `0`) | IPv4 13-bit fragment offset (in 8-byte units) |
-| `traffic_class` | no (default `0`) | IPv6 Traffic Class — 8-bit DSCP + ECN field |
-| `flow_label` | no (default `0`) | IPv6 20-bit Flow Label for QoS |
-
-#### `transport`
-
-| Field | Default | Description |
-|-------|---------|-------------|
-| `src_port` | `12345` | Source port (TCP/UDP) |
-| `dst_port` | `80` | Destination port (TCP/UDP) |
-| `seq` | `0` | TCP sequence number |
-| `ack` | `0` | TCP acknowledgement number |
-| `reserved` | `0` | TCP 4-bit reserved field (RFC 9293 §3.1); should be `0` |
-| `flags` | `16` | TCP 8-bit control flags integer — `TCP_CWR`=128, `TCP_ECE`=64, `TCP_URG`=32, `TCP_ACK`=16, `TCP_PSH`=8, `TCP_RST`=4, `TCP_SYN`=2, `TCP_FIN`=1; add values to combine (e.g. `24` for PSH+ACK) |
-| `window` | `65535` | TCP receive-window size in bytes |
-| `urgent_ptr` | `0` | TCP urgent pointer (relevant only when URG flag is set) |
-| `options.mss` | — | TCP MSS option — Maximum Segment Size in bytes |
-| `options.window_scale` | — | TCP Window Scale option — shift count 0–14 |
-| `options.sack_permitted` | `false` | TCP SACK Permitted option |
-| `options.sack` | `[]` | TCP SACK blocks — array of `[left_edge, right_edge]` pairs |
-| `options.timestamps` | — | TCP Timestamps option — `[TSval, TSecr]` array |
-| `type` | `8` / `128` | ICMP/ICMPv6 message type — default `8` (Echo Request) for ICMP, `128` for ICMPv6 |
-| `code` | `0` | ICMP/ICMPv6 sub-type code |
-| `identifier` | `1` | ICMP/ICMPv6 16-bit identifier used to match replies to requests |
-| `sequence` | `1` | ICMP/ICMPv6 16-bit sequence number |
-
-#### `payload`
-
-`size` and `data` are mutually exclusive; `data` takes precedence.
-
-| Field | Description |
-|-------|-------------|
-| `size` | Generate N random bytes as the payload |
-| `data` | Explicit payload as a hex string (e.g. `"48656c6c6f"` = `Hello`) |
-
-#### `output` (top-level, shared across all packets)
-
-`file` and `pcap` are mutually exclusive.
-
-| Field | Default | Description |
-|-------|---------|-------------|
-| `file` | — | Write raw bytes to this path |
-| `pcap` | — | Write a libpcap `.pcap` file to this path |
-
-#### `output` (per-packet)
-
-`timestamp_s` and `timestamp_us` only affect pcap output.
-
-| Field | Default | Description |
-|-------|---------|-------------|
-| `mtu` | — | Fragment the packet; each IP datagram will be at most this many bytes |
-| `timestamp_s` | *(current time)* | Capture timestamp — whole seconds written to `ts_sec` in each pcap packet record header; 32-bit unsigned integer |
-| `timestamp_us` | `0` | Capture timestamp — microseconds fraction (0–999999) written to `ts_usec` in each pcap packet record header |
+# Round-trip: capture → config → rebuild
+python parse_cli.py capture.pcap --replay-pcap out.pcap --output replay.json
+python build_cli.py --config replay.json
+```
 
 ---
 
@@ -796,23 +1115,45 @@ packet-generator/
     fragmentation.py   # fragment_ipv4 and fragment_ipv6
     ip.py              # IPv4 header (20 bytes)
     ipv6.py            # IPv6 header (40 bytes)
-    tcp.py             # TCP header (20 bytes)
+    tcp.py             # TCP header (20+ bytes, variable via data offset)
     udp.py             # UDP header (8 bytes)
     icmp.py            # ICMPv4 header (8 bytes)
     icmpv6.py          # ICMPv6 header (8 bytes)
+    pcap.py            # write_pcap — libpcap file writer (usec and nsec)
+  packet_parser/
+    __init__.py        # exports all parsers with distinct names
+    ethernet.py        # parse Ethernet II + optional 802.1Q VLAN tag
+    vlan.py            # parse IEEE 802.1Q VLAN tag (4 bytes)
+    ip.py              # parse IPv4 / IPv6 (version auto-detected)
+    icmp.py            # parse ICMPv4 header (8 bytes)
+    icmpv6.py          # parse ICMPv6 header (8 bytes)
+    udp.py             # parse UDP header (8 bytes)
+    tcp.py             # parse TCP header (variable length)
+    pcap.py            # read_pcap — libpcap file reader
+    to_config.py       # update_config / to_json_config / to_json_string
+    parser.py          # parse_packet / parse_pcap_packet / parse_pcap_file / ParsedPacket
   tests/
     test_builder.py
     test_checksum.py
-    test_ethernet.py
     test_fragmentation.py
-    test_icmp.py
-    test_icmpv6.py
-    test_ip.py
-    test_ipv6.py
-    test_pcap.py
-    test_tcp.py
-    test_udp.py
-  cli.py            # command-line interface
+    test_generator_ethernet.py
+    test_generator_icmp.py
+    test_generator_ip.py
+    test_generator_ipv6.py
+    test_generator_pcap.py
+    test_generator_tcp.py
+    test_generator_udp.py
+    test_parser_ethernet.py
+    test_parser_icmp.py
+    test_parser_ip.py
+    test_parser_pcap.py
+    test_parser_tcp.py
+    test_parser_udp.py
+    test_parser_parser.py
+    test_parser_to_config.py
+    test_parser_vlan.py
+  build_cli.py    # packet builder CLI (--src/--dst/--protocol or --config)
+  parse_cli.py    # pcap parser CLI — produces a JSON config from a pcap file
   README.md
 ```
 
