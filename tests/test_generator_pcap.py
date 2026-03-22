@@ -1,8 +1,9 @@
 import io
 import struct
 import unittest
-#from cli import _write_pcap, _LINKTYPE_ETHERNET, _LINKTYPE_RAW
 from packet_generator.pcap import write_pcap, LINKTYPE_ETHERNET, LINKTYPE_RAW
+
+_PCAP_MAGIC_NSEC = 0xA1B23C4D
 
 _PCAP_MAGIC    = 0xA1B2C3D4
 _PCAP_MAJOR    = 2
@@ -99,6 +100,44 @@ class TestWritePcap(unittest.TestCase):
         buf = io.BytesIO()
         write_pcap([], file_object=buf, link_type=LINKTYPE_ETHERNET)
         self.assertEqual(len(buf.getvalue()), _GLOBAL_HDR_SZ)
+
+
+class TestWritePcapNanoseconds(unittest.TestCase):
+    def _parse_global(self, data: bytes) -> dict:
+        magic, major, minor, zone, sigfigs, snaplen, network = struct.unpack_from('<IHHiIII', data)
+        return dict(magic=magic, major=major, minor=minor, zone=zone,
+                    sigfigs=sigfigs, snaplen=snaplen, network=network)
+
+    def _parse_pkt_hdr(self, data: bytes, offset: int) -> dict:
+        ts_sec, ts_frac, incl_len, orig_len = struct.unpack_from('<IIII', data, offset)
+        return dict(ts_sec=ts_sec, ts_frac=ts_frac, incl_len=incl_len, orig_len=orig_len)
+
+    def test_nsec_magic(self):
+        buf = io.BytesIO()
+        write_pcap([(b'\x00' * 10, 0, 0)], file_object=buf, nanoseconds=True)
+        hdr = self._parse_global(buf.getvalue())
+        self.assertEqual(hdr['magic'], _PCAP_MAGIC_NSEC)
+
+    def test_usec_magic_by_default(self):
+        buf = io.BytesIO()
+        write_pcap([(b'\x00' * 10, 0, 0)], file_object=buf)
+        hdr = self._parse_global(buf.getvalue())
+        self.assertEqual(hdr['magic'], _PCAP_MAGIC)
+
+    def test_nsec_timestamp_fraction_preserved(self):
+        buf = io.BytesIO()
+        write_pcap([(b'\x00' * 10, 1234567890, 999_999_999)], file_object=buf, nanoseconds=True)
+        phdr = self._parse_pkt_hdr(buf.getvalue(), _GLOBAL_HDR_SZ)
+        self.assertEqual(phdr['ts_sec'], 1234567890)
+        self.assertEqual(phdr['ts_frac'], 999_999_999)
+
+    def test_nsec_file_size_same_as_usec(self):
+        payload = b'\xAB' * 20
+        buf_usec = io.BytesIO()
+        buf_nsec = io.BytesIO()
+        write_pcap([(payload, 0, 0)], file_object=buf_usec, nanoseconds=False)
+        write_pcap([(payload, 0, 0)], file_object=buf_nsec, nanoseconds=True)
+        self.assertEqual(len(buf_usec.getvalue()), len(buf_nsec.getvalue()))
 
 
 if __name__ == '__main__':

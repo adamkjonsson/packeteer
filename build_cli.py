@@ -3,23 +3,19 @@
 Build and inspect raw network packets.
 
 Examples:
-  python cli.py --src 192.168.1.1 --dst 8.8.8.8 --protocol tcp --size 20
-  python cli.py --src ::1 --dst ::2 --protocol udp --size 10
-  python cli.py --src fe80::1 --dst fe80::2 --protocol icmpv6 --size 0 --no-ethernet
-  python cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol icmp --size 4 --output packet.bin
-  python cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol tcp --size 64 --pcap capture.pcap
-  python cli.py --config packets.json
+  python build_cli.py --src 192.168.1.1 --dst 8.8.8.8 --protocol tcp --size 20
+  python build_cli.py --src ::1 --dst ::2 --protocol udp --size 10
+  python build_cli.py --src fe80::1 --dst fe80::2 --protocol icmpv6 --size 0 --no-ethernet
+  python build_cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol icmp --size 4 --output packet.bin
+  python build_cli.py --src 10.0.0.1 --dst 10.0.0.2 --protocol tcp --size 64 --pcap capture.pcap
+  python build_cli.py --config packets.json
 """
 import argparse
 import json
 import sys
 from packet_generator import PacketBuilder, Protocol
 from packet_generator.tcp import TCPOptions
-from packet_generator.pcap import write_pcap
-
-# PCAP link-layer types
-_LINKTYPE_ETHERNET = 1    # Ethernet II (with header)
-_LINKTYPE_RAW      = 101  # Raw IP (no Ethernet header)
+from packet_generator.pcap import write_pcap, LINKTYPE_ETHERNET, LINKTYPE_RAW
 
 def _parse_tcp_options(spec: dict | None) -> TCPOptions | None:
     """Convert a JSON ``transport.options`` object to a :class:`TCPOptions`."""
@@ -40,6 +36,7 @@ def _run_multi_packet(cfg: dict) -> None:
     global_output = cfg.get("output", {})
     pcap_path = global_output.get("pcap")
     file_path = global_output.get("file")
+    nanoseconds: bool = global_output.get("nanoseconds", False)
 
     if pcap_path and file_path:
         print("Error: output.pcap and output.file are mutually exclusive", file=sys.stderr)
@@ -56,7 +53,7 @@ def _run_multi_packet(cfg: dict) -> None:
 
     # Use LINKTYPE_RAW only when every packet disables ethernet
     all_no_eth = all(not spec.get("ethernet", {}).get("enabled", True) for spec in specs)
-    link_type = _LINKTYPE_RAW if all_no_eth else _LINKTYPE_ETHERNET
+    link_type = LINKTYPE_RAW if all_no_eth else LINKTYPE_ETHERNET
 
     # collected: list of (pkt_bytes, ts_sec, ts_usec)
     collected: list[tuple[bytes, int, int]] = []
@@ -135,13 +132,13 @@ def _run_multi_packet(cfg: dict) -> None:
             print(f"Error building packet {i}: {e}", file=sys.stderr)
             sys.exit(1)
 
-        ts_sec: int = out.get("timestamp_s")
-        ts_usec: int = out.get("timestamp_us")
+        ts_sec: int = out.get("timestamp_s", 0)
+        ts_frac: int = out.get("timestamp_ns" if nanoseconds else "timestamp_us", 0)
         for pkt in pkts:
-            collected.append((pkt, ts_sec, ts_usec))
+            collected.append((pkt, ts_sec, ts_frac))
 
     if pcap_path:
-        write_pcap(collected, path=pcap_path, link_type=link_type)
+        write_pcap(collected, path=pcap_path, link_type=link_type, nanoseconds=nanoseconds)
         print(f"Wrote {len(collected)} packet(s) to {pcap_path} (link type: {link_type})")
     elif file_path:
         with open(file_path, "wb") as f:
@@ -277,7 +274,7 @@ def main():
         collection = []
         for pac in packets:
             collection.append((pac, args.timestamp_s, args.timestamp_us))
-        link_type = _LINKTYPE_RAW if args.no_ethernet else _LINKTYPE_ETHERNET
+        link_type = LINKTYPE_RAW if args.no_ethernet else LINKTYPE_ETHERNET
         write_pcap(collection, path=args.pcap, link_type=link_type)
         print(f"Wrote {len(packets)} packet(s) to {args.pcap} (link type: {link_type})")
     elif args.output:

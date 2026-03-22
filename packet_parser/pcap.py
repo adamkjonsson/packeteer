@@ -181,4 +181,6 @@ def read_pcap(
     if path is not None:
         with open(path, "rb") as f:
             return _read_pcap(f)
-    return _read_pcap(file_object)
+    else:
+        assert(file_object is not None)
+        return _read_pcap(file_object)
