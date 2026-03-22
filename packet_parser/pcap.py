@@ -1,21 +1,33 @@
-"""libpcap file reader.
+"""libpcap and pcapng file reader.
 
 This module reads raw packet bytes and capture timestamps from a libpcap
-(``.pcap``) file produced by Wireshark, tcpdump, or
-:mod:`packet_generator.pcap`.
+(``.pcap``) or pcapng (``.pcapng``) file.  The format is detected
+automatically from the file's magic number, so :func:`read_pcap` accepts
+both formats transparently.
 
-Supported magic numbers::
+Supported pcap magic numbers::
 
     0xA1B2C3D4  little-endian, microsecond timestamps  (most common)
     0xD4C3B2A1  big-endian,    microsecond timestamps
     0xA1B23C4D  little-endian, nanosecond  timestamps
     0x4D3CB2A1  big-endian,    nanosecond  timestamps
 
-Nanosecond-resolution files report ``ts_usec`` values in nanoseconds; the
-field is left as-is so callers can distinguish resolution via
+Nanosecond-resolution pcap files report ``ts_usec`` values in nanoseconds;
+the field is left as-is so callers can distinguish resolution via
 :attr:`PcapFileHeader.nanoseconds`.
 
-File format overview::
+Supported pcapng block types:
+
+* **Section Header Block** (``0x0A0D0D0A``) — marks start of a section;
+  byte-order magic determines endianness of subsequent blocks.
+* **Interface Description Block** (``0x00000001``) — captures link-layer
+  type, snap length, and ``if_tsresol`` timestamp resolution option.
+* **Enhanced Packet Block** (``0x00000006``) — primary packet block with
+  64-bit timestamps.
+* **Obsolete Packet Block** (``0x00000002``) — legacy packet block; read
+  for compatibility but not written.
+
+pcap file format overview::
 
     Global header (24 bytes)
         magic_number  (4) — determines byte order and timestamp resolution
@@ -47,6 +59,16 @@ _MAGIC_NSEC: int = 0xA1B23C4D
 
 _GLOBAL_HDR_SIZE: int = 24
 _PKT_HDR_SIZE: int = 16
+
+# pcapng constants
+_PCAPNG_SHB_TYPE: int = 0x0A0D0D0A
+_PCAPNG_IDB_TYPE: int = 0x00000001
+_PCAPNG_EPB_TYPE: int = 0x00000006
+_PCAPNG_OPB_TYPE: int = 0x00000002  # Obsolete Packet Block
+_PCAPNG_BOM_LE:   int = 0x1A2B3C4D  # byte-order magic, LE file
+_PCAPNG_BOM_BE:   int = 0x4D3C2B1A  # byte-order magic, BE file
+_PCAPNG_IDB_OPT_TSRESOL: int = 9    # if_tsresol option code
+_OPT_ENDOFOPT: int = 0
 
 
 @dataclass
@@ -80,6 +102,131 @@ class PcapFile:
     """
     header: PcapFileHeader
     packets: list[tuple[bytes, int, int]] = field(default_factory=list)
+
+
+def _parse_idb_tsresol(body: bytes, offset: int, endian: str) -> int:
+    """Return the timestamp ticks-per-second from IDB options (default: 1_000_000)."""
+    while offset + 4 <= len(body):
+        opt_code, opt_len = struct.unpack_from(endian + "HH", body, offset)
+        offset += 4
+        if opt_code == _OPT_ENDOFOPT:
+            break
+        opt_value = body[offset : offset + opt_len]
+        offset += (opt_len + 3) & ~3  # advance past padded value
+        if opt_code == _PCAPNG_IDB_OPT_TSRESOL and opt_len >= 1:
+            tsresol_byte = opt_value[0]
+            exp = tsresol_byte & 0x7F
+            if tsresol_byte & 0x80:   # binary: 2^exp ticks per second
+                return 1 << exp
+            else:                     # decimal: 10^exp ticks per second
+                return 10 ** exp
+    return 1_000_000  # default: microseconds
+
+
+def _read_pcapng(file_obj: io.RawIOBase | io.BufferedIOBase) -> PcapFile:
+    """Read a pcapng file.  *file_obj* must be positioned at the start."""
+    # --- Section Header Block ---
+    type_raw      = file_obj.read(4)   # 0x0A0D0D0A (byte-order symmetric)
+    total_len_raw = file_obj.read(4)
+    bom_raw       = file_obj.read(4)
+    if len(type_raw) < 4 or len(total_len_raw) < 4 or len(bom_raw) < 4:
+        raise ValueError("Truncated pcapng SHB")
+
+    (bom,) = struct.unpack_from("<I", bom_raw)
+    if bom == _PCAPNG_BOM_LE:
+        endian = "<"
+    elif bom == _PCAPNG_BOM_BE:
+        endian = ">"
+    else:
+        raise ValueError(f"Unrecognised pcapng byte-order magic: 0x{bom:08X}")
+
+    (total_len,) = struct.unpack(endian + "I", total_len_raw)
+    if total_len < 12:
+        raise ValueError(f"SHB total length {total_len} too small (minimum 12)")
+    # Skip remainder of SHB: body_len - 4 (already read BOM) + 4 (trailing total_len)
+    file_obj.read(total_len - 12)
+
+    # --- Subsequent blocks ---
+    interfaces: list[tuple[int, int]] = []  # (link_type, ticks_per_second)
+    link_type = 1       # LINKTYPE_ETHERNET default
+    snaplen   = 65535
+    nanoseconds = False
+    packets: list[tuple[bytes, int, int]] = []
+
+    while True:
+        block_hdr = file_obj.read(8)
+        if not block_hdr:
+            break
+        if len(block_hdr) < 8:
+            raise ValueError("Truncated pcapng block header")
+        block_type, total_len = struct.unpack(endian + "II", block_hdr)
+        if total_len < 12:
+            raise ValueError(f"Block total length {total_len} too small (minimum 12)")
+        body_len = total_len - 12
+        body = file_obj.read(body_len)
+        if len(body) < body_len:
+            raise ValueError(f"Truncated block body: got {len(body)}, need {body_len}")
+        trailing = file_obj.read(4)
+        if len(trailing) < 4:
+            raise ValueError("Truncated trailing block total length")
+
+        if block_type == _PCAPNG_IDB_TYPE:
+            if len(body) < 8:
+                raise ValueError("IDB body too short")
+            idb_link_type, _, idb_snaplen = struct.unpack_from(endian + "HHI", body)
+            resolution = _parse_idb_tsresol(body, 8, endian)
+            interfaces.append((idb_link_type, resolution))
+            if len(interfaces) == 1:
+                link_type   = idb_link_type
+                snaplen     = idb_snaplen
+                nanoseconds = (resolution == 1_000_000_000)
+
+        elif block_type == _PCAPNG_EPB_TYPE:
+            if len(body) < 20:
+                raise ValueError("EPB body too short")
+            iface_id, ts_hi, ts_lo, cap_len, _ = struct.unpack_from(endian + "IIIII", body)
+            pkt_data = body[20 : 20 + cap_len]
+            if len(pkt_data) < cap_len:
+                raise ValueError("EPB packet data truncated")
+            ts64 = (ts_hi << 32) | ts_lo
+            resolution = interfaces[iface_id][1] if iface_id < len(interfaces) else 1_000_000
+            ts_sec, ts_frac = divmod(ts64, resolution)
+            packets.append((pkt_data, ts_sec, ts_frac))
+
+        elif block_type == _PCAPNG_OPB_TYPE:
+            if len(body) < 16:
+                raise ValueError("OPB body too short")
+            iface_id_16, _, ts_hi, ts_lo, cap_len, _ = struct.unpack_from(endian + "HHIIII", body)
+            pkt_data = body[16 : 16 + cap_len]
+            if len(pkt_data) < cap_len:
+                raise ValueError("OPB packet data truncated")
+            ts64 = (ts_hi << 32) | ts_lo
+            resolution = interfaces[iface_id_16][1] if iface_id_16 < len(interfaces) else 1_000_000
+            ts_sec, ts_frac = divmod(ts64, resolution)
+            packets.append((pkt_data, ts_sec, ts_frac))
+        # All other block types (NRB, ISB, further SHBs, …) are silently skipped.
+
+    file_header = PcapFileHeader(
+        link_type=link_type,
+        version_major=1,
+        version_minor=0,
+        snaplen=snaplen,
+        nanoseconds=nanoseconds,
+    )
+    return PcapFile(header=file_header, packets=packets)
+
+
+def _detect_and_read(file_obj: io.RawIOBase | io.BufferedIOBase) -> PcapFile:
+    """Detect pcap vs pcapng from the first 4 bytes and dispatch."""
+    header4 = file_obj.read(4)
+    if len(header4) < 4:
+        raise ValueError(f"File too short: got {len(header4)} bytes, need at least 4")
+    rest = file_obj.read()
+    buf = io.BytesIO(header4 + rest)
+    (magic,) = struct.unpack_from("<I", header4)
+    if magic == _PCAPNG_SHB_TYPE:
+        return _read_pcapng(buf)
+    return _read_pcap(buf)
 
 
 def _read_pcap(file_obj: io.RawIOBase | io.BufferedIOBase) -> PcapFile:
@@ -180,7 +327,7 @@ def read_pcap(
 
     if path is not None:
         with open(path, "rb") as f:
-            return _read_pcap(f)
+            return _detect_and_read(f)
     else:
-        assert(file_object is not None)
-        return _read_pcap(file_object)
+        assert file_object is not None
+        return _detect_and_read(file_object)

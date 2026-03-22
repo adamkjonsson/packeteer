@@ -26,10 +26,10 @@ Typical usage::
         payload = raw[eth_size + ip_size + tcp_size:]
         if payload:
             update_config(cfg, payload)
-        cfg.setdefault("output", {}).update({"timestamp_s": ts_sec, "timestamp_us": ts_frac})
+        cfg.setdefault("metadata", {}).update({"timestamp_s": ts_sec, "timestamp_us": ts_frac})
         packet_configs.append(cfg)
 
-    print(to_json_string(to_json_config(packet_configs, output={"pcap": "out.pcap"})))
+    print(to_json_string(to_json_config(packet_configs, output={"from_file": "capture.pcap", "type": "pcap"})))
 """
 from __future__ import annotations
 
@@ -195,13 +195,14 @@ def update_config(
 def to_json_config(
     packets: list[dict[str, Any]],
     *,
-    output: dict[str, Any] | None = None,
+    file_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Wrap a list of packet config dicts into a top-level config dict.
 
     Args:
         packets: List of per-packet dicts built with :func:`update_config`.
-        output: Top-level ``output`` block (e.g. ``{"pcap": "out.pcap"}``).
+        file_metadata: Top-level ``file_metadata`` block (e.g.
+            ``{"from_file": "capture.pcap", "type": "pcap"}``).
             Omitted when ``None``.
 
     Returns:
@@ -209,8 +210,8 @@ def to_json_config(
         ``cli.py --config``.
     """
     cfg: dict[str, Any] = {"packets": packets}
-    if output is not None:
-        cfg["output"] = output
+    if file_metadata is not None:
+        cfg["file_metadata"] = file_metadata
     return cfg
 
 

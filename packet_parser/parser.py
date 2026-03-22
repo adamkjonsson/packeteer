@@ -203,7 +203,7 @@ def parse_pcap_file(
     with :func:`packet_parser.to_config.update_config`, and serialises the
     result with :func:`packet_parser.to_config.to_json_string`.
 
-    The per-packet ``output`` block is populated with ``timestamp_s`` and
+    The per-packet ``metadata`` block is populated with ``timestamp_s`` and
     either ``timestamp_us`` or ``timestamp_ns`` (depending on the file's
     timestamp resolution).  When the source file uses nanosecond timestamps,
     ``"nanoseconds": true`` is added to the top-level ``output`` block so that
@@ -238,11 +238,17 @@ def parse_pcap_file(
                 update_config(cfg, layer)
         if pkt.payload:
             update_config(cfg, pkt.payload)
-        cfg["output"] = {"timestamp_s": pkt.ts_sec, ts_frac_key: pkt.ts_frac}
+        cfg["metadata"] = {"timestamp_s": pkt.ts_sec, ts_frac_key: pkt.ts_frac}
         packet_configs.append(cfg)
 
     global_output: dict[str, Any] = dict(output) if output is not None else {}
-    if pcap.header.nanoseconds:
-        global_output.setdefault("nanoseconds", True)
+    global_output.setdefault("nanoseconds", pcap.header.nanoseconds)
+    if output is not None:
+        # version_major 1 = pcapng, 2 = pcap
+        file_type = "pcapng" if pcap.header.version_major == 1 else "pcap"
+        global_output.setdefault("type", file_type)
 
-    return to_json_string(to_json_config(packet_configs, output=global_output or None))
+    # Include the output block when the caller explicitly provided one (even
+    # empty), or when it has content added automatically (e.g. nanoseconds).
+    include_output = output is not None or bool(global_output)
+    return to_json_string(to_json_config(packet_configs, file_metadata=global_output if include_output else None))

@@ -274,13 +274,13 @@ class TestToJsonConfig(unittest.TestCase):
         result = to_json_config([p1])
         self.assertEqual(result["packets"], [p1])
 
-    def test_output_block_included(self):
-        result = to_json_config([], output={"pcap": "out.pcap"})
-        self.assertEqual(result["output"], {"pcap": "out.pcap"})
+    def test_file_metadata_block_included(self):
+        result = to_json_config([], file_metadata={"from_file": "capture.pcap", "type": "pcap"})
+        self.assertEqual(result["file_metadata"], {"from_file": "capture.pcap", "type": "pcap"})
 
-    def test_no_output_block_when_none(self):
+    def test_no_file_metadata_block_when_none(self):
         result = to_json_config([])
-        self.assertNotIn("output", result)
+        self.assertNotIn("file_metadata", result)
 
     def test_multiple_packets(self):
         pkts = [{}, {}, {}]
@@ -409,9 +409,9 @@ class TestRoundtrip(unittest.TestCase):
 
     def test_to_json_string_is_parseable(self):
         cfg = self._build_and_parse_tcp(src_port=1234, dst_port=80)
-        full = to_json_config([cfg], output={"pcap": "out.pcap"})
+        full = to_json_config([cfg], file_metadata={"from_file": "capture.pcap", "type": "pcap"})
         parsed = json.loads(to_json_string(full))
-        self.assertEqual(parsed["output"]["pcap"], "out.pcap")
+        self.assertEqual(parsed["file_metadata"]["from_file"], "capture.pcap")
         self.assertEqual(parsed["packets"][0]["transport"]["dst_port"], 80)
 
 
