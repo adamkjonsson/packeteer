@@ -126,68 +126,74 @@ class TestEthernetMinFrameSize(unittest.TestCase):
         self.assertEqual(ETHERNET_MIN_FRAME_SIZE, 60)
 
     def test_padding_by_default(self):
-        from packet_generator import PacketBuilder, Protocol
-        pkt = PacketBuilder(
-            "10.0.0.1", "10.0.0.2", Protocol.ICMP,
-        ).build()
-        # 14 (eth) + 20 (ip) + 8 (icmp) = 42 bytes — padded to 60 by default
+        from packet_generator import PacketBuilder
+        pkt = (PacketBuilder()
+               .ethernet(pad=True)
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .icmp()
+               .build())
+        # 14 (eth) + 20 (ip) + 8 (icmp) = 42 bytes — padded to 60 with pad=True
         self.assertEqual(len(pkt), 60)
 
     def test_short_frame_padded_to_60(self):
-        from packet_generator import PacketBuilder, Protocol
-        pkt = PacketBuilder(
-            "10.0.0.1", "10.0.0.2", Protocol.ICMP,
-            pad_ethernet=True,
-        ).build()
+        from packet_generator import PacketBuilder
+        pkt = (PacketBuilder()
+               .ethernet(pad=True)
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .icmp()
+               .build())
         self.assertEqual(len(pkt), 60)
 
     def test_padding_bytes_are_zero(self):
-        from packet_generator import PacketBuilder, Protocol
-        pkt = PacketBuilder(
-            "10.0.0.1", "10.0.0.2", Protocol.ICMP,
-            pad_ethernet=True,
-        ).build()
+        from packet_generator import PacketBuilder
+        pkt = (PacketBuilder()
+               .ethernet(pad=True)
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .icmp()
+               .build())
         # payload starts at byte 42 (14+20+8); padding fills up to 60
         self.assertEqual(pkt[42:], b'\x00' * 18)
 
     def test_frame_at_exact_minimum_not_padded(self):
-        from packet_generator import PacketBuilder, Protocol
+        from packet_generator import PacketBuilder
         # 14 (eth) + 20 (ip) + 8 (udp) + 18 (payload) = 60 — exactly at minimum
-        pkt = PacketBuilder(
-            "10.0.0.1", "10.0.0.2", Protocol.UDP,
-            payload_size=18,
-            pad_ethernet=True,
-        ).build()
+        pkt = (PacketBuilder()
+               .ethernet(pad=True)
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .udp()
+               .payload(size=18)
+               .build())
         self.assertEqual(len(pkt), 60)
 
     def test_frame_above_minimum_not_padded(self):
-        from packet_generator import PacketBuilder, Protocol
-        pkt = PacketBuilder(
-            "10.0.0.1", "10.0.0.2", Protocol.UDP,
-            payload_size=100,
-            pad_ethernet=True,
-        ).build()
+        from packet_generator import PacketBuilder
+        pkt = (PacketBuilder()
+               .ethernet(pad=True)
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .udp()
+               .payload(size=100)
+               .build())
         # 14 + 20 + 8 + 100 = 142 — no padding needed
         self.assertEqual(len(pkt), 142)
 
     def test_padding_with_vlan_tag(self):
-        from packet_generator import PacketBuilder, Protocol
+        from packet_generator import PacketBuilder
         # 18 (eth+vlan) + 20 (ip) + 8 (icmp) = 46 — needs 14 bytes of padding
-        pkt = PacketBuilder(
-            "10.0.0.1", "10.0.0.2", Protocol.ICMP,
-            vlan_id=10,
-            pad_ethernet=True,
-        ).build()
+        pkt = (PacketBuilder()
+               .ethernet(pad=True)
+               .vlan(vid=10)
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .icmp()
+               .build())
         self.assertEqual(len(pkt), 60)
 
     def test_no_padding_without_ethernet(self):
-        from packet_generator import PacketBuilder, Protocol
-        pkt = PacketBuilder(
-            "10.0.0.1", "10.0.0.2", Protocol.ICMP,
-            include_ethernet=False,
-            pad_ethernet=True,
-        ).build()
-        # pad_ethernet has no effect without include_ethernet
+        from packet_generator import PacketBuilder
+        pkt = (PacketBuilder()
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .icmp()
+               .build())
+        # no ethernet → no padding
         self.assertEqual(len(pkt), 28)  # 20 (ip) + 8 (icmp)
 
 
