@@ -33,14 +33,34 @@ Typical usage::
         .payload(data=b"hello ipv6")
         .build()
     )
+
+    # QinQ (double-tagged) IPv4 UDP packet
+    pkt = (PacketBuilder()
+        .ethernet()
+        .vlan(vid=100)   # outer VLAN
+        .vlan(vid=200)   # inner VLAN
+        .ip(src="10.0.0.1", dst="10.0.0.2")
+        .udp()
+        .build()
+    )
+
+    # IPv4-in-IPv4 tunnel
+    pkt = (PacketBuilder()
+        .ethernet()
+        .ip(src="203.0.113.1", dst="203.0.113.2")   # outer (tunnel) IP
+        .ip(src="10.0.0.1", dst="10.0.0.2")         # inner IP
+        .tcp(dst_port=80)
+        .build()
+    )
 """
 from __future__ import annotations
 
 import os
 import socket
+import struct
 
 from .ethernet import (
-    EthernetHeader, VLANTag, ETHERTYPE_IPV4, ETHERTYPE_IPV6,
+    EthernetHeader, VLANTag, ETHERTYPE_IPV4, ETHERTYPE_IPV6, ETHERTYPE_8021Q,
     ETHERNET_MIN_FRAME_SIZE, build_ethernet_header,
 )
 from .ip import IPHeader, build_ip_header
@@ -49,6 +69,35 @@ from .tcp import TCPHeader, TCPOptions, TCP_ACK, build_tcp_header
 from .udp import UDPHeader, build_udp_header
 from .icmp import ICMPHeader, build_icmp_header
 from .icmpv6 import ICMPv6Header, build_icmpv6_header
+
+# ── protocol-number helpers ───────────────────────────────────────────────────
+
+_ETHERTYPE_MAP: dict[type, int] = {
+    IPHeader:   ETHERTYPE_IPV4,
+    IPv6Header: ETHERTYPE_IPV6,
+    VLANTag:    ETHERTYPE_8021Q,
+}
+
+_IP_PROTO_MAP: dict[type, int] = {
+    TCPHeader:    6,
+    UDPHeader:    17,
+    ICMPHeader:   1,
+    ICMPv6Header: 58,
+    IPHeader:     4,   # IP-in-IP (RFC 2003)
+    IPv6Header:   41,  # IPv6-in-IPv4 (RFC 4213)
+}
+
+
+def _ethertype_for(layer: object) -> int:
+    """Return the EtherType value that an enclosing Ethernet/VLAN layer should
+    use when *layer* is its direct payload."""
+    return _ETHERTYPE_MAP.get(type(layer), 0)
+
+
+def _ip_proto_for(layer: object) -> int:
+    """Return the IP protocol number that an enclosing IP layer should use when
+    *layer* is its direct payload."""
+    return _IP_PROTO_MAP.get(type(layer), 0)
 
 
 def _detect_ip_version(addr: str) -> int:
@@ -72,13 +121,32 @@ def _detect_ip_version(addr: str) -> int:
         return 4
 
 
+# ── PacketBuilder ─────────────────────────────────────────────────────────────
+
 class PacketBuilder:
     """Assembles complete raw network packets layer by layer.
 
-    Call the fluent layer methods in order, then call :meth:`build` or
-    :meth:`fragment` to produce the final bytes.  The IP version (4 or 6)
-    is detected automatically from the address passed to :meth:`ip`.
+    Call the fluent layer methods in any order and any number of times, then
+    call :meth:`build` or :meth:`fragment` to produce the final bytes.
+
+    Layers are stacked in the order the methods are called — the first call
+    becomes the outermost (leftmost) layer.  The IP version (4 or 6) is
+    detected automatically from the address string passed to :meth:`ip`.
     All checksums are computed correctly per their respective RFCs.
+
+    Each method appends a layer to an internal ordered list, so the same
+    method may be called multiple times to produce advanced encapsulations:
+
+    * Calling :meth:`vlan` twice creates a QinQ (802.1ad) double-tagged frame.
+    * Calling :meth:`ip` twice creates an IP-in-IP tunnel packet.
+
+    The layer list stores the same public dataclasses exported by
+    ``packet_generator`` (``EthernetHeader``, ``VLANTag``, ``IPHeader``,
+    ``IPv6Header``, ``TCPHeader``, ``UDPHeader``, ``ICMPHeader``,
+    ``ICMPv6Header``).  Protocol-number fields that depend on the next layer
+    (``ethertype``, ``protocol``, ``next_header``) are set to ``0`` when the
+    object is stored and filled in correctly at :meth:`build` / :meth:`fragment`
+    time.
 
     Example::
 
@@ -95,13 +163,7 @@ class PacketBuilder:
     """
 
     def __init__(self) -> None:
-        self._eth_src_mac: str = "00:00:00:00:00:01"
-        self._eth_dst_mac: str = "00:00:00:00:00:02"
-        self._eth: bool = False          # True when .ethernet() has been called
-        self._vlan: VLANTag | None = None
-        self._pad_ethernet: bool = False
-        self._ip: IPHeader | IPv6Header | None = None
-        self._transport_hdr: TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | None = None
+        self._layers: list = []
         self._payload_size: int = 0
         self._payload_data: bytes | None = None
         self._cached_payload: bytes | None = None
@@ -115,7 +177,7 @@ class PacketBuilder:
         dst_mac: str = "00:00:00:00:00:02",
         pad: bool = False,
     ) -> "PacketBuilder":
-        """Add an Ethernet II header to the packet.
+        """Append an Ethernet II header layer.
 
         Omitting this call produces a raw IP packet with no layer-2 framing.
 
@@ -125,25 +187,23 @@ class PacketBuilder:
             pad: When ``True``, zero-pad the assembled frame to the IEEE 802.3
                 minimum of 60 bytes when the frame would otherwise be shorter.
         """
-        self._eth = True
-        self._eth_src_mac = src_mac
-        self._eth_dst_mac = dst_mac
-        self._pad_ethernet = pad
+        # ethertype=0 is a placeholder; the correct value is filled in at
+        # build time based on whatever layer follows this one.
+        self._layers.append(EthernetHeader(dst_mac, src_mac, ethertype=0, pad=pad))
         return self
 
     def vlan(self, *, vid: int, pcp: int = 0, dei: int = 0) -> "PacketBuilder":
-        """Add an IEEE 802.1Q VLAN tag to the Ethernet header.
+        """Append an IEEE 802.1Q VLAN tag layer.
 
-        Only meaningful when :meth:`ethernet` has also been called.  Inserts a
-        4-byte tag (TPID ``0x8100`` + TCI) expanding the Ethernet header from
-        14 to 18 bytes.
+        Inserts a 4-byte VLAN tag between the enclosing Ethernet header and
+        the next layer.  Call twice for QinQ (double-tagged) frames.
 
         Args:
             vid: VLAN ID (1–4094).
             pcp: Priority Code Point (0–7).
             dei: Drop Eligible Indicator (0 or 1).
         """
-        self._vlan = VLANTag(vid, pcp, dei)
+        self._layers.append(VLANTag(vid, pcp, dei))
         return self
 
     def ip(
@@ -161,11 +221,13 @@ class PacketBuilder:
         traffic_class: int = 0,
         flow_label: int = 0,
     ) -> "PacketBuilder":
-        """Add an IP header.  IPv4 or IPv6 is auto-detected from *src*.
+        """Append an IP header layer.  IPv4 or IPv6 is auto-detected from *src*.
 
         IPv4-specific parameters (``tos``, ``identification``, ``flags``,
         ``fragment_offset``) are ignored when *src* is an IPv6 address, and
         vice versa for IPv6-specific parameters.
+
+        Call twice to create an IP-in-IP tunnel packet.
 
         Args:
             src: Source IP address (dotted-decimal IPv4 or colon-hex IPv6).
@@ -181,22 +243,22 @@ class PacketBuilder:
         Raises:
             OSError: If *src* is not a valid IPv4 or IPv6 address.
         """
+        # protocol / next_header = 0 is a placeholder filled in at build time.
         if _detect_ip_version(src) == 6:
-            self._ip = IPv6Header(
-                src, dst, next_header=0,  # filled in by build()/fragment()
+            self._layers.append(IPv6Header(
+                src, dst, next_header=0,
                 hop_limit=ttl,
                 traffic_class=traffic_class,
                 flow_label=flow_label,
-            )
+            ))
         else:
-            self._ip = IPHeader(
-                src, dst, protocol=0,     # filled in by build()/fragment()
-                ttl=ttl,
-                tos=tos,
+            self._layers.append(IPHeader(
+                src, dst, protocol=0,
+                ttl=ttl, tos=tos,
                 identification=identification,
                 flags=flags,
                 fragment_offset=fragment_offset,
-            )
+            ))
         return self
 
     def tcp(
@@ -212,18 +274,18 @@ class PacketBuilder:
         reserved: int = 0,
         options: TCPOptions | None = None,
     ) -> "PacketBuilder":
-        """Add a TCP transport header."""
-        self._transport_hdr = TCPHeader(
+        """Append a TCP transport header layer."""
+        self._layers.append(TCPHeader(
             src_port, dst_port,
             seq=seq, ack=ack, flags=flags,
             window=window, urgent_ptr=urgent_ptr,
             reserved=reserved, options=options,
-        )
+        ))
         return self
 
     def udp(self, *, src_port: int = 12345, dst_port: int = 80) -> "PacketBuilder":
-        """Add a UDP transport header."""
-        self._transport_hdr = UDPHeader(src_port, dst_port)
+        """Append a UDP transport header layer."""
+        self._layers.append(UDPHeader(src_port, dst_port))
         return self
 
     def icmp(
@@ -234,10 +296,10 @@ class PacketBuilder:
         identifier: int = 1,
         sequence: int = 1,
     ) -> "PacketBuilder":
-        """Add an ICMPv4 transport header.  Requires an IPv4 address in :meth:`ip`."""
-        self._transport_hdr = ICMPHeader(
+        """Append an ICMPv4 transport header layer.  Requires an IPv4 layer above it."""
+        self._layers.append(ICMPHeader(
             type=type, code=code, identifier=identifier, sequence=sequence,
-        )
+        ))
         return self
 
     def icmpv6(
@@ -248,10 +310,10 @@ class PacketBuilder:
         identifier: int = 1,
         sequence: int = 1,
     ) -> "PacketBuilder":
-        """Add an ICMPv6 transport header.  Requires an IPv6 address in :meth:`ip`."""
-        self._transport_hdr = ICMPv6Header(
+        """Append an ICMPv6 transport header layer.  Requires an IPv6 layer above it."""
+        self._layers.append(ICMPv6Header(
             type=type, code=code, identifier=identifier, sequence=sequence,
-        )
+        ))
         return self
 
     def payload(self, *, size: int = 0, data: bytes | None = None) -> "PacketBuilder":
@@ -280,58 +342,100 @@ class PacketBuilder:
             )
         return self._cached_payload
 
-    def _build_transport(self, data: bytes) -> tuple[bytes, int]:
-        """Build the transport header and return ``(header_bytes, proto_num)``.
+    def _find_ip_before(self, i: int) -> IPHeader | IPv6Header:
+        """Return the nearest IP layer to the left of index *i*.
 
-        *proto_num* is the IP protocol number (6=TCP, 17=UDP, 1=ICMP, 58=ICMPv6).
+        Raises:
+            ValueError: If no IP layer exists at any index less than *i*.
         """
-        assert self._ip is not None  # guaranteed by _validate()
-        ip_version = 6 if isinstance(self._ip, IPv6Header) else 4
-        src_ip = self._ip.src
-        dst_ip = self._ip.dst
+        for layer in reversed(self._layers[:i]):
+            if isinstance(layer, (IPHeader, IPv6Header)):
+                return layer
+        raise ValueError(
+            "No IP layer found to the left of a transport layer; "
+            "call .ip() before .tcp(), .udp(), .icmp(), or .icmpv6()"
+        )
 
-        if isinstance(self._transport_hdr, TCPHeader):
-            return build_tcp_header(self._transport_hdr, data, src_ip, dst_ip, ip_version), 6
-        if isinstance(self._transport_hdr, UDPHeader):
-            return build_udp_header(self._transport_hdr, data, src_ip, dst_ip, ip_version), 17
-        if isinstance(self._transport_hdr, ICMPHeader):
-            return build_icmp_header(self._transport_hdr, data), socket.IPPROTO_ICMP
-        if isinstance(self._transport_hdr, ICMPv6Header):
-            return build_icmpv6_header(self._transport_hdr, data, src_ip, dst_ip), 58
-        raise ValueError(f"Unknown transport type: {type(self._transport_hdr)}")
+    def _assemble_range(self, start: int, end: int, data: bytes) -> bytes:
+        """Assemble layers[start:end] right-to-left over *data*.
 
-    def _build_network(self, ip_payload: bytes, proto: int) -> tuple[bytes, int]:
-        """Build the IP header and return ``(header_bytes, ethertype)``."""
-        assert self._ip is not None  # guaranteed by _validate()
-        if isinstance(self._ip, IPv6Header):
-            network = build_ipv6_header(
-                IPv6Header(
-                    self._ip.src, self._ip.dst, proto,
-                    hop_limit=self._ip.hop_limit,
-                    traffic_class=self._ip.traffic_class,
-                    flow_label=self._ip.flow_label,
-                ),
-                ip_payload,
-            )
-            return network, ETHERTYPE_IPV6
-        else:
-            network = build_ip_header(
-                IPHeader(
-                    self._ip.src, self._ip.dst, proto,
-                    ttl=self._ip.ttl,
-                    tos=self._ip.tos,
-                    identification=self._ip.identification,
-                    flags=self._ip.flags,
-                    fragment_offset=self._ip.fragment_offset,
-                ),
-                ip_payload,
-            )
-            return network, ETHERTYPE_IPV4
+        The 'next layer' for protocol-number lookups is always taken from the
+        full self._layers list (using i+1), so layers at the boundary of a
+        sub-range correctly see the layer just outside the range.
+        """
+        for i in range(end - 1, start - 1, -1):
+            layer = self._layers[i]
+            next_layer = self._layers[i + 1] if i + 1 < len(self._layers) else None
+
+            if isinstance(layer, TCPHeader):
+                ip = self._find_ip_before(i)
+                ip_version = 6 if isinstance(ip, IPv6Header) else 4
+                data = build_tcp_header(layer, data, ip.src, ip.dst, ip_version) + data
+
+            elif isinstance(layer, UDPHeader):
+                ip = self._find_ip_before(i)
+                ip_version = 6 if isinstance(ip, IPv6Header) else 4
+                data = build_udp_header(layer, data, ip.src, ip.dst, ip_version) + data
+
+            elif isinstance(layer, ICMPHeader):
+                data = build_icmp_header(layer, data) + data
+
+            elif isinstance(layer, ICMPv6Header):
+                ip = self._find_ip_before(i)
+                data = build_icmpv6_header(layer, data, ip.src, ip.dst) + data
+
+            elif isinstance(layer, IPHeader):
+                proto = _ip_proto_for(next_layer) if next_layer else 0
+                hdr = IPHeader(
+                    layer.src, layer.dst, proto,
+                    ttl=layer.ttl, tos=layer.tos,
+                    identification=layer.identification,
+                    flags=layer.flags,
+                    fragment_offset=layer.fragment_offset,
+                )
+                data = build_ip_header(hdr, data) + data
+
+            elif isinstance(layer, IPv6Header):
+                proto = _ip_proto_for(next_layer) if next_layer else 0
+                hdr = IPv6Header(
+                    layer.src, layer.dst, proto,
+                    hop_limit=layer.hop_limit,
+                    traffic_class=layer.traffic_class,
+                    flow_label=layer.flow_label,
+                )
+                data = build_ipv6_header(hdr, data) + data
+
+            elif isinstance(layer, VLANTag):
+                ethertype = _ethertype_for(next_layer) if next_layer else 0
+                tci = (layer.pcp << 13) | (layer.dei << 12) | layer.vid
+                data = struct.pack("!HH", tci, ethertype) + data
+
+            elif isinstance(layer, EthernetHeader):
+                ethertype = _ethertype_for(next_layer) if next_layer else 0
+                eth = EthernetHeader(layer.dst_mac, layer.src_mac, ethertype)
+                data = build_ethernet_header(eth) + data
+
+        return data
+
+    def _apply_eth_padding(self, data: bytes) -> bytes:
+        """Pad *data* to the Ethernet minimum frame size if the outermost layer
+        is an :class:`EthernetHeader` with ``pad=True``."""
+        if (self._layers
+                and isinstance(self._layers[0], EthernetHeader)
+                and self._layers[0].pad
+                and len(data) < ETHERNET_MIN_FRAME_SIZE):
+            data += b'\x00' * (ETHERNET_MIN_FRAME_SIZE - len(data))
+        return data
 
     def _validate(self) -> None:
-        if self._ip is None:
+        has_ip = any(isinstance(l, (IPHeader, IPv6Header)) for l in self._layers)
+        has_transport = any(
+            isinstance(l, (TCPHeader, UDPHeader, ICMPHeader, ICMPv6Header))
+            for l in self._layers
+        )
+        if not has_ip:
             raise ValueError("No IP layer configured; call .ip() before .build()/.fragment()")
-        if self._transport_hdr is None:
+        if not has_transport:
             raise ValueError(
                 "No transport layer configured; "
                 "call .tcp(), .udp(), .icmp(), or .icmpv6() before .build()/.fragment()"
@@ -342,21 +446,15 @@ class PacketBuilder:
     def build(self) -> bytes:
         """Assemble and return the complete packet bytes.
 
-        Assembly order::
-
-            [Ethernet II header — optional, added by .ethernet()]
-            [IPv4 (20 B) or IPv6 (40 B) header]
-            [TCP / UDP / ICMP / ICMPv6 header]
-            [payload]
-
-        All checksums are computed automatically.
+        Layers are assembled from innermost (payload) to outermost, with all
+        checksums computed automatically.
 
         Returns:
             A :class:`bytes` object containing the fully assembled packet.
 
         Raises:
-            ValueError: If :meth:`ip` or a transport method has not been called.
-            OSError: If the IP address passed to :meth:`ip` is invalid.
+            ValueError: If no IP layer or no transport layer has been added.
+            OSError: If an IP address string is invalid.
 
         Example::
 
@@ -365,41 +463,33 @@ class PacketBuilder:
             28
         """
         self._validate()
-        data = self._payload_bytes
-        transport, proto = self._build_transport(data)
-        ip_payload = transport + data
-        network, ethertype = self._build_network(ip_payload, proto)
-        packet = network + ip_payload
-
-        if self._eth:
-            eth_hdr = build_ethernet_header(
-                EthernetHeader(self._eth_dst_mac, self._eth_src_mac, ethertype, self._vlan)
-            )
-            packet = eth_hdr + packet
-            if self._pad_ethernet and len(packet) < ETHERNET_MIN_FRAME_SIZE:
-                packet += b'\x00' * (ETHERNET_MIN_FRAME_SIZE - len(packet))
-
-        return packet
+        data = self._assemble_range(0, len(self._layers), self._payload_bytes)
+        return self._apply_eth_padding(data)
 
     def fragment(self, mtu: int = 1500) -> list[bytes]:
         """Fragment the packet to fit within *mtu* bytes per IP datagram.
+
+        The first IP layer in the stack is used as the fragmentation point.
+        Everything to its left (Ethernet, VLAN, outer IP) becomes a prefix
+        prepended to every fragment; everything to its right (inner IP if any,
+        transport, payload) becomes the transport data that is fragmented.
 
         IPv4 uses native Flags / Fragment Offset fragmentation (RFC 791).
         IPv6 inserts a Fragment Extension Header (next header = 44) per
         RFC 8200 §4.5.
 
         Args:
-            mtu: Maximum IP packet size in bytes, *excluding* any Ethernet
-                header.  Defaults to ``1500``.
+            mtu: Maximum IP packet size in bytes, *excluding* any prefix
+                headers (e.g. Ethernet).  Defaults to ``1500``.
 
         Returns:
             A list of fully assembled packet bytes, one entry per fragment.
             When the payload fits in a single datagram the list has one element.
 
         Raises:
-            ValueError: If :meth:`ip` or a transport method has not been called,
+            ValueError: If no IP layer or no transport layer has been added,
                 or if *mtu* is too small to hold even one 8-byte fragment.
-            OSError: If the IP address passed to :meth:`ip` is invalid.
+            OSError: If an IP address string is invalid.
 
         Example::
 
@@ -414,39 +504,44 @@ class PacketBuilder:
         from .fragmentation import fragment_ipv4, fragment_ipv6
 
         self._validate()
-        assert self._ip is not None  # guaranteed by _validate()
-        data = self._payload_bytes
-        transport, proto = self._build_transport(data)
-        transport_data = transport + data
 
-        eth_header = None
-        if self._eth:
-            ethertype = ETHERTYPE_IPV6 if isinstance(self._ip, IPv6Header) else ETHERTYPE_IPV4
-            eth_header = EthernetHeader(self._eth_dst_mac, self._eth_src_mac, ethertype, self._vlan)
+        # Find the first (outermost) IP layer.
+        k = next(
+            i for i, l in enumerate(self._layers)
+            if isinstance(l, (IPHeader, IPv6Header))
+        )
+        ip_layer = self._layers[k]
 
-        if isinstance(self._ip, IPv6Header):
+        # Build everything to the right of the IP layer (transport + payload,
+        # including any inner IP layers in an IP-in-IP stack).
+        transport_data = self._assemble_range(k + 1, len(self._layers), self._payload_bytes)
+
+        # Fragment the IP layer.
+        next_layer = self._layers[k + 1] if k + 1 < len(self._layers) else None
+        proto = _ip_proto_for(next_layer) if next_layer else 0
+
+        if isinstance(ip_layer, IPv6Header):
             ip_hdr = IPv6Header(
-                self._ip.src, self._ip.dst, proto,
-                hop_limit=self._ip.hop_limit,
-                traffic_class=self._ip.traffic_class,
-                flow_label=self._ip.flow_label,
+                ip_layer.src, ip_layer.dst, proto,
+                hop_limit=ip_layer.hop_limit,
+                traffic_class=ip_layer.traffic_class,
+                flow_label=ip_layer.flow_label,
             )
-            frags = fragment_ipv6(ip_hdr, transport_data, mtu, eth_header=eth_header)
+            frags = fragment_ipv6(ip_hdr, transport_data, mtu, eth_header=None)
         else:
             ip_hdr = IPHeader(
-                self._ip.src, self._ip.dst, proto,
-                ttl=self._ip.ttl,
-                tos=self._ip.tos,
-                identification=self._ip.identification,
-                flags=self._ip.flags,
-                fragment_offset=self._ip.fragment_offset,
+                ip_layer.src, ip_layer.dst, proto,
+                ttl=ip_layer.ttl, tos=ip_layer.tos,
+                identification=ip_layer.identification,
+                flags=ip_layer.flags,
+                fragment_offset=ip_layer.fragment_offset,
             )
-            frags = fragment_ipv4(ip_hdr, transport_data, mtu, eth_header=eth_header)
+            frags = fragment_ipv4(ip_hdr, transport_data, mtu, eth_header=None)
 
-        if self._pad_ethernet and self._eth:
-            frags = [
-                f + b'\x00' * (ETHERNET_MIN_FRAME_SIZE - len(f))
-                if len(f) < ETHERNET_MIN_FRAME_SIZE else f
-                for f in frags
-            ]
-        return frags
+        # Build the prefix (everything to the left of the IP layer).
+        # _assemble_range uses self._layers[k] as the 'next_layer' context for
+        # layers at index k-1, so ethertype/proto values are set correctly.
+        prefix = self._assemble_range(0, k, b"")
+
+        result = [prefix + frag for frag in frags]
+        return [self._apply_eth_padding(f) for f in result]

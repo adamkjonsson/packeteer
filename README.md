@@ -15,7 +15,7 @@ No external dependencies. Python 3.10+ and the standard library only.
 ## Features
 
 - **Ethernet II** framing with configurable MAC addresses and automatic EtherType
-- **IEEE 802.1Q VLAN tagging** — inserts a 4-byte VLAN tag (TPID `0x8100` + TCI) into the Ethernet header; configurable VID (1–4094), PCP (0–7), and DEI
+- **IEEE 802.1Q VLAN tagging** — 4-byte tag (TPID `0x8100` + TCI) with configurable VID (1–4094), PCP (0–7), and DEI; call `.vlan()` twice for **QinQ / 802.1ad** double-tagged frames
 - **IPv4** headers (RFC 791) with RFC 1071 header checksum
 - **IPv6** fixed headers (RFC 8200) — no header checksum, 40 bytes
 - **TCP** (RFC 9293) with pseudo-header checksum for IPv4 and IPv6
@@ -23,6 +23,7 @@ No external dependencies. Python 3.10+ and the standard library only.
 - **ICMPv4** (RFC 792) Echo Request/Reply — no pseudo-header
 - **ICMPv6** (RFC 4443) Echo Request/Reply — mandatory IPv6 pseudo-header checksum
 - IP version **auto-detected** from address strings (no explicit flag needed)
+- **Arbitrary layer stacking** — each fluent method appends a layer, so any protocol can appear at any depth and any number of times; call `.ip()` twice for **IP-in-IP** (RFC 2003) or **IPv6-in-IPv4** (RFC 4213) tunnels
 - **IPv4 fragmentation** (RFC 791) — Flags/Fragment Offset in IP header, MF flag, shared identification
 - **IPv6 fragmentation** (RFC 8200 §4.5) — Fragment Extension Header (next header = 44), 32-bit identification
 - High-level `PacketBuilder.fragment(mtu)` and low-level `fragment_ipv4` / `fragment_ipv6` functions
@@ -450,15 +451,40 @@ all three protocols in the correct order with accurate timestamps.
 The primary entry point. Build packets layer by layer using a fluent API, then
 call `.build()` or `.fragment()` to produce the final bytes.
 
+Each method **appends** a layer to an ordered stack — it does not overwrite a
+previous call. This means you can call the same method multiple times to
+produce advanced encapsulations: call `.vlan()` twice for QinQ, call `.ip()`
+twice for an IP-in-IP tunnel.
+
 ```python
 from packet_generator import PacketBuilder
 
+# Standard Ethernet + IP + TCP packet
 pkt = (PacketBuilder()
     .ethernet(src_mac="00:00:00:00:00:01", dst_mac="00:00:00:00:00:02", pad=False)
-    .vlan(vid=100, pcp=0, dei=0)          # optional; only meaningful after .ethernet()
+    .vlan(vid=100, pcp=0, dei=0)
     .ip(src="10.0.0.1", dst="10.0.0.2", ttl=64)
     .tcp(src_port=12345, dst_port=80, seq=0, ack=0, flags=TCP_ACK, window=65535)
     .payload(size=64)                     # OR .payload(data=b"hello")
+    .build()
+)
+
+# QinQ (double-tagged) frame — call .vlan() twice
+pkt = (PacketBuilder()
+    .ethernet()
+    .vlan(vid=100)   # outer VLAN
+    .vlan(vid=200)   # inner VLAN
+    .ip(src="10.0.0.1", dst="10.0.0.2")
+    .udp()
+    .build()
+)
+
+# IP-in-IP tunnel — call .ip() twice
+pkt = (PacketBuilder()
+    .ethernet()
+    .ip(src="203.0.113.1", dst="203.0.113.2")   # outer (tunnel) IP
+    .ip(src="10.0.0.1", dst="10.0.0.2")         # inner IP
+    .tcp(dst_port=80)
     .build()
 )
 ```
@@ -468,15 +494,17 @@ Omitting `.payload()` produces a zero-byte payload.
 
 #### Layer methods
 
+Each method appends one layer to the stack and returns `self` for chaining.
+
 | Method | Description |
 |--------|-------------|
-| `.ethernet(src_mac, dst_mac, pad=False)` | Add an Ethernet II header. `pad=True` zero-pads the frame to the IEEE 802.3 minimum of 60 bytes. |
-| `.vlan(vid, pcp=0, dei=0)` | Add an 802.1Q VLAN tag (call after `.ethernet()`). |
-| `.ip(src, dst, ttl=64, tos=0, identification=0, flags=0b010, fragment_offset=0, traffic_class=0, flow_label=0)` | Add an IPv4 or IPv6 header (auto-detected from `src`). IPv4-only params are ignored for IPv6 and vice versa. |
-| `.tcp(src_port=12345, dst_port=80, seq=0, ack=0, flags=TCP_ACK, window=65535, urgent_ptr=0, reserved=0, options=None)` | Add a TCP transport header. |
-| `.udp(src_port=12345, dst_port=80)` | Add a UDP transport header. |
-| `.icmp(type=8, code=0, identifier=1, sequence=1)` | Add an ICMPv4 transport header (use with IPv4 addresses). |
-| `.icmpv6(type=128, code=0, identifier=1, sequence=1)` | Add an ICMPv6 transport header (use with IPv6 addresses). |
+| `.ethernet(src_mac, dst_mac, pad=False)` | Append an Ethernet II header. `pad=True` zero-pads the frame to the IEEE 802.3 minimum of 60 bytes. |
+| `.vlan(vid, pcp=0, dei=0)` | Append an 802.1Q VLAN tag. Call twice for QinQ (802.1ad) double-tagged frames. |
+| `.ip(src, dst, ttl=64, tos=0, identification=0, flags=0b010, fragment_offset=0, traffic_class=0, flow_label=0)` | Append an IPv4 or IPv6 header (auto-detected from `src`). Call twice for IP-in-IP tunnels. IPv4-only params are ignored for IPv6 and vice versa. |
+| `.tcp(src_port=12345, dst_port=80, seq=0, ack=0, flags=TCP_ACK, window=65535, urgent_ptr=0, reserved=0, options=None)` | Append a TCP transport header. |
+| `.udp(src_port=12345, dst_port=80)` | Append a UDP transport header. |
+| `.icmp(type=8, code=0, identifier=1, sequence=1)` | Append an ICMPv4 transport header (use with IPv4 addresses). |
+| `.icmpv6(type=128, code=0, identifier=1, sequence=1)` | Append an ICMPv6 transport header (use with IPv6 addresses). |
 | `.payload(size=0, data=None)` | Set the payload. `data` takes precedence over `size`. Random bytes are generated for `size` and cached. |
 
 #### Assembly methods
@@ -486,7 +514,7 @@ pkt: bytes         = builder.build()             # assemble and return the compl
 frags: list[bytes] = builder.fragment(mtu=1500)  # fragment into ≤ mtu-byte IP datagrams
 ```
 
-`.build()` raises `ValueError` if `.ip()` or a transport method has not been called.
+`.build()` raises `ValueError` if no IP layer or no transport layer has been added.
 
 ---
 
@@ -508,6 +536,14 @@ hdr = EthernetHeader(
     ethertype=ETHERTYPE_IPV4,   # 0x0800
 )
 raw: bytes = build_ethernet_header(hdr)  # 14 bytes
+
+# With pad=True the caller is responsible for padding the full frame to 60 bytes
+hdr = EthernetHeader(
+    dst_mac="aa:bb:cc:dd:ee:ff",
+    src_mac="11:22:33:44:55:66",
+    ethertype=ETHERTYPE_IPV4,
+    pad=True,
+)
 
 # IEEE 802.1Q tagged header — 18 bytes
 #   dst_mac (6) | src_mac (6) | TPID 0x8100 (2) | TCI (2) | inner EtherType (2)
@@ -701,24 +737,24 @@ when `nanoseconds=True`.
 
 ```python
 import time
-from packet_generator import PacketBuilder, Protocol, write_pcap, LINKTYPE_RAW
+from packet_generator import PacketBuilder, write_pcap, LINKTYPE_ETHERNET, LINKTYPE_RAW
 
 # Microsecond timestamps (default)
 t = int(time.time())
 pkts = [
-    (PacketBuilder("10.0.0.1", "10.0.0.2", Protocol.TCP).build(), t, 0),
-    (PacketBuilder("10.0.0.2", "10.0.0.1", Protocol.TCP).build(), t, 500_000),
+    (PacketBuilder().ethernet().ip(src="10.0.0.1", dst="10.0.0.2").tcp().build(), t, 0),
+    (PacketBuilder().ethernet().ip(src="10.0.0.2", dst="10.0.0.1").tcp().build(), t, 500_000),
 ]
-write_pcap(pkts, path="out.pcap")
+write_pcap(pkts, path="out.pcap", link_type=LINKTYPE_ETHERNET)
 
 # Nanosecond timestamps
 now_ns = time.time_ns()
 sec, nsec = divmod(now_ns, 1_000_000_000)
-pkts = [(PacketBuilder("10.0.0.1", "10.0.0.2", Protocol.UDP).build(), sec, nsec)]
+pkts = [(PacketBuilder().ethernet().ip(src="10.0.0.1", dst="10.0.0.2").udp().build(), sec, nsec)]
 write_pcap(pkts, path="out_ns.pcap", nanoseconds=True)
 
 # Raw IP packets (no Ethernet header)
-pkts = [(PacketBuilder("::1", "::2", Protocol.UDP, include_ethernet=False).build(), 0, 0)]
+pkts = [(PacketBuilder().ip(src="::1", dst="::2").udp().build(), 0, 0)]
 write_pcap(pkts, path="raw.pcap", link_type=LINKTYPE_RAW)
 ```
 
@@ -751,12 +787,12 @@ Section Header Block, one Interface Description Block (with the appropriate
 
 ```python
 import time
-from packet_generator import PacketBuilder, Protocol
+from packet_generator import PacketBuilder
 from packet_generator.pcap import write_pcapng
 
 now_ns = time.time_ns()
 sec, nsec = divmod(now_ns, 1_000_000_000)
-pkt = PacketBuilder("10.0.0.1", "10.0.0.2", Protocol.TCP).build()
+pkt = PacketBuilder().ethernet().ip(src="10.0.0.1", dst="10.0.0.2").tcp().build()
 write_pcapng([(pkt, sec, nsec)], path="out.pcapng", nanoseconds=True)
 ```
 

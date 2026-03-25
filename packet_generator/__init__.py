@@ -14,7 +14,9 @@ Fragmentation is supported via :meth:`PacketBuilder.fragment` (high-level)
 or the low-level :func:`fragment_ipv4` and :func:`fragment_ipv6` functions.
 
 The recommended entry point is :class:`PacketBuilder`, which wires all
-layers together and exposes a clean, high-level API:
+layers together and exposes a clean, high-level API.  Each fluent method
+**appends** a layer to an ordered stack, so the same method can be called
+multiple times to produce advanced encapsulations.
 
 .. code-block:: python
 
@@ -46,9 +48,28 @@ layers together and exposes a clean, high-level API:
         .build()
     )
 
+    # QinQ (802.1ad) double-tagged frame — call .vlan() twice
+    pkt = (PacketBuilder()
+        .ethernet()
+        .vlan(vid=100)   # outer VLAN
+        .vlan(vid=200)   # inner VLAN
+        .ip(src="10.0.0.1", dst="10.0.0.2")
+        .udp()
+        .build()
+    )
+
+    # IP-in-IP tunnel — call .ip() twice
+    pkt = (PacketBuilder()
+        .ethernet()
+        .ip(src="203.0.113.1", dst="203.0.113.2")
+        .ip(src="10.0.0.1", dst="10.0.0.2")
+        .tcp(dst_port=80)
+        .build()
+    )
+
 Public API:
     PacketBuilder: High-level packet assembly class.
-    EthernetHeader: Dataclass for Ethernet II header fields.
+    EthernetHeader: Dataclass for Ethernet II header fields (dst_mac, src_mac, ethertype, vlan_tag, pad).
     VLANTag: Dataclass for IEEE 802.1Q VLAN tag fields.
     IPHeader: Dataclass for IPv4 header fields.
     IPv6Header: Dataclass for IPv6 header fields.
