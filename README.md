@@ -15,7 +15,7 @@ No external dependencies. Python 3.10+ and the standard library only.
 ## Features
 
 - **Ethernet II** framing with configurable MAC addresses and automatic EtherType
-- **IEEE 802.1Q VLAN tagging** — 4-byte tag (TPID `0x8100` + TCI) with configurable VID (1–4094), PCP (0–7), and DEI; call `.vlan()` twice for **QinQ / 802.1ad** double-tagged frames
+- **IEEE 802.1Q VLAN tagging** — 4-byte tag (TPID `0x8100` + TCI) with configurable VID (1–4094), PCP (0–7), and DEI; call `.vlan()` twice for **QinQ** double-tagged frames (IEEE 802.1ad)
 - **IPv4** headers (RFC 791) with RFC 1071 header checksum
 - **IPv6** fixed headers (RFC 8200) — no header checksum, 40 bytes
 - **TCP** (RFC 9293) with pseudo-header checksum for IPv4 and IPv6
@@ -453,8 +453,8 @@ call `.build()` or `.fragment()` to produce the final bytes.
 
 Each method **appends** a layer to an ordered stack — it does not overwrite a
 previous call. This means you can call the same method multiple times to
-produce advanced encapsulations: call `.vlan()` twice for QinQ, call `.ip()`
-twice for an IP-in-IP tunnel.
+produce advanced encapsulations: call `.vlan()` twice for QinQ (IEEE 802.1ad),
+call `.ip()` twice for IP-in-IP (RFC 2003) or IPv6-in-IPv4 (RFC 4213) tunnels.
 
 ```python
 from packet_generator import PacketBuilder
@@ -499,8 +499,8 @@ Each method appends one layer to the stack and returns `self` for chaining.
 | Method | Description |
 |--------|-------------|
 | `.ethernet(src_mac, dst_mac, pad=False)` | Append an Ethernet II header. `pad=True` zero-pads the frame to the IEEE 802.3 minimum of 60 bytes. |
-| `.vlan(vid, pcp=0, dei=0)` | Append an 802.1Q VLAN tag. Call twice for QinQ (802.1ad) double-tagged frames. |
-| `.ip(src, dst, ttl=64, tos=0, identification=0, flags=0b010, fragment_offset=0, traffic_class=0, flow_label=0)` | Append an IPv4 or IPv6 header (auto-detected from `src`). Call twice for IP-in-IP tunnels. IPv4-only params are ignored for IPv6 and vice versa. |
+| `.vlan(vid, pcp=0, dei=0)` | Append an 802.1Q VLAN tag. Call twice for QinQ (IEEE 802.1ad) double-tagged frames. |
+| `.ip(src, dst, ttl=64, tos=0, identification=0, flags=0b010, fragment_offset=0, traffic_class=0, flow_label=0)` | Append an IPv4 or IPv6 header (auto-detected from `src`). Call twice for IP-in-IP (RFC 2003) or IPv6-in-IPv4 (RFC 4213) tunnels. IPv4-only params are ignored for IPv6 and vice versa. |
 | `.tcp(src_port=12345, dst_port=80, seq=0, ack=0, flags=TCP_ACK, window=65535, urgent_ptr=0, reserved=0, options=None)` | Append a TCP transport header. |
 | `.udp(src_port=12345, dst_port=80)` | Append a UDP transport header. |
 | `.icmp(type=8, code=0, identifier=1, sequence=1)` | Append an ICMPv4 transport header (use with IPv4 addresses). |
@@ -1194,5 +1194,8 @@ All tests run in under a second and require no third-party packages.
 | RFC 1071 | Computing the Internet Checksum |
 | RFC 4443 | Internet Control Message Protocol for IPv6 (ICMPv6) |
 | RFC 8200 | Internet Protocol, Version 6 (IPv6) — including §4.5 Fragment Extension Header |
+| RFC 2003 | IP Encapsulation within IP (IPv4-in-IPv4 tunnelling) |
+| RFC 4213 | Basic Transition Mechanisms for IPv6 Hosts and Routers (IPv6-in-IPv4 tunnelling) |
 | IEEE 802.3 | Ethernet |
 | IEEE 802.1Q | Virtual LANs (VLAN tagging) |
+| IEEE 802.1ad | Provider Bridges (QinQ double-tagged frames) |
