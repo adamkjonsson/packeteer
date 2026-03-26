@@ -35,21 +35,28 @@ from __future__ import annotations
 
 import json
 import socket
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from packet_parser.parser import ParsedPacket
 
 from packet_generator.ethernet import EthernetHeader
+from packet_generator.etherip import EtherIPHeader, IPPROTO_ETHERIP
 from packet_generator.ip import IPHeader
 from packet_generator.ipv6 import IPv6Header
+from packet_generator.mpls import MPLSLabel
+from packet_generator.pppoe import PPPoEHeader, PPPOE_CODE_SESSION
 from packet_generator.tcp import TCPHeader, TCPOptions
 from packet_generator.udp import UDPHeader
 from packet_generator.icmp import ICMPHeader
 from packet_generator.icmpv6 import ICMPv6Header
 
 _PROTO_TO_STR: dict[int, str] = {
-    socket.IPPROTO_TCP: "tcp",
-    socket.IPPROTO_UDP: "udp",
+    socket.IPPROTO_TCP:  "tcp",
+    socket.IPPROTO_UDP:  "udp",
     socket.IPPROTO_ICMP: "icmp",
     socket.IPPROTO_ICMPV6: "icmpv6",
+    IPPROTO_ETHERIP:     "etherip",
 }
 
 
@@ -146,20 +153,67 @@ def _apply_transport(config: dict[str, Any], hdr: TCPHeader | UDPHeader | ICMPHe
     config["transport"] = section
 
 
+def _apply_pppoe(config: dict[str, Any], hdr: PPPoEHeader) -> None:
+    section: dict[str, Any] = {"session_id": hdr.session_id}
+    if hdr.code != PPPOE_CODE_SESSION:
+        section["code"] = hdr.code
+    if hdr.tags:
+        section["tags"] = [
+            {"type": t.type, "data": t.data.hex()}
+            for t in hdr.tags
+        ]
+    config["pppoe"] = section
+
+
+def _apply_mpls(config: dict[str, Any], label: MPLSLabel) -> None:
+    entry: dict[str, Any] = {"label": label.label}
+    if label.tc != 0:
+        entry["tc"] = label.tc
+    entry["ttl"] = label.ttl
+    config.setdefault("mpls", []).append(entry)
+
+
+def _apply_etherip(config: dict[str, Any], hdr: EtherIPHeader, tunneled: ParsedPacket) -> None:
+    """Serialise *hdr* and the recursively-parsed inner frame *tunneled* into
+    ``config["etherip"]``.  Called recursively for double-nested EtherIP."""
+    inner: dict[str, Any] = {}
+    if tunneled.ethernet is not None:
+        _apply_ethernet(inner, tunneled.ethernet)
+    for label in tunneled.mpls:
+        _apply_mpls(inner, label)
+    if tunneled.pppoe is not None:
+        _apply_pppoe(inner, tunneled.pppoe)
+    if tunneled.ip is not None:
+        _apply_ip(inner, tunneled.ip)
+    if tunneled.etherip is not None and tunneled.tunneled is not None:
+        _apply_etherip(inner, tunneled.etherip, tunneled.tunneled)  # recurse
+    elif tunneled.transport is not None:
+        _apply_transport(inner, tunneled.transport)
+        if tunneled.payload:
+            _apply_payload(inner, tunneled.payload)
+    config["etherip"] = inner
+
+
 def _apply_payload(config: dict[str, Any], payload: bytes) -> None:
     config["payload"] = {"data": payload.hex()}
 
 
 def update_config(
     config: dict[str, Any],
-    layer: EthernetHeader | IPHeader | IPv6Header | TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | bytes,
+    layer: EthernetHeader | PPPoEHeader | MPLSLabel | IPHeader | IPv6Header | TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | bytes,
 ) -> dict[str, Any]:
     """Add a parsed protocol layer to *config* and return it.
 
     Dispatches on the type of *layer*:
 
     - :class:`~packet_generator.ethernet.EthernetHeader` → ``ethernet`` section
+    - :class:`~packet_generator.mpls.MPLSLabel` → appended to the ``mpls`` array
+    - :class:`~packet_generator.pppoe.PPPoEHeader` → ``pppoe`` section
     - :class:`~packet_generator.ip.IPHeader` / :class:`~packet_generator.ipv6.IPv6Header` → ``network`` section
+    - :class:`~packet_generator.etherip.EtherIPHeader` → handled via
+      :func:`_apply_etherip` in :func:`~packet_parser.parser.parse_pcap_file`
+      (requires the inner :class:`~packet_parser.parser.ParsedPacket` as a
+      second argument — not dispatchable through ``update_config`` alone)
     - :class:`~packet_generator.tcp.TCPHeader` → ``transport`` section (TCP fields)
     - :class:`~packet_generator.udp.UDPHeader` → ``transport`` section (UDP fields)
     - :class:`~packet_generator.icmp.ICMPHeader` / :class:`~packet_generator.icmpv6.ICMPv6Header` → ``transport`` section (ICMP fields)
@@ -181,6 +235,10 @@ def update_config(
     """
     if isinstance(layer, EthernetHeader):
         _apply_ethernet(config, layer)
+    elif isinstance(layer, PPPoEHeader):
+        _apply_pppoe(config, layer)
+    elif isinstance(layer, MPLSLabel):
+        _apply_mpls(config, layer)
     elif isinstance(layer, (IPHeader, IPv6Header)):
         _apply_ip(config, layer)
     elif isinstance(layer, (TCPHeader, UDPHeader, ICMPHeader, ICMPv6Header)):
@@ -209,9 +267,10 @@ def to_json_config(
         A dict matching the top-level JSON config format accepted by
         ``cli.py --config``.
     """
-    cfg: dict[str, Any] = {"packets": packets}
+    cfg: dict[str, Any] = {}
     if file_metadata is not None:
         cfg["file_metadata"] = file_metadata
+    cfg["packets"] = packets
     return cfg
 
 

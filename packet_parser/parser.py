@@ -6,13 +6,14 @@ select the next parser automatically.
 
 Example — single raw packet::
 
-    from packet_parser.parser import parse_packet, ParsedPacket
-    from packet_generator import PacketBuilder, Protocol
+    from packet_parser.parser import parse_packet
+    from packet_generator import PacketBuilder
+    from packet_generator.pcap import LINKTYPE_RAW
 
-    raw = PacketBuilder("10.0.0.1", "10.0.0.2", Protocol.TCP, dst_port=443).build()
-    pkt = parse_packet(raw)
+    raw = PacketBuilder().ip(src="10.0.0.1", dst="10.0.0.2").tcp(dst_port=443).build()
+    pkt = parse_packet(raw, link_type=LINKTYPE_RAW)
 
-    print(pkt.ip.src, "→", pkt.ip.dst)
+    print(pkt.ip.src, "->", pkt.ip.dst)
     print("dst_port:", pkt.transport.dst_port)
     print("payload:", pkt.payload.hex())
 
@@ -26,7 +27,7 @@ Example — reading from a pcap file::
         pkt = parse_pcap_packet(record, pcap.header)
         if pkt.transport:
             print(f"{pkt.ts_sec}.{pkt.ts_frac:06d}  "
-                  f"{pkt.ip.src} → {pkt.ip.dst}:{pkt.transport.dst_port}")
+                  f"{pkt.ip.src} -> {pkt.ip.dst}:{pkt.transport.dst_port}")
 """
 from __future__ import annotations
 
@@ -44,6 +45,9 @@ from packet_generator.ethernet import (
 )
 from packet_generator.ip import IPHeader
 from packet_generator.ipv6 import IPv6Header
+from packet_generator.etherip import EtherIPHeader, IPPROTO_ETHERIP
+from packet_generator.mpls import MPLSLabel, ETHERTYPE_MPLS_UNICAST, ETHERTYPE_MPLS_MULTICAST
+from packet_generator.pppoe import PPPoEHeader, ETHERTYPE_PPPOE_DISCOVERY, ETHERTYPE_PPPOE_SESSION
 from packet_generator.tcp import TCPHeader
 from packet_generator.udp import UDPHeader
 from packet_generator.icmp import ICMPHeader
@@ -51,9 +55,12 @@ from packet_generator.icmpv6 import ICMPv6Header
 from packet_generator.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW
 
 from packet_parser.pcap import PcapFileHeader, read_pcap
-from packet_parser.to_config import update_config, to_json_config, to_json_string
+from packet_parser.to_config import update_config, to_json_config, to_json_string, _apply_etherip
 
 from packet_parser.ethernet import packet_parser as _ethernet_parser
+from packet_parser.etherip import packet_parser as _etherip_parser
+from packet_parser.mpls import packet_parser as _mpls_parser
+from packet_parser.pppoe import packet_parser as _pppoe_parser
 from packet_parser.ip import packet_parser as _ip_parser
 from packet_parser.tcp import packet_parser as _tcp_parser
 from packet_parser.udp import packet_parser as _udp_parser
@@ -79,7 +86,16 @@ class ParsedPacket:
 
     Attributes:
         ethernet: Parsed Ethernet II header (includes VLAN tag when present).
+        mpls: List of parsed MPLS label stack entries, outermost first.
+            Empty when no MPLS labels are present.
+        pppoe: Parsed PPPoE header, or ``None`` when absent.
         ip: Parsed IPv4 or IPv6 header.
+        etherip: Parsed EtherIP tunnel header, or ``None`` when absent.
+            When set, :attr:`tunneled` contains the inner frame as a
+            :class:`ParsedPacket`.
+        tunneled: Inner Ethernet frame parsed recursively when
+            :attr:`etherip` is present, otherwise ``None``.  May itself
+            have a non-``None`` :attr:`etherip` for double-nested tunnels.
         transport: Parsed TCP, UDP, ICMPv4, or ICMPv6 header.
         payload: Bytes remaining after all parsed headers.
         ts_sec: Capture timestamp — whole seconds (from pcap record).
@@ -88,7 +104,11 @@ class ParsedPacket:
     """
 
     ethernet:  EthernetHeader | None = None
+    mpls:      list[MPLSLabel] = field(default_factory=list)
+    pppoe:     PPPoEHeader | None = None
     ip:        IPHeader | IPv6Header | None = None
+    etherip:   EtherIPHeader | None = None
+    tunneled:  "ParsedPacket | None" = None
     transport: TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | None = None
     payload:   bytes = field(default=b"")
     ts_sec:    int = 0
@@ -102,12 +122,24 @@ def parse_packet(data: bytes, *, link_type: int = LINKTYPE_ETHERNET) -> ParsedPa
     parser to select the next one:
 
     - **Ethernet** (``link_type=LINKTYPE_ETHERNET``, default): The EtherType
-      drives IP-layer selection.  IEEE 802.1Q VLAN tags are decoded inside the
-      Ethernet parser; the returned ``EthernetHeader.vlan_tag`` carries the
-      tag fields and ``next_layer_id`` is already the inner EtherType.
+      drives layer selection.  IEEE 802.1Q VLAN tags are decoded inside the
+      Ethernet parser; ``next_layer_id`` is already the inner EtherType.
+    - **MPLS** (EtherType ``0x8847``/``0x8848``): Zero or more label stack
+      entries are decoded into :attr:`ParsedPacket.mpls`.  Parsing continues
+      until the bottom-of-stack label is consumed and the next byte is an IP
+      version nibble.
+    - **PPPoE** (EtherType ``0x8863``/``0x8864``): The 6-byte PPPoE header is
+      decoded into :attr:`ParsedPacket.pppoe`.  For session frames the 2-byte
+      PPP protocol field is consumed and used to determine whether an IPv4 or
+      IPv6 header follows.  For discovery frames parsing stops after the tags
+      (no IP layer follows).
     - **Raw IP** (``link_type=LINKTYPE_RAW``): Ethernet parsing is skipped;
       IP-version detection starts immediately.
     - **IP**: The protocol/next-header field selects the transport parser.
+    - **EtherIP** (IP protocol ``97``): The 2-byte EtherIP header is decoded
+      into :attr:`ParsedPacket.etherip` and ``parse_packet`` is called
+      recursively on the inner Ethernet frame.  The result is stored in
+      :attr:`ParsedPacket.tunneled`.  Arbitrary nesting is supported.
     - **Transport**: TCP, UDP, ICMPv4, or ICMPv6.
     - **Payload**: Any bytes after the last parsed header.
 
@@ -134,10 +166,39 @@ def parse_packet(data: bytes, *, link_type: int = LINKTYPE_ETHERNET) -> ParsedPa
         pkt.ethernet = eth_hdr
         remaining = remaining[eth_size:]
         # ethertype is the inner EtherType (VLAN already unwrapped by the parser)
-        if ethertype not in (ETHERTYPE_IPV4, ETHERTYPE_IPV6):
+        if ethertype not in (ETHERTYPE_IPV4, ETHERTYPE_IPV6,
+                             ETHERTYPE_MPLS_UNICAST, ETHERTYPE_MPLS_MULTICAST,
+                             ETHERTYPE_PPPOE_DISCOVERY, ETHERTYPE_PPPOE_SESSION):
             pkt.payload = remaining
             return pkt
     elif link_type != LINKTYPE_RAW:
+        pkt.payload = remaining
+        return pkt
+    else:
+        ethertype = None   # raw IP — skip MPLS loop below
+
+    # ── MPLS ──────────────────────────────────────────────────────────────────
+    while ethertype in (ETHERTYPE_MPLS_UNICAST, ETHERTYPE_MPLS_MULTICAST):
+        m_size, ethertype, m_hdr = _mpls_parser(remaining)
+        if m_size == 0 or m_hdr is None:
+            pkt.payload = remaining
+            return pkt
+        pkt.mpls.append(m_hdr)
+        remaining = remaining[m_size:]
+
+    # ── PPPoE ─────────────────────────────────────────────────────────────────
+    if ethertype in (ETHERTYPE_PPPOE_DISCOVERY, ETHERTYPE_PPPOE_SESSION):
+        p_size, ethertype, pppoe_hdr = _pppoe_parser(remaining)
+        if p_size == 0 or pppoe_hdr is None:
+            pkt.payload = remaining
+            return pkt
+        pkt.pppoe = pppoe_hdr
+        remaining = remaining[p_size:]
+        if ethertype is None:  # discovery frame — no IP follows
+            pkt.payload = remaining
+            return pkt
+
+    if ethertype is not None and ethertype not in (ETHERTYPE_IPV4, ETHERTYPE_IPV6):
         pkt.payload = remaining
         return pkt
 
@@ -156,6 +217,15 @@ def parse_packet(data: bytes, *, link_type: int = LINKTYPE_ETHERNET) -> ParsedPa
         if t_size > 0:
             pkt.transport = t_hdr
             remaining = remaining[t_size:]
+
+    # ── EtherIP ───────────────────────────────────────────────────────────────
+    elif ip_proto == IPPROTO_ETHERIP:
+        ei_size, _, ei_hdr = _etherip_parser(remaining)
+        if ei_size > 0 and ei_hdr is not None:
+            pkt.etherip = ei_hdr
+            pkt.tunneled = parse_packet(remaining[ei_size:], link_type=LINKTYPE_ETHERNET)
+            pkt.payload = b""
+            return pkt
 
     pkt.payload = remaining
     return pkt
@@ -233,11 +303,20 @@ def parse_pcap_file(
     for record in pcap.packets:
         pkt = parse_pcap_packet(record, pcap.header)
         cfg: dict[str, Any] = {}
-        for layer in (pkt.ethernet, pkt.ip, pkt.transport):
-            if layer is not None:
-                update_config(cfg, layer)
-        if pkt.payload:
-            update_config(cfg, pkt.payload)
+        if pkt.ethernet is not None:
+            update_config(cfg, pkt.ethernet)
+        for mpls_label in pkt.mpls:
+            update_config(cfg, mpls_label)
+        if pkt.pppoe is not None:
+            update_config(cfg, pkt.pppoe)
+        if pkt.ip is not None:
+            update_config(cfg, pkt.ip)
+        if pkt.etherip is not None and pkt.tunneled is not None:
+            _apply_etherip(cfg, pkt.etherip, pkt.tunneled)
+        elif pkt.transport is not None:
+            update_config(cfg, pkt.transport)
+            if pkt.payload:
+                update_config(cfg, pkt.payload)
         cfg["metadata"] = {"timestamp_s": pkt.ts_sec, ts_frac_key: pkt.ts_frac}
         packet_configs.append(cfg)
 
