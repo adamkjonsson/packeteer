@@ -92,6 +92,7 @@ from .pcap import write_pcap, write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW
 from .fragmentation import fragment_ipv4, fragment_ipv6
 from .ip import IPHeader
 from .ipv6 import IPv6Header
+from .mpls import MPLSLabel, ETHERTYPE_MPLS_UNICAST, ETHERTYPE_MPLS_MULTICAST
 from .tcp import (
     TCPHeader, TCPOptions,
     TCP_FIN, TCP_SYN, TCP_RST, TCP_PSH, TCP_ACK, TCP_URG, TCP_ECE, TCP_CWR,
@@ -120,6 +121,9 @@ __all__ = [
     "UDPHeader",
     "ICMPHeader",
     "ICMPv6Header",
+    "MPLSLabel",
+    "ETHERTYPE_MPLS_UNICAST",
+    "ETHERTYPE_MPLS_MULTICAST",
     "fragment_ipv4",
     "fragment_ipv6",
     "write_pcap",

@@ -44,6 +44,7 @@ from packet_generator.ethernet import (
 )
 from packet_generator.ip import IPHeader
 from packet_generator.ipv6 import IPv6Header
+from packet_generator.mpls import MPLSLabel, ETHERTYPE_MPLS_UNICAST, ETHERTYPE_MPLS_MULTICAST
 from packet_generator.tcp import TCPHeader
 from packet_generator.udp import UDPHeader
 from packet_generator.icmp import ICMPHeader
@@ -54,6 +55,7 @@ from packet_parser.pcap import PcapFileHeader, read_pcap
 from packet_parser.to_config import update_config, to_json_config, to_json_string
 
 from packet_parser.ethernet import packet_parser as _ethernet_parser
+from packet_parser.mpls import packet_parser as _mpls_parser
 from packet_parser.ip import packet_parser as _ip_parser
 from packet_parser.tcp import packet_parser as _tcp_parser
 from packet_parser.udp import packet_parser as _udp_parser
@@ -79,6 +81,8 @@ class ParsedPacket:
 
     Attributes:
         ethernet: Parsed Ethernet II header (includes VLAN tag when present).
+        mpls: List of parsed MPLS label stack entries, outermost first.
+            Empty when no MPLS labels are present.
         ip: Parsed IPv4 or IPv6 header.
         transport: Parsed TCP, UDP, ICMPv4, or ICMPv6 header.
         payload: Bytes remaining after all parsed headers.
@@ -88,6 +92,7 @@ class ParsedPacket:
     """
 
     ethernet:  EthernetHeader | None = None
+    mpls:      list[MPLSLabel] = field(default_factory=list)
     ip:        IPHeader | IPv6Header | None = None
     transport: TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | None = None
     payload:   bytes = field(default=b"")
@@ -134,10 +139,26 @@ def parse_packet(data: bytes, *, link_type: int = LINKTYPE_ETHERNET) -> ParsedPa
         pkt.ethernet = eth_hdr
         remaining = remaining[eth_size:]
         # ethertype is the inner EtherType (VLAN already unwrapped by the parser)
-        if ethertype not in (ETHERTYPE_IPV4, ETHERTYPE_IPV6):
+        if ethertype not in (ETHERTYPE_IPV4, ETHERTYPE_IPV6,
+                             ETHERTYPE_MPLS_UNICAST, ETHERTYPE_MPLS_MULTICAST):
             pkt.payload = remaining
             return pkt
     elif link_type != LINKTYPE_RAW:
+        pkt.payload = remaining
+        return pkt
+    else:
+        ethertype = None   # raw IP — skip MPLS loop below
+
+    # ── MPLS ──────────────────────────────────────────────────────────────────
+    while ethertype in (ETHERTYPE_MPLS_UNICAST, ETHERTYPE_MPLS_MULTICAST):
+        m_size, ethertype, m_hdr = _mpls_parser(remaining)
+        if m_size == 0 or m_hdr is None:
+            pkt.payload = remaining
+            return pkt
+        pkt.mpls.append(m_hdr)
+        remaining = remaining[m_size:]
+
+    if ethertype is not None and ethertype not in (ETHERTYPE_IPV4, ETHERTYPE_IPV6):
         pkt.payload = remaining
         return pkt
 
@@ -233,7 +254,11 @@ def parse_pcap_file(
     for record in pcap.packets:
         pkt = parse_pcap_packet(record, pcap.header)
         cfg: dict[str, Any] = {}
-        for layer in (pkt.ethernet, pkt.ip, pkt.transport):
+        if pkt.ethernet is not None:
+            update_config(cfg, pkt.ethernet)
+        for mpls_label in pkt.mpls:
+            update_config(cfg, mpls_label)
+        for layer in (pkt.ip, pkt.transport):
             if layer is not None:
                 update_config(cfg, layer)
         if pkt.payload:

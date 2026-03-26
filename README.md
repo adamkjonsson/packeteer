@@ -10,8 +10,9 @@ files written by any tool.
 
 The `packet_generator` module is the primary library for packet construction.
 It exposes `PacketBuilder`, a fluent layer-by-layer API that assembles any
-combination of Ethernet, VLAN (including QinQ), IPv4, IPv6, TCP, UDP, ICMP,
-and ICMPv6 layers into raw bytes ready to send or write to a pcap file.
+combination of Ethernet, VLAN (including QinQ), MPLS label stacks, IPv4, IPv6,
+TCP, UDP, ICMP, and ICMPv6 layers into raw bytes ready to send or write to a
+pcap file.
 
 No external dependencies. Python 3.10+ and the standard library only.
 
@@ -21,6 +22,7 @@ No external dependencies. Python 3.10+ and the standard library only.
 
 - **Ethernet II** framing with configurable MAC addresses and automatic EtherType
 - **IEEE 802.1Q VLAN tagging** — 4-byte tag (TPID `0x8100` + TCI) with configurable VID (1–4094), PCP (0–7), and DEI; call `.vlan()` twice for **QinQ** double-tagged frames (IEEE 802.1ad)
+- **MPLS** label stack entries (RFC 3032) — 4-byte entries with configurable Label (20-bit), TC (3-bit), and TTL; bottom-of-stack bit set automatically; call `.mpls()` multiple times to build a label stack
 - **IPv4** headers (RFC 791) with RFC 1071 header checksum
 - **IPv6** fixed headers (RFC 8200) — no header checksum, 40 bytes
 - **TCP** (RFC 9293) with pseudo-header checksum for IPv4 and IPv6
@@ -151,6 +153,27 @@ link type 1 (Ethernet) is used. CLI flags are ignored for multi-packet configs.
 | `vlan.id` | — | VLAN ID 1–4094; omit the `vlan` key entirely to disable VLAN tagging |
 | `vlan.pcp` | `0` | VLAN Priority Code Point (0–7) |
 | `vlan.dei` | `0` | VLAN Drop Eligible Indicator (0 or 1) |
+
+#### `mpls`
+
+An optional array of MPLS label stack entries inserted between the Ethernet/VLAN
+layer and the IP layer.  Entries are ordered outermost first.  Omit the key
+entirely when MPLS is not needed.
+
+```json
+"mpls": [
+  { "label": 100, "ttl": 64 },
+  { "label": 200, "tc": 3, "ttl": 32 }
+]
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `label` | *(required)* | 20-bit MPLS label value (0–1048575) |
+| `tc` | `0` | Traffic Class — 3-bit QoS/ECN field (0–7) |
+| `ttl` | `64` | Time-to-Live (0–255) |
+
+The bottom-of-stack (S) bit is set automatically: `1` on the last entry, `0` on all others.
 
 #### `network`
 
@@ -451,7 +474,8 @@ call `.build()` or `.fragment()` to produce the final bytes.
 Each method **appends** a layer to an ordered stack — it does not overwrite a
 previous call. This means you can call the same method multiple times to
 produce advanced encapsulations: call `.vlan()` twice for QinQ (IEEE 802.1ad),
-call `.ip()` twice for IP-in-IP (RFC 2003) or IPv6-in-IPv4 (RFC 4213) tunnels.
+call `.mpls()` multiple times to build an MPLS label stack (RFC 3032), call
+`.ip()` twice for IP-in-IP (RFC 2003) or IPv6-in-IPv4 (RFC 4213) tunnels.
 
 ```python
 from packet_generator import PacketBuilder
@@ -471,6 +495,16 @@ pkt = (PacketBuilder()
     .ethernet()
     .vlan(vid=100)   # outer VLAN
     .vlan(vid=200)   # inner VLAN
+    .ip(src="10.0.0.1", dst="10.0.0.2")
+    .udp()
+    .build()
+)
+
+# MPLS label stack (two labels) — call .mpls() for each entry
+pkt = (PacketBuilder()
+    .ethernet()
+    .mpls(label=100)   # outer label (S=0)
+    .mpls(label=200)   # inner label (S=1, bottom of stack)
     .ip(src="10.0.0.1", dst="10.0.0.2")
     .udp()
     .build()
@@ -497,6 +531,7 @@ Each method appends one layer to the stack and returns `self` for chaining.
 |--------|-------------|
 | `.ethernet(src_mac, dst_mac, pad=False)` | Append an Ethernet II header. `pad=True` zero-pads the frame to the IEEE 802.3 minimum of 60 bytes. |
 | `.vlan(vid, pcp=0, dei=0)` | Append an 802.1Q VLAN tag. Call twice for QinQ (IEEE 802.1ad) double-tagged frames. |
+| `.mpls(label, tc=0, ttl=64)` | Append an MPLS label stack entry (RFC 3032). The bottom-of-stack S bit is set automatically. Call multiple times to build a label stack. |
 | `.ip(src, dst, ttl=64, tos=0, identification=0, flags=0b010, fragment_offset=0, traffic_class=0, flow_label=0)` | Append an IPv4 or IPv6 header (auto-detected from `src`). Call twice for IP-in-IP (RFC 2003) or IPv6-in-IPv4 (RFC 4213) tunnels. IPv4-only params are ignored for IPv6 and vice versa. |
 | `.tcp(src_port=12345, dst_port=80, seq=0, ack=0, flags=TCP_ACK, window=65535, urgent_ptr=0, reserved=0, options=None)` | Append a TCP transport header. |
 | `.udp(src_port=12345, dst_port=80)` | Append a UDP transport header. |
@@ -560,6 +595,35 @@ raw: bytes = build_ethernet_header(hdr)  # 18 bytes
 | `vid` | 0–4095 | VLAN Identifier. Values 1–4094 identify a specific VLAN; 0 = priority tag only; 4095 reserved. |
 | `pcp` | 0–7 | Priority Code Point (IEEE 802.1p class of service). |
 | `dei` | 0–1 | Drop Eligible Indicator — frame may be dropped under congestion. |
+
+#### `MPLSLabel`
+
+```python
+from packet_generator import MPLSLabel, ETHERTYPE_MPLS_UNICAST
+from packet_generator.mpls import build_mpls_label
+
+entry = MPLSLabel(label=100, tc=0, ttl=64)
+raw: bytes = build_mpls_label(entry, bottom_of_stack=True)  # 4 bytes
+```
+
+`MPLSLabel` fields:
+
+| Field | Range | Description |
+|-------|-------|-------------|
+| `label` | 0–1048575 | 20-bit MPLS label value. |
+| `tc` | 0–7 | Traffic Class (3 bits), formerly called EXP; used for QoS and ECN. |
+| `ttl` | 0–255 | Time-to-Live; decremented at each LSR hop. |
+
+The S (bottom-of-stack) bit is not stored; pass `bottom_of_stack=True` to
+`build_mpls_label` for the last entry in the stack, `False` for all others.
+`PacketBuilder` sets the S bit automatically.
+
+EtherType constants:
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `ETHERTYPE_MPLS_UNICAST` | `0x8847` | MPLS unicast — used for most MPLS traffic |
+| `ETHERTYPE_MPLS_MULTICAST` | `0x8848` | MPLS multicast |
 
 #### `IPHeader` (IPv4)
 
@@ -866,6 +930,7 @@ On success `header_size > 0` and the next layer's bytes start at
 from packet_parser import (
     ethernet_packet_parser,
     vlan_packet_parser,
+    mpls_packet_parser,
     ip_packet_parser,
     icmp_packet_parser,
     icmpv6_packet_parser,
@@ -878,6 +943,7 @@ from packet_parser import (
 |--------|--------|---------------------------|---------------------|
 | `ethernet_packet_parser` | `packet_parser.ethernet` | EtherType | `EthernetHeader` |
 | `vlan_packet_parser` | `packet_parser.vlan` | Inner EtherType | `VLANTag` |
+| `mpls_packet_parser` | `packet_parser.mpls` | `0x8847` (more labels) or IPv4/IPv6 EtherType (bottom of stack) | `MPLSLabel` |
 | `ip_packet_parser` | `packet_parser.ip` | IP protocol number | `IPHeader` or `IPv6Header` |
 | `icmp_packet_parser` | `packet_parser.icmp` | ICMP type | `ICMPHeader` |
 | `icmpv6_packet_parser` | `packet_parser.icmpv6` | ICMPv6 type | `ICMPv6Header` |
@@ -897,6 +963,7 @@ parsers automatically and returns a single `ParsedPacket` dataclass.
 | Field | Type | Description |
 |-------|------|-------------|
 | `ethernet` | `EthernetHeader \| None` | Ethernet II header (VLAN tag included when present) |
+| `mpls` | `list[MPLSLabel]` | MPLS label stack entries, outermost first. Empty list when no MPLS labels are present. |
 | `ip` | `IPHeader \| IPv6Header \| None` | IPv4 or IPv6 header |
 | `transport` | `TCPHeader \| UDPHeader \| ICMPHeader \| ICMPv6Header \| None` | Transport-layer header |
 | `payload` | `bytes` | Bytes after the deepest parsed header |
@@ -907,12 +974,12 @@ parsers automatically and returns a single `ParsedPacket` dataclass.
 
 ```python
 from packet_parser.parser import parse_packet
-from packet_generator import PacketBuilder, Protocol
+from packet_generator import PacketBuilder
 
-raw = PacketBuilder("10.0.0.1", "10.0.0.2", Protocol.TCP, dst_port=443).build()
-pkt = parse_packet(raw)
+raw = PacketBuilder().ip(src="10.0.0.1", dst="10.0.0.2").tcp(dst_port=443).build()
+pkt = parse_packet(raw, link_type=LINKTYPE_RAW)
 
-print(pkt.ip.src, "→", pkt.ip.dst)
+print(pkt.ip.src, "->", pkt.ip.dst)
 print("dst_port:", pkt.transport.dst_port)
 ```
 
@@ -989,6 +1056,7 @@ of the dict, and returns the same dict for optional chaining.
 | *layer* type | Section written |
 |---|---|
 | `EthernetHeader` | `ethernet` (src_mac, dst_mac, enabled, optional vlan) |
+| `MPLSLabel` | `mpls` array — appends `{label, tc, ttl}` entry (tc omitted when 0) |
 | `IPHeader` / `IPv6Header` | `network` (src, dst, protocol, ttl; non-default fields only) |
 | `TCPHeader` | `transport` (src_port, dst_port, seq, ack, flags, window; optional options) |
 | `UDPHeader` | `transport` (src_port, dst_port) |
@@ -1119,12 +1187,13 @@ python packet_lab.py build config.json --pcap out.pcap
 packet-generator/
   packet_generator/
     __init__.py        # public API re-exports
-    builder.py         # PacketBuilder and Protocol — main entry point
+    builder.py         # PacketBuilder — main entry point
     checksum.py        # RFC 1071 one's-complement checksum utility
     ethernet.py        # Ethernet II header (14 bytes, 18 with 802.1Q VLAN tag)
     fragmentation.py   # fragment_ipv4 and fragment_ipv6
     ip.py              # IPv4 header (20 bytes)
     ipv6.py            # IPv6 header (40 bytes)
+    mpls.py            # MPLS label stack entry (4 bytes, RFC 3032)
     tcp.py             # TCP header (20+ bytes, variable via data offset)
     udp.py             # UDP header (8 bytes)
     icmp.py            # ICMPv4 header (8 bytes)
@@ -1134,6 +1203,7 @@ packet-generator/
     __init__.py        # exports all parsers with distinct names
     ethernet.py        # parse Ethernet II + optional 802.1Q VLAN tag
     vlan.py            # parse IEEE 802.1Q VLAN tag (4 bytes)
+    mpls.py            # parse MPLS label stack entry (4 bytes, RFC 3032)
     ip.py              # parse IPv4 / IPv6 (version auto-detected)
     icmp.py            # parse ICMPv4 header (8 bytes)
     icmpv6.py          # parse ICMPv6 header (8 bytes)
@@ -1144,6 +1214,7 @@ packet-generator/
     parser.py          # parse_packet / parse_pcap_packet / parse_pcap_file / ParsedPacket
   tests/
     test_builder.py
+    test_mpls.py
     test_checksum.py
     test_fragmentation.py
     test_generator_ethernet.py
@@ -1192,6 +1263,8 @@ All tests run in under a second and require no third-party packages.
 | RFC 4443 | Internet Control Message Protocol for IPv6 (ICMPv6) |
 | RFC 8200 | Internet Protocol, Version 6 (IPv6) — including §4.5 Fragment Extension Header |
 | RFC 2003 | IP Encapsulation within IP (IPv4-in-IPv4 tunnelling) |
+| RFC 3031 | Multiprotocol Label Switching Architecture (MPLS) |
+| RFC 3032 | MPLS Label Stack Encoding — 4-byte label stack entry format |
 | RFC 4213 | Basic Transition Mechanisms for IPv6 Hosts and Routers (IPv6-in-IPv4 tunnelling) |
 | IEEE 802.3 | Ethernet |
 | IEEE 802.1Q | Virtual LANs (VLAN tagging) |

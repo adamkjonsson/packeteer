@@ -40,6 +40,7 @@ from typing import Any
 from packet_generator.ethernet import EthernetHeader
 from packet_generator.ip import IPHeader
 from packet_generator.ipv6 import IPv6Header
+from packet_generator.mpls import MPLSLabel
 from packet_generator.tcp import TCPHeader, TCPOptions
 from packet_generator.udp import UDPHeader
 from packet_generator.icmp import ICMPHeader
@@ -146,13 +147,21 @@ def _apply_transport(config: dict[str, Any], hdr: TCPHeader | UDPHeader | ICMPHe
     config["transport"] = section
 
 
+def _apply_mpls(config: dict[str, Any], label: MPLSLabel) -> None:
+    entry: dict[str, Any] = {"label": label.label}
+    if label.tc != 0:
+        entry["tc"] = label.tc
+    entry["ttl"] = label.ttl
+    config.setdefault("mpls", []).append(entry)
+
+
 def _apply_payload(config: dict[str, Any], payload: bytes) -> None:
     config["payload"] = {"data": payload.hex()}
 
 
 def update_config(
     config: dict[str, Any],
-    layer: EthernetHeader | IPHeader | IPv6Header | TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | bytes,
+    layer: EthernetHeader | MPLSLabel | IPHeader | IPv6Header | TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | bytes,
 ) -> dict[str, Any]:
     """Add a parsed protocol layer to *config* and return it.
 
@@ -181,6 +190,8 @@ def update_config(
     """
     if isinstance(layer, EthernetHeader):
         _apply_ethernet(config, layer)
+    elif isinstance(layer, MPLSLabel):
+        _apply_mpls(config, layer)
     elif isinstance(layer, (IPHeader, IPv6Header)):
         _apply_ip(config, layer)
     elif isinstance(layer, (TCPHeader, UDPHeader, ICMPHeader, ICMPv6Header)):

@@ -69,6 +69,7 @@ from .tcp import TCPHeader, TCPOptions, TCP_ACK, build_tcp_header
 from .udp import UDPHeader, build_udp_header
 from .icmp import ICMPHeader, build_icmp_header
 from .icmpv6 import ICMPv6Header, build_icmpv6_header
+from .mpls import MPLSLabel, ETHERTYPE_MPLS_UNICAST, build_mpls_label
 
 # ── protocol-number helpers ───────────────────────────────────────────────────
 
@@ -76,6 +77,7 @@ _ETHERTYPE_MAP: dict[type, int] = {
     IPHeader:   ETHERTYPE_IPV4,
     IPv6Header: ETHERTYPE_IPV6,
     VLANTag:    ETHERTYPE_8021Q,
+    MPLSLabel:  ETHERTYPE_MPLS_UNICAST,
 }
 
 _IP_PROTO_MAP: dict[type, int] = {
@@ -204,6 +206,22 @@ class PacketBuilder:
             dei: Drop Eligible Indicator (0 or 1).
         """
         self._layers.append(VLANTag(vid, pcp, dei))
+        return self
+
+    def mpls(self, *, label: int, tc: int = 0, ttl: int = 64) -> "PacketBuilder":
+        """Append an MPLS label stack entry (RFC 3032).
+
+        The bottom-of-stack (S) bit is set automatically at build time: it is
+        ``1`` when the next layer is not another :class:`MPLSLabel`, and ``0``
+        when more MPLS labels follow.  Call multiple times to build an MPLS
+        label stack.
+
+        Args:
+            label: 20-bit MPLS label value (0–1048575).
+            tc: Traffic Class (0–7).  Defaults to ``0``.
+            ttl: Time-to-Live (0–255).  Defaults to ``64``.
+        """
+        self._layers.append(MPLSLabel(label=label, tc=tc, ttl=ttl))
         return self
 
     def ip(
@@ -404,6 +422,10 @@ class PacketBuilder:
                     flow_label=layer.flow_label,
                 )
                 data = build_ipv6_header(hdr, data) + data
+
+            elif isinstance(layer, MPLSLabel):
+                bos = not isinstance(next_layer, MPLSLabel)
+                data = build_mpls_label(layer, bos) + data
 
             elif isinstance(layer, VLANTag):
                 ethertype = _ethertype_for(next_layer) if next_layer else 0

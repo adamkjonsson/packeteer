@@ -83,6 +83,8 @@ def _run_multi_packet(cfg: dict, pcap_path: str | None = None, pcapng_path: str 
                 print(f"Error: packet {i} payload.data is not valid hex: {e}", file=sys.stderr)
                 sys.exit(1)
 
+        mpls_labels = spec.get("mpls", [])
+
         try:
             b = PacketBuilder()
             if eth.get("enabled", True):
@@ -93,6 +95,12 @@ def _run_multi_packet(cfg: dict, pcap_path: str | None = None, pcapng_path: str 
                 )
                 if vlan:
                     b = b.vlan(vid=vlan["id"], pcp=vlan.get("pcp", 0), dei=vlan.get("dei", 0))
+            for mpls_entry in mpls_labels:
+                b = b.mpls(
+                    label=mpls_entry["label"],
+                    tc=mpls_entry.get("tc", 0),
+                    ttl=mpls_entry.get("ttl", 64),
+                )
             b = b.ip(
                 src=src, dst=dst,
                 ttl=net.get("ttl", 64),
