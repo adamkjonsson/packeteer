@@ -8,6 +8,11 @@ into RFC-compliant IP fragments in one call. The companion `packet_parser`
 module can decode each layer back to its header dataclass and read libpcap
 files written by any tool.
 
+The `packet_generator` module is the primary library for packet construction.
+It exposes `PacketBuilder`, a fluent layer-by-layer API that assembles any
+combination of Ethernet, VLAN (including QinQ), IPv4, IPv6, TCP, UDP, ICMP,
+and ICMPv6 layers into raw bytes ready to send or write to a pcap file.
+
 No external dependencies. Python 3.10+ and the standard library only.
 
 ---
@@ -30,14 +35,6 @@ No external dependencies. Python 3.10+ and the standard library only.
 - Payload: random bytes of a given size, or supply your own
 - Optional Ethernet header — produce raw IP packets when not needed
 - `packet_lab.py` CLI with `build` and `parse` subcommands — build packets and write pcap/pcapng files, or parse captures back to a JSON config for replay
-- **`packet_parser` module** — parse each layer back to its header dataclass; roundtrip-compatible with all `packet_generator` builders
-  - Parsers for Ethernet II (with optional 802.1Q VLAN tag), IPv4, IPv6, ICMP, ICMPv6, UDP, and TCP
-  - Each parser returns `(header_size, next_layer_id, HeaderObject)` — chain parsers by slicing `data[header_size:]`
-  - `read_pcap` reads both libpcap (`.pcap`) and pcapng (`.pcapng`) files, auto-detected from the file magic (microsecond and nanosecond timestamps, little- and big-endian)
-  - `parse_packet(data)` — parse a raw `bytes` object through all layers at once, returning a `ParsedPacket` dataclass
-  - `parse_pcap_packet(record, file_header)` — parse one record from a `PcapFile`, with `link_type` and timestamps filled in automatically
-  - `parse_pcap_file(path=…)` — parse every packet in a pcap or pcapng file and return a ready-to-use JSON config string
-  - `packet_parser.to_config` — convert parsed headers to a JSON config dict accepted by `packet_lab.py build --config`; build up the config one protocol layer at a time with `update_config`
 
 ---
 
