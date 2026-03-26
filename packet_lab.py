@@ -18,6 +18,7 @@ import sys
 from packet_generator import PacketBuilder
 from packet_generator.tcp import TCPOptions
 from packet_generator.pcap import write_pcap, write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW
+from packet_generator.pppoe import PPPoETag, PPPOE_CODE_SESSION
 from packet_parser.parser import parse_pcap_file
 
 
@@ -61,8 +62,13 @@ def _run_multi_packet(cfg: dict, pcap_path: str | None = None, pcapng_path: str 
         src = net.get("src")
         dst = net.get("dst")
         protocol_str = net.get("protocol")
+        pppoe_spec = spec.get("pppoe")
+        is_pppoe_discovery = (
+            pppoe_spec is not None
+            and pppoe_spec.get("code", PPPOE_CODE_SESSION) != PPPOE_CODE_SESSION
+        )
 
-        if not src or not dst or not protocol_str:
+        if not is_pppoe_discovery and (not src or not dst or not protocol_str):
             print(
                 f"Error: packet {i} missing network.src, network.dst, or network.protocol",
                 file=sys.stderr,
@@ -101,57 +107,77 @@ def _run_multi_packet(cfg: dict, pcap_path: str | None = None, pcapng_path: str 
                     tc=mpls_entry.get("tc", 0),
                     ttl=mpls_entry.get("ttl", 64),
                 )
-            b = b.ip(
-                src=src, dst=dst,
-                ttl=net.get("ttl", 64),
-                tos=net.get("tos", 0),
-                identification=net.get("identification", 0),
-                flags=net.get("flags", 0b010),
-                fragment_offset=net.get("fragment_offset", 0),
-                traffic_class=net.get("traffic_class", 0),
-                flow_label=net.get("flow_label", 0),
-            )
-            proto_lower = protocol_str.lower()
-            if proto_lower == "tcp":
-                b = b.tcp(
-                    src_port=transport.get("src_port", 12345),
-                    dst_port=transport.get("dst_port", 80),
-                    seq=transport.get("seq", 0),
-                    ack=transport.get("ack", 0),
-                    flags=transport.get("flags", 0x002),
-                    window=transport.get("window", 65535),
-                    urgent_ptr=transport.get("urgent_ptr", 0),
-                    reserved=transport.get("reserved", 0),
-                    options=_parse_tcp_options(transport.get("options")),
+            if pppoe_spec is not None:
+                try:
+                    tags = [
+                        PPPoETag(
+                            type=t["type"],
+                            data=bytes.fromhex(t.get("data", "")),
+                        )
+                        for t in pppoe_spec.get("tags", [])
+                    ]
+                except (KeyError, ValueError) as e:
+                    print(f"Error: packet {i} pppoe tag error: {e}", file=sys.stderr)
+                    sys.exit(1)
+                b = b.pppoe(
+                    code=pppoe_spec.get("code", PPPOE_CODE_SESSION),
+                    session_id=pppoe_spec.get("session_id", 0),
+                    tags=tags,
                 )
-            elif proto_lower == "udp":
-                b = b.udp(
-                    src_port=transport.get("src_port", 12345),
-                    dst_port=transport.get("dst_port", 80),
-                )
-            elif proto_lower == "icmp":
-                b = b.icmp(
-                    type=transport.get("type", 8),
-                    code=transport.get("code", 0),
-                    identifier=transport.get("identifier", 1),
-                    sequence=transport.get("sequence", 1),
-                )
-            elif proto_lower == "icmpv6":
-                b = b.icmpv6(
-                    type=transport.get("type", 128),
-                    code=transport.get("code", 0),
-                    identifier=transport.get("identifier", 1),
-                    sequence=transport.get("sequence", 1),
-                )
+            if is_pppoe_discovery:
+                pkts = [b.build()]
             else:
-                print(f"Error: packet {i} unknown protocol '{protocol_str}'", file=sys.stderr)
-                sys.exit(1)
-            if explicit_payload is not None:
-                b = b.payload(data=explicit_payload)
-            elif payload_spec.get("size", 0):
-                b = b.payload(size=payload_spec["size"])
-            mtu = out.get("mtu")
-            pkts = b.fragment(mtu=mtu) if mtu is not None else [b.build()]
+                b = b.ip(
+                    src=src, dst=dst,
+                    ttl=net.get("ttl", 64),
+                    tos=net.get("tos", 0),
+                    identification=net.get("identification", 0),
+                    flags=net.get("flags", 0b010),
+                    fragment_offset=net.get("fragment_offset", 0),
+                    traffic_class=net.get("traffic_class", 0),
+                    flow_label=net.get("flow_label", 0),
+                )
+                proto_lower = protocol_str.lower()
+                if proto_lower == "tcp":
+                    b = b.tcp(
+                        src_port=transport.get("src_port", 12345),
+                        dst_port=transport.get("dst_port", 80),
+                        seq=transport.get("seq", 0),
+                        ack=transport.get("ack", 0),
+                        flags=transport.get("flags", 0x002),
+                        window=transport.get("window", 65535),
+                        urgent_ptr=transport.get("urgent_ptr", 0),
+                        reserved=transport.get("reserved", 0),
+                        options=_parse_tcp_options(transport.get("options")),
+                    )
+                elif proto_lower == "udp":
+                    b = b.udp(
+                        src_port=transport.get("src_port", 12345),
+                        dst_port=transport.get("dst_port", 80),
+                    )
+                elif proto_lower == "icmp":
+                    b = b.icmp(
+                        type=transport.get("type", 8),
+                        code=transport.get("code", 0),
+                        identifier=transport.get("identifier", 1),
+                        sequence=transport.get("sequence", 1),
+                    )
+                elif proto_lower == "icmpv6":
+                    b = b.icmpv6(
+                        type=transport.get("type", 128),
+                        code=transport.get("code", 0),
+                        identifier=transport.get("identifier", 1),
+                        sequence=transport.get("sequence", 1),
+                    )
+                else:
+                    print(f"Error: packet {i} unknown protocol '{protocol_str}'", file=sys.stderr)
+                    sys.exit(1)
+                if explicit_payload is not None:
+                    b = b.payload(data=explicit_payload)
+                elif payload_spec.get("size", 0):
+                    b = b.payload(size=payload_spec["size"])
+                mtu = out.get("mtu")
+                pkts = b.fragment(mtu=mtu) if mtu is not None else [b.build()]
         except (OSError, ValueError) as e:
             print(f"Error building packet {i}: {e}", file=sys.stderr)
             sys.exit(1)

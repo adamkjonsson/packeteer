@@ -44,12 +44,39 @@ Typical usage::
         .build()
     )
 
+    # MPLS label stack carrying IPv4 UDP (RFC 3032)
+    pkt = (PacketBuilder()
+        .ethernet()
+        .mpls(label=100)   # outer label (S=0)
+        .mpls(label=200)   # inner label (S=1, bottom of stack)
+        .ip(src="10.0.0.1", dst="10.0.0.2")
+        .udp()
+        .build()
+    )
+
     # IPv4-in-IPv4 tunnel
     pkt = (PacketBuilder()
         .ethernet()
         .ip(src="203.0.113.1", dst="203.0.113.2")   # outer (tunnel) IP
         .ip(src="10.0.0.1", dst="10.0.0.2")         # inner IP
         .tcp(dst_port=80)
+        .build()
+    )
+
+    # PPPoE session carrying IPv4 TCP (RFC 2516)
+    pkt = (PacketBuilder()
+        .ethernet()
+        .pppoe(session_id=0x1234)
+        .ip(src="10.0.0.1", dst="8.8.8.8")
+        .tcp(dst_port=80)
+        .build()
+    )
+
+    # PPPoE PADI discovery frame
+    from packet_generator.pppoe import PPPOE_CODE_PADI, PPPoETag, PPPOE_TAG_SERVICE_NAME
+    pkt = (PacketBuilder()
+        .ethernet(dst_mac="ff:ff:ff:ff:ff:ff")
+        .pppoe(code=PPPOE_CODE_PADI, tags=[PPPoETag(PPPOE_TAG_SERVICE_NAME, b"")])
         .build()
     )
 """
@@ -70,6 +97,13 @@ from .udp import UDPHeader, build_udp_header
 from .icmp import ICMPHeader, build_icmp_header
 from .icmpv6 import ICMPv6Header, build_icmpv6_header
 from .mpls import MPLSLabel, ETHERTYPE_MPLS_UNICAST, build_mpls_label
+from .pppoe import (
+    PPPoEHeader, PPPoETag,
+    ETHERTYPE_PPPOE_DISCOVERY, ETHERTYPE_PPPOE_SESSION,
+    PPP_IPV4, PPP_IPV6,
+    PPPOE_CODE_SESSION,
+    build_pppoe_header,
+)
 
 # ── protocol-number helpers ───────────────────────────────────────────────────
 
@@ -78,6 +112,7 @@ _ETHERTYPE_MAP: dict[type, int] = {
     IPv6Header: ETHERTYPE_IPV6,
     VLANTag:    ETHERTYPE_8021Q,
     MPLSLabel:  ETHERTYPE_MPLS_UNICAST,
+    # PPPoEHeader is handled dynamically in _ethertype_for (session vs discovery)
 }
 
 _IP_PROTO_MAP: dict[type, int] = {
@@ -89,10 +124,18 @@ _IP_PROTO_MAP: dict[type, int] = {
     IPv6Header:   41,  # IPv6-in-IPv4 (RFC 4213)
 }
 
+# PPP protocol numbers for the 2-byte PPP header in PPPoE session frames
+_PPP_PROTO_MAP: dict[type, int] = {
+    IPHeader:   PPP_IPV4,
+    IPv6Header: PPP_IPV6,
+}
+
 
 def _ethertype_for(layer: object) -> int:
     """Return the EtherType value that an enclosing Ethernet/VLAN layer should
     use when *layer* is its direct payload."""
+    if isinstance(layer, PPPoEHeader):
+        return ETHERTYPE_PPPOE_SESSION if layer.code == PPPOE_CODE_SESSION else ETHERTYPE_PPPOE_DISCOVERY
     return _ETHERTYPE_MAP.get(type(layer), 0)
 
 
@@ -140,15 +183,17 @@ class PacketBuilder:
     method may be called multiple times to produce advanced encapsulations:
 
     * Calling :meth:`vlan` twice creates a QinQ (802.1ad) double-tagged frame.
+    * Calling :meth:`mpls` multiple times builds an MPLS label stack (RFC 3032).
     * Calling :meth:`ip` twice creates an IP-in-IP tunnel packet.
+    * Calling :meth:`pppoe` inserts a PPPoE session or discovery frame (RFC 2516).
 
     The layer list stores the same public dataclasses exported by
-    ``packet_generator`` (``EthernetHeader``, ``VLANTag``, ``IPHeader``,
-    ``IPv6Header``, ``TCPHeader``, ``UDPHeader``, ``ICMPHeader``,
-    ``ICMPv6Header``).  Protocol-number fields that depend on the next layer
-    (``ethertype``, ``protocol``, ``next_header``) are set to ``0`` when the
-    object is stored and filled in correctly at :meth:`build` / :meth:`fragment`
-    time.
+    ``packet_generator`` (``EthernetHeader``, ``VLANTag``, ``MPLSLabel``,
+    ``PPPoEHeader``, ``IPHeader``, ``IPv6Header``, ``TCPHeader``, ``UDPHeader``,
+    ``ICMPHeader``, ``ICMPv6Header``).  Protocol-number fields that depend on
+    the next layer (``ethertype``, ``protocol``, ``next_header``) are set to
+    ``0`` when the object is stored and filled in correctly at :meth:`build` /
+    :meth:`fragment` time.
 
     Example::
 
@@ -222,6 +267,35 @@ class PacketBuilder:
             ttl: Time-to-Live (0–255).  Defaults to ``64``.
         """
         self._layers.append(MPLSLabel(label=label, tc=tc, ttl=ttl))
+        return self
+
+    def pppoe(
+        self,
+        *,
+        code: int = PPPOE_CODE_SESSION,
+        session_id: int = 0,
+        tags: list[PPPoETag] | None = None,
+    ) -> "PacketBuilder":
+        """Append a PPPoE header layer (RFC 2516).
+
+        For **session** frames (``code=0x00``, the default) a 2-byte PPP
+        protocol field is inserted automatically between the PPPoE header and
+        the next IP layer (``0x0021`` for IPv4, ``0x0057`` for IPv6).  The
+        Ethernet EtherType is set to ``0x8864`` automatically.
+
+        For **discovery** frames (``code != 0x00``) the ``tags`` list is
+        encoded as the PPPoE payload.  The Ethernet EtherType is set to
+        ``0x8863`` automatically.  No IP or transport layer is required after
+        a discovery PPPoE layer.
+
+        Args:
+            code: PPPoE message code.  Use ``PPPOE_CODE_SESSION`` (``0x00``)
+                for session data or one of the ``PPPOE_CODE_PAD*`` constants
+                for discovery messages.  Defaults to ``PPPOE_CODE_SESSION``.
+            session_id: 16-bit session identifier.  Defaults to ``0``.
+            tags: TLV tags for discovery frames.  Ignored for session frames.
+        """
+        self._layers.append(PPPoEHeader(code=code, session_id=session_id, tags=tags or []))
         return self
 
     def ip(
@@ -423,6 +497,19 @@ class PacketBuilder:
                 )
                 data = build_ipv6_header(hdr, data) + data
 
+            elif isinstance(layer, PPPoEHeader):
+                if layer.code == PPPOE_CODE_SESSION:
+                    # Insert 2-byte PPP protocol field between PPPoE and IP
+                    ppp_proto = _PPP_PROTO_MAP.get(type(next_layer), 0)
+                    payload = struct.pack("!H", ppp_proto) + data
+                else:
+                    # Discovery: encode tags as payload; ignore upstream data
+                    payload = b"".join(
+                        struct.pack("!HH", t.type, len(t.data)) + t.data
+                        for t in layer.tags
+                    )
+                data = build_pppoe_header(layer, payload) + payload
+
             elif isinstance(layer, MPLSLabel):
                 bos = not isinstance(next_layer, MPLSLabel)
                 data = build_mpls_label(layer, bos) + data
@@ -450,6 +537,19 @@ class PacketBuilder:
         return data
 
     def _validate(self) -> None:
+        # PPPoE discovery frames carry only tags — no IP or transport required.
+        has_pppoe_discovery = any(
+            isinstance(l, PPPoEHeader) and l.code != PPPOE_CODE_SESSION
+            for l in self._layers
+        )
+        if has_pppoe_discovery:
+            if not any(isinstance(l, EthernetHeader) for l in self._layers):
+                raise ValueError(
+                    "PPPoE discovery frames require an Ethernet header; "
+                    "call .ethernet() before .pppoe()"
+                )
+            return
+
         has_ip = any(isinstance(l, (IPHeader, IPv6Header)) for l in self._layers)
         has_transport = any(
             isinstance(l, (TCPHeader, UDPHeader, ICMPHeader, ICMPv6Header))

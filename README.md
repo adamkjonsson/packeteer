@@ -10,9 +10,9 @@ files written by any tool.
 
 The `packet_generator` module is the primary library for packet construction.
 It exposes `PacketBuilder`, a fluent layer-by-layer API that assembles any
-combination of Ethernet, VLAN (including QinQ), MPLS label stacks, IPv4, IPv6,
-TCP, UDP, ICMP, and ICMPv6 layers into raw bytes ready to send or write to a
-pcap file.
+combination of Ethernet, VLAN (including QinQ), MPLS label stacks, PPPoE
+session and discovery frames, IPv4, IPv6, TCP, UDP, ICMP, and ICMPv6 layers
+into raw bytes ready to send or write to a pcap file.
 
 No external dependencies. Python 3.10+ and the standard library only.
 
@@ -23,6 +23,7 @@ No external dependencies. Python 3.10+ and the standard library only.
 - **Ethernet II** framing with configurable MAC addresses and automatic EtherType
 - **IEEE 802.1Q VLAN tagging** — 4-byte tag (TPID `0x8100` + TCI) with configurable VID (1–4094), PCP (0–7), and DEI; call `.vlan()` twice for **QinQ** double-tagged frames (IEEE 802.1ad)
 - **MPLS** label stack entries (RFC 3032) — 4-byte entries with configurable Label (20-bit), TC (3-bit), and TTL; bottom-of-stack bit set automatically; call `.mpls()` multiple times to build a label stack
+- **PPPoE** session and discovery frames (RFC 2516) — 6-byte header (Ver/Type/Code/SessionID/Length); session frames carry a 2-byte PPP protocol field before the IP payload; discovery frames carry TLV tags (Service-Name, AC-Name, Host-Uniq, etc.); EtherType `0x8864` for session, `0x8863` for discovery
 - **IPv4** headers (RFC 791) with RFC 1071 header checksum
 - **IPv6** fixed headers (RFC 8200) — no header checksum, 40 bytes
 - **TCP** (RFC 9293) with pseudo-header checksum for IPv4 and IPv6
@@ -96,6 +97,11 @@ block records information about the file the config was parsed from (`from_file`
 
 ```json
 {
+  "file_metadata": {
+    "from_file": "conversation.pcap",
+    "type": "pcap",
+    "nanoseconds": false
+  },
   "packets": [
     {
       "network": {
@@ -126,12 +132,7 @@ block records information about the file the config was parsed from (`from_file`
       "payload": { "size": 128 },
       "metadata": { "timestamp_s": 1000, "timestamp_us": 500000 }
     }
-  ],
-  "file_metadata": {
-    "from_file": "conversation.pcap",
-    "type": "pcap",
-    "nanoseconds": false
-  }
+  ]
 }
 ```
 
@@ -174,6 +175,38 @@ entirely when MPLS is not needed.
 | `ttl` | `64` | Time-to-Live (0–255) |
 
 The bottom-of-stack (S) bit is set automatically: `1` on the last entry, `0` on all others.
+
+#### `pppoe`
+
+An optional PPPoE header inserted between the Ethernet/VLAN layer and the IP
+layer.  Omit the key entirely when PPPoE is not needed.
+
+```json
+"pppoe": {
+  "session_id": 4660,
+  "code": 0
+}
+```
+
+For PPPoE discovery frames, set `code` to one of the discovery codes and
+include a `tags` array of TLV entries:
+
+```json
+"pppoe": {
+  "code": 9,
+  "tags": [
+    { "type": 257, "data": "" }
+  ]
+}
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `session_id` | `0` | 16-bit PPPoE session identifier (relevant for session frames) |
+| `code` | `0` | PPPoE message code: `0`=session, `9`=PADI, `7`=PADO, `25`=PADR, `101`=PADS, `167`=PADT |
+| `tags` | `[]` | Array of TLV tags for discovery frames. Each entry has `type` (integer) and `data` (hex string). |
+
+PPPoE tag type constants (decimal): `257`=Service-Name, `258`=AC-Name, `259`=Host-Uniq, `260`=AC-Cookie, `515`=Generic-Error.
 
 #### `network`
 
@@ -518,6 +551,23 @@ pkt = (PacketBuilder()
     .tcp(dst_port=80)
     .build()
 )
+
+# PPPoE session frame carrying IPv4 TCP (RFC 2516)
+pkt = (PacketBuilder()
+    .ethernet()
+    .pppoe(session_id=0x1234)
+    .ip(src="10.0.0.1", dst="8.8.8.8")
+    .tcp(dst_port=80)
+    .build()
+)
+
+# PPPoE PADI discovery frame (broadcast)
+from packet_generator import PPPOE_CODE_PADI, PPPoETag, PPPOE_TAG_SERVICE_NAME
+pkt = (PacketBuilder()
+    .ethernet(dst_mac="ff:ff:ff:ff:ff:ff")
+    .pppoe(code=PPPOE_CODE_PADI, tags=[PPPoETag(PPPOE_TAG_SERVICE_NAME, b"")])
+    .build()
+)
 ```
 
 Omitting `.ethernet()` produces a raw IP packet with no layer-2 framing.
@@ -532,6 +582,7 @@ Each method appends one layer to the stack and returns `self` for chaining.
 | `.ethernet(src_mac, dst_mac, pad=False)` | Append an Ethernet II header. `pad=True` zero-pads the frame to the IEEE 802.3 minimum of 60 bytes. |
 | `.vlan(vid, pcp=0, dei=0)` | Append an 802.1Q VLAN tag. Call twice for QinQ (IEEE 802.1ad) double-tagged frames. |
 | `.mpls(label, tc=0, ttl=64)` | Append an MPLS label stack entry (RFC 3032). The bottom-of-stack S bit is set automatically. Call multiple times to build a label stack. |
+| `.pppoe(code=0, session_id=0, tags=None)` | Append a PPPoE header (RFC 2516). `code=0` (default) is a session frame carrying an IP payload; any other code is a discovery frame carrying TLV `tags` and no IP layer. |
 | `.ip(src, dst, ttl=64, tos=0, identification=0, flags=0b010, fragment_offset=0, traffic_class=0, flow_label=0)` | Append an IPv4 or IPv6 header (auto-detected from `src`). Call twice for IP-in-IP (RFC 2003) or IPv6-in-IPv4 (RFC 4213) tunnels. IPv4-only params are ignored for IPv6 and vice versa. |
 | `.tcp(src_port=12345, dst_port=80, seq=0, ack=0, flags=TCP_ACK, window=65535, urgent_ptr=0, reserved=0, options=None)` | Append a TCP transport header. |
 | `.udp(src_port=12345, dst_port=80)` | Append a UDP transport header. |
@@ -624,6 +675,70 @@ EtherType constants:
 |----------|-------|-------------|
 | `ETHERTYPE_MPLS_UNICAST` | `0x8847` | MPLS unicast — used for most MPLS traffic |
 | `ETHERTYPE_MPLS_MULTICAST` | `0x8848` | MPLS multicast |
+
+#### `PPPoEHeader` and `PPPoETag`
+
+```python
+from packet_generator import (
+    PPPoEHeader, PPPoETag,
+    ETHERTYPE_PPPOE_SESSION, ETHERTYPE_PPPOE_DISCOVERY,
+    PPP_IPV4, PPP_IPV6,
+    PPPOE_CODE_SESSION, PPPOE_CODE_PADI, PPPOE_CODE_PADO,
+    PPPOE_CODE_PADR, PPPOE_CODE_PADS, PPPOE_CODE_PADT,
+    PPPOE_TAG_SERVICE_NAME, PPPOE_TAG_AC_NAME, PPPOE_TAG_HOST_UNIQ,
+    PPPOE_TAG_AC_COOKIE, PPPOE_TAG_GENERIC_ERROR,
+)
+from packet_generator.pppoe import build_pppoe_header
+
+hdr = PPPoEHeader(code=PPPOE_CODE_SESSION, session_id=0x1234)
+payload = b"\x00\x21" + ip_bytes  # PPP protocol 0x0021 + IPv4 data
+raw: bytes = build_pppoe_header(hdr, payload)  # 6 bytes header only
+```
+
+`PPPoEHeader` fields:
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `code` | `PPPOE_CODE_SESSION` (`0x00`) | PPPoE message code. `0x00` = session frame; other values are discovery codes. |
+| `session_id` | `0` | 16-bit session identifier (set by PADS; `0` for discovery frames). |
+| `tags` | `[]` | List of `PPPoETag` TLV entries; used only for discovery frames. |
+
+`PPPoETag` fields:
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `type` | *(required)* | 16-bit tag type. |
+| `data` | `b""` | Tag value bytes. |
+
+PPPoE code constants:
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `PPPOE_CODE_SESSION` | `0x00` | Session data frame |
+| `PPPOE_CODE_PADI` | `0x09` | PPPoE Active Discovery Initiation |
+| `PPPOE_CODE_PADO` | `0x07` | PPPoE Active Discovery Offer |
+| `PPPOE_CODE_PADR` | `0x19` | PPPoE Active Discovery Request |
+| `PPPOE_CODE_PADS` | `0x65` | PPPoE Active Discovery Session-confirmation |
+| `PPPOE_CODE_PADT` | `0xa7` | PPPoE Active Discovery Terminate |
+
+PPPoE tag type constants:
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `PPPOE_TAG_SERVICE_NAME` | `0x0101` | Service-Name |
+| `PPPOE_TAG_AC_NAME` | `0x0102` | AC-Name |
+| `PPPOE_TAG_HOST_UNIQ` | `0x0103` | Host-Uniq |
+| `PPPOE_TAG_AC_COOKIE` | `0x0104` | AC-Cookie |
+| `PPPOE_TAG_GENERIC_ERROR` | `0x0203` | Generic-Error |
+
+EtherType and PPP protocol constants:
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `ETHERTYPE_PPPOE_DISCOVERY` | `0x8863` | PPPoE discovery frames |
+| `ETHERTYPE_PPPOE_SESSION` | `0x8864` | PPPoE session frames |
+| `PPP_IPV4` | `0x0021` | PPP protocol number for IPv4 |
+| `PPP_IPV6` | `0x0057` | PPP protocol number for IPv6 |
 
 #### `IPHeader` (IPv4)
 
@@ -931,6 +1046,7 @@ from packet_parser import (
     ethernet_packet_parser,
     vlan_packet_parser,
     mpls_packet_parser,
+    pppoe_packet_parser,
     ip_packet_parser,
     icmp_packet_parser,
     icmpv6_packet_parser,
@@ -944,6 +1060,7 @@ from packet_parser import (
 | `ethernet_packet_parser` | `packet_parser.ethernet` | EtherType | `EthernetHeader` |
 | `vlan_packet_parser` | `packet_parser.vlan` | Inner EtherType | `VLANTag` |
 | `mpls_packet_parser` | `packet_parser.mpls` | `0x8847` (more labels) or IPv4/IPv6 EtherType (bottom of stack) | `MPLSLabel` |
+| `pppoe_packet_parser` | `packet_parser.pppoe` | IPv4/IPv6 EtherType for session frames; `None` for discovery frames | `PPPoEHeader` |
 | `ip_packet_parser` | `packet_parser.ip` | IP protocol number | `IPHeader` or `IPv6Header` |
 | `icmp_packet_parser` | `packet_parser.icmp` | ICMP type | `ICMPHeader` |
 | `icmpv6_packet_parser` | `packet_parser.icmpv6` | ICMPv6 type | `ICMPv6Header` |
@@ -964,6 +1081,7 @@ parsers automatically and returns a single `ParsedPacket` dataclass.
 |-------|------|-------------|
 | `ethernet` | `EthernetHeader \| None` | Ethernet II header (VLAN tag included when present) |
 | `mpls` | `list[MPLSLabel]` | MPLS label stack entries, outermost first. Empty list when no MPLS labels are present. |
+| `pppoe` | `PPPoEHeader \| None` | PPPoE header (session or discovery), or `None` when absent. |
 | `ip` | `IPHeader \| IPv6Header \| None` | IPv4 or IPv6 header |
 | `transport` | `TCPHeader \| UDPHeader \| ICMPHeader \| ICMPv6Header \| None` | Transport-layer header |
 | `payload` | `bytes` | Bytes after the deepest parsed header |
@@ -1057,6 +1175,7 @@ of the dict, and returns the same dict for optional chaining.
 |---|---|
 | `EthernetHeader` | `ethernet` (src_mac, dst_mac, enabled, optional vlan) |
 | `MPLSLabel` | `mpls` array — appends `{label, tc, ttl}` entry (tc omitted when 0) |
+| `PPPoEHeader` | `pppoe` (session_id; code omitted when 0; tags array when non-empty) |
 | `IPHeader` / `IPv6Header` | `network` (src, dst, protocol, ttl; non-default fields only) |
 | `TCPHeader` | `transport` (src_port, dst_port, seq, ack, flags, window; optional options) |
 | `UDPHeader` | `transport` (src_port, dst_port) |
@@ -1194,6 +1313,7 @@ packet-generator/
     ip.py              # IPv4 header (20 bytes)
     ipv6.py            # IPv6 header (40 bytes)
     mpls.py            # MPLS label stack entry (4 bytes, RFC 3032)
+    pppoe.py           # PPPoE session and discovery frames (RFC 2516)
     tcp.py             # TCP header (20+ bytes, variable via data offset)
     udp.py             # UDP header (8 bytes)
     icmp.py            # ICMPv4 header (8 bytes)
@@ -1204,6 +1324,7 @@ packet-generator/
     ethernet.py        # parse Ethernet II + optional 802.1Q VLAN tag
     vlan.py            # parse IEEE 802.1Q VLAN tag (4 bytes)
     mpls.py            # parse MPLS label stack entry (4 bytes, RFC 3032)
+    pppoe.py           # parse PPPoE session and discovery frames (RFC 2516)
     ip.py              # parse IPv4 / IPv6 (version auto-detected)
     icmp.py            # parse ICMPv4 header (8 bytes)
     icmpv6.py          # parse ICMPv6 header (8 bytes)
@@ -1215,6 +1336,7 @@ packet-generator/
   tests/
     test_builder.py
     test_mpls.py
+    test_pppoe.py
     test_checksum.py
     test_fragmentation.py
     test_generator_ethernet.py
@@ -1263,6 +1385,7 @@ All tests run in under a second and require no third-party packages.
 | RFC 4443 | Internet Control Message Protocol for IPv6 (ICMPv6) |
 | RFC 8200 | Internet Protocol, Version 6 (IPv6) — including §4.5 Fragment Extension Header |
 | RFC 2003 | IP Encapsulation within IP (IPv4-in-IPv4 tunnelling) |
+| RFC 2516 | A Method for Transmitting PPP Over Ethernet (PPPoE) |
 | RFC 3031 | Multiprotocol Label Switching Architecture (MPLS) |
 | RFC 3032 | MPLS Label Stack Encoding — 4-byte label stack entry format |
 | RFC 4213 | Basic Transition Mechanisms for IPv6 Hosts and Routers (IPv6-in-IPv4 tunnelling) |
