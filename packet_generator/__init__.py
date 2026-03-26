@@ -14,42 +14,62 @@ Fragmentation is supported via :meth:`PacketBuilder.fragment` (high-level)
 or the low-level :func:`fragment_ipv4` and :func:`fragment_ipv6` functions.
 
 The recommended entry point is :class:`PacketBuilder`, which wires all
-layers together and exposes a clean, high-level API:
+layers together and exposes a clean, high-level API.  Each fluent method
+**appends** a layer to an ordered stack, so the same method can be called
+multiple times to produce advanced encapsulations.
 
 .. code-block:: python
 
-    from packet_generator import PacketBuilder, Protocol
+    from packet_generator import PacketBuilder
 
     # IPv4 TCP packet (Ethernet + IP + TCP + 64 random payload bytes)
-    pkt = PacketBuilder(
-        src_ip="192.168.1.1",
-        dst_ip="8.8.8.8",
-        protocol=Protocol.TCP,
-        payload_size=64,
-        dst_port=443,
-    ).build()
+    pkt = (PacketBuilder()
+        .ethernet()
+        .ip(src="192.168.1.1", dst="8.8.8.8")
+        .tcp(dst_port=443)
+        .payload(size=64)
+        .build()
+    )
 
     # IPv6 UDP packet without Ethernet header
-    pkt = PacketBuilder(
-        src_ip="fe80::1",
-        dst_ip="fe80::2",
-        protocol=Protocol.UDP,
-        payload_size=20,
-        include_ethernet=False,
-    ).build()
+    pkt = (PacketBuilder()
+        .ip(src="fe80::1", dst="fe80::2")
+        .udp()
+        .payload(size=20)
+        .build()
+    )
 
     # ICMPv6 Echo Request with explicit payload
-    pkt = PacketBuilder(
-        src_ip="::1",
-        dst_ip="::2",
-        protocol=Protocol.ICMPv6,
-        payload=b"hello ipv6",
-    ).build()
+    pkt = (PacketBuilder()
+        .ethernet()
+        .ip(src="::1", dst="::2")
+        .icmpv6()
+        .payload(data=b"hello ipv6")
+        .build()
+    )
+
+    # QinQ (802.1ad) double-tagged frame — call .vlan() twice
+    pkt = (PacketBuilder()
+        .ethernet()
+        .vlan(vid=100)   # outer VLAN
+        .vlan(vid=200)   # inner VLAN
+        .ip(src="10.0.0.1", dst="10.0.0.2")
+        .udp()
+        .build()
+    )
+
+    # IP-in-IP tunnel — call .ip() twice
+    pkt = (PacketBuilder()
+        .ethernet()
+        .ip(src="203.0.113.1", dst="203.0.113.2")
+        .ip(src="10.0.0.1", dst="10.0.0.2")
+        .tcp(dst_port=80)
+        .build()
+    )
 
 Public API:
     PacketBuilder: High-level packet assembly class.
-    Protocol: Enum of supported transport protocols (TCP, UDP, ICMP, ICMPv6).
-    EthernetHeader: Dataclass for Ethernet II header fields.
+    EthernetHeader: Dataclass for Ethernet II header fields (dst_mac, src_mac, ethertype, vlan_tag, pad).
     VLANTag: Dataclass for IEEE 802.1Q VLAN tag fields.
     IPHeader: Dataclass for IPv4 header fields.
     IPv6Header: Dataclass for IPv6 header fields.
@@ -66,7 +86,7 @@ Public API:
 """
 from __future__ import annotations
 
-from .builder import PacketBuilder, Protocol
+from .builder import PacketBuilder
 from .ethernet import EthernetHeader, VLANTag, ETHERNET_MIN_FRAME_SIZE
 from .pcap import write_pcap, write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW
 from .fragmentation import fragment_ipv4, fragment_ipv6
@@ -82,7 +102,6 @@ from .icmpv6 import ICMPv6Header
 
 __all__ = [
     "PacketBuilder",
-    "Protocol",
     "EthernetHeader",
     "VLANTag",
     "ETHERNET_MIN_FRAME_SIZE",

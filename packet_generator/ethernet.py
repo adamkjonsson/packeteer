@@ -85,6 +85,7 @@ class EthernetHeader:
     src_mac: str
     ethertype: int = ETHERTYPE_IPV4
     vlan_tag: VLANTag | None = None
+    pad: bool = False
 
 
 def _parse_mac(mac: str) -> bytes:

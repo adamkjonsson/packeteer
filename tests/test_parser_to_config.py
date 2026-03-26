@@ -8,7 +8,7 @@ from packet_generator.tcp import TCPHeader, TCPOptions, TCP_SYN, TCP_ACK, TCP_PS
 from packet_generator.udp import UDPHeader
 from packet_generator.icmp import ICMPHeader
 from packet_generator.icmpv6 import ICMPv6Header
-from packet_generator import PacketBuilder, Protocol
+from packet_generator import PacketBuilder
 
 from packet_parser.to_config import update_config, to_json_config, to_json_string
 from packet_parser import (
@@ -307,9 +307,11 @@ class TestToJsonString(unittest.TestCase):
 class TestRoundtrip(unittest.TestCase):
     """Parse a packet built by packet_generator and verify the config fields."""
 
-    def _build_and_parse_tcp(self, **kwargs):
-        raw = PacketBuilder(src_ip="10.0.0.1", dst_ip="10.0.0.2",
-                            protocol=Protocol.TCP, **kwargs).build()
+    def _build_and_parse_tcp(self, src_port=12345, dst_port=80, flags=TCP_ACK):
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .tcp(src_port=src_port, dst_port=dst_port, flags=flags)
+               .build())
         cfg = {}
         eth_size, _, eth_hdr = ethernet_packet_parser(raw)
         update_config(cfg, eth_hdr)
@@ -334,12 +336,13 @@ class TestRoundtrip(unittest.TestCase):
         self.assertEqual(cfg["transport"]["dst_port"], 443)
 
     def test_tcp_flags(self):
-        cfg = self._build_and_parse_tcp(tcp_flags=TCP_SYN)
+        cfg = self._build_and_parse_tcp(flags=TCP_SYN)
         self.assertEqual(cfg["transport"]["flags"], TCP_SYN)
 
     def test_udp_roundtrip(self):
-        raw = PacketBuilder(src_ip="10.0.0.1", dst_ip="10.0.0.2",
-                            protocol=Protocol.UDP, src_port=5000, dst_port=53).build()
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .udp(src_port=5000, dst_port=53).build())
         cfg = {}
         eth_size, _, eth_hdr = ethernet_packet_parser(raw)
         update_config(cfg, eth_hdr)
@@ -352,9 +355,9 @@ class TestRoundtrip(unittest.TestCase):
         self.assertEqual(cfg["transport"]["dst_port"], 53)
 
     def test_icmp_roundtrip(self):
-        raw = PacketBuilder(src_ip="10.0.0.1", dst_ip="10.0.0.2",
-                            protocol=Protocol.ICMP,
-                            icmp_identifier=7, icmp_sequence=3).build()
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .icmp(identifier=7, sequence=3).build())
         cfg = {}
         eth_size, _, eth_hdr = ethernet_packet_parser(raw)
         update_config(cfg, eth_hdr)
@@ -367,9 +370,9 @@ class TestRoundtrip(unittest.TestCase):
         self.assertEqual(cfg["transport"]["sequence"], 3)
 
     def test_icmpv6_roundtrip(self):
-        raw = PacketBuilder(src_ip="::1", dst_ip="::2",
-                            protocol=Protocol.ICMPv6,
-                            icmp_identifier=4, icmp_sequence=9).build()
+        raw = (PacketBuilder().ethernet()
+               .ip(src="::1", dst="::2")
+               .icmpv6(identifier=4, sequence=9).build())
         cfg = {}
         eth_size, _, eth_hdr = ethernet_packet_parser(raw)
         update_config(cfg, eth_hdr)
@@ -382,8 +385,8 @@ class TestRoundtrip(unittest.TestCase):
         self.assertEqual(cfg["transport"]["sequence"], 9)
 
     def test_vlan_roundtrip(self):
-        raw = PacketBuilder(src_ip="10.0.0.1", dst_ip="10.0.0.2",
-                            protocol=Protocol.UDP, vlan_id=42, vlan_pcp=5).build()
+        raw = (PacketBuilder().ethernet().vlan(vid=42, pcp=5)
+               .ip(src="10.0.0.1", dst="10.0.0.2").udp().build())
         cfg = {}
         eth_size, _, eth_hdr = ethernet_packet_parser(raw)
         update_config(cfg, eth_hdr)
@@ -391,11 +394,10 @@ class TestRoundtrip(unittest.TestCase):
         self.assertEqual(cfg["ethernet"]["vlan"]["pcp"], 5)
 
     def test_payload_roundtrip(self):
-        # Payload must be ≥ 18 bytes to avoid Ethernet minimum-frame zero-padding
-        # (60 byte min frame − 14 eth − 20 ip − 8 udp = 18 bytes minimum payload)
         payload = b"\xca\xfe\xba\xbe" * 5  # 20 bytes
-        raw = PacketBuilder(src_ip="10.0.0.1", dst_ip="10.0.0.2",
-                            protocol=Protocol.UDP, payload=payload).build()
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .udp().payload(data=payload).build())
         cfg = {}
         eth_size, _, eth_hdr = ethernet_packet_parser(raw)
         update_config(cfg, eth_hdr)

@@ -71,12 +71,11 @@ class TestTCPHeader(unittest.TestCase):
         self.assertEqual(seq, 0xDEADBEEF)
 
     def test_seq_via_packet_builder(self):
-        from packet_generator import PacketBuilder, Protocol
-        pkt = PacketBuilder(
-            "10.0.0.1", "10.0.0.2", Protocol.TCP,
-            include_ethernet=False,
-            tcp_seq=0x12345678,
-        ).build()
+        from packet_generator import PacketBuilder
+        pkt = (PacketBuilder()
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .tcp(seq=0x12345678)
+               .build())
         # 20-byte IP header, then TCP seq at bytes 4–7
         seq = struct.unpack('!I', pkt[20 + 4: 20 + 8])[0]
         self.assertEqual(seq, 0x12345678)
@@ -260,25 +259,23 @@ class TestTCPOptions(unittest.TestCase):
     # ── PacketBuilder integration ─────────────────────────────────────────────
 
     def test_options_via_packet_builder(self):
-        from packet_generator import PacketBuilder, Protocol
+        from packet_generator import PacketBuilder
         opts = TCPOptions(mss=1460, window_scale=7)
-        pkt = PacketBuilder(
-            "10.0.0.1", "10.0.0.2", Protocol.TCP,
-            include_ethernet=False,
-            tcp_options=opts,
-        ).build()
+        pkt = (PacketBuilder()
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .tcp(options=opts)
+               .build())
         # IP header = 20, then TCP; data offset at byte 20+12
         tcp_start = 20
         data_offset = (pkt[tcp_start + 12] >> 4) & 0xF
         self.assertGreater(data_offset, 5)
 
     def test_reserved_via_packet_builder(self):
-        from packet_generator import PacketBuilder, Protocol
-        pkt = PacketBuilder(
-            "10.0.0.1", "10.0.0.2", Protocol.TCP,
-            include_ethernet=False,
-            tcp_reserved=0b0011,
-        ).build()
+        from packet_generator import PacketBuilder
+        pkt = (PacketBuilder()
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .tcp(reserved=0b0011)
+               .build())
         tcp_start = 20
         reserved = pkt[tcp_start + 12] & 0xF
         self.assertEqual(reserved, 0b0011)

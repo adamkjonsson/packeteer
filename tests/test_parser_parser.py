@@ -1,7 +1,7 @@
 import io
 import unittest
 
-from packet_generator import PacketBuilder, Protocol
+from packet_generator import PacketBuilder
 from packet_generator.ethernet import EthernetHeader
 from packet_generator.ip import IPHeader
 from packet_generator.ipv6 import IPv6Header
@@ -15,25 +15,40 @@ from packet_parser.parser import parse_packet, parse_pcap_packet, parse_pcap_fil
 from packet_parser.pcap import read_pcap
 
 
-def _tcp(**kw):
-    return PacketBuilder(src_ip="10.0.0.1", dst_ip="10.0.0.2",
-                         protocol=Protocol.TCP, **kw).build()
+def _tcp(src_port=12345, dst_port=80, seq=0, flags=TCP_ACK, window=65535):
+    return (PacketBuilder()
+            .ethernet()
+            .ip(src="10.0.0.1", dst="10.0.0.2")
+            .tcp(src_port=src_port, dst_port=dst_port, seq=seq, flags=flags, window=window)
+            .build())
 
-def _udp(**kw):
-    return PacketBuilder(src_ip="10.0.0.1", dst_ip="10.0.0.2",
-                         protocol=Protocol.UDP, **kw).build()
+def _udp(src_port=12345, dst_port=80):
+    return (PacketBuilder()
+            .ethernet()
+            .ip(src="10.0.0.1", dst="10.0.0.2")
+            .udp(src_port=src_port, dst_port=dst_port)
+            .build())
 
-def _icmp(**kw):
-    return PacketBuilder(src_ip="10.0.0.1", dst_ip="10.0.0.2",
-                         protocol=Protocol.ICMP, **kw).build()
+def _icmp(identifier=1, sequence=1):
+    return (PacketBuilder()
+            .ethernet()
+            .ip(src="10.0.0.1", dst="10.0.0.2")
+            .icmp(identifier=identifier, sequence=sequence)
+            .build())
 
-def _tcp6(**kw):
-    return PacketBuilder(src_ip="::1", dst_ip="::2",
-                         protocol=Protocol.TCP, **kw).build()
+def _tcp6(src_port=12345, dst_port=80):
+    return (PacketBuilder()
+            .ethernet()
+            .ip(src="::1", dst="::2")
+            .tcp(src_port=src_port, dst_port=dst_port)
+            .build())
 
-def _icmpv6(**kw):
-    return PacketBuilder(src_ip="::1", dst_ip="::2",
-                         protocol=Protocol.ICMPv6, **kw).build()
+def _icmpv6(identifier=1, sequence=1):
+    return (PacketBuilder()
+            .ethernet()
+            .ip(src="::1", dst="::2")
+            .icmpv6(identifier=identifier, sequence=sequence)
+            .build())
 
 
 class TestParsedPacketDefaults(unittest.TestCase):
@@ -47,8 +62,8 @@ class TestParsedPacketDefaults(unittest.TestCase):
 
 class TestParsePacketEthernetIPv4TCP(unittest.TestCase):
     def setUp(self):
-        self.raw = _tcp(src_port=1234, dst_port=443, tcp_seq=999,
-                        tcp_flags=TCP_SYN, tcp_window=4096)
+        self.raw = _tcp(src_port=1234, dst_port=443, seq=999,
+                        flags=TCP_SYN, window=4096)
         self.pkt = parse_packet(self.raw)
 
     def test_ethernet_present(self):
@@ -95,7 +110,7 @@ class TestParsePacketEthernetIPv4UDP(unittest.TestCase):
 
 class TestParsePacketEthernetIPv4ICMP(unittest.TestCase):
     def setUp(self):
-        self.pkt = parse_packet(_icmp(icmp_identifier=7, icmp_sequence=3))
+        self.pkt = parse_packet(_icmp(identifier=7, sequence=3))
 
     def test_transport_is_icmp(self):
         self.assertIsInstance(self.pkt.transport, ICMPHeader)
@@ -129,7 +144,7 @@ class TestParsePacketEthernetIPv6TCP(unittest.TestCase):
 
 class TestParsePacketEthernetIPv6ICMPv6(unittest.TestCase):
     def setUp(self):
-        self.pkt = parse_packet(_icmpv6(icmp_identifier=4, icmp_sequence=9))
+        self.pkt = parse_packet(_icmpv6(identifier=4, sequence=9))
 
     def test_ip_is_ipv6(self):
         self.assertIsInstance(self.pkt.ip, IPv6Header)
@@ -145,8 +160,8 @@ class TestParsePacketEthernetIPv6ICMPv6(unittest.TestCase):
 class TestParsePacketVLAN(unittest.TestCase):
     def setUp(self):
         self.pkt = parse_packet(
-            PacketBuilder("10.0.0.1", "10.0.0.2", Protocol.UDP,
-                          vlan_id=42, vlan_pcp=5).build()
+            PacketBuilder().ethernet().vlan(vid=42, pcp=5)
+            .ip(src="10.0.0.1", dst="10.0.0.2").udp().build()
         )
 
     def test_ethernet_has_vlan_tag(self):
@@ -188,16 +203,17 @@ class TestParsePacketPayload(unittest.TestCase):
     def test_payload_captured(self):
         # Use ≥ 18 bytes to avoid Ethernet minimum-frame zero-padding
         payload = b"\xca\xfe\xba\xbe" * 5
-        raw = PacketBuilder("10.0.0.1", "10.0.0.2", Protocol.UDP,
-                            payload=payload).build()
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .udp().payload(data=payload).build())
         pkt = parse_packet(raw)
         self.assertEqual(pkt.payload, payload)
 
     def test_zero_payload_tcp_has_only_padding(self):
-        # 14 (eth) + 20 (ip) + 20 (tcp) = 54 bytes; Ethernet min frame is 60,
-        # so 6 zero-padding bytes appear as payload after all headers.
-        raw = PacketBuilder("10.0.0.1", "10.0.0.2", Protocol.TCP,
-                            payload_size=0).build()
+        # 14 (eth) + 20 (ip) + 20 (tcp) = 54 bytes; no padding with pad=False default.
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .tcp().build())
         pkt = parse_packet(raw)
         self.assertEqual(pkt.payload, bytes(len(pkt.payload)))
 

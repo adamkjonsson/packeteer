@@ -3,7 +3,7 @@ import socket
 import struct
 import unittest
 
-from packet_generator import PacketBuilder, Protocol, fragment_ipv4, fragment_ipv6
+from packet_generator import PacketBuilder, fragment_ipv4, fragment_ipv6
 from packet_generator.ip import IPHeader
 from packet_generator.ipv6 import IPv6Header
 from packet_generator.ethernet import EthernetHeader, ETHERTYPE_IPV4, ETHERTYPE_IPV6
@@ -293,90 +293,115 @@ class TestFragmentIPv6(unittest.TestCase):
 class TestPacketBuilderFragment(unittest.TestCase):
 
     def test_ipv4_udp_single_fragment(self):
-        frags = PacketBuilder(
-            "10.0.0.1", "10.0.0.2", Protocol.UDP, payload_size=100,
-        ).fragment(mtu=1500)
+        frags = (PacketBuilder()
+                 .ip(src="10.0.0.1", dst="10.0.0.2")
+                 .udp()
+                 .payload(size=100)
+                 .fragment(mtu=1500))
         self.assertEqual(len(frags), 1)
 
     def test_ipv4_udp_multiple_fragments(self):
-        frags = PacketBuilder(
-            "10.0.0.1", "10.0.0.2", Protocol.UDP, payload_size=2000,
-        ).fragment(mtu=576)
+        frags = (PacketBuilder()
+                 .ip(src="10.0.0.1", dst="10.0.0.2")
+                 .udp()
+                 .payload(size=2000)
+                 .fragment(mtu=576))
         self.assertGreater(len(frags), 1)
 
     def test_ipv4_tcp_multiple_fragments(self):
-        frags = PacketBuilder(
-            "192.168.1.1", "192.168.1.2", Protocol.TCP, payload_size=3000,
-        ).fragment(mtu=1500)
+        frags = (PacketBuilder()
+                 .ip(src="192.168.1.1", dst="192.168.1.2")
+                 .tcp()
+                 .payload(size=3000)
+                 .fragment(mtu=1500))
         self.assertGreater(len(frags), 1)
 
     def test_ipv4_icmp_multiple_fragments(self):
-        frags = PacketBuilder(
-            "1.2.3.4", "5.6.7.8", Protocol.ICMP, payload_size=1000,
-        ).fragment(mtu=576)
+        frags = (PacketBuilder()
+                 .ip(src="1.2.3.4", dst="5.6.7.8")
+                 .icmp()
+                 .payload(size=1000)
+                 .fragment(mtu=576))
         self.assertGreater(len(frags), 1)
 
     def test_ipv6_udp_single_fragment(self):
-        frags = PacketBuilder(
-            "::1", "::2", Protocol.UDP, payload_size=100,
-        ).fragment(mtu=1500)
+        frags = (PacketBuilder()
+                 .ip(src="::1", dst="::2")
+                 .udp()
+                 .payload(size=100)
+                 .fragment(mtu=1500))
         self.assertEqual(len(frags), 1)
 
     def test_ipv6_udp_multiple_fragments(self):
-        frags = PacketBuilder(
-            "fe80::1", "fe80::2", Protocol.UDP, payload_size=2000,
-        ).fragment(mtu=1280)
+        frags = (PacketBuilder()
+                 .ip(src="fe80::1", dst="fe80::2")
+                 .udp()
+                 .payload(size=2000)
+                 .fragment(mtu=1280))
         self.assertGreater(len(frags), 1)
 
     def test_ipv6_tcp_multiple_fragments(self):
-        frags = PacketBuilder(
-            "::1", "::2", Protocol.TCP, payload_size=3000,
-        ).fragment(mtu=1280)
+        frags = (PacketBuilder()
+                 .ip(src="::1", dst="::2")
+                 .tcp()
+                 .payload(size=3000)
+                 .fragment(mtu=1280))
         self.assertGreater(len(frags), 1)
 
     def test_ipv6_icmpv6_multiple_fragments(self):
-        frags = PacketBuilder(
-            "::1", "::2", Protocol.ICMPv6, payload_size=2000,
-        ).fragment(mtu=1280)
+        frags = (PacketBuilder()
+                 .ip(src="::1", dst="::2")
+                 .icmpv6()
+                 .payload(size=2000)
+                 .fragment(mtu=1280))
         self.assertGreater(len(frags), 1)
 
     def test_no_ethernet_ipv4(self):
-        frags = PacketBuilder(
-            "10.0.0.1", "10.0.0.2", Protocol.UDP, payload_size=1000,
-            include_ethernet=False,
-        ).fragment(mtu=576)
+        frags = (PacketBuilder()
+                 .ip(src="10.0.0.1", dst="10.0.0.2")
+                 .udp()
+                 .payload(size=1000)
+                 .fragment(mtu=576))
         for frag in frags:
             self.assertEqual(frag[0], 0x45)  # IP header starts at byte 0
 
     def test_no_ethernet_ipv6(self):
-        frags = PacketBuilder(
-            "::1", "::2", Protocol.UDP, payload_size=1000,
-            include_ethernet=False,
-        ).fragment(mtu=576)
+        frags = (PacketBuilder()
+                 .ip(src="::1", dst="::2")
+                 .udp()
+                 .payload(size=1000)
+                 .fragment(mtu=576))
         for frag in frags:
             self.assertEqual(frag[0] >> 4, 6)  # IPv6 version starts at byte 0
 
     def test_payload_consistency_across_calls(self):
-        """fragment() and build() must use the same cached payload bytes."""
-        builder = PacketBuilder(
-            "10.0.0.1", "10.0.0.2", Protocol.UDP, payload_size=100,
-        )
-        # Access payload twice — must be identical (cached, not re-randomised)
-        _ = builder.fragment(mtu=1500)
-        self.assertEqual(builder.payload, builder.payload)
+        """fragment() must use the same cached payload bytes on repeated calls."""
+        builder = (PacketBuilder()
+                   .ip(src="10.0.0.1", dst="10.0.0.2", identification=1234)
+                   .udp()
+                   .payload(size=100))
+        frags1 = builder.fragment(mtu=1500)
+        frags2 = builder.fragment(mtu=1500)
+        self.assertEqual(frags1, frags2)
 
     def test_ipv4_fragments_contain_ethernet_ethertype(self):
-        frags = PacketBuilder(
-            "10.0.0.1", "10.0.0.2", Protocol.UDP, payload_size=500,
-        ).fragment(mtu=200)
+        frags = (PacketBuilder()
+                 .ethernet()
+                 .ip(src="10.0.0.1", dst="10.0.0.2")
+                 .udp()
+                 .payload(size=500)
+                 .fragment(mtu=200))
         for frag in frags:
             ethertype = struct.unpack("!H", frag[12:14])[0]
             self.assertEqual(ethertype, 0x0800)
 
     def test_ipv6_fragments_contain_ethernet_ethertype(self):
-        frags = PacketBuilder(
-            "::1", "::2", Protocol.UDP, payload_size=500,
-        ).fragment(mtu=200)
+        frags = (PacketBuilder()
+                 .ethernet()
+                 .ip(src="::1", dst="::2")
+                 .udp()
+                 .payload(size=500)
+                 .fragment(mtu=200))
         for frag in frags:
             ethertype = struct.unpack("!H", frag[12:14])[0]
             self.assertEqual(ethertype, 0x86DD)
