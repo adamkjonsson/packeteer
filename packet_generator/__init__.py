@@ -6,7 +6,8 @@ This package constructs byte-accurate network packets at all layers:
   VLAN tags (:class:`VLANTag`), PPPoE session and discovery frames
   (:class:`PPPoEHeader`, :class:`PPPoETag`)
 * **Layer 2.5** — MPLS label stacks (:class:`MPLSLabel`, RFC 3032)
-* **Layer 3** — IPv4 (:class:`IPHeader`) and IPv6 (:class:`IPv6Header`)
+* **Layer 3** — IPv4 (:class:`IPHeader`) and IPv6 (:class:`IPv6Header`);
+  EtherIP tunnels (:class:`EtherIPHeader`, RFC 3378)
 * **Layer 4** — TCP (:class:`TCPHeader`), UDP (:class:`UDPHeader`),
   ICMPv4 (:class:`ICMPHeader`), ICMPv6 (:class:`ICMPv6Header`)
 
@@ -89,6 +90,17 @@ multiple times to produce advanced encapsulations.
         .build()
     )
 
+    # EtherIP tunnel (RFC 3378) — outer IP carries an inner Ethernet frame
+    pkt = (PacketBuilder()
+        .ethernet()
+        .ip(src="10.0.0.1", dst="10.0.0.2")
+        .etherip()
+        .ethernet(src_mac="aa:bb:cc:dd:ee:01", dst_mac="aa:bb:cc:dd:ee:02")
+        .ip(src="192.168.1.1", dst="192.168.1.2")
+        .tcp(dst_port=80)
+        .build()
+    )
+
     # PPPoE PADI discovery frame
     from packet_generator import PPPOE_CODE_PADI, PPPoETag, PPPOE_TAG_SERVICE_NAME
     pkt = (PacketBuilder()
@@ -100,6 +112,8 @@ multiple times to produce advanced encapsulations.
 Public API:
     PacketBuilder: High-level packet assembly class.
     EthernetHeader: Dataclass for Ethernet II header fields (dst_mac, src_mac, ethertype, vlan_tag, pad).
+    EtherIPHeader: Dataclass for the EtherIP tunnel header (RFC 3378). No user-configurable fields.
+    IPPROTO_ETHERIP: IP protocol number 97 — EtherIP (RFC 3378).
     VLANTag: Dataclass for IEEE 802.1Q VLAN tag fields.
     MPLSLabel: Dataclass for one MPLS label stack entry (RFC 3032).
     ETHERTYPE_MPLS_UNICAST: EtherType 0x8847 — MPLS unicast.
@@ -131,6 +145,7 @@ from __future__ import annotations
 
 from .builder import PacketBuilder
 from .ethernet import EthernetHeader, VLANTag, ETHERNET_MIN_FRAME_SIZE
+from .etherip import EtherIPHeader, IPPROTO_ETHERIP
 from .pcap import write_pcap, write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW
 from .fragmentation import fragment_ipv4, fragment_ipv6
 from .ip import IPHeader
@@ -158,6 +173,8 @@ __all__ = [
     "EthernetHeader",
     "VLANTag",
     "ETHERNET_MIN_FRAME_SIZE",
+    "EtherIPHeader",
+    "IPPROTO_ETHERIP",
     "IPHeader",
     "IPv6Header",
     "TCPHeader",

@@ -79,6 +79,17 @@ Typical usage::
         .pppoe(code=PPPOE_CODE_PADI, tags=[PPPoETag(PPPOE_TAG_SERVICE_NAME, b"")])
         .build()
     )
+
+    # EtherIP tunnel — outer Ethernet + outer IP + EtherIP + inner Ethernet + inner IP + TCP
+    pkt = (PacketBuilder()
+        .ethernet()
+        .ip(src="10.0.0.1", dst="10.0.0.2")
+        .etherip()
+        .ethernet(src_mac="aa:bb:cc:dd:ee:01", dst_mac="aa:bb:cc:dd:ee:02")
+        .ip(src="192.168.1.1", dst="192.168.1.2")
+        .tcp(dst_port=80)
+        .build()
+    )
 """
 from __future__ import annotations
 
@@ -96,6 +107,7 @@ from .tcp import TCPHeader, TCPOptions, TCP_ACK, build_tcp_header
 from .udp import UDPHeader, build_udp_header
 from .icmp import ICMPHeader, build_icmp_header
 from .icmpv6 import ICMPv6Header, build_icmpv6_header
+from .etherip import EtherIPHeader, IPPROTO_ETHERIP, build_etherip_header
 from .mpls import MPLSLabel, ETHERTYPE_MPLS_UNICAST, build_mpls_label
 from .pppoe import (
     PPPoEHeader, PPPoETag,
@@ -116,12 +128,13 @@ _ETHERTYPE_MAP: dict[type, int] = {
 }
 
 _IP_PROTO_MAP: dict[type, int] = {
-    TCPHeader:    6,
-    UDPHeader:    17,
-    ICMPHeader:   1,
-    ICMPv6Header: 58,
-    IPHeader:     4,   # IP-in-IP (RFC 2003)
-    IPv6Header:   41,  # IPv6-in-IPv4 (RFC 4213)
+    TCPHeader:     6,
+    UDPHeader:     17,
+    ICMPHeader:    1,
+    ICMPv6Header:  58,
+    IPHeader:      4,   # IP-in-IP (RFC 2003)
+    IPv6Header:    41,  # IPv6-in-IPv4 (RFC 4213)
+    EtherIPHeader: IPPROTO_ETHERIP,  # EtherIP (RFC 3378)
 }
 
 # PPP protocol numbers for the 2-byte PPP header in PPPoE session frames
@@ -186,11 +199,13 @@ class PacketBuilder:
     * Calling :meth:`mpls` multiple times builds an MPLS label stack (RFC 3032).
     * Calling :meth:`ip` twice creates an IP-in-IP tunnel packet.
     * Calling :meth:`pppoe` inserts a PPPoE session or discovery frame (RFC 2516).
+    * Calling :meth:`etherip` inserts an EtherIP tunnel header (RFC 3378),
+      followed by an inner :meth:`ethernet` + :meth:`ip` + transport chain.
 
     The layer list stores the same public dataclasses exported by
     ``packet_generator`` (``EthernetHeader``, ``VLANTag``, ``MPLSLabel``,
-    ``PPPoEHeader``, ``IPHeader``, ``IPv6Header``, ``TCPHeader``, ``UDPHeader``,
-    ``ICMPHeader``, ``ICMPv6Header``).  Protocol-number fields that depend on
+    ``PPPoEHeader``, ``EtherIPHeader``, ``IPHeader``, ``IPv6Header``,
+    ``TCPHeader``, ``UDPHeader``, ``ICMPHeader``, ``ICMPv6Header``).  Protocol-number fields that depend on
     the next layer (``ethertype``, ``protocol``, ``next_header``) are set to
     ``0`` when the object is stored and filled in correctly at :meth:`build` /
     :meth:`fragment` time.
@@ -296,6 +311,29 @@ class PacketBuilder:
             tags: TLV tags for discovery frames.  Ignored for session frames.
         """
         self._layers.append(PPPoEHeader(code=code, session_id=session_id, tags=tags or []))
+        return self
+
+    def etherip(self) -> "PacketBuilder":
+        """Append an EtherIP tunnel header (RFC 3378).
+
+        Call after the outer :meth:`ip` and before the inner :meth:`ethernet`
+        layer.  The IP protocol number (97) is set automatically on the
+        enclosing IP header.  The 2-byte wire header (version=3, reserved=0,
+        i.e. ``0x30 0x00``) is inserted at build time.
+
+        Example — outer Ethernet + outer IP + EtherIP + inner Ethernet + inner IP + TCP::
+
+            pkt = (PacketBuilder()
+                .ethernet()
+                .ip(src="10.0.0.1", dst="10.0.0.2")
+                .etherip()
+                .ethernet(src_mac="aa:bb:cc:dd:ee:01", dst_mac="aa:bb:cc:dd:ee:02")
+                .ip(src="192.168.1.1", dst="192.168.1.2")
+                .tcp(dst_port=80)
+                .build()
+            )
+        """
+        self._layers.append(EtherIPHeader())
         return self
 
     def ip(
@@ -509,6 +547,9 @@ class PacketBuilder:
                         for t in layer.tags
                     )
                 data = build_pppoe_header(layer, payload) + payload
+
+            elif isinstance(layer, EtherIPHeader):
+                data = build_etherip_header() + data
 
             elif isinstance(layer, MPLSLabel):
                 bos = not isinstance(next_layer, MPLSLabel)
