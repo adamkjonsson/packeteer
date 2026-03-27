@@ -57,6 +57,8 @@ _PROTO_TO_STR: dict[int, str] = {
     socket.IPPROTO_ICMP: "icmp",
     socket.IPPROTO_ICMPV6: "icmpv6",
     IPPROTO_ETHERIP:     "etherip",
+    4:                   "ipip",   # IPv4-in-IP (RFC 2003)
+    41:                  "ipip",   # IPv6-in-IP (RFC 4213)
 }
 
 
@@ -192,6 +194,20 @@ def _apply_etherip(config: dict[str, Any], hdr: EtherIPHeader, tunneled: ParsedP
         if tunneled.payload:
             _apply_payload(inner, tunneled.payload)
     config["etherip"] = inner
+
+
+def _apply_ipip(config: dict[str, Any], tunneled: "ParsedPacket") -> None:
+    """Serialise inner IP-in-IP frame into ``config["ipip"]`` (no ethernet)."""
+    inner: dict[str, Any] = {}
+    if tunneled.ip is not None:
+        _apply_ip(inner, tunneled.ip)
+    if tunneled.ipip and tunneled.tunneled is not None:
+        _apply_ipip(inner, tunneled.tunneled)  # recurse for nested IP-in-IP
+    elif tunneled.transport is not None:
+        _apply_transport(inner, tunneled.transport)
+        if tunneled.payload:
+            _apply_payload(inner, tunneled.payload)
+    config["ipip"] = inner
 
 
 def _apply_payload(config: dict[str, Any], payload: bytes) -> None:

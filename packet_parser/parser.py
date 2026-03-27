@@ -55,7 +55,7 @@ from packet_generator.icmpv6 import ICMPv6Header
 from packet_generator.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW
 
 from packet_parser.pcap import PcapFileHeader, read_pcap
-from packet_parser.to_config import update_config, to_json_config, to_json_string, _apply_etherip
+from packet_parser.to_config import update_config, to_json_config, to_json_string, _apply_etherip, _apply_ipip
 
 from packet_parser.ethernet import packet_parser as _ethernet_parser
 from packet_parser.etherip import packet_parser as _etherip_parser
@@ -90,12 +90,18 @@ class ParsedPacket:
             Empty when no MPLS labels are present.
         pppoe: Parsed PPPoE header, or ``None`` when absent.
         ip: Parsed IPv4 or IPv6 header.
+        ipip: ``True`` when the outer IP's protocol field is ``4``
+            (IPv4-in-IP, RFC 2003) or ``41`` (IPv6-in-IP, RFC 4213).
+            When set, :attr:`tunneled` holds the inner IP packet (no
+            inner Ethernet frame).  Mutually exclusive with
+            :attr:`etherip`.
         etherip: Parsed EtherIP tunnel header, or ``None`` when absent.
             When set, :attr:`tunneled` contains the inner frame as a
             :class:`ParsedPacket`.
-        tunneled: Inner Ethernet frame parsed recursively when
-            :attr:`etherip` is present, otherwise ``None``.  May itself
-            have a non-``None`` :attr:`etherip` for double-nested tunnels.
+        tunneled: Inner packet parsed recursively when :attr:`ipip` is
+            ``True`` or :attr:`etherip` is set, otherwise ``None``.
+            May itself have a non-``None`` :attr:`ipip` or
+            :attr:`etherip` for double-nested tunnels.
         transport: Parsed TCP, UDP, ICMPv4, or ICMPv6 header.
         payload: Bytes remaining after all parsed headers.
         ts_sec: Capture timestamp — whole seconds (from pcap record).
@@ -107,6 +113,7 @@ class ParsedPacket:
     mpls:      list[MPLSLabel] = field(default_factory=list)
     pppoe:     PPPoEHeader | None = None
     ip:        IPHeader | IPv6Header | None = None
+    ipip:      bool = False
     etherip:   EtherIPHeader | None = None
     tunneled:  "ParsedPacket | None" = None
     transport: TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | None = None
@@ -218,6 +225,13 @@ def parse_packet(data: bytes, *, link_type: int = LINKTYPE_ETHERNET) -> ParsedPa
             pkt.transport = t_hdr
             remaining = remaining[t_size:]
 
+    # ── IP-in-IP (RFC 2003 / RFC 4213) ───────────────────────────────────────
+    elif ip_proto in (4, 41):
+        pkt.ipip    = True
+        pkt.tunneled = parse_packet(remaining, link_type=LINKTYPE_RAW)
+        pkt.payload  = b""
+        return pkt
+
     # ── EtherIP ───────────────────────────────────────────────────────────────
     elif ip_proto == IPPROTO_ETHERIP:
         ei_size, _, ei_hdr = _etherip_parser(remaining)
@@ -311,7 +325,9 @@ def parse_pcap_file(
             update_config(cfg, pkt.pppoe)
         if pkt.ip is not None:
             update_config(cfg, pkt.ip)
-        if pkt.etherip is not None and pkt.tunneled is not None:
+        if pkt.ipip and pkt.tunneled is not None:
+            _apply_ipip(cfg, pkt.tunneled)
+        elif pkt.etherip is not None and pkt.tunneled is not None:
             _apply_etherip(cfg, pkt.etherip, pkt.tunneled)
         elif pkt.transport is not None:
             update_config(cfg, pkt.transport)

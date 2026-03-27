@@ -36,6 +36,111 @@ def _parse_tcp_options(spec: dict | None) -> TCPOptions | None:
     )
 
 
+def _apply_ip_chain(
+    b: "PacketBuilder",
+    spec: dict,
+    packet_num: int,
+) -> "PacketBuilder":
+    """Append IP + transport layers from an IP-in-IP inner spec to *b*.
+
+    No ethernet/VLAN/MPLS/PPPoE — the inner spec contains only
+    ``network``, ``transport``, ``payload``, and optionally a nested
+    ``ipip`` key for double-tunnelled packets.  Called recursively.
+    """
+    net          = spec.get("network", {})
+    transport    = spec.get("transport", {})
+    payload_spec = spec.get("payload", {})
+    ipip_inner   = spec.get("ipip")
+
+    src          = net.get("src")
+    dst          = net.get("dst")
+    protocol_str = net.get("protocol")
+
+    if not src or not dst or not protocol_str:
+        print(
+            f"Error: packet {packet_num} ipip inner spec missing "
+            "network.src, network.dst, or network.protocol",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    b = b.ip(
+        src=src, dst=dst,
+        ttl=net.get("ttl", 64),
+        tos=net.get("tos", 0),
+        identification=net.get("identification", 0),
+        flags=net.get("flags", 0b010),
+        fragment_offset=net.get("fragment_offset", 0),
+        traffic_class=net.get("traffic_class", 0),
+        flow_label=net.get("flow_label", 0),
+    )
+
+    proto_lower = protocol_str.lower()
+
+    if proto_lower == "ipip":
+        if ipip_inner is None:
+            print(
+                f"Error: packet {packet_num} ipip inner protocol is "
+                "'ipip' but nested 'ipip' spec is missing",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        return _apply_ip_chain(b, ipip_inner, packet_num)
+
+    if proto_lower == "tcp":
+        b = b.tcp(
+            src_port=transport.get("src_port", 12345),
+            dst_port=transport.get("dst_port", 80),
+            seq=transport.get("seq", 0),
+            ack=transport.get("ack", 0),
+            flags=transport.get("flags", 0x002),
+            window=transport.get("window", 65535),
+            urgent_ptr=transport.get("urgent_ptr", 0),
+            reserved=transport.get("reserved", 0),
+            options=_parse_tcp_options(transport.get("options")),
+        )
+    elif proto_lower == "udp":
+        b = b.udp(
+            src_port=transport.get("src_port", 12345),
+            dst_port=transport.get("dst_port", 80),
+        )
+    elif proto_lower == "icmp":
+        b = b.icmp(
+            type=transport.get("type", 8),
+            code=transport.get("code", 0),
+            identifier=transport.get("identifier", 1),
+            sequence=transport.get("sequence", 1),
+        )
+    elif proto_lower == "icmpv6":
+        b = b.icmpv6(
+            type=transport.get("type", 128),
+            code=transport.get("code", 0),
+            identifier=transport.get("identifier", 1),
+            sequence=transport.get("sequence", 1),
+        )
+    else:
+        print(
+            f"Error: packet {packet_num} ipip inner unknown protocol '{protocol_str}'",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    explicit_payload: bytes | None = None
+    if "data" in payload_spec:
+        try:
+            explicit_payload = bytes.fromhex(payload_spec["data"])
+        except ValueError as e:
+            print(f"Error: packet {packet_num} ipip inner payload.data is not valid hex: {e}",
+                  file=sys.stderr)
+            sys.exit(1)
+    if explicit_payload is not None:
+        b = b.payload(data=explicit_payload)
+    elif payload_spec.get("size", 0):
+        b = b.payload(size=payload_spec["size"])
+
+    return b
+
+
 def _apply_spec_to_builder(
     b: "PacketBuilder",
     spec: dict,
@@ -65,10 +170,19 @@ def _apply_spec_to_builder(
         and pppoe_spec.get("code", PPPOE_CODE_SESSION) != PPPOE_CODE_SESSION
     )
     is_etherip = bool(protocol_str) and protocol_str.lower() == "etherip"
+    is_ipip    = bool(protocol_str) and protocol_str.lower() == "ipip"
 
-    if not is_pppoe_discovery and not is_etherip and (not src or not dst or not protocol_str):
+    if not is_pppoe_discovery and not is_etherip and not is_ipip and \
+            (not src or not dst or not protocol_str):
         print(
             f"Error: packet {packet_num} missing network.src, network.dst, or network.protocol",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if is_ipip and spec.get("ipip") is None:
+        print(
+            f"Error: packet {packet_num} protocol is 'ipip' but 'ipip' spec is missing",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -138,6 +252,10 @@ def _apply_spec_to_builder(
     if proto_lower == "etherip":
         b = b.etherip()
         b, _ = _apply_spec_to_builder(b, etherip_inner, packet_num)  # recurse
+        return b, False
+
+    if proto_lower == "ipip":
+        b = _apply_ip_chain(b, spec["ipip"], packet_num)
         return b, False
 
     if proto_lower == "tcp":

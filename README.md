@@ -25,6 +25,7 @@ No external dependencies. Python 3.10+ and the standard library only.
 - **MPLS** label stack entries (RFC 3032) — 4-byte entries with configurable Label (20-bit), TC (3-bit), and TTL; bottom-of-stack bit set automatically; call `.mpls()` multiple times to build a label stack
 - **PPPoE** session and discovery frames (RFC 2516)
 - **EtherIP** tunnels (RFC 3378) — 2-byte header (version=3, reserved=0, wire bytes `0x30 0x00`); encapsulates a complete Ethernet frame inside an IP datagram; IP protocol number 97; parsed recursively so `pkt.tunneled` holds the inner frame as a `ParsedPacket`; arbitrary nesting supported — 6-byte header (Ver/Type/Code/SessionID/Length); session frames carry a 2-byte PPP protocol field before the IP payload; discovery frames carry TLV tags (Service-Name, AC-Name, Host-Uniq, etc.); EtherType `0x8864` for session, `0x8863` for discovery
+- **IP-in-IP** tunnels (RFC 2003 / RFC 4213) — no additional header bytes; outer IP protocol `4` for IPv4-in-IPv4, `41` for IPv6-in-IP; parsed recursively so `pkt.tunneled` holds the inner IP packet; `pkt.ipip` is `True` when present; arbitrary nesting supported
 - **IPv4** headers (RFC 791) with RFC 1071 header checksum
 - **IPv6** fixed headers (RFC 8200) — no header checksum, 40 bytes
 - **TCP** (RFC 9293) with pseudo-header checksum for IPv4 and IPv6
@@ -32,7 +33,7 @@ No external dependencies. Python 3.10+ and the standard library only.
 - **ICMPv4** (RFC 792) Echo Request/Reply — no pseudo-header
 - **ICMPv6** (RFC 4443) Echo Request/Reply — mandatory IPv6 pseudo-header checksum
 - IP version **auto-detected** from address strings (no explicit flag needed)
-- **Arbitrary layer stacking** — each fluent method appends a layer, so any protocol can appear at any depth and any number of times; call `.ip()` twice for **IP-in-IP** (RFC 2003) or **IPv6-in-IPv4** (RFC 4213) tunnels
+- **Arbitrary layer stacking** — each fluent method appends a layer, so any protocol can appear at any depth and any number of times; call `.ip()` twice for **IP-in-IP** (RFC 2003) or **IPv6-in-IPv4** (RFC 4213) tunnels (no extra method required — the outer protocol field is set automatically)
 - **IPv4 fragmentation** (RFC 791) — Flags/Fragment Offset in IP header, MF flag, shared identification
 - **IPv6 fragmentation** (RFC 8200 §4.5) — Fragment Extension Header (next header = 44), 32-bit identification
 - High-level `PacketBuilder.fragment(mtu)` and low-level `fragment_ipv4` / `fragment_ipv6` functions
@@ -227,6 +228,25 @@ enclosing packet spec to signal that `.etherip()` should be called.
 ```
 
 Double-nested EtherIP uses a nested `"etherip"` key inside the inner spec.
+
+#### `ipip`
+
+An optional IP-in-IP inner packet spec inserted after the outer `network`
+section.  Unlike `etherip`, the inner spec has **no** `"ethernet"` key
+(there is no inner Ethernet frame).  Set `network.protocol` to `"ipip"` in
+the enclosing packet spec to activate this section; the outer IP protocol
+field (`4` for IPv4, `41` for IPv6) is set automatically from the inner
+`network.src` address.
+
+```json
+"network": { "src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "ipip", "ttl": 64 },
+"ipip": {
+  "network":   { "src": "192.168.1.1", "dst": "192.168.1.2", "protocol": "tcp", "ttl": 64 },
+  "transport": { "src_port": 12345, "dst_port": 80 }
+}
+```
+
+Double-nested IP-in-IP uses a nested `"ipip"` key inside the inner spec.
 
 #### `network`
 
@@ -1134,8 +1154,9 @@ parsers automatically and returns a single `ParsedPacket` dataclass.
 | `mpls` | `list[MPLSLabel]` | MPLS label stack entries, outermost first. Empty list when no MPLS labels are present. |
 | `pppoe` | `PPPoEHeader \| None` | PPPoE header (session or discovery), or `None` when absent. |
 | `ip` | `IPHeader \| IPv6Header \| None` | IPv4 or IPv6 header |
+| `ipip` | `bool` | `True` when the outer IP protocol is `4` (IPv4-in-IP) or `41` (IPv6-in-IP). Mutually exclusive with `etherip`. When `True`, `tunneled` holds the inner IP packet (no inner Ethernet frame). |
 | `etherip` | `EtherIPHeader \| None` | EtherIP tunnel header, or `None` when absent. When set, `tunneled` holds the inner frame. |
-| `tunneled` | `ParsedPacket \| None` | Inner Ethernet frame parsed recursively when `etherip` is present, otherwise `None`. May itself contain `etherip` / `tunneled` for double-nested tunnels. |
+| `tunneled` | `ParsedPacket \| None` | Inner packet parsed recursively when `ipip` is `True` or `etherip` is set, otherwise `None`. May itself contain `ipip` / `etherip` / `tunneled` for double-nested tunnels. |
 | `transport` | `TCPHeader \| UDPHeader \| ICMPHeader \| ICMPv6Header \| None` | Transport-layer header |
 | `payload` | `bytes` | Bytes after the deepest parsed header |
 | `ts_sec` | `int` | Capture timestamp whole seconds (populated by `parse_pcap_packet`) |
@@ -1230,6 +1251,7 @@ of the dict, and returns the same dict for optional chaining.
 | `MPLSLabel` | `mpls` array — appends `{label, tc, ttl}` entry (tc omitted when 0) |
 | `PPPoEHeader` | `pppoe` (session_id; code omitted when 0; tags array when non-empty) |
 | `EtherIPHeader` | `etherip` (nested inner packet spec); called via `_apply_etherip` in `parse_pcap_file` rather than `update_config` |
+| `IP-in-IP` (`pkt.ipip`) | `ipip` (nested inner packet spec, no ethernet); called via `_apply_ipip` in `parse_pcap_file` rather than `update_config` |
 | `IPHeader` / `IPv6Header` | `network` (src, dst, protocol, ttl; non-default fields only) |
 | `TCPHeader` | `transport` (src_port, dst_port, seq, ack, flags, window; optional options) |
 | `UDPHeader` | `transport` (src_port, dst_port) |
@@ -1392,6 +1414,7 @@ packet-generator/
   tests/
     test_builder.py
     test_etherip.py
+    test_ipip.py
     test_mpls.py
     test_pppoe.py
     test_checksum.py
