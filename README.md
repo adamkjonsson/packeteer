@@ -23,8 +23,8 @@ No external dependencies. Python 3.10+ and the standard library only.
 - **Ethernet II** framing with configurable MAC addresses and automatic EtherType
 - **IEEE 802.1Q VLAN tagging** — 4-byte tag (TPID `0x8100` + TCI) with configurable VID (1–4094), PCP (0–7), and DEI; call `.vlan()` twice for **QinQ** double-tagged frames (IEEE 802.1ad)
 - **MPLS** label stack entries (RFC 3032) — 4-byte entries with configurable Label (20-bit), TC (3-bit), and TTL; bottom-of-stack bit set automatically; call `.mpls()` multiple times to build a label stack
-- **PPPoE** session and discovery frames (RFC 2516)
-- **EtherIP** tunnels (RFC 3378) — 2-byte header (version=3, reserved=0, wire bytes `0x30 0x00`); encapsulates a complete Ethernet frame inside an IP datagram; IP protocol number 97; parsed recursively so `pkt.tunneled` holds the inner frame as a `ParsedPacket`; arbitrary nesting supported — 6-byte header (Ver/Type/Code/SessionID/Length); session frames carry a 2-byte PPP protocol field before the IP payload; discovery frames carry TLV tags (Service-Name, AC-Name, Host-Uniq, etc.); EtherType `0x8864` for session, `0x8863` for discovery
+- **PPPoE** session and discovery frames (RFC 2516) — 6-byte header (Ver/Type/Code/SessionID/Length); session frames carry a 2-byte PPP protocol field before the IP payload; discovery frames carry TLV tags (Service-Name, AC-Name, Host-Uniq, etc.); EtherType `0x8864` for session, `0x8863` for discovery
+- **EtherIP** tunnels (RFC 3378) — 2-byte header (version=3, reserved=0, wire bytes `0x30 0x00`); encapsulates a complete Ethernet frame inside an IP datagram; IP protocol number 97; parsed recursively so `pkt.tunneled` holds the inner frame as a `ParsedPacket`; arbitrary nesting supported
 - **IP-in-IP** tunnels (RFC 2003 / RFC 4213) — no additional header bytes; outer IP protocol `4` for IPv4-in-IPv4, `41` for IPv6-in-IP; parsed recursively so `pkt.tunneled` holds the inner IP packet; `pkt.ipip` is `True` when present; arbitrary nesting supported
 - **IPv4** headers (RFC 791) with RFC 1071 header checksum
 - **IPv6** fixed headers (RFC 8200) — no header checksum, 40 bytes

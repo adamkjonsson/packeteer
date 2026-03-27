@@ -1,6 +1,6 @@
 """Convert parsed packet header objects to a JSON config dict.
 
-The produced dict matches the JSON format accepted by ``cli.py --config``,
+The produced dict matches the JSON format accepted by ``packet_lab.py build``,
 so a parsed capture can be saved and replayed directly.
 
 Build up a config one protocol layer at a time using :func:`update_config`,
@@ -29,7 +29,7 @@ Typical usage::
         cfg.setdefault("metadata", {}).update({"timestamp_s": ts_sec, "timestamp_us": ts_frac})
         packet_configs.append(cfg)
 
-    print(to_json_string(to_json_config(packet_configs, output={"from_file": "capture.pcap", "type": "pcap"})))
+    print(to_json_string(to_json_config(packet_configs, file_metadata={"from_file": "capture.pcap", "type": "pcap"})))
 """
 from __future__ import annotations
 

@@ -143,6 +143,11 @@ def parse_packet(data: bytes, *, link_type: int = LINKTYPE_ETHERNET) -> ParsedPa
     - **Raw IP** (``link_type=LINKTYPE_RAW``): Ethernet parsing is skipped;
       IP-version detection starts immediately.
     - **IP**: The protocol/next-header field selects the transport parser.
+    - **IP-in-IP** (IP protocol ``4`` or ``41``, RFC 2003 / RFC 4213):
+      ``parse_packet`` is called recursively with ``LINKTYPE_RAW`` on the
+      remaining bytes.  :attr:`ParsedPacket.ipip` is set to ``True`` and the
+      result is stored in :attr:`ParsedPacket.tunneled`.  Arbitrary nesting is
+      supported.  Mutually exclusive with EtherIP.
     - **EtherIP** (IP protocol ``97``): The 2-byte EtherIP header is decoded
       into :attr:`ParsedPacket.etherip` and ``parse_packet`` is called
       recursively on the inner Ethernet frame.  The result is stored in
