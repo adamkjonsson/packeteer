@@ -175,6 +175,18 @@ def _apply_mpls(config: dict[str, Any], label: MPLSLabel) -> None:
     config.setdefault("mpls", []).append(entry)
 
 
+def _apply_inner_tail(inner: dict[str, Any], tunneled: ParsedPacket) -> None:
+    """Write transport + payload into *inner* when there is no nested tunnel.
+
+    Shared by :func:`_apply_etherip` and :func:`_apply_ipip` for the
+    terminal (non-recursive) case.
+    """
+    if tunneled.transport is not None:
+        _apply_transport(inner, tunneled.transport)
+        if tunneled.payload:
+            _apply_payload(inner, tunneled.payload)
+
+
 def _apply_etherip(config: dict[str, Any], hdr: EtherIPHeader, tunneled: ParsedPacket) -> None:
     """Serialise *hdr* and the recursively-parsed inner frame *tunneled* into
     ``config["etherip"]``.  Called recursively for double-nested EtherIP."""
@@ -189,10 +201,8 @@ def _apply_etherip(config: dict[str, Any], hdr: EtherIPHeader, tunneled: ParsedP
         _apply_ip(inner, tunneled.ip)
     if tunneled.etherip is not None and tunneled.tunneled is not None:
         _apply_etherip(inner, tunneled.etherip, tunneled.tunneled)  # recurse
-    elif tunneled.transport is not None:
-        _apply_transport(inner, tunneled.transport)
-        if tunneled.payload:
-            _apply_payload(inner, tunneled.payload)
+    else:
+        _apply_inner_tail(inner, tunneled)
     config["etherip"] = inner
 
 
@@ -203,10 +213,8 @@ def _apply_ipip(config: dict[str, Any], tunneled: "ParsedPacket") -> None:
         _apply_ip(inner, tunneled.ip)
     if tunneled.ipip and tunneled.tunneled is not None:
         _apply_ipip(inner, tunneled.tunneled)  # recurse for nested IP-in-IP
-    elif tunneled.transport is not None:
-        _apply_transport(inner, tunneled.transport)
-        if tunneled.payload:
-            _apply_payload(inner, tunneled.payload)
+    else:
+        _apply_inner_tail(inner, tunneled)
     config["ipip"] = inner
 
 

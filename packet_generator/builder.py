@@ -486,6 +486,32 @@ class PacketBuilder:
             "call .ip() before .tcp(), .udp(), .icmp(), or .icmpv6()"
         )
 
+    def _ip_context(self, i: int) -> tuple[str, str, int]:
+        """Return ``(src, dst, ip_version)`` from the nearest IP layer left of *i*."""
+        ip = self._find_ip_before(i)
+        return ip.src, ip.dst, (6 if isinstance(ip, IPv6Header) else 4)
+
+    @staticmethod
+    def _clone_ip(layer: IPHeader, proto: int) -> IPHeader:
+        """Return a copy of *layer* with ``protocol`` set to *proto*."""
+        return IPHeader(
+            layer.src, layer.dst, proto,
+            ttl=layer.ttl, tos=layer.tos,
+            identification=layer.identification,
+            flags=layer.flags,
+            fragment_offset=layer.fragment_offset,
+        )
+
+    @staticmethod
+    def _clone_ipv6(layer: IPv6Header, proto: int) -> IPv6Header:
+        """Return a copy of *layer* with ``next_header`` set to *proto*."""
+        return IPv6Header(
+            layer.src, layer.dst, proto,
+            hop_limit=layer.hop_limit,
+            traffic_class=layer.traffic_class,
+            flow_label=layer.flow_label,
+        )
+
     def _assemble_range(self, start: int, end: int, data: bytes) -> bytes:
         """Assemble layers[start:end] right-to-left over *data*.
 
@@ -498,14 +524,12 @@ class PacketBuilder:
             next_layer = self._layers[i + 1] if i + 1 < len(self._layers) else None
 
             if isinstance(layer, TCPHeader):
-                ip = self._find_ip_before(i)
-                ip_version = 6 if isinstance(ip, IPv6Header) else 4
-                data = build_tcp_header(layer, data, ip.src, ip.dst, ip_version) + data
+                src, dst, ver = self._ip_context(i)
+                data = build_tcp_header(layer, data, src, dst, ver) + data
 
             elif isinstance(layer, UDPHeader):
-                ip = self._find_ip_before(i)
-                ip_version = 6 if isinstance(ip, IPv6Header) else 4
-                data = build_udp_header(layer, data, ip.src, ip.dst, ip_version) + data
+                src, dst, ver = self._ip_context(i)
+                data = build_udp_header(layer, data, src, dst, ver) + data
 
             elif isinstance(layer, ICMPHeader):
                 data = build_icmp_header(layer, data) + data
@@ -516,24 +540,11 @@ class PacketBuilder:
 
             elif isinstance(layer, IPHeader):
                 proto = _ip_proto_for(next_layer) if next_layer else 0
-                hdr = IPHeader(
-                    layer.src, layer.dst, proto,
-                    ttl=layer.ttl, tos=layer.tos,
-                    identification=layer.identification,
-                    flags=layer.flags,
-                    fragment_offset=layer.fragment_offset,
-                )
-                data = build_ip_header(hdr, data) + data
+                data = build_ip_header(self._clone_ip(layer, proto), data) + data
 
             elif isinstance(layer, IPv6Header):
                 proto = _ip_proto_for(next_layer) if next_layer else 0
-                hdr = IPv6Header(
-                    layer.src, layer.dst, proto,
-                    hop_limit=layer.hop_limit,
-                    traffic_class=layer.traffic_class,
-                    flow_label=layer.flow_label,
-                )
-                data = build_ipv6_header(hdr, data) + data
+                data = build_ipv6_header(self._clone_ipv6(layer, proto), data) + data
 
             elif isinstance(layer, PPPoEHeader):
                 if layer.code == PPPOE_CODE_SESSION:
@@ -684,22 +695,9 @@ class PacketBuilder:
         proto = _ip_proto_for(next_layer) if next_layer else 0
 
         if isinstance(ip_layer, IPv6Header):
-            ip_hdr = IPv6Header(
-                ip_layer.src, ip_layer.dst, proto,
-                hop_limit=ip_layer.hop_limit,
-                traffic_class=ip_layer.traffic_class,
-                flow_label=ip_layer.flow_label,
-            )
-            frags = fragment_ipv6(ip_hdr, transport_data, mtu, eth_header=None)
+            frags = fragment_ipv6(self._clone_ipv6(ip_layer, proto), transport_data, mtu, eth_header=None)
         else:
-            ip_hdr = IPHeader(
-                ip_layer.src, ip_layer.dst, proto,
-                ttl=ip_layer.ttl, tos=ip_layer.tos,
-                identification=ip_layer.identification,
-                flags=ip_layer.flags,
-                fragment_offset=ip_layer.fragment_offset,
-            )
-            frags = fragment_ipv4(ip_hdr, transport_data, mtu, eth_header=None)
+            frags = fragment_ipv4(self._clone_ip(ip_layer, proto), transport_data, mtu, eth_header=None)
 
         # Build the prefix (everything to the left of the IP layer).
         # _assemble_range uses self._layers[k] as the 'next_layer' context for
