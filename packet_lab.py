@@ -181,6 +181,22 @@ def _apply_ip_chain(
             sys.exit(1)
         return _apply_ip_chain(b, ipip_inner, packet_num)
 
+    if proto_lower == "gre":
+        gre_inner = spec.get("gre")
+        if gre_inner is None:
+            print(
+                f"Error: packet {packet_num} inner protocol is "
+                "'gre' but nested 'gre' spec is missing",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        b = b.gre(
+            key=gre_inner.get("key"),
+            seq=gre_inner.get("seq"),
+            checksum=gre_inner.get("checksum", False),
+        )
+        return _apply_ip_chain(b, gre_inner, packet_num)
+
     b = _dispatch_transport(b, proto_lower, spec.get("transport", {}), packet_num, "ipip inner ")
     return _apply_payload_spec(b, spec.get("payload", {}), packet_num, "ipip inner ")
 
@@ -211,8 +227,9 @@ def _apply_spec_to_builder(
     )
     is_etherip = bool(protocol_str) and protocol_str.lower() == "etherip"
     is_ipip    = bool(protocol_str) and protocol_str.lower() == "ipip"
+    is_gre     = bool(protocol_str) and protocol_str.lower() == "gre"
 
-    if not is_pppoe_discovery and not is_etherip and not is_ipip and \
+    if not is_pppoe_discovery and not is_etherip and not is_ipip and not is_gre and \
             (not src or not dst or not protocol_str):
         print(
             f"Error: packet {packet_num} missing network.src, network.dst, or network.protocol",
@@ -230,6 +247,13 @@ def _apply_spec_to_builder(
     if is_etherip and spec.get("etherip") is None:
         print(
             f"Error: packet {packet_num} protocol is 'etherip' but 'etherip' spec is missing",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if is_gre and spec.get("gre") is None:
+        print(
+            f"Error: packet {packet_num} protocol is 'gre' but 'gre' spec is missing",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -273,6 +297,21 @@ def _apply_spec_to_builder(
 
     if proto_lower == "ipip":
         b = _apply_ip_chain(b, spec["ipip"], packet_num)
+        return b, False
+
+    if proto_lower == "gre":
+        gre_spec = spec["gre"]
+        b = b.gre(
+            key=gre_spec.get("key"),
+            seq=gre_spec.get("seq"),
+            checksum=gre_spec.get("checksum", False),
+        )
+        if "ethernet" in gre_spec:
+            # TEB: inner spec includes an Ethernet layer
+            b, _ = _apply_spec_to_builder(b, gre_spec, packet_num)
+        else:
+            # IP-in-GRE or nested GRE: no inner Ethernet
+            b = _apply_ip_chain(b, gre_spec, packet_num)
         return b, False
 
     b = _dispatch_transport(b, proto_lower, spec.get("transport", {}), packet_num)

@@ -46,6 +46,7 @@ from packet_generator.ethernet import (
 from packet_generator.ip import IPHeader
 from packet_generator.ipv6 import IPv6Header
 from packet_generator.etherip import EtherIPHeader, IPPROTO_ETHERIP
+from packet_generator.gre import GREHeader, IPPROTO_GRE, GRE_PROTO_TEB
 from packet_generator.mpls import MPLSLabel, ETHERTYPE_MPLS_UNICAST, ETHERTYPE_MPLS_MULTICAST
 from packet_generator.pppoe import PPPoEHeader, ETHERTYPE_PPPOE_DISCOVERY, ETHERTYPE_PPPOE_SESSION
 from packet_generator.tcp import TCPHeader
@@ -55,10 +56,11 @@ from packet_generator.icmpv6 import ICMPv6Header
 from packet_generator.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW
 
 from packet_parser.pcap import PcapFileHeader, read_pcap
-from packet_parser.to_config import update_config, to_json_config, to_json_string, _apply_etherip, _apply_ipip
+from packet_parser.to_config import update_config, to_json_config, to_json_string, _apply_etherip, _apply_ipip, _apply_gre
 
 from packet_parser.ethernet import packet_parser as _ethernet_parser
 from packet_parser.etherip import packet_parser as _etherip_parser
+from packet_parser.gre import packet_parser as _gre_parser
 from packet_parser.mpls import packet_parser as _mpls_parser
 from packet_parser.pppoe import packet_parser as _pppoe_parser
 from packet_parser.ip import packet_parser as _ip_parser
@@ -94,14 +96,20 @@ class ParsedPacket:
             (IPv4-in-IP, RFC 2003) or ``41`` (IPv6-in-IP, RFC 4213).
             When set, :attr:`tunneled` holds the inner IP packet (no
             inner Ethernet frame).  Mutually exclusive with
-            :attr:`etherip`.
+            :attr:`gre` and :attr:`etherip`.
+        gre: Parsed GRE tunnel header (RFC 2784 / RFC 2890), or ``None``
+            when absent.  When set, :attr:`tunneled` contains the inner
+            packet.  For TEB (``protocol_type == 0x6558``) the inner
+            packet has an Ethernet header; for IP-in-GRE it does not.
+            Mutually exclusive with :attr:`ipip` and :attr:`etherip`.
         etherip: Parsed EtherIP tunnel header, or ``None`` when absent.
             When set, :attr:`tunneled` contains the inner frame as a
             :class:`ParsedPacket`.
         tunneled: Inner packet parsed recursively when :attr:`ipip` is
-            ``True`` or :attr:`etherip` is set, otherwise ``None``.
-            May itself have a non-``None`` :attr:`ipip` or
-            :attr:`etherip` for double-nested tunnels.
+            ``True``, :attr:`gre` is set, or :attr:`etherip` is set,
+            otherwise ``None``.  May itself have a non-``None``
+            :attr:`gre`, :attr:`ipip`, or :attr:`etherip` for
+            double-nested tunnels.
         transport: Parsed TCP, UDP, ICMPv4, or ICMPv6 header.
         payload: Bytes remaining after all parsed headers.
         ts_sec: Capture timestamp — whole seconds (from pcap record).
@@ -114,6 +122,7 @@ class ParsedPacket:
     pppoe:     PPPoEHeader | None = None
     ip:        IPHeader | IPv6Header | None = None
     ipip:      bool = False
+    gre:       GREHeader | None = None
     etherip:   EtherIPHeader | None = None
     tunneled:  "ParsedPacket | None" = None
     transport: TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | None = None
@@ -147,7 +156,13 @@ def parse_packet(data: bytes, *, link_type: int = LINKTYPE_ETHERNET) -> ParsedPa
       ``parse_packet`` is called recursively with ``LINKTYPE_RAW`` on the
       remaining bytes.  :attr:`ParsedPacket.ipip` is set to ``True`` and the
       result is stored in :attr:`ParsedPacket.tunneled`.  Arbitrary nesting is
-      supported.  Mutually exclusive with EtherIP.
+      supported.  Mutually exclusive with GRE and EtherIP.
+    - **GRE** (IP protocol ``47``, RFC 2784 / RFC 2890): The variable-length
+      GRE header is decoded into :attr:`ParsedPacket.gre`.  For TEB payloads
+      (Protocol Type ``0x6558``) ``parse_packet`` is called recursively with
+      ``LINKTYPE_ETHERNET``; for IPv4/IPv6 payloads ``LINKTYPE_RAW`` is used.
+      The result is stored in :attr:`ParsedPacket.tunneled`.  Arbitrary
+      nesting is supported.  Mutually exclusive with IP-in-IP and EtherIP.
     - **EtherIP** (IP protocol ``97``): The 2-byte EtherIP header is decoded
       into :attr:`ParsedPacket.etherip` and ``parse_packet`` is called
       recursively on the inner Ethernet frame.  The result is stored in
@@ -237,6 +252,18 @@ def parse_packet(data: bytes, *, link_type: int = LINKTYPE_ETHERNET) -> ParsedPa
         pkt.payload  = b""
         return pkt
 
+    # ── GRE (RFC 2784 / RFC 2890) ─────────────────────────────────────────────
+    elif ip_proto == IPPROTO_GRE:
+        g_size, proto_type, g_hdr = _gre_parser(remaining)
+        if g_size > 0 and g_hdr is not None:
+            pkt.gre = g_hdr
+            if proto_type == GRE_PROTO_TEB:
+                pkt.tunneled = parse_packet(remaining[g_size:], link_type=LINKTYPE_ETHERNET)
+            else:
+                pkt.tunneled = parse_packet(remaining[g_size:], link_type=LINKTYPE_RAW)
+            pkt.payload = b""
+            return pkt
+
     # ── EtherIP ───────────────────────────────────────────────────────────────
     elif ip_proto == IPPROTO_ETHERIP:
         ei_size, _, ei_hdr = _etherip_parser(remaining)
@@ -302,13 +329,14 @@ def parse_pcap_file(
         path: Path to the ``.pcap`` file.
         file_object: Readable binary file-like object positioned at the start
             of the pcap data.
-        output: Extra fields to merge into the top-level ``output`` block
-            (e.g. ``{"pcap": "replay.pcap"}``).  ``"nanoseconds"`` is set
-            automatically from the source file and must not be supplied here.
+        output: Extra fields to merge into the top-level ``file_metadata``
+            block (e.g. ``{"from_file": "capture.pcap", "type": "pcap"}``).
+            ``"nanoseconds"`` is set automatically from the source file and
+            must not be supplied here.
 
     Returns:
         A JSON string whose top-level structure matches the format accepted by
-        ``cli.py --config``.
+        ``packet_lab.py build``.
 
     Raises:
         ValueError: If neither or both of *path* / *file_object* are given, or
@@ -332,6 +360,8 @@ def parse_pcap_file(
             update_config(cfg, pkt.ip)
         if pkt.ipip and pkt.tunneled is not None:
             _apply_ipip(cfg, pkt.tunneled)
+        elif pkt.gre is not None and pkt.tunneled is not None:
+            _apply_gre(cfg, pkt.gre, pkt.tunneled)
         elif pkt.etherip is not None and pkt.tunneled is not None:
             _apply_etherip(cfg, pkt.etherip, pkt.tunneled)
         elif pkt.transport is not None:
