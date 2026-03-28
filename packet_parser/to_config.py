@@ -1,6 +1,6 @@
 """Convert parsed packet header objects to a JSON config dict.
 
-The produced dict matches the JSON format accepted by ``cli.py --config``,
+The produced dict matches the JSON format accepted by ``packet_lab.py build``,
 so a parsed capture can be saved and replayed directly.
 
 Build up a config one protocol layer at a time using :func:`update_config`,
@@ -29,7 +29,7 @@ Typical usage::
         cfg.setdefault("metadata", {}).update({"timestamp_s": ts_sec, "timestamp_us": ts_frac})
         packet_configs.append(cfg)
 
-    print(to_json_string(to_json_config(packet_configs, output={"from_file": "capture.pcap", "type": "pcap"})))
+    print(to_json_string(to_json_config(packet_configs, file_metadata={"from_file": "capture.pcap", "type": "pcap"})))
 """
 from __future__ import annotations
 
@@ -42,6 +42,7 @@ if TYPE_CHECKING:
 
 from packet_generator.ethernet import EthernetHeader
 from packet_generator.etherip import EtherIPHeader, IPPROTO_ETHERIP
+from packet_generator.gre import GREHeader, IPPROTO_GRE
 from packet_generator.ip import IPHeader
 from packet_generator.ipv6 import IPv6Header
 from packet_generator.mpls import MPLSLabel
@@ -57,6 +58,9 @@ _PROTO_TO_STR: dict[int, str] = {
     socket.IPPROTO_ICMP: "icmp",
     socket.IPPROTO_ICMPV6: "icmpv6",
     IPPROTO_ETHERIP:     "etherip",
+    IPPROTO_GRE:         "gre",
+    4:                   "ipip",   # IPv4-in-IP (RFC 2003)
+    41:                  "ipip",   # IPv6-in-IP (RFC 4213)
 }
 
 
@@ -173,6 +177,18 @@ def _apply_mpls(config: dict[str, Any], label: MPLSLabel) -> None:
     config.setdefault("mpls", []).append(entry)
 
 
+def _apply_inner_tail(inner: dict[str, Any], tunneled: ParsedPacket) -> None:
+    """Write transport + payload into *inner* when there is no nested tunnel.
+
+    Shared by :func:`_apply_etherip` and :func:`_apply_ipip` for the
+    terminal (non-recursive) case.
+    """
+    if tunneled.transport is not None:
+        _apply_transport(inner, tunneled.transport)
+        if tunneled.payload:
+            _apply_payload(inner, tunneled.payload)
+
+
 def _apply_etherip(config: dict[str, Any], hdr: EtherIPHeader, tunneled: ParsedPacket) -> None:
     """Serialise *hdr* and the recursively-parsed inner frame *tunneled* into
     ``config["etherip"]``.  Called recursively for double-nested EtherIP."""
@@ -187,11 +203,52 @@ def _apply_etherip(config: dict[str, Any], hdr: EtherIPHeader, tunneled: ParsedP
         _apply_ip(inner, tunneled.ip)
     if tunneled.etherip is not None and tunneled.tunneled is not None:
         _apply_etherip(inner, tunneled.etherip, tunneled.tunneled)  # recurse
-    elif tunneled.transport is not None:
-        _apply_transport(inner, tunneled.transport)
-        if tunneled.payload:
-            _apply_payload(inner, tunneled.payload)
+    else:
+        _apply_inner_tail(inner, tunneled)
     config["etherip"] = inner
+
+
+def _apply_ipip(config: dict[str, Any], tunneled: "ParsedPacket") -> None:
+    """Serialise inner IP-in-IP frame into ``config["ipip"]`` (no ethernet)."""
+    inner: dict[str, Any] = {}
+    if tunneled.ip is not None:
+        _apply_ip(inner, tunneled.ip)
+    if tunneled.ipip and tunneled.tunneled is not None:
+        _apply_ipip(inner, tunneled.tunneled)  # recurse for nested IP-in-IP
+    else:
+        _apply_inner_tail(inner, tunneled)
+    config["ipip"] = inner
+
+
+def _apply_gre(config: dict[str, Any], hdr: GREHeader, tunneled: "ParsedPacket") -> None:
+    """Serialise *hdr* and the recursively-parsed inner payload *tunneled* into
+    ``config["gre"]``.  Called recursively for nested GRE."""
+    inner: dict[str, Any] = {}
+    # RFC 2890 / RFC 2784 optional fields
+    if hdr.key is not None:
+        inner["key"] = hdr.key
+    if hdr.seq is not None:
+        inner["seq"] = hdr.seq
+    if hdr.checksum:
+        inner["checksum"] = True
+    # Inner payload layers (TEB has ethernet; IP-in-GRE does not)
+    if tunneled.ethernet is not None:
+        _apply_ethernet(inner, tunneled.ethernet)
+    for label in tunneled.mpls:
+        _apply_mpls(inner, label)
+    if tunneled.pppoe is not None:
+        _apply_pppoe(inner, tunneled.pppoe)
+    if tunneled.ip is not None:
+        _apply_ip(inner, tunneled.ip)
+    if tunneled.gre is not None and tunneled.tunneled is not None:
+        _apply_gre(inner, tunneled.gre, tunneled.tunneled)   # recurse
+    elif tunneled.etherip is not None and tunneled.tunneled is not None:
+        _apply_etherip(inner, tunneled.etherip, tunneled.tunneled)
+    elif tunneled.ipip and tunneled.tunneled is not None:
+        _apply_ipip(inner, tunneled.tunneled)
+    else:
+        _apply_inner_tail(inner, tunneled)
+    config["gre"] = inner
 
 
 def _apply_payload(config: dict[str, Any], payload: bytes) -> None:
@@ -212,6 +269,10 @@ def update_config(
     - :class:`~packet_generator.ip.IPHeader` / :class:`~packet_generator.ipv6.IPv6Header` → ``network`` section
     - :class:`~packet_generator.etherip.EtherIPHeader` → handled via
       :func:`_apply_etherip` in :func:`~packet_parser.parser.parse_pcap_file`
+      (requires the inner :class:`~packet_parser.parser.ParsedPacket` as a
+      second argument — not dispatchable through ``update_config`` alone)
+    - :class:`~packet_generator.gre.GREHeader` → handled via
+      :func:`_apply_gre` in :func:`~packet_parser.parser.parse_pcap_file`
       (requires the inner :class:`~packet_parser.parser.ParsedPacket` as a
       second argument — not dispatchable through ``update_config`` alone)
     - :class:`~packet_generator.tcp.TCPHeader` → ``transport`` section (TCP fields)
@@ -265,7 +326,7 @@ def to_json_config(
 
     Returns:
         A dict matching the top-level JSON config format accepted by
-        ``cli.py --config``.
+        ``packet_lab.py build``.
     """
     cfg: dict[str, Any] = {}
     if file_metadata is not None:

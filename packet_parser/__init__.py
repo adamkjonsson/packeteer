@@ -3,6 +3,7 @@ from __future__ import annotations
 from packet_parser.ethernet import packet_parser as ethernet_packet_parser
 from packet_parser.vlan import packet_parser as vlan_packet_parser
 from packet_parser.etherip import packet_parser as etherip_packet_parser
+from packet_parser.gre import packet_parser as gre_packet_parser
 from packet_parser.mpls import packet_parser as mpls_packet_parser
 from packet_parser.pppoe import packet_parser as pppoe_packet_parser
 from packet_parser.ip import packet_parser as ip_packet_parser
@@ -14,6 +15,7 @@ from packet_parser.tcp import packet_parser as tcp_packet_parser
 __all__ = [
     "ethernet_packet_parser",
     "etherip_packet_parser",
+    "gre_packet_parser",
     "vlan_packet_parser",
     "mpls_packet_parser",
     "pppoe_packet_parser",

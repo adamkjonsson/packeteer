@@ -36,6 +36,171 @@ def _parse_tcp_options(spec: dict | None) -> TCPOptions | None:
     )
 
 
+def _build_ip_layer(b: "PacketBuilder", net: dict) -> "PacketBuilder":
+    """Append an IP layer from a ``network`` spec dict to *b*."""
+    return b.ip(
+        src=net["src"], dst=net["dst"],
+        ttl=net.get("ttl", 64),
+        tos=net.get("tos", 0),
+        identification=net.get("identification", 0),
+        flags=net.get("flags", 0b010),
+        fragment_offset=net.get("fragment_offset", 0),
+        traffic_class=net.get("traffic_class", 0),
+        flow_label=net.get("flow_label", 0),
+    )
+
+
+def _dispatch_transport(
+    b: "PacketBuilder",
+    proto_lower: str,
+    transport: dict,
+    packet_num: int,
+    context: str = "",
+) -> "PacketBuilder":
+    """Append the transport layer for *proto_lower* to *b* and return it.
+
+    *context* is a short prefix (e.g. ``"ipip inner "``) used in error messages.
+    """
+    if proto_lower == "tcp":
+        return b.tcp(
+            src_port=transport.get("src_port", 12345),
+            dst_port=transport.get("dst_port", 80),
+            seq=transport.get("seq", 0),
+            ack=transport.get("ack", 0),
+            flags=transport.get("flags", 0x002),
+            window=transport.get("window", 65535),
+            urgent_ptr=transport.get("urgent_ptr", 0),
+            reserved=transport.get("reserved", 0),
+            options=_parse_tcp_options(transport.get("options")),
+        )
+    if proto_lower == "udp":
+        return b.udp(
+            src_port=transport.get("src_port", 12345),
+            dst_port=transport.get("dst_port", 80),
+        )
+    if proto_lower == "icmp":
+        return b.icmp(
+            type=transport.get("type", 8),
+            code=transport.get("code", 0),
+            identifier=transport.get("identifier", 1),
+            sequence=transport.get("sequence", 1),
+        )
+    if proto_lower == "icmpv6":
+        return b.icmpv6(
+            type=transport.get("type", 128),
+            code=transport.get("code", 0),
+            identifier=transport.get("identifier", 1),
+            sequence=transport.get("sequence", 1),
+        )
+    print(
+        f"Error: packet {packet_num} {context}unknown protocol '{proto_lower}'",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
+def _apply_payload_spec(
+    b: "PacketBuilder",
+    payload_spec: dict,
+    packet_num: int,
+    context: str = "",
+) -> "PacketBuilder":
+    """Append a payload layer from *payload_spec* to *b* (if any) and return it.
+
+    *context* is a short prefix (e.g. ``"ipip inner "``) used in error messages.
+    """
+    if "data" in payload_spec:
+        try:
+            data = bytes.fromhex(payload_spec["data"])
+        except ValueError as e:
+            print(
+                f"Error: packet {packet_num} {context}payload.data is not valid hex: {e}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        return b.payload(data=data)
+    if payload_spec.get("size", 0):
+        return b.payload(size=payload_spec["size"])
+    return b
+
+
+def _build_pppoe(
+    b: "PacketBuilder",
+    pppoe_spec: dict,
+    packet_num: int,
+) -> "PacketBuilder":
+    """Append a PPPoE layer from *pppoe_spec* to *b* and return it."""
+    try:
+        tags = [
+            PPPoETag(type=t["type"], data=bytes.fromhex(t.get("data", "")))
+            for t in pppoe_spec.get("tags", [])
+        ]
+    except (KeyError, ValueError) as e:
+        print(f"Error: packet {packet_num} pppoe tag error: {e}", file=sys.stderr)
+        sys.exit(1)
+    return b.pppoe(
+        code=pppoe_spec.get("code", PPPOE_CODE_SESSION),
+        session_id=pppoe_spec.get("session_id", 0),
+        tags=tags,
+    )
+
+
+def _apply_ip_chain(
+    b: "PacketBuilder",
+    spec: dict,
+    packet_num: int,
+) -> "PacketBuilder":
+    """Append IP + transport layers from an IP-in-IP inner spec to *b*.
+
+    No ethernet/VLAN/MPLS/PPPoE — the inner spec contains only
+    ``network``, ``transport``, ``payload``, and optionally a nested
+    ``ipip`` key for double-tunnelled packets.  Called recursively.
+    """
+    net          = spec.get("network", {})
+    protocol_str = net.get("protocol")
+
+    if not net.get("src") or not net.get("dst") or not protocol_str:
+        print(
+            f"Error: packet {packet_num} ipip inner spec missing "
+            "network.src, network.dst, or network.protocol",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    b = _build_ip_layer(b, net)
+    proto_lower = protocol_str.lower()
+
+    if proto_lower == "ipip":
+        ipip_inner = spec.get("ipip")
+        if ipip_inner is None:
+            print(
+                f"Error: packet {packet_num} ipip inner protocol is "
+                "'ipip' but nested 'ipip' spec is missing",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        return _apply_ip_chain(b, ipip_inner, packet_num)
+
+    if proto_lower == "gre":
+        gre_inner = spec.get("gre")
+        if gre_inner is None:
+            print(
+                f"Error: packet {packet_num} inner protocol is "
+                "'gre' but nested 'gre' spec is missing",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        b = b.gre(
+            key=gre_inner.get("key"),
+            seq=gre_inner.get("seq"),
+            checksum=gre_inner.get("checksum", False),
+        )
+        return _apply_ip_chain(b, gre_inner, packet_num)
+
+    b = _dispatch_transport(b, proto_lower, spec.get("transport", {}), packet_num, "ipip inner ")
+    return _apply_payload_spec(b, spec.get("payload", {}), packet_num, "ipip inner ")
+
+
 def _apply_spec_to_builder(
     b: "PacketBuilder",
     spec: dict,
@@ -48,13 +213,9 @@ def _apply_spec_to_builder(
     Called recursively for the inner frame when ``protocol`` is ``"etherip"``.
     """
     eth          = spec.get("ethernet", {})
-    vlan         = eth.get("vlan", {})
     mpls_labels  = spec.get("mpls", [])
     pppoe_spec   = spec.get("pppoe")
-    etherip_inner = spec.get("etherip")   # inner frame spec when protocol="etherip"
     net          = spec.get("network", {})
-    transport    = spec.get("transport", {})
-    payload_spec = spec.get("payload", {})
 
     src          = net.get("src")
     dst          = net.get("dst")
@@ -65,17 +226,34 @@ def _apply_spec_to_builder(
         and pppoe_spec.get("code", PPPOE_CODE_SESSION) != PPPOE_CODE_SESSION
     )
     is_etherip = bool(protocol_str) and protocol_str.lower() == "etherip"
+    is_ipip    = bool(protocol_str) and protocol_str.lower() == "ipip"
+    is_gre     = bool(protocol_str) and protocol_str.lower() == "gre"
 
-    if not is_pppoe_discovery and not is_etherip and (not src or not dst or not protocol_str):
+    if not is_pppoe_discovery and not is_etherip and not is_ipip and not is_gre and \
+            (not src or not dst or not protocol_str):
         print(
             f"Error: packet {packet_num} missing network.src, network.dst, or network.protocol",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    if is_etherip and etherip_inner is None:
+    if is_ipip and spec.get("ipip") is None:
+        print(
+            f"Error: packet {packet_num} protocol is 'ipip' but 'ipip' spec is missing",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if is_etherip and spec.get("etherip") is None:
         print(
             f"Error: packet {packet_num} protocol is 'etherip' but 'etherip' spec is missing",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if is_gre and spec.get("gre") is None:
+        print(
+            f"Error: packet {packet_num} protocol is 'gre' but 'gre' spec is missing",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -87,6 +265,7 @@ def _apply_spec_to_builder(
             dst_mac=eth.get("dst_mac", "00:00:00:00:00:02"),
             pad=eth.get("pad", False),
         )
+        vlan = eth.get("vlan", {})
         if vlan:
             b = b.vlan(vid=vlan["id"], pcp=vlan.get("pcp", 0), dei=vlan.get("dei", 0))
 
@@ -100,95 +279,43 @@ def _apply_spec_to_builder(
 
     # ── PPPoE ────────────────────────────────────────────────────────────────
     if pppoe_spec is not None:
-        try:
-            tags = [
-                PPPoETag(
-                    type=t["type"],
-                    data=bytes.fromhex(t.get("data", "")),
-                )
-                for t in pppoe_spec.get("tags", [])
-            ]
-        except (KeyError, ValueError) as e:
-            print(f"Error: packet {packet_num} pppoe tag error: {e}", file=sys.stderr)
-            sys.exit(1)
-        b = b.pppoe(
-            code=pppoe_spec.get("code", PPPOE_CODE_SESSION),
-            session_id=pppoe_spec.get("session_id", 0),
-            tags=tags,
-        )
+        b = _build_pppoe(b, pppoe_spec, packet_num)
 
     if is_pppoe_discovery:
         return b, True
 
     # ── IP ───────────────────────────────────────────────────────────────────
-    b = b.ip(
-        src=src, dst=dst,
-        ttl=net.get("ttl", 64),
-        tos=net.get("tos", 0),
-        identification=net.get("identification", 0),
-        flags=net.get("flags", 0b010),
-        fragment_offset=net.get("fragment_offset", 0),
-        traffic_class=net.get("traffic_class", 0),
-        flow_label=net.get("flow_label", 0),
-    )
+    b = _build_ip_layer(b, net)
 
     # ── Protocol dispatch ────────────────────────────────────────────────────
     proto_lower = protocol_str.lower()
 
     if proto_lower == "etherip":
         b = b.etherip()
-        b, _ = _apply_spec_to_builder(b, etherip_inner, packet_num)  # recurse
+        b, _ = _apply_spec_to_builder(b, spec["etherip"], packet_num)
         return b, False
 
-    if proto_lower == "tcp":
-        b = b.tcp(
-            src_port=transport.get("src_port", 12345),
-            dst_port=transport.get("dst_port", 80),
-            seq=transport.get("seq", 0),
-            ack=transport.get("ack", 0),
-            flags=transport.get("flags", 0x002),
-            window=transport.get("window", 65535),
-            urgent_ptr=transport.get("urgent_ptr", 0),
-            reserved=transport.get("reserved", 0),
-            options=_parse_tcp_options(transport.get("options")),
-        )
-    elif proto_lower == "udp":
-        b = b.udp(
-            src_port=transport.get("src_port", 12345),
-            dst_port=transport.get("dst_port", 80),
-        )
-    elif proto_lower == "icmp":
-        b = b.icmp(
-            type=transport.get("type", 8),
-            code=transport.get("code", 0),
-            identifier=transport.get("identifier", 1),
-            sequence=transport.get("sequence", 1),
-        )
-    elif proto_lower == "icmpv6":
-        b = b.icmpv6(
-            type=transport.get("type", 128),
-            code=transport.get("code", 0),
-            identifier=transport.get("identifier", 1),
-            sequence=transport.get("sequence", 1),
-        )
-    else:
-        print(f"Error: packet {packet_num} unknown protocol '{protocol_str}'", file=sys.stderr)
-        sys.exit(1)
+    if proto_lower == "ipip":
+        b = _apply_ip_chain(b, spec["ipip"], packet_num)
+        return b, False
 
-    # ── Payload ──────────────────────────────────────────────────────────────
-    explicit_payload: bytes | None = None
-    if "data" in payload_spec:
-        try:
-            explicit_payload = bytes.fromhex(payload_spec["data"])
-        except ValueError as e:
-            print(f"Error: packet {packet_num} payload.data is not valid hex: {e}", file=sys.stderr)
-            sys.exit(1)
+    if proto_lower == "gre":
+        gre_spec = spec["gre"]
+        b = b.gre(
+            key=gre_spec.get("key"),
+            seq=gre_spec.get("seq"),
+            checksum=gre_spec.get("checksum", False),
+        )
+        if "ethernet" in gre_spec:
+            # TEB: inner spec includes an Ethernet layer
+            b, _ = _apply_spec_to_builder(b, gre_spec, packet_num)
+        else:
+            # IP-in-GRE or nested GRE: no inner Ethernet
+            b = _apply_ip_chain(b, gre_spec, packet_num)
+        return b, False
 
-    if explicit_payload is not None:
-        b = b.payload(data=explicit_payload)
-    elif payload_spec.get("size", 0):
-        b = b.payload(size=payload_spec["size"])
-
+    b = _dispatch_transport(b, proto_lower, spec.get("transport", {}), packet_num)
+    b = _apply_payload_spec(b, spec.get("payload", {}), packet_num)
     return b, False
 
 

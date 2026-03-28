@@ -7,7 +7,9 @@ This package constructs byte-accurate network packets at all layers:
   (:class:`PPPoEHeader`, :class:`PPPoETag`)
 * **Layer 2.5** — MPLS label stacks (:class:`MPLSLabel`, RFC 3032)
 * **Layer 3** — IPv4 (:class:`IPHeader`) and IPv6 (:class:`IPv6Header`);
-  EtherIP tunnels (:class:`EtherIPHeader`, RFC 3378)
+  IP-in-IP tunnels (RFC 2003 / RFC 4213);
+  EtherIP tunnels (:class:`EtherIPHeader`, RFC 3378);
+  GRE tunnels (:class:`GREHeader`, RFC 2784 / RFC 2890)
 * **Layer 4** — TCP (:class:`TCPHeader`), UDP (:class:`UDPHeader`),
   ICMPv4 (:class:`ICMPHeader`), ICMPv6 (:class:`ICMPv6Header`)
 
@@ -101,6 +103,16 @@ multiple times to produce advanced encapsulations.
         .build()
     )
 
+    # GRE tunnel (RFC 2784) — IPv4-in-GRE with Key (RFC 2890)
+    pkt = (PacketBuilder()
+        .ethernet()
+        .ip(src="10.0.0.1", dst="10.0.0.2")
+        .gre(key=1234)
+        .ip(src="192.168.1.1", dst="192.168.1.2")
+        .tcp(dst_port=80)
+        .build()
+    )
+
     # PPPoE PADI discovery frame
     from packet_generator import PPPOE_CODE_PADI, PPPoETag, PPPOE_TAG_SERVICE_NAME
     pkt = (PacketBuilder()
@@ -114,6 +126,11 @@ Public API:
     EthernetHeader: Dataclass for Ethernet II header fields (dst_mac, src_mac, ethertype, vlan_tag, pad).
     EtherIPHeader: Dataclass for the EtherIP tunnel header (RFC 3378). No user-configurable fields.
     IPPROTO_ETHERIP: IP protocol number 97 — EtherIP (RFC 3378).
+    GREHeader: Dataclass for the GRE tunnel header (RFC 2784 / RFC 2890). Fields: key, seq, checksum, protocol_type.
+    IPPROTO_GRE: IP protocol number 47 — GRE (RFC 2784).
+    GRE_PROTO_IPV4: GRE Protocol Type 0x0800 — IPv4 payload.
+    GRE_PROTO_IPV6: GRE Protocol Type 0x86DD — IPv6 payload.
+    GRE_PROTO_TEB: GRE Protocol Type 0x6558 — Transparent Ethernet Bridging (inner Ethernet frame).
     VLANTag: Dataclass for IEEE 802.1Q VLAN tag fields.
     MPLSLabel: Dataclass for one MPLS label stack entry (RFC 3032).
     ETHERTYPE_MPLS_UNICAST: EtherType 0x8847 — MPLS unicast.
@@ -146,6 +163,7 @@ from __future__ import annotations
 from .builder import PacketBuilder
 from .ethernet import EthernetHeader, VLANTag, ETHERNET_MIN_FRAME_SIZE
 from .etherip import EtherIPHeader, IPPROTO_ETHERIP
+from .gre import GREHeader, IPPROTO_GRE, GRE_PROTO_IPV4, GRE_PROTO_IPV6, GRE_PROTO_TEB
 from .pcap import write_pcap, write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW
 from .fragmentation import fragment_ipv4, fragment_ipv6
 from .ip import IPHeader
@@ -175,6 +193,11 @@ __all__ = [
     "ETHERNET_MIN_FRAME_SIZE",
     "EtherIPHeader",
     "IPPROTO_ETHERIP",
+    "GREHeader",
+    "IPPROTO_GRE",
+    "GRE_PROTO_IPV4",
+    "GRE_PROTO_IPV6",
+    "GRE_PROTO_TEB",
     "IPHeader",
     "IPv6Header",
     "TCPHeader",

@@ -23,8 +23,10 @@ No external dependencies. Python 3.10+ and the standard library only.
 - **Ethernet II** framing with configurable MAC addresses and automatic EtherType
 - **IEEE 802.1Q VLAN tagging** — 4-byte tag (TPID `0x8100` + TCI) with configurable VID (1–4094), PCP (0–7), and DEI; call `.vlan()` twice for **QinQ** double-tagged frames (IEEE 802.1ad)
 - **MPLS** label stack entries (RFC 3032) — 4-byte entries with configurable Label (20-bit), TC (3-bit), and TTL; bottom-of-stack bit set automatically; call `.mpls()` multiple times to build a label stack
-- **PPPoE** session and discovery frames (RFC 2516)
-- **EtherIP** tunnels (RFC 3378) — 2-byte header (version=3, reserved=0, wire bytes `0x30 0x00`); encapsulates a complete Ethernet frame inside an IP datagram; IP protocol number 97; parsed recursively so `pkt.tunneled` holds the inner frame as a `ParsedPacket`; arbitrary nesting supported — 6-byte header (Ver/Type/Code/SessionID/Length); session frames carry a 2-byte PPP protocol field before the IP payload; discovery frames carry TLV tags (Service-Name, AC-Name, Host-Uniq, etc.); EtherType `0x8864` for session, `0x8863` for discovery
+- **PPPoE** session and discovery frames (RFC 2516) — 6-byte header (Ver/Type/Code/SessionID/Length); session frames carry a 2-byte PPP protocol field before the IP payload; discovery frames carry TLV tags (Service-Name, AC-Name, Host-Uniq, etc.); EtherType `0x8864` for session, `0x8863` for discovery
+- **EtherIP** tunnels (RFC 3378) — 2-byte header (version=3, reserved=0, wire bytes `0x30 0x00`); encapsulates a complete Ethernet frame inside an IP datagram; IP protocol number 97; parsed recursively so `pkt.tunneled` holds the inner frame as a `ParsedPacket`; arbitrary nesting supported
+- **IP-in-IP** tunnels (RFC 2003 / RFC 4213) — no additional header bytes; outer IP protocol `4` for IPv4-in-IPv4, `41` for IPv6-in-IP; parsed recursively so `pkt.tunneled` holds the inner IP packet; `pkt.ipip` is `True` when present; arbitrary nesting supported
+- **GRE** tunnels (RFC 2784 / RFC 2890) — variable-length header (4–16 bytes); outer IP protocol `47`; optional Key (K flag, 4 bytes), Sequence Number (S flag, 4 bytes), and Checksum (C flag, 4 bytes) fields; Protocol Type field (EtherType) identifies payload: `0x0800` IPv4, `0x86DD` IPv6, `0x6558` TEB (Transparent Ethernet Bridging, inner Ethernet frame); parsed recursively so `pkt.tunneled` holds the inner packet; `pkt.gre` is the `GREHeader` when present; arbitrary nesting supported; mutually exclusive with IP-in-IP and EtherIP
 - **IPv4** headers (RFC 791) with RFC 1071 header checksum
 - **IPv6** fixed headers (RFC 8200) — no header checksum, 40 bytes
 - **TCP** (RFC 9293) with pseudo-header checksum for IPv4 and IPv6
@@ -32,7 +34,7 @@ No external dependencies. Python 3.10+ and the standard library only.
 - **ICMPv4** (RFC 792) Echo Request/Reply — no pseudo-header
 - **ICMPv6** (RFC 4443) Echo Request/Reply — mandatory IPv6 pseudo-header checksum
 - IP version **auto-detected** from address strings (no explicit flag needed)
-- **Arbitrary layer stacking** — each fluent method appends a layer, so any protocol can appear at any depth and any number of times; call `.ip()` twice for **IP-in-IP** (RFC 2003) or **IPv6-in-IPv4** (RFC 4213) tunnels
+- **Arbitrary layer stacking** — each fluent method appends a layer, so any protocol can appear at any depth and any number of times; call `.ip()` twice for **IP-in-IP** (RFC 2003) or **IPv6-in-IPv4** (RFC 4213) tunnels (no extra method required — the outer protocol field is set automatically)
 - **IPv4 fragmentation** (RFC 791) — Flags/Fragment Offset in IP header, MF flag, shared identification
 - **IPv6 fragmentation** (RFC 8200 §4.5) — Fragment Extension Header (next header = 44), 32-bit identification
 - High-level `PacketBuilder.fragment(mtu)` and low-level `fragment_ipv4` / `fragment_ipv6` functions
@@ -228,13 +230,90 @@ enclosing packet spec to signal that `.etherip()` should be called.
 
 Double-nested EtherIP uses a nested `"etherip"` key inside the inner spec.
 
+#### `ipip`
+
+An optional IP-in-IP inner packet spec inserted after the outer `network`
+section.  Unlike `etherip`, the inner spec has **no** `"ethernet"` key
+(there is no inner Ethernet frame).  Set `network.protocol` to `"ipip"` in
+the enclosing packet spec to activate this section; the outer IP protocol
+field (`4` for IPv4, `41` for IPv6) is set automatically from the inner
+`network.src` address.
+
+```json
+"network": { "src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "ipip", "ttl": 64 },
+"ipip": {
+  "network":   { "src": "192.168.1.1", "dst": "192.168.1.2", "protocol": "tcp", "ttl": 64 },
+  "transport": { "src_port": 12345, "dst_port": 80 }
+}
+```
+
+Double-nested IP-in-IP uses a nested `"ipip"` key inside the inner spec.
+
+#### `gre`
+
+An optional GRE tunnel header (RFC 2784 / RFC 2890) inserted between the
+outer IP layer and the inner payload.  The value is the inner packet spec,
+optionally with GRE-specific fields (`key`, `seq`, `checksum`).  Set
+`network.protocol` to `"gre"` in the enclosing packet spec to activate this
+section.  The outer IP protocol number (`47`) and the GRE Protocol Type
+(derived from the inner payload type) are set automatically.
+
+```json
+"network": { "src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "gre", "ttl": 64 },
+"gre": {
+  "network":   { "src": "192.168.1.1", "dst": "192.168.1.2", "protocol": "tcp", "ttl": 64 },
+  "transport": { "src_port": 12345, "dst_port": 80 }
+}
+```
+
+With Key and Sequence Number (RFC 2890):
+
+```json
+"gre": {
+  "key": 1234,
+  "seq": 0,
+  "network":   { "src": "192.168.1.1", "dst": "192.168.1.2", "protocol": "udp" },
+  "transport": { "dst_port": 53 }
+}
+```
+
+With Checksum (RFC 2784):
+
+```json
+"gre": {
+  "checksum": true,
+  "network":   { "src": "192.168.1.1", "dst": "192.168.1.2", "protocol": "tcp" },
+  "transport": { "dst_port": 443 }
+}
+```
+
+TEB (Transparent Ethernet Bridging) — inner Ethernet frame inside GRE:
+
+```json
+"gre": {
+  "key": 42,
+  "ethernet": { "src_mac": "aa:bb:cc:dd:ee:01", "dst_mac": "aa:bb:cc:dd:ee:02" },
+  "network":   { "src": "192.168.1.1", "dst": "192.168.1.2", "protocol": "tcp" },
+  "transport": { "dst_port": 80 }
+}
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `key` | — | RFC 2890 32-bit Key field. When present the K flag is set. |
+| `seq` | — | RFC 2890 32-bit Sequence Number field. When present the S flag is set. |
+| `checksum` | `false` | When `true` the C flag is set and the RFC 1071 checksum is computed. |
+
+The presence of `"ethernet"` inside the `"gre"` spec signals TEB mode (GRE Protocol Type `0x6558`).
+Double-nested GRE uses a nested `"gre"` key with `"protocol": "gre"` in the inner `"network"` spec.
+
 #### `network`
 
 | Field | Required | Description |
 |-------|----------|-------------|
 | `src` | yes | Source IP address (IPv4 or IPv6) |
 | `dst` | yes | Destination IP address |
-| `protocol` | yes | `"tcp"`, `"udp"`, `"icmp"`, or `"icmpv6"` |
+| `protocol` | yes | `"tcp"`, `"udp"`, `"icmp"`, `"icmpv6"`, `"gre"`, `"etherip"`, or `"ipip"` |
 | `ttl` | no (default `64`) | TTL (IPv4) / Hop Limit (IPv6) |
 | `tos` | no (default `0`) | IPv4 Type of Service / DSCP byte |
 | `identification` | no (default `0`) | IPv4 16-bit packet identification field |
@@ -599,6 +678,27 @@ pkt = (PacketBuilder()
     .tcp(dst_port=80)
     .build()
 )
+
+# GRE tunnel (RFC 2784) — IPv4-in-GRE with Key and Sequence Number (RFC 2890)
+pkt = (PacketBuilder()
+    .ethernet()
+    .ip(src="10.0.0.1", dst="10.0.0.2")
+    .gre(key=1234, seq=0)
+    .ip(src="192.168.1.1", dst="192.168.1.2")
+    .tcp(dst_port=80)
+    .build()
+)
+
+# GRE TEB — outer IP + GRE + inner Ethernet frame (Protocol Type 0x6558)
+pkt = (PacketBuilder()
+    .ethernet()
+    .ip(src="10.0.0.1", dst="10.0.0.2")
+    .gre(key=42)
+    .ethernet(src_mac="aa:bb:cc:dd:ee:01", dst_mac="aa:bb:cc:dd:ee:02")
+    .ip(src="192.168.1.1", dst="192.168.1.2")
+    .tcp(dst_port=80)
+    .build()
+)
 ```
 
 Omitting `.ethernet()` produces a raw IP packet with no layer-2 framing.
@@ -615,6 +715,7 @@ Each method appends one layer to the stack and returns `self` for chaining.
 | `.mpls(label, tc=0, ttl=64)` | Append an MPLS label stack entry (RFC 3032). The bottom-of-stack S bit is set automatically. Call multiple times to build a label stack. |
 | `.pppoe(code=0, session_id=0, tags=None)` | Append a PPPoE header (RFC 2516). `code=0` (default) is a session frame carrying an IP payload; any other code is a discovery frame carrying TLV `tags` and no IP layer. |
 | `.etherip()` | Append an EtherIP tunnel header (RFC 3378). Call after the outer `.ip()` and before the inner `.ethernet()` layer. The 2-byte header (`0x30 0x00`) and IP protocol number (97) are set automatically. |
+| `.gre(key=None, seq=None, checksum=False)` | Append a GRE tunnel header (RFC 2784 / RFC 2890). Call after the outer `.ip()` and before the inner layer. The outer IP protocol number (47) and GRE Protocol Type (auto-detected from the next layer: `0x0800` IPv4, `0x86DD` IPv6, `0x6558` Ethernet/TEB) are set automatically. |
 | `.ip(src, dst, ttl=64, tos=0, identification=0, flags=0b010, fragment_offset=0, traffic_class=0, flow_label=0)` | Append an IPv4 or IPv6 header (auto-detected from `src`). Call twice for IP-in-IP (RFC 2003) or IPv6-in-IPv4 (RFC 4213) tunnels. IPv4-only params are ignored for IPv6 and vice versa. |
 | `.tcp(src_port=12345, dst_port=80, seq=0, ack=0, flags=TCP_ACK, window=65535, urgent_ptr=0, reserved=0, options=None)` | Append a TCP transport header. |
 | `.udp(src_port=12345, dst_port=80)` | Append a UDP transport header. |
@@ -788,6 +889,34 @@ fixed by the RFC and written automatically by `build_etherip_header()`.
 | Constant | Value | Description |
 |----------|-------|-------------|
 | `IPPROTO_ETHERIP` | `97` | IP protocol number for EtherIP (RFC 3378) |
+
+#### `GREHeader`
+
+```python
+from packet_generator import GREHeader, IPPROTO_GRE, GRE_PROTO_IPV4, GRE_PROTO_IPV6, GRE_PROTO_TEB
+from packet_generator.gre import build_gre_header
+
+hdr = GREHeader(key=1234, seq=0, checksum=False, protocol_type=GRE_PROTO_IPV4)
+raw: bytes = build_gre_header(hdr, payload=inner_bytes)  # 8 bytes (4 fixed + 4 key)
+```
+
+`GREHeader` fields:
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `key` | `None` | RFC 2890 32-bit Key field. When set the K flag is included in the header. |
+| `seq` | `None` | RFC 2890 32-bit Sequence Number field. When set the S flag is included. |
+| `checksum` | `False` | When `True` the C flag is set and the RFC 1071 ones-complement checksum is computed over the GRE header + payload. |
+| `protocol_type` | `0` | EtherType identifying the encapsulated payload. Set automatically by `PacketBuilder` from the next layer. |
+
+GRE constants:
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `IPPROTO_GRE` | `47` | IP protocol number for GRE (RFC 2784) |
+| `GRE_PROTO_IPV4` | `0x0800` | GRE Protocol Type for IPv4 payload |
+| `GRE_PROTO_IPV6` | `0x86DD` | GRE Protocol Type for IPv6 payload |
+| `GRE_PROTO_TEB` | `0x6558` | GRE Protocol Type for Transparent Ethernet Bridging (inner Ethernet frame) |
 
 #### `IPHeader` (IPv4)
 
@@ -1094,6 +1223,7 @@ On success `header_size > 0` and the next layer's bytes start at
 from packet_parser import (
     ethernet_packet_parser,
     etherip_packet_parser,
+    gre_packet_parser,
     vlan_packet_parser,
     mpls_packet_parser,
     pppoe_packet_parser,
@@ -1112,6 +1242,7 @@ from packet_parser import (
 | `mpls_packet_parser` | `packet_parser.mpls` | `0x8847` (more labels) or IPv4/IPv6 EtherType (bottom of stack) | `MPLSLabel` |
 | `pppoe_packet_parser` | `packet_parser.pppoe` | IPv4/IPv6 EtherType for session frames; `None` for discovery frames | `PPPoEHeader` |
 | `etherip_packet_parser` | `packet_parser.etherip` | Always `None` (inner frame identified by restarting Ethernet parsing) | `EtherIPHeader` |
+| `gre_packet_parser` | `packet_parser.gre` | GRE Protocol Type (EtherType: `0x0800` IPv4, `0x86DD` IPv6, `0x6558` TEB) | `GREHeader` |
 | `ip_packet_parser` | `packet_parser.ip` | IP protocol number | `IPHeader` or `IPv6Header` |
 | `icmp_packet_parser` | `packet_parser.icmp` | ICMP type | `ICMPHeader` |
 | `icmpv6_packet_parser` | `packet_parser.icmpv6` | ICMPv6 type | `ICMPv6Header` |
@@ -1134,8 +1265,10 @@ parsers automatically and returns a single `ParsedPacket` dataclass.
 | `mpls` | `list[MPLSLabel]` | MPLS label stack entries, outermost first. Empty list when no MPLS labels are present. |
 | `pppoe` | `PPPoEHeader \| None` | PPPoE header (session or discovery), or `None` when absent. |
 | `ip` | `IPHeader \| IPv6Header \| None` | IPv4 or IPv6 header |
+| `ipip` | `bool` | `True` when the outer IP protocol is `4` (IPv4-in-IP) or `41` (IPv6-in-IP). Mutually exclusive with `gre` and `etherip`. When `True`, `tunneled` holds the inner IP packet (no inner Ethernet frame). |
+| `gre` | `GREHeader \| None` | GRE tunnel header (RFC 2784 / RFC 2890), or `None` when absent. When set, `tunneled` holds the inner packet. For TEB payloads the inner packet has an Ethernet header; for IP-in-GRE it does not. Mutually exclusive with `ipip` and `etherip`. |
 | `etherip` | `EtherIPHeader \| None` | EtherIP tunnel header, or `None` when absent. When set, `tunneled` holds the inner frame. |
-| `tunneled` | `ParsedPacket \| None` | Inner Ethernet frame parsed recursively when `etherip` is present, otherwise `None`. May itself contain `etherip` / `tunneled` for double-nested tunnels. |
+| `tunneled` | `ParsedPacket \| None` | Inner packet parsed recursively when `ipip` is `True`, `gre` is set, or `etherip` is set, otherwise `None`. May itself contain `gre` / `ipip` / `etherip` / `tunneled` for double-nested tunnels. |
 | `transport` | `TCPHeader \| UDPHeader \| ICMPHeader \| ICMPv6Header \| None` | Transport-layer header |
 | `payload` | `bytes` | Bytes after the deepest parsed header |
 | `ts_sec` | `int` | Capture timestamp whole seconds (populated by `parse_pcap_packet`) |
@@ -1230,6 +1363,8 @@ of the dict, and returns the same dict for optional chaining.
 | `MPLSLabel` | `mpls` array — appends `{label, tc, ttl}` entry (tc omitted when 0) |
 | `PPPoEHeader` | `pppoe` (session_id; code omitted when 0; tags array when non-empty) |
 | `EtherIPHeader` | `etherip` (nested inner packet spec); called via `_apply_etherip` in `parse_pcap_file` rather than `update_config` |
+| `GREHeader` (`pkt.gre`) | `gre` (optional key/seq/checksum fields + nested inner packet spec); called via `_apply_gre` in `parse_pcap_file` rather than `update_config` |
+| `IP-in-IP` (`pkt.ipip`) | `ipip` (nested inner packet spec, no ethernet); called via `_apply_ipip` in `parse_pcap_file` rather than `update_config` |
 | `IPHeader` / `IPv6Header` | `network` (src, dst, protocol, ttl; non-default fields only) |
 | `TCPHeader` | `transport` (src_port, dst_port, seq, ack, flags, window; optional options) |
 | `UDPHeader` | `transport` (src_port, dst_port) |
@@ -1367,6 +1502,7 @@ packet-generator/
     ip.py              # IPv4 header (20 bytes)
     ipv6.py            # IPv6 header (40 bytes)
     etherip.py         # EtherIP tunnel header (2 bytes, RFC 3378)
+    gre.py             # GRE tunnel header (4–16 bytes, RFC 2784 / RFC 2890)
     mpls.py            # MPLS label stack entry (4 bytes, RFC 3032)
     pppoe.py           # PPPoE session and discovery frames (RFC 2516)
     tcp.py             # TCP header (20+ bytes, variable via data offset)
@@ -1379,6 +1515,7 @@ packet-generator/
     ethernet.py        # parse Ethernet II + optional 802.1Q VLAN tag
     vlan.py            # parse IEEE 802.1Q VLAN tag (4 bytes)
     etherip.py         # parse EtherIP tunnel header (2 bytes, RFC 3378)
+    gre.py             # parse GRE tunnel header (4–16 bytes, RFC 2784 / RFC 2890)
     mpls.py            # parse MPLS label stack entry (4 bytes, RFC 3032)
     pppoe.py           # parse PPPoE session and discovery frames (RFC 2516)
     ip.py              # parse IPv4 / IPv6 (version auto-detected)
@@ -1392,6 +1529,8 @@ packet-generator/
   tests/
     test_builder.py
     test_etherip.py
+    test_gre.py
+    test_ipip.py
     test_mpls.py
     test_pppoe.py
     test_checksum.py
@@ -1443,6 +1582,8 @@ All tests run in under a second and require no third-party packages.
 | RFC 8200 | Internet Protocol, Version 6 (IPv6) — including §4.5 Fragment Extension Header |
 | RFC 2003 | IP Encapsulation within IP (IPv4-in-IPv4 tunnelling) |
 | RFC 2516 | A Method for Transmitting PPP Over Ethernet (PPPoE) |
+| RFC 2784 | Generic Routing Encapsulation (GRE) — 4-byte fixed header, C/K/S flags, Protocol Type |
+| RFC 2890 | Key and Sequence Number Extensions to GRE — optional Key and Sequence Number fields |
 | RFC 3378 | EtherIP: Tunneling Ethernet Frames in IP Datagrams |
 | RFC 3031 | Multiprotocol Label Switching Architecture (MPLS) |
 | RFC 3032 | MPLS Label Stack Encoding — 4-byte label stack entry format |

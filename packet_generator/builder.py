@@ -90,6 +90,16 @@ Typical usage::
         .tcp(dst_port=80)
         .build()
     )
+
+    # GRE tunnel (RFC 2784) — IPv4-in-GRE with Key (RFC 2890)
+    pkt = (PacketBuilder()
+        .ethernet()
+        .ip(src="10.0.0.1", dst="10.0.0.2")
+        .gre(key=1234)
+        .ip(src="192.168.1.1", dst="192.168.1.2")
+        .tcp(dst_port=80)
+        .build()
+    )
 """
 from __future__ import annotations
 
@@ -108,6 +118,7 @@ from .udp import UDPHeader, build_udp_header
 from .icmp import ICMPHeader, build_icmp_header
 from .icmpv6 import ICMPv6Header, build_icmpv6_header
 from .etherip import EtherIPHeader, IPPROTO_ETHERIP, build_etherip_header
+from .gre import GREHeader, IPPROTO_GRE, GRE_PROTO_IPV4, GRE_PROTO_IPV6, GRE_PROTO_TEB, build_gre_header
 from .mpls import MPLSLabel, ETHERTYPE_MPLS_UNICAST, build_mpls_label
 from .pppoe import (
     PPPoEHeader, PPPoETag,
@@ -135,6 +146,14 @@ _IP_PROTO_MAP: dict[type, int] = {
     IPHeader:      4,   # IP-in-IP (RFC 2003)
     IPv6Header:    41,  # IPv6-in-IPv4 (RFC 4213)
     EtherIPHeader: IPPROTO_ETHERIP,  # EtherIP (RFC 3378)
+    GREHeader:     IPPROTO_GRE,      # GRE (RFC 2784)
+}
+
+# EtherType that a GRE header should advertise based on the next layer type
+_GRE_PROTO_MAP: dict[type, int] = {
+    IPHeader:       GRE_PROTO_IPV4,
+    IPv6Header:     GRE_PROTO_IPV6,
+    EthernetHeader: GRE_PROTO_TEB,
 }
 
 # PPP protocol numbers for the 2-byte PPP header in PPPoE session frames
@@ -201,11 +220,14 @@ class PacketBuilder:
     * Calling :meth:`pppoe` inserts a PPPoE session or discovery frame (RFC 2516).
     * Calling :meth:`etherip` inserts an EtherIP tunnel header (RFC 3378),
       followed by an inner :meth:`ethernet` + :meth:`ip` + transport chain.
+    * Calling :meth:`gre` inserts a GRE tunnel header (RFC 2784 / RFC 2890).
+      The GRE Protocol Type is set automatically from the layer that follows.
 
     The layer list stores the same public dataclasses exported by
     ``packet_generator`` (``EthernetHeader``, ``VLANTag``, ``MPLSLabel``,
-    ``PPPoEHeader``, ``EtherIPHeader``, ``IPHeader``, ``IPv6Header``,
-    ``TCPHeader``, ``UDPHeader``, ``ICMPHeader``, ``ICMPv6Header``).  Protocol-number fields that depend on
+    ``PPPoEHeader``, ``EtherIPHeader``, ``GREHeader``, ``IPHeader``,
+    ``IPv6Header``, ``TCPHeader``, ``UDPHeader``, ``ICMPHeader``,
+    ``ICMPv6Header``).  Protocol-number fields that depend on
     the next layer (``ethertype``, ``protocol``, ``next_header``) are set to
     ``0`` when the object is stored and filled in correctly at :meth:`build` /
     :meth:`fragment` time.
@@ -334,6 +356,48 @@ class PacketBuilder:
             )
         """
         self._layers.append(EtherIPHeader())
+        return self
+
+    def gre(
+        self,
+        *,
+        key: int | None = None,
+        seq: int | None = None,
+        checksum: bool = False,
+    ) -> "PacketBuilder":
+        """Append a GRE tunnel header (RFC 2784 / RFC 2890).
+
+        Call after the outer :meth:`ip` and before the inner layer (IP or
+        Ethernet for TEB).  The outer IP protocol number (47) is set
+        automatically.  The GRE Protocol Type is determined at build time from
+        the layer that immediately follows this header:
+
+        * :meth:`ip` with an IPv4 address → ``0x0800`` (IPv4)
+        * :meth:`ip` with an IPv6 address → ``0x86DD`` (IPv6)
+        * :meth:`ethernet` → ``0x6558`` (Transparent Ethernet Bridging)
+
+        Args:
+            key: RFC 2890 32-bit Key field.  When not ``None`` the K flag is
+                set and the 4-byte Key field is appended to the header.
+            seq: RFC 2890 32-bit Sequence Number field.  When not ``None`` the
+                S flag is set and the 4-byte Sequence Number field is appended.
+            checksum: When ``True`` the C flag is set, a 4-byte Checksum +
+                Reserved1 block is appended, and the 16-bit ones-complement
+                checksum (RFC 1071) is computed over the header + payload at
+                build time.
+
+        Example — IPv4-in-GRE with Key and Sequence Number::
+
+            pkt = (PacketBuilder()
+                .ethernet()
+                .ip(src="10.0.0.1", dst="10.0.0.2")
+                .gre(key=1234, seq=0)
+                .ip(src="192.168.1.1", dst="192.168.1.2")
+                .tcp(dst_port=80)
+                .build()
+            )
+        """
+        self._layers.append(GREHeader(key=key, seq=seq, checksum=checksum))
         return self
 
     def ip(
@@ -486,6 +550,32 @@ class PacketBuilder:
             "call .ip() before .tcp(), .udp(), .icmp(), or .icmpv6()"
         )
 
+    def _ip_context(self, i: int) -> tuple[str, str, int]:
+        """Return ``(src, dst, ip_version)`` from the nearest IP layer left of *i*."""
+        ip = self._find_ip_before(i)
+        return ip.src, ip.dst, (6 if isinstance(ip, IPv6Header) else 4)
+
+    @staticmethod
+    def _clone_ip(layer: IPHeader, proto: int) -> IPHeader:
+        """Return a copy of *layer* with ``protocol`` set to *proto*."""
+        return IPHeader(
+            layer.src, layer.dst, proto,
+            ttl=layer.ttl, tos=layer.tos,
+            identification=layer.identification,
+            flags=layer.flags,
+            fragment_offset=layer.fragment_offset,
+        )
+
+    @staticmethod
+    def _clone_ipv6(layer: IPv6Header, proto: int) -> IPv6Header:
+        """Return a copy of *layer* with ``next_header`` set to *proto*."""
+        return IPv6Header(
+            layer.src, layer.dst, proto,
+            hop_limit=layer.hop_limit,
+            traffic_class=layer.traffic_class,
+            flow_label=layer.flow_label,
+        )
+
     def _assemble_range(self, start: int, end: int, data: bytes) -> bytes:
         """Assemble layers[start:end] right-to-left over *data*.
 
@@ -498,14 +588,12 @@ class PacketBuilder:
             next_layer = self._layers[i + 1] if i + 1 < len(self._layers) else None
 
             if isinstance(layer, TCPHeader):
-                ip = self._find_ip_before(i)
-                ip_version = 6 if isinstance(ip, IPv6Header) else 4
-                data = build_tcp_header(layer, data, ip.src, ip.dst, ip_version) + data
+                src, dst, ver = self._ip_context(i)
+                data = build_tcp_header(layer, data, src, dst, ver) + data
 
             elif isinstance(layer, UDPHeader):
-                ip = self._find_ip_before(i)
-                ip_version = 6 if isinstance(ip, IPv6Header) else 4
-                data = build_udp_header(layer, data, ip.src, ip.dst, ip_version) + data
+                src, dst, ver = self._ip_context(i)
+                data = build_udp_header(layer, data, src, dst, ver) + data
 
             elif isinstance(layer, ICMPHeader):
                 data = build_icmp_header(layer, data) + data
@@ -516,24 +604,11 @@ class PacketBuilder:
 
             elif isinstance(layer, IPHeader):
                 proto = _ip_proto_for(next_layer) if next_layer else 0
-                hdr = IPHeader(
-                    layer.src, layer.dst, proto,
-                    ttl=layer.ttl, tos=layer.tos,
-                    identification=layer.identification,
-                    flags=layer.flags,
-                    fragment_offset=layer.fragment_offset,
-                )
-                data = build_ip_header(hdr, data) + data
+                data = build_ip_header(self._clone_ip(layer, proto), data) + data
 
             elif isinstance(layer, IPv6Header):
                 proto = _ip_proto_for(next_layer) if next_layer else 0
-                hdr = IPv6Header(
-                    layer.src, layer.dst, proto,
-                    hop_limit=layer.hop_limit,
-                    traffic_class=layer.traffic_class,
-                    flow_label=layer.flow_label,
-                )
-                data = build_ipv6_header(hdr, data) + data
+                data = build_ipv6_header(self._clone_ipv6(layer, proto), data) + data
 
             elif isinstance(layer, PPPoEHeader):
                 if layer.code == PPPOE_CODE_SESSION:
@@ -550,6 +625,14 @@ class PacketBuilder:
 
             elif isinstance(layer, EtherIPHeader):
                 data = build_etherip_header() + data
+
+            elif isinstance(layer, GREHeader):
+                proto_type = _GRE_PROTO_MAP.get(type(next_layer), 0)
+                hdr = GREHeader(
+                    key=layer.key, seq=layer.seq,
+                    checksum=layer.checksum, protocol_type=proto_type,
+                )
+                data = build_gre_header(hdr, data) + data
 
             elif isinstance(layer, MPLSLabel):
                 bos = not isinstance(next_layer, MPLSLabel)
@@ -684,22 +767,9 @@ class PacketBuilder:
         proto = _ip_proto_for(next_layer) if next_layer else 0
 
         if isinstance(ip_layer, IPv6Header):
-            ip_hdr = IPv6Header(
-                ip_layer.src, ip_layer.dst, proto,
-                hop_limit=ip_layer.hop_limit,
-                traffic_class=ip_layer.traffic_class,
-                flow_label=ip_layer.flow_label,
-            )
-            frags = fragment_ipv6(ip_hdr, transport_data, mtu, eth_header=None)
+            frags = fragment_ipv6(self._clone_ipv6(ip_layer, proto), transport_data, mtu, eth_header=None)
         else:
-            ip_hdr = IPHeader(
-                ip_layer.src, ip_layer.dst, proto,
-                ttl=ip_layer.ttl, tos=ip_layer.tos,
-                identification=ip_layer.identification,
-                flags=ip_layer.flags,
-                fragment_offset=ip_layer.fragment_offset,
-            )
-            frags = fragment_ipv4(ip_hdr, transport_data, mtu, eth_header=None)
+            frags = fragment_ipv4(self._clone_ip(ip_layer, proto), transport_data, mtu, eth_header=None)
 
         # Build the prefix (everything to the left of the IP layer).
         # _assemble_range uses self._layers[k] as the 'next_layer' context for
