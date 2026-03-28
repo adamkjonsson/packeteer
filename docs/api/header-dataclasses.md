@@ -1,0 +1,184 @@
+# Header Dataclasses
+
+Every protocol layer is represented by a plain dataclass.
+{class}`~packet_generator.builder.PacketBuilder` stores instances of these
+classes internally and they are also returned by the parser functions in
+{doc}`parser`.
+
+---
+
+## Layer 2 — Ethernet
+
+```{eval-rst}
+.. autoclass:: packet_generator.ethernet.EthernetHeader
+   :members:
+```
+
+```{eval-rst}
+.. autoclass:: packet_generator.ethernet.VLANTag
+   :members:
+```
+
+---
+
+## Layer 2.5 — MPLS
+
+```{eval-rst}
+.. autoclass:: packet_generator.mpls.MPLSLabel
+   :members:
+```
+
+EtherType constants:
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `ETHERTYPE_MPLS_UNICAST` | `0x8847` | MPLS unicast — used for most MPLS traffic |
+| `ETHERTYPE_MPLS_MULTICAST` | `0x8848` | MPLS multicast |
+
+---
+
+## Layer 2 — PPPoE
+
+```{eval-rst}
+.. autoclass:: packet_generator.pppoe.PPPoEHeader
+   :members:
+```
+
+```{eval-rst}
+.. autoclass:: packet_generator.pppoe.PPPoETag
+   :members:
+```
+
+PPPoE code constants:
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `PPPOE_CODE_SESSION` | `0x00` | Session data frame |
+| `PPPOE_CODE_PADI` | `0x09` | Active Discovery Initiation |
+| `PPPOE_CODE_PADO` | `0x07` | Active Discovery Offer |
+| `PPPOE_CODE_PADR` | `0x19` | Active Discovery Request |
+| `PPPOE_CODE_PADS` | `0x65` | Active Discovery Session-confirmation |
+| `PPPOE_CODE_PADT` | `0xa7` | Active Discovery Terminate |
+
+PPPoE tag type constants:
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `PPPOE_TAG_SERVICE_NAME` | `0x0101` | Service-Name |
+| `PPPOE_TAG_AC_NAME` | `0x0102` | AC-Name |
+| `PPPOE_TAG_HOST_UNIQ` | `0x0103` | Host-Uniq |
+| `PPPOE_TAG_AC_COOKIE` | `0x0104` | AC-Cookie |
+| `PPPOE_TAG_GENERIC_ERROR` | `0x0203` | Generic-Error |
+
+EtherType and PPP protocol constants:
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `ETHERTYPE_PPPOE_DISCOVERY` | `0x8863` | PPPoE discovery frames |
+| `ETHERTYPE_PPPOE_SESSION` | `0x8864` | PPPoE session frames |
+| `PPP_IPV4` | `0x0021` | PPP protocol number for IPv4 |
+| `PPP_IPV6` | `0x0057` | PPP protocol number for IPv6 |
+
+---
+
+## Tunnels — EtherIP
+
+```{eval-rst}
+.. autoclass:: packet_generator.etherip.EtherIPHeader
+   :members:
+```
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `IPPROTO_ETHERIP` | `97` | IP protocol number for EtherIP (RFC 3378) |
+
+---
+
+## Tunnels — GRE
+
+```{eval-rst}
+.. autoclass:: packet_generator.gre.GREHeader
+   :members:
+```
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `IPPROTO_GRE` | `47` | IP protocol number for GRE (RFC 2784) |
+| `GRE_PROTO_IPV4` | `0x0800` | GRE Protocol Type for IPv4 payload |
+| `GRE_PROTO_IPV6` | `0x86DD` | GRE Protocol Type for IPv6 payload |
+| `GRE_PROTO_TEB` | `0x6558` | GRE Protocol Type for Transparent Ethernet Bridging |
+
+---
+
+## Layer 3 — IPv4
+
+```{eval-rst}
+.. autoclass:: packet_generator.ip.IPHeader
+   :members:
+```
+
+---
+
+## Layer 3 — IPv6
+
+```{eval-rst}
+.. autoclass:: packet_generator.ipv6.IPv6Header
+   :members:
+```
+
+---
+
+## Layer 4 — TCP
+
+```{eval-rst}
+.. autoclass:: packet_generator.tcp.TCPHeader
+   :members:
+```
+
+```{eval-rst}
+.. autoclass:: packet_generator.tcp.TCPOptions
+   :members:
+```
+
+TCP flag constants:
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `TCP_FIN` | `0x01` | No more data from sender |
+| `TCP_SYN` | `0x02` | Synchronise sequence numbers |
+| `TCP_RST` | `0x04` | Reset the connection |
+| `TCP_PSH` | `0x08` | Push buffered data to the application |
+| `TCP_ACK` | `0x10` | Acknowledgement field is significant |
+| `TCP_URG` | `0x20` | Urgent pointer field is significant |
+| `TCP_ECE` | `0x40` | ECN-Echo |
+| `TCP_CWR` | `0x80` | Congestion Window Reduced |
+
+Combine flags with `|`: `TCP_PSH | TCP_ACK` = `0x18` (data segment),
+`TCP_SYN | TCP_ACK` = `0x12` (handshake reply).
+
+---
+
+## Layer 4 — UDP
+
+```{eval-rst}
+.. autoclass:: packet_generator.udp.UDPHeader
+   :members:
+```
+
+---
+
+## Layer 4 — ICMPv4
+
+```{eval-rst}
+.. autoclass:: packet_generator.icmp.ICMPHeader
+   :members:
+```
+
+---
+
+## Layer 4 — ICMPv6
+
+```{eval-rst}
+.. autoclass:: packet_generator.icmpv6.ICMPv6Header
+   :members:
+```

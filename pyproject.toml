@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "packet-generator"
+version = "0.1.0"
+requires-python = ">=3.10"
+description = "Pure-Python packet-building and parsing library"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["packet_generator*", "packet_parser*"]
