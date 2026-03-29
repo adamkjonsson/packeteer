@@ -9,8 +9,8 @@ the standard library.
 ## Clone and install
 
 ```bash
-git clone https://github.com/adamkjonsson/packet-generator.git
-cd packet-generator
+git clone https://github.com/adamkjonsson/packeteer.git
+cd packeteer
 pip install -e .
 ```
 
