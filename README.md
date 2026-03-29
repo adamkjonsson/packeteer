@@ -12,7 +12,7 @@ and the standard library only.
 - **Tunnels**: IP-in-IP (RFC 2003/4213), EtherIP (RFC 3378), GRE (RFC 2784/2890) with Key, Sequence, Checksum, and TEB
 - **IPv4 and IPv6 fragmentation** in one call
 - **pcap and pcapng** file I/O with microsecond or nanosecond timestamps
-- **CLI** (`packet_lab.py`) — build from JSON config, parse captures back to JSON, or sanitise configs by replacing sensitive fields with synthetic data
+- **CLI** (`packeteer`) — build from JSON config, parse captures back to JSON, or sanitise configs by replacing sensitive fields with synthetic data
 
 ## Quick start
 
@@ -46,7 +46,7 @@ Or read the source pages directly:
 | [docs/quickstart.md](docs/quickstart.md) | Five worked examples |
 | [docs/overview.md](docs/overview.md) | Purpose and use cases (synthetic test data, sanitising captures) |
 | [docs/sanitiser.md](docs/sanitiser.md) | Replacing sensitive fields with synthetic data |
-| [docs/cli.md](docs/cli.md) | `packet_lab.py build` / `parse` / `sanitise` reference |
+| [docs/cli.md](docs/cli.md) | `packeteer build` / `parse` / `sanitise` reference |
 | [docs/json-config.md](docs/json-config.md) | JSON config format reference |
 | [docs/fragmentation.md](docs/fragmentation.md) | IPv4 and IPv6 fragmentation |
 | [docs/api/packet-builder.md](docs/api/packet-builder.md) | `PacketBuilder` API |

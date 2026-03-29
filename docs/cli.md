@@ -1,6 +1,6 @@
 # CLI Reference
 
-`packet_lab.py` is the command-line entry point with three subcommands:
+`packeteer` is the command-line entry point with three subcommands:
 `build` constructs packets and writes them to a pcap or pcapng file;
 `parse` reads a capture and produces a JSON config that can be fed back
 to `build` for replay;
@@ -12,7 +12,7 @@ data drawn from IANA-reserved ranges.
 ## `build`
 
 ```
-python packet_lab.py build <config.json> (--pcap FILE | --pcapng FILE)
+packeteer build <config.json> (--pcap FILE | --pcapng FILE)
 ```
 
 Reads the JSON config file, builds each packet, and writes them all to the
@@ -28,10 +28,10 @@ output file.  `--pcap` and `--pcapng` are mutually exclusive; one is required.
 
 ```bash
 # Build from a JSON config and write a pcap file
-python packet_lab.py build packets.json --pcap out.pcap
+packeteer build packets.json --pcap out.pcap
 
 # Build from a JSON config and write a pcapng file
-python packet_lab.py build packets.json --pcapng out.pcapng
+packeteer build packets.json --pcapng out.pcapng
 ```
 
 Per-packet fragmentation is controlled via the `metadata.mtu` field in the
@@ -42,7 +42,7 @@ JSON config — see {doc}`json-config` and {doc}`fragmentation`.
 ## `parse`
 
 ```
-python packet_lab.py parse <capture> [options]
+packeteer parse <capture> [options]
 ```
 
 Reads every packet in a pcap or pcapng file, parses it through all layers, and
@@ -60,20 +60,20 @@ are auto-detected from the first four bytes — no extension checking needed.
 
 ```bash
 # Print JSON config to stdout
-python packet_lab.py parse capture.pcap
+packeteer parse capture.pcap
 
 # Save JSON config to a file
-python packet_lab.py parse capture.pcap --output replay.json
+packeteer parse capture.pcap --output replay.json
 
 # Save and embed a replay pcap path in the config
-python packet_lab.py parse capture.pcap --output replay.json --replay-pcap replayed.pcap
+packeteer parse capture.pcap --output replay.json --replay-pcap replayed.pcap
 
 # Parse a pcapng file (auto-detected)
-python packet_lab.py parse capture.pcapng --output replay.json
+packeteer parse capture.pcapng --output replay.json
 
 # Round-trip: parse pcapng → config → rebuild as pcapng
-python packet_lab.py parse capture.pcapng --output config.json
-python packet_lab.py build config.json --pcapng out.pcapng
+packeteer parse capture.pcapng --output config.json
+packeteer build config.json --pcapng out.pcapng
 ```
 
 ---
@@ -81,7 +81,7 @@ python packet_lab.py build config.json --pcapng out.pcapng
 ## `sanitise`
 
 ```
-python packet_lab.py sanitise <input.json> [--output FILE]
+packeteer sanitise <input.json> [--output FILE]
                               [--no-ips] [--no-macs]
                               [--ports] [--payload] [--timestamps]
 ```
@@ -105,13 +105,13 @@ the communication structure.
 
 ```bash
 # Step 1: parse the original capture
-python packet_lab.py parse capture.pcap --output capture.json
+packeteer parse capture.pcap --output capture.json
 
 # Step 2: sanitise (replace IPs, MACs; optionally ports and payload)
-python packet_lab.py sanitise capture.json --ports --payload --output clean.json
+packeteer sanitise capture.json --ports --payload --output clean.json
 
 # Step 3: rebuild a shareable pcap
-python packet_lab.py build clean.json --pcap clean.pcap
+packeteer build clean.json --pcap clean.pcap
 ```
 
 See {doc}`sanitiser` for the full reference including the Python API.

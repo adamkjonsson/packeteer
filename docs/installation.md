@@ -15,7 +15,8 @@ pip install -e .
 ```
 
 The `-e` flag installs the package in *editable* mode, so changes to the
-source are reflected immediately without reinstalling.
+source are reflected immediately without reinstalling.  After installation the
+`packeteer` command is available on your `PATH`.
 
 ## Run the tests
 

@@ -1,6 +1,6 @@
 # Overview
 
-packet-generator is built around a two-way workflow between pcap capture files
+packeteer is built around a two-way workflow between pcap capture files
 and a human-readable JSON config format.
 
 ## The core workflow
@@ -9,12 +9,12 @@ and a human-readable JSON config format.
 pcap file  ──parse──▶  JSON config  ──build──▶  pcap file
 ```
 
-**Parsing** (`packet_lab.py parse`) reads a `.pcap` or `.pcapng` capture and
+**Parsing** (`packeteer parse`) reads a `.pcap` or `.pcapng` capture and
 writes a JSON file that describes every packet as a set of named fields — MAC
 addresses, IP addresses, ports, flags, payload size, and so on.  Each protocol
 layer has its own JSON key so the structure mirrors the actual packet layout.
 
-**Building** (`packet_lab.py build`) reads that JSON file and assembles the
+**Building** (`packeteer build`) reads that JSON file and assembles the
 packets back into a new pcap.  All checksums (IP, TCP, UDP, ICMP, GRE, …) are
 recomputed from scratch, so edits to any field automatically produce a
 byte-perfect result without manual recalculation.
