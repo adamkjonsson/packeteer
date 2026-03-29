@@ -3,14 +3,17 @@
 packet_lab — build and parse raw network packets.
 
 Subcommands:
-  build   Build packets from a JSON config file and write to a pcap or pcapng file
-  parse   Parse a pcap or pcapng file and produce a JSON config
+  build     Build packets from a JSON config file and write to a pcap or pcapng file
+  parse     Parse a pcap or pcapng file and produce a JSON config
+  sanitise  Replace sensitive fields in a JSON config with synthetic data
 
 Examples:
   python packet_lab.py build packets.json --pcap out.pcap
   python packet_lab.py build packets.json --pcapng out.pcapng
   python packet_lab.py parse capture.pcap
   python packet_lab.py parse capture.pcap --output replay.json --replay-pcap replayed.pcap
+  python packet_lab.py sanitise capture.json --output clean.json
+  python packet_lab.py sanitise capture.json --ports --payload --output clean.json
 """
 import argparse
 import json
@@ -20,6 +23,7 @@ from packet_generator.tcp import TCPOptions
 from packet_generator.pcap import write_pcap, write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW
 from packet_generator.pppoe import PPPoETag, PPPOE_CODE_SESSION
 from packet_parser.parser import parse_pcap_file
+from replacer import SanitiseOptions, sanitise
 
 
 def _parse_tcp_options(spec: dict | None) -> TCPOptions | None:
@@ -402,6 +406,46 @@ def _cmd_parse(args: argparse.Namespace) -> None:
         print(json_str)
 
 
+def _cmd_sanitise(args: argparse.Namespace) -> None:
+    try:
+        with open(args.input) as f:
+            config = json.load(f)
+    except OSError as e:
+        print(f"Error reading '{args.input}': {e}", file=sys.stderr)
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        print(f"Invalid JSON in '{args.input}': {e}", file=sys.stderr)
+        sys.exit(1)
+
+    opts = SanitiseOptions(
+        ips=not args.no_ips,
+        macs=not args.no_macs,
+        ports=args.ports,
+        payload=args.payload,
+        timestamps=args.timestamps,
+    )
+
+    try:
+        result = sanitise(config, opts)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    output_str = json.dumps(result, indent=2)
+
+    if args.output:
+        try:
+            with open(args.output, "w") as f:
+                f.write(output_str)
+                f.write("\n")
+        except OSError as e:
+            print(f"Error writing '{args.output}': {e}", file=sys.stderr)
+            sys.exit(1)
+        print(f"Wrote sanitised config to {args.output}")
+    else:
+        print(output_str)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Build and parse raw network packets",
@@ -452,6 +496,45 @@ def main():
         help="Set type=pcapng in the generated file_metadata so the config can be replayed as a pcapng",
     )
     parse_parser.set_defaults(func=_cmd_parse)
+
+    # ── sanitise subcommand ───────────────────────────────────────────────────
+    san_parser = subparsers.add_parser(
+        "sanitise",
+        help="Replace sensitive fields in a JSON config with synthetic data",
+        description=(
+            "Replace sensitive fields (IP addresses, MACs, ports, payload, timestamps) "
+            "in a JSON config with synthetic data drawn from IANA-reserved ranges. "
+            "The same original value always maps to the same synthetic value, so the "
+            "communication structure is preserved."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    san_parser.add_argument("input", metavar="FILE", help="Input JSON config file")
+    san_parser.add_argument(
+        "--output", "-o", metavar="FILE",
+        help="Write sanitised JSON to FILE instead of stdout",
+    )
+    san_parser.add_argument(
+        "--no-ips", action="store_true",
+        help="Do not replace IP addresses (default: replaced)",
+    )
+    san_parser.add_argument(
+        "--no-macs", action="store_true",
+        help="Do not replace MAC addresses (default: replaced)",
+    )
+    san_parser.add_argument(
+        "--ports", action="store_true",
+        help="Replace TCP/UDP port numbers (default: kept)",
+    )
+    san_parser.add_argument(
+        "--payload", action="store_true",
+        help="Zero out payload data (default: kept)",
+    )
+    san_parser.add_argument(
+        "--timestamps", action="store_true",
+        help="Zero out packet timestamps (default: kept)",
+    )
+    san_parser.set_defaults(func=_cmd_sanitise)
 
     args = parser.parse_args()
     args.func(args)
