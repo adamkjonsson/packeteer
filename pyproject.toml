@@ -7,7 +7,23 @@ name = "packet-generator"
 version = "0.1.0"
 requires-python = ">=3.10"
 description = "Pure-Python packet-building and parsing library"
+authors = [ { name = "Adam Jonsson", email = "adam.jonsson@live.se"} ]
+readme = "README.md"
+classifiers = [ 
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Network Analysis",
+    "Programming Language :: Python :: 3.10" ]
+
+[tool.setuptools]
+py-modules = ["packet_lab"]
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["packet_generator*", "packet_parser*"]
+
+[project.scripts]
+packet-generator-cli = "packet_lab:main"
+
+[project.urls]
+Repository = "https://github.com/adamkjonsson/packet-generator.git"

@@ -27,6 +27,7 @@ and the standard library only.
 installation
 quickstart
 overview
+sanitiser
 cli
 json-config
 fragmentation

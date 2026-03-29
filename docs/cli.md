@@ -1,9 +1,11 @@
 # CLI Reference
 
-`packet_lab.py` is the command-line entry point with two subcommands:
+`packet_lab.py` is the command-line entry point with three subcommands:
 `build` constructs packets and writes them to a pcap or pcapng file;
 `parse` reads a capture and produces a JSON config that can be fed back
-to `build` for replay.
+to `build` for replay;
+`sanitise` replaces sensitive field values in a JSON config with synthetic
+data drawn from IANA-reserved ranges.
 
 ---
 
@@ -73,6 +75,46 @@ python packet_lab.py parse capture.pcapng --output replay.json
 python packet_lab.py parse capture.pcapng --output config.json
 python packet_lab.py build config.json --pcapng out.pcapng
 ```
+
+---
+
+## `sanitise`
+
+```
+python packet_lab.py sanitise <input.json> [--output FILE]
+                              [--no-ips] [--no-macs]
+                              [--ports] [--payload] [--timestamps]
+```
+
+Reads *input.json* (a config produced by `parse`), replaces sensitive field
+values with synthetic equivalents, and writes the result.  The same original
+value always maps to the same synthetic value across all packets, preserving
+the communication structure.
+
+| Argument | Description |
+|----------|-------------|
+| `input` | JSON config file to sanitise |
+| `--output FILE` / `-o FILE` | Write result to FILE (default: stdout) |
+| `--no-ips` | Keep original IP addresses (default: replaced) |
+| `--no-macs` | Keep original MAC addresses (default: replaced) |
+| `--ports` | Replace TCP/UDP port numbers (default: kept) |
+| `--payload` | Zero out payload data (default: kept) |
+| `--timestamps` | Zero out packet timestamps (default: kept) |
+
+**Example** — full sanitise-and-replay workflow:
+
+```bash
+# Step 1: parse the original capture
+python packet_lab.py parse capture.pcap --output capture.json
+
+# Step 2: sanitise (replace IPs, MACs; optionally ports and payload)
+python packet_lab.py sanitise capture.json --ports --payload --output clean.json
+
+# Step 3: rebuild a shareable pcap
+python packet_lab.py build clean.json --pcap clean.pcap
+```
+
+See {doc}`sanitiser` for the full reference including the Python API.
 
 ---
 
