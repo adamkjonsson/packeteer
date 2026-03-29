@@ -26,4 +26,4 @@ include = ["packet_generator*", "packet_parser*"]
 packeteer = "packet_lab:main"
 
 [project.urls]
-Repository = "https://github.com/adamkjonsson/packet-generator.git"
+Repository = "https://github.com/adamkjonsson/packeteer.git"
