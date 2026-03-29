@@ -1,4 +1,4 @@
-# packet-generator
+# packeteer
 
 A pure-Python library for building, fragmenting, and parsing complete,
 byte-accurate raw network packets. No external dependencies — Python 3.10+

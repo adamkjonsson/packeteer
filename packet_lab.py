@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-packet_lab — build and parse raw network packets.
+packeteer — build, parse, and sanitise raw network packets.
 
 Subcommands:
   build     Build packets from a JSON config file and write to a pcap or pcapng file

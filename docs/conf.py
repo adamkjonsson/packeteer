@@ -1,4 +1,4 @@
-"""Sphinx configuration for packet-generator documentation."""
+"""Sphinx configuration for packeteer documentation."""
 import os
 import sys
 
@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.abspath(".."))
 
 # ── Project metadata ──────────────────────────────────────────────────────────
 
-project = "packet-generator"
+project = "packeteer"
 author = "Adam Kjönsson"
 release = "0.1.0"
 copyright = f"2024, {author}"
@@ -62,10 +62,10 @@ intersphinx_mapping = {
 # ── Theme ─────────────────────────────────────────────────────────────────────
 
 html_theme = "furo"
-html_title = "packet-generator"
+html_title = "packeteer"
 
 html_theme_options = {
-    "source_repository": "https://github.com/adamkjonsson/packet-generator",
+    "source_repository": "https://github.com/adamkjonsson/packeteer",
     "source_branch": "main",
     "source_directory": "docs/",
 }

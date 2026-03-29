@@ -3,10 +3,10 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "packet-generator"
+name = "packeteer"
 version = "0.1.0"
 requires-python = ">=3.10"
-description = "Pure-Python packet-building and parsing library"
+description = "Pure-Python library for building, parsing, and sanitising raw network packets"
 authors = [ { name = "Adam Jonsson", email = "adam.jonsson@live.se"} ]
 readme = "README.md"
 classifiers = [ 
@@ -23,7 +23,7 @@ where = ["."]
 include = ["packet_generator*", "packet_parser*"]
 
 [project.scripts]
-packet-generator-cli = "packet_lab:main"
+packeteer = "packet_lab:main"
 
 [project.urls]
 Repository = "https://github.com/adamkjonsson/packet-generator.git"
