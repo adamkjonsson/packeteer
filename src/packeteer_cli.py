@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-packeteer — build, parse, and sanitise raw network packets.
+packeteer — build, parse, sanitise, and generate raw network packets.
 
 Subcommands:
   build     Build packets from a JSON config file and write to a pcap or pcapng file
   parse     Parse a pcap or pcapng file and produce a JSON config
   sanitise  Replace sensitive fields in a JSON config with synthetic data
+  stream    Generate a synthetic TCP stream and write to a pcap or pcapng file
 
 Examples:
   packeteer build packets.json --pcap out.pcap
@@ -14,6 +15,8 @@ Examples:
   packeteer parse capture.pcap --output replay.json --replay-pcap replayed.pcap
   packeteer sanitise capture.json --output clean.json
   packeteer sanitise capture.json --ports --payload --output clean.json
+  packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 --packets 50 --pcap out.pcap
+  packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 --server-port 443 --distribution bimodal --pcapng tls.pcapng
 """
 # This module is the entry point for the `packeteer` CLI command.
 # The mapping is declared in pyproject.toml: [project.scripts] packeteer = "packeteer_cli:main"
@@ -23,6 +26,7 @@ import sys
 from packet_generator import PacketBuilder
 from packet_generator.tcp import TCPOptions
 from packet_generator.pcap import write_pcap, write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW
+from packet_generator.tcp_stream import generate_tcp_stream
 from packet_generator.pppoe import PPPoETag, PPPOE_CODE_SESSION
 from packet_parser.parser import parse_pcap_file
 from replacer import SanitiseOptions, sanitise
@@ -448,6 +452,43 @@ def _cmd_sanitise(args: argparse.Namespace) -> None:
         print(output_str)
 
 
+def _cmd_stream(args: argparse.Namespace) -> None:
+    try:
+        stream = generate_tcp_stream(
+            client_ip=args.client_ip,
+            server_ip=args.server_ip,
+            client_port=args.client_port,
+            server_port=args.server_port,
+            client_mac=args.client_mac,
+            server_mac=args.server_mac,
+            num_data_packets=args.packets,
+            min_payload=args.min_payload,
+            max_payload=args.max_payload,
+            payload_distribution=args.distribution,
+            ip_ttl=args.ttl,
+            window=args.window,
+            inter_packet_gap=args.gap,
+            include_ethernet=not args.no_ethernet,
+        )
+    except (ValueError, OSError) as e:
+        print(f"Error generating stream: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    tuples = stream.to_pcap_tuples()
+    link_type = LINKTYPE_RAW if args.no_ethernet else LINKTYPE_ETHERNET
+
+    try:
+        if args.pcap:
+            write_pcap(tuples, path=args.pcap, link_type=link_type)
+            print(f"Wrote {len(tuples)} packet(s) to {args.pcap} (link type: {link_type})")
+        else:
+            write_pcapng(tuples, path=args.pcapng, link_type=link_type)
+            print(f"Wrote {len(tuples)} packet(s) to {args.pcapng} (link type: {link_type})")
+    except OSError as e:
+        print(f"Error writing output: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Build and parse raw network packets",
@@ -537,6 +578,56 @@ def main():
         help="Zero out packet timestamps (default: kept)",
     )
     san_parser.set_defaults(func=_cmd_sanitise)
+
+    # ── stream subcommand ─────────────────────────────────────────────────────
+    stream_parser = subparsers.add_parser(
+        "stream",
+        help="Generate a synthetic TCP stream",
+        description=(
+            "Generate a realistic TCP stream — three-way handshake, data transfer, "
+            "and four-way teardown — and write it to a pcap or pcapng file. "
+            "Sequence and acknowledgement numbers are computed correctly for all packets."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    # Required endpoints
+    stream_parser.add_argument("--client-ip", required=True, metavar="IP",
+                               help="Client IP address (IPv4 or IPv6)")
+    stream_parser.add_argument("--server-ip", required=True, metavar="IP",
+                               help="Server IP address (same family as --client-ip)")
+    # Optional endpoint fields
+    stream_parser.add_argument("--client-port", type=int, default=54321, metavar="PORT",
+                               help="Client source port (default: 54321)")
+    stream_parser.add_argument("--server-port", type=int, default=80, metavar="PORT",
+                               help="Server destination port (default: 80)")
+    stream_parser.add_argument("--client-mac", default="00:00:00:00:00:01", metavar="MAC",
+                               help="Client MAC address (default: 00:00:00:00:00:01)")
+    stream_parser.add_argument("--server-mac", default="00:00:00:00:00:02", metavar="MAC",
+                               help="Server MAC address (default: 00:00:00:00:00:02)")
+    # Stream shape
+    stream_parser.add_argument("--packets", type=int, default=10, metavar="N",
+                               help="Number of data packets sent by the client (default: 10)")
+    stream_parser.add_argument("--min-payload", type=int, default=40, metavar="BYTES",
+                               help="Minimum payload size in bytes (default: 40)")
+    stream_parser.add_argument("--max-payload", type=int, default=1460, metavar="BYTES",
+                               help="Maximum payload size in bytes (default: 1460)")
+    stream_parser.add_argument("--distribution", default="uniform",
+                               choices=["uniform", "bimodal", "fixed"],
+                               help="Payload size distribution (default: uniform)")
+    # IP / TCP tuning
+    stream_parser.add_argument("--ttl", type=int, default=64, metavar="N",
+                               help="IP TTL / hop limit (default: 64)")
+    stream_parser.add_argument("--window", type=int, default=65535, metavar="BYTES",
+                               help="TCP receive window size (default: 65535)")
+    stream_parser.add_argument("--gap", type=float, default=0.001, metavar="SECONDS",
+                               help="Inter-packet gap in seconds (default: 0.001)")
+    stream_parser.add_argument("--no-ethernet", action="store_true",
+                               help="Omit Ethernet headers (write raw IP packets)")
+    # Output (mutually exclusive, one required)
+    stream_out = stream_parser.add_mutually_exclusive_group(required=True)
+    stream_out.add_argument("--pcap", metavar="FILE", help="Write to a libpcap (.pcap) file")
+    stream_out.add_argument("--pcapng", metavar="FILE", help="Write to a pcapng (.pcapng) file")
+    stream_parser.set_defaults(func=_cmd_stream)
 
     args = parser.parse_args()
     args.func(args)
