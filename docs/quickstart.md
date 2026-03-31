@@ -54,14 +54,14 @@ See {doc}`api/pcap-io` for the full I/O reference.
 
 ```bash
 # Build packets from a JSON config and write a pcap file
-python packet_lab.py build packets.json --pcap out.pcap
+packeteer build packets.json --pcap out.pcap
 
 # Parse a capture and print its JSON config
-python packet_lab.py parse capture.pcap
+packeteer parse capture.pcap
 
 # Round-trip: parse → config → rebuild
-python packet_lab.py parse capture.pcap --output config.json
-python packet_lab.py build config.json --pcap replayed.pcap
+packeteer parse capture.pcap --output config.json
+packeteer build config.json --pcap replayed.pcap
 ```
 
 See {doc}`cli` for the full CLI reference and {doc}`json-config` for the JSON

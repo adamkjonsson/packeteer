@@ -336,7 +336,7 @@ def parse_pcap_file(
 
     Returns:
         A JSON string whose top-level structure matches the format accepted by
-        ``packet_lab.py build``.
+        ``packeteer build``.
 
     Raises:
         ValueError: If neither or both of *path* / *file_object* are given, or

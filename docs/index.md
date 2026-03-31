@@ -1,4 +1,4 @@
-# packet-generator
+# packeteer
 
 A pure-Python library for building, fragmenting, and parsing complete,
 byte-accurate raw network packets. No external dependencies — Python 3.10+
@@ -17,7 +17,7 @@ and the standard library only.
 - **GRE** tunnels (RFC 2784 / RFC 2890) — optional Key, Sequence Number, and Checksum fields; TEB (Transparent Ethernet Bridging) supported
 - **IPv4 and IPv6 fragmentation** (RFC 791 / RFC 8200 §4.5)
 - **pcap and pcapng** file I/O — read and write with microsecond or nanosecond timestamps
-- **CLI** (`packet_lab.py`) — build packets from a JSON config file, or parse a capture back to JSON for replay
+- **CLI** (`packeteer`) — build packets from a JSON config, parse captures back to JSON, or sanitise configs by replacing sensitive fields with synthetic data
 
 ## In this documentation
 

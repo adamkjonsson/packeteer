@@ -3,10 +3,10 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "packet-generator"
+name = "packeteer"
 version = "0.1.0"
 requires-python = ">=3.10"
-description = "Pure-Python packet-building and parsing library"
+description = "Pure-Python library for building, parsing, and sanitising raw network packets"
 authors = [ { name = "Adam Jonsson", email = "adam.jonsson@live.se"} ]
 readme = "README.md"
 classifiers = [ 
@@ -16,14 +16,19 @@ classifiers = [
     "Programming Language :: Python :: 3.10" ]
 
 [tool.setuptools]
-py-modules = ["packet_lab"]
+py-modules = ["packeteer_cli", "replacer"]
+package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
-where = ["."]
+where = ["src"]
 include = ["packet_generator*", "packet_parser*"]
 
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["src/tests"]
+
 [project.scripts]
-packet-generator-cli = "packet_lab:main"
+packeteer = "packeteer_cli:main"
 
 [project.urls]
-Repository = "https://github.com/adamkjonsson/packet-generator.git"
+Repository = "https://github.com/adamkjonsson/packeteer.git"

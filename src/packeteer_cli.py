@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-packet_lab — build and parse raw network packets.
+packeteer — build, parse, and sanitise raw network packets.
 
 Subcommands:
   build     Build packets from a JSON config file and write to a pcap or pcapng file
@@ -8,13 +8,15 @@ Subcommands:
   sanitise  Replace sensitive fields in a JSON config with synthetic data
 
 Examples:
-  python packet_lab.py build packets.json --pcap out.pcap
-  python packet_lab.py build packets.json --pcapng out.pcapng
-  python packet_lab.py parse capture.pcap
-  python packet_lab.py parse capture.pcap --output replay.json --replay-pcap replayed.pcap
-  python packet_lab.py sanitise capture.json --output clean.json
-  python packet_lab.py sanitise capture.json --ports --payload --output clean.json
+  packeteer build packets.json --pcap out.pcap
+  packeteer build packets.json --pcapng out.pcapng
+  packeteer parse capture.pcap
+  packeteer parse capture.pcap --output replay.json --replay-pcap replayed.pcap
+  packeteer sanitise capture.json --output clean.json
+  packeteer sanitise capture.json --ports --payload --output clean.json
 """
+# This module is the entry point for the `packeteer` CLI command.
+# The mapping is declared in pyproject.toml: [project.scripts] packeteer = "packeteer_cli:main"
 import argparse
 import json
 import sys

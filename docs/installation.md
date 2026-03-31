@@ -9,18 +9,19 @@ the standard library.
 ## Clone and install
 
 ```bash
-git clone https://github.com/adamkjonsson/packet-generator.git
-cd packet-generator
+git clone https://github.com/adamkjonsson/packeteer.git
+cd packeteer
 pip install -e .
 ```
 
 The `-e` flag installs the package in *editable* mode, so changes to the
-source are reflected immediately without reinstalling.
+source are reflected immediately without reinstalling.  After installation the
+`packeteer` command is available on your `PATH`.
 
 ## Run the tests
 
 ```bash
-python -m unittest discover tests/ -v
+PYTHONPATH=src python -m unittest discover src/tests/ -v
 ```
 
 All tests run in under a second with no third-party packages required.

@@ -30,7 +30,7 @@ which — you just cannot tell who they really are.
 ## CLI
 
 ```
-packet_lab.py sanitise <input.json> [--output <output.json>]
+packeteer sanitise <input.json> [--output <output.json>]
                        [--no-ips] [--no-macs]
                        [--ports] [--payload] [--timestamps]
 ```
@@ -51,15 +51,15 @@ packet_lab.py sanitise <input.json> [--output <output.json>]
 Replace IPs and MACs only (defaults):
 
 ```bash
-packet_lab.py parse capture.pcap --output capture.json
-packet_lab.py sanitise capture.json --output clean.json
-packet_lab.py build clean.json --pcap clean.pcap
+packeteer parse capture.pcap --output capture.json
+packeteer sanitise capture.json --output clean.json
+packeteer build clean.json --pcap clean.pcap
 ```
 
 Full sanitisation (replace everything):
 
 ```bash
-packet_lab.py sanitise capture.json \
+packeteer sanitise capture.json \
     --ports --payload --timestamps \
     --output fully-clean.json
 ```
@@ -67,7 +67,7 @@ packet_lab.py sanitise capture.json \
 Keep IPs, replace everything else:
 
 ```bash
-packet_lab.py sanitise capture.json \
+packeteer sanitise capture.json \
     --no-ips --ports --payload --timestamps \
     --output clean.json
 ```
@@ -151,4 +151,4 @@ Ports are unchanged because `--ports` was not given.
 - `file_metadata` block
 
 Checksums are not stored in the JSON config — they are always recomputed from
-scratch when the config is rebuilt with `packet_lab.py build`.
+scratch when the config is rebuilt with `packeteer build`.

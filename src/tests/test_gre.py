@@ -580,8 +580,9 @@ class TestGRERoundTrip(unittest.TestCase):
         with tempfile.NamedTemporaryFile(suffix=".pcap", delete=False) as pf:
             pf_path = pf.name
         try:
+            packet_lab = os.path.join(os.path.dirname(__file__), "..", "packeteer_cli.py")
             result = subprocess.run(
-                [sys.executable, "packet_lab.py", "build", jf_path, "--pcap", pf_path],
+                [sys.executable, packet_lab, "build", jf_path, "--pcap", pf_path],
                 capture_output=True, text=True
             )
             self.assertEqual(result.returncode, 0, result.stderr)

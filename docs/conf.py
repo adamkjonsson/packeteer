@@ -1,16 +1,16 @@
-"""Sphinx configuration for packet-generator documentation."""
+"""Sphinx configuration for packeteer documentation."""
 import os
 import sys
 
 # Make packet_generator and packet_parser importable without pip install
-sys.path.insert(0, os.path.abspath(".."))
+sys.path.insert(0, os.path.abspath("../src"))
 
 # ── Project metadata ──────────────────────────────────────────────────────────
 
-project = "packet-generator"
-author = "Adam Kjönsson"
+project = "packeteer"
+author = "Adam Jonsson"
 release = "0.1.0"
-copyright = f"2024, {author}"
+copyright = f"2026, {author}"
 
 # ── Extensions ────────────────────────────────────────────────────────────────
 
@@ -62,10 +62,10 @@ intersphinx_mapping = {
 # ── Theme ─────────────────────────────────────────────────────────────────────
 
 html_theme = "furo"
-html_title = "packet-generator"
+html_title = "packeteer"
 
 html_theme_options = {
-    "source_repository": "https://github.com/adamkjonsson/packet-generator",
+    "source_repository": "https://github.com/adamkjonsson/packeteer",
     "source_branch": "main",
     "source_directory": "docs/",
 }

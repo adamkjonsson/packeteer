@@ -1,7 +1,7 @@
 # JSON Config File Format
 
-The JSON config file is the input to `packet_lab.py build` and the output of
-`packet_lab.py parse`.  It contains a top-level `packets` array with one
+The JSON config file is the input to `packeteer build` and the output of
+`packeteer parse`.  It contains a top-level `packets` array with one
 object per packet, and an optional `file_metadata` block.
 
 ```json
@@ -273,7 +273,7 @@ combine (e.g. `24` for PSH+ACK).
 (json-config-file-metadata)=
 ## `file_metadata` (top-level)
 
-Written by `packet_lab.py parse`; read by `packet_lab.py build` for format
+Written by `packeteer parse`; read by `packeteer build` for format
 settings (`type`, `nanoseconds`).  `from_file` is informational only.
 
 | Field | Description |
