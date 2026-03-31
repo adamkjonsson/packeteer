@@ -59,5 +59,5 @@ Or read the source pages directly:
 ## Running tests
 
 ```bash
-python3 -m unittest discover -s tests -q
+PYTHONPATH=src python3 -m unittest discover -s src/tests -q
 ```

@@ -21,7 +21,7 @@ source are reflected immediately without reinstalling.  After installation the
 ## Run the tests
 
 ```bash
-python -m unittest discover tests/ -v
+PYTHONPATH=src python -m unittest discover src/tests/ -v
 ```
 
 All tests run in under a second with no third-party packages required.

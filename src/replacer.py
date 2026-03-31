@@ -1,6 +1,6 @@
 """Sanitise a JSON packet config by replacing sensitive field values.
 
-Reads a config dict in the format produced by ``packet_lab.py parse`` and
+Reads a config dict in the format produced by ``packeteer parse`` and
 returns a deep-copied, sanitised version where selected field values have been
 replaced with synthetic but structurally valid equivalents.
 
@@ -229,7 +229,7 @@ def sanitise(
 ) -> dict:
     """Return a sanitised deep copy of *config*.
 
-    *config* must be a dict in the format produced by ``packet_lab.py parse``
+    *config* must be a dict in the format produced by ``packeteer parse``
     — a top-level ``"packets"`` list, with an optional ``"file_metadata"``
     block.
 
@@ -238,7 +238,7 @@ def sanitise(
     Args:
         config: Packet config dict as returned by
             :func:`packet_parser.to_config.to_json_config` or loaded from a
-            JSON file written by ``packet_lab.py parse``.
+            JSON file written by ``packeteer parse``.
         options: Controls which field types are replaced.  Defaults to
             :class:`SanitiseOptions` with ``ips=True``, ``macs=True``,
             ``ports=False``, ``payload=False``, ``timestamps=False``.

@@ -1,6 +1,6 @@
 """Convert parsed packet header objects to a JSON config dict.
 
-The produced dict matches the JSON format accepted by ``packet_lab.py build``,
+The produced dict matches the JSON format accepted by ``packeteer build``,
 so a parsed capture can be saved and replayed directly.
 
 Build up a config one protocol layer at a time using :func:`update_config`,
@@ -326,7 +326,7 @@ def to_json_config(
 
     Returns:
         A dict matching the top-level JSON config format accepted by
-        ``packet_lab.py build``.
+        ``packeteer build``.
     """
     cfg: dict[str, Any] = {}
     if file_metadata is not None:

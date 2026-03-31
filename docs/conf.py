@@ -3,14 +3,14 @@ import os
 import sys
 
 # Make packet_generator and packet_parser importable without pip install
-sys.path.insert(0, os.path.abspath(".."))
+sys.path.insert(0, os.path.abspath("../src"))
 
 # ── Project metadata ──────────────────────────────────────────────────────────
 
 project = "packeteer"
-author = "Adam Kjönsson"
+author = "Adam Jonsson"
 release = "0.1.0"
-copyright = f"2024, {author}"
+copyright = f"2026, {author}"
 
 # ── Extensions ────────────────────────────────────────────────────────────────
 

@@ -16,14 +16,19 @@ classifiers = [
     "Programming Language :: Python :: 3.10" ]
 
 [tool.setuptools]
-py-modules = ["packet_lab"]
+py-modules = ["packeteer_cli", "replacer"]
+package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
-where = ["."]
+where = ["src"]
 include = ["packet_generator*", "packet_parser*"]
 
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["src/tests"]
+
 [project.scripts]
-packeteer = "packet_lab:main"
+packeteer = "packeteer_cli:main"
 
 [project.urls]
 Repository = "https://github.com/adamkjonsson/packeteer.git"
