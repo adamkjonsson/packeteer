@@ -149,6 +149,7 @@ acknowledgement numbers are computed correctly for every packet.
 | `--gap SECONDS` | `0.001` | Inter-packet gap (1 ms) |
 | `--gap-jitter SECONDS` | `0.0` | Max additional delay per gap, drawn from `[gap, gap+jitter]`; output is re-sorted by timestamp |
 | `--psh-probability PROB` | `0.5` | Probability (0.0–1.0) that PSH is set on each data segment |
+| `--packet-loss PROB` | `0.0` | Probability (0.0–1.0) that any packet is silently dropped from the capture |
 | `--no-ethernet` | off | Omit Ethernet headers (raw IP packets) |
 
 `--pcap` and `--pcapng` are mutually exclusive; one is required.

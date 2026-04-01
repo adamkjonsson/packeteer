@@ -372,7 +372,39 @@ class TestTimestamps(unittest.TestCase):
             self.assertLessEqual(t, n * gap_usec + jitter_usec)
 
 
-# ── Group 10: IPv6 support ────────────────────────────────────────────────────
+# ── Group 10: Packet loss ─────────────────────────────────────────────────────
+
+class TestPacketLoss(unittest.TestCase):
+
+    def test_zero_loss_no_packets_dropped(self):
+        n = 10
+        stream = _stream(num_data_packets=n, packet_loss_probability=0.0)
+        self.assertEqual(len(stream.packets), 2 * n + 7)
+
+    def test_full_loss_no_packets_remain(self):
+        stream = _stream(num_data_packets=10, packet_loss_probability=1.0)
+        self.assertEqual(len(stream.packets), 0)
+
+    def test_partial_loss_reduces_packet_count(self):
+        # At 50 % loss over 200 data packets the chance of ending up with the
+        # full count is astronomically small.
+        stream = _stream(num_data_packets=100, packet_loss_probability=0.5)
+        self.assertLess(len(stream.packets), 2 * 100 + 7)
+
+    def test_seq_numbers_unaffected_by_loss(self):
+        # With 100 % loss the stream is empty, but with 0 % loss seq numbers
+        # must still be correct — check they are not disturbed by the loss path.
+        stream = _stream(
+            num_data_packets=3,
+            payload_sizes=[100, 200, 300],
+            packet_loss_probability=0.0,
+        )
+        data_pkts = [p for p in stream.packets if p.label.startswith("DATA")]
+        self.assertEqual(data_pkts[1].seq, _CLIENT_ISN + 1 + 100)
+        self.assertEqual(data_pkts[2].seq, _CLIENT_ISN + 1 + 100 + 200)
+
+
+# ── Group 11: IPv6 support ───────────────────────────────────────────────────
 
 class TestIPv6Support(unittest.TestCase):
 

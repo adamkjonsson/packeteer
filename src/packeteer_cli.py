@@ -470,6 +470,7 @@ def _cmd_stream(args: argparse.Namespace) -> None:
             inter_packet_gap=args.gap,
             gap_jitter=args.gap_jitter,
             psh_probability=args.psh_probability,
+            packet_loss_probability=args.packet_loss_probability,
             include_ethernet=not args.no_ethernet,
         )
     except (ValueError, OSError) as e:
@@ -627,6 +628,9 @@ def main():
                                help="Max additional delay per gap; each gap is drawn from [gap, gap+jitter] and packets are re-sorted by timestamp (default: 0.0)")
     stream_parser.add_argument("--psh-probability", type=float, default=0.5, metavar="PROB",
                                help="Probability (0.0-1.0) that PSH is set on each data segment (default: 0.5)")
+    stream_parser.add_argument("--packet-loss", type=float, default=0.0, metavar="PROB",
+                               dest="packet_loss_probability",
+                               help="Probability (0.0-1.0) that any packet is dropped from the capture (default: 0.0)")
     stream_parser.add_argument("--no-ethernet", action="store_true",
                                help="Omit Ethernet headers (write raw IP packets)")
     # Output (mutually exclusive, one required)

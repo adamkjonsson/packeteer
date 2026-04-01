@@ -71,6 +71,26 @@ stream = generate_tcp_stream(
 
 ---
 
+## Packet loss
+
+Set `packet_loss_probability` to simulate packets being lost on the wire.
+Each packet is independently dropped from the capture with that probability.
+Sequence and acknowledgement numbers are computed as if every packet was
+transmitted — only the capture record is omitted, matching what an analyser
+would see when loss occurs mid-stream.
+
+```python
+# 5 % packet loss
+stream = generate_tcp_stream(
+    client_ip="10.0.0.1",
+    server_ip="10.0.0.2",
+    num_data_packets=100,
+    packet_loss_probability=0.05,
+)
+```
+
+---
+
 ## PSH flag behaviour
 
 Real TCP stacks do not set PSH on every data segment — they use it to signal

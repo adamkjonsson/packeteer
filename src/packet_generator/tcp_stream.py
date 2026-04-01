@@ -232,6 +232,7 @@ def generate_tcp_stream(
     inter_packet_gap: float = 0.001,
     gap_jitter: float = 0.0,
     psh_probability: float = 0.5,
+    packet_loss_probability: float = 0.0,
     packet_hooks: list[Callable[[TCPStreamPacket, int], TCPStreamPacket | None]] | None = None,
 ) -> TCPStream:
     """Generate a complete TCP stream as a sequence of :class:`TCPStreamPacket` objects.
@@ -295,6 +296,11 @@ def generate_tcp_stream(
             each data segment.  Real TCP stacks set PSH to signal the receiver
             to flush its buffer, but not on every segment.  Defaults to
             ``0.5``.
+        packet_loss_probability: Probability (0.0–1.0) that any individual
+            packet is silently dropped from the capture, simulating packet
+            loss on the wire.  Sequence and acknowledgement numbers are
+            computed as if the packet was sent; only the capture record is
+            omitted.  Defaults to ``0.0`` (no loss).
         packet_hooks: Optional list of callables applied to each packet after
             it is built.  Each hook has the signature::
 
@@ -387,6 +393,9 @@ def generate_tcp_stream(
             payload_len=len(payload),
             label=label,
         )
+
+        if packet_loss_probability and random.random() < packet_loss_probability:
+            pkt = None
 
         if packet_hooks:
             for hook in packet_hooks:
