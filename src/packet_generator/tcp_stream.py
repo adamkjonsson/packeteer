@@ -25,9 +25,9 @@ Typical usage::
 """
 from __future__ import annotations
 
-import os
 import random
 import time
+from pathlib import Path
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -35,6 +35,18 @@ from .builder import PacketBuilder
 from .tcp import TCPOptions, TCP_SYN, TCP_ACK, TCP_PSH, TCP_FIN
 
 _WRAP = 2 ** 32
+
+_DEFAULT_PAYLOAD = (
+    Path(__file__).with_name("default_payload.txt").read_bytes()
+)
+
+
+def _repeat_payload(size: int) -> bytes:
+    """Return *size* bytes of the default payload, repeating as needed."""
+    if size <= 0:
+        return b""
+    times, remainder = divmod(size, len(_DEFAULT_PAYLOAD))
+    return _DEFAULT_PAYLOAD * times + _DEFAULT_PAYLOAD[:remainder]
 
 
 # ── Data model ────────────────────────────────────────────────────────────────
@@ -394,7 +406,7 @@ def generate_tcp_stream(
     # ── Data transfer (client → server, server ACKs each packet) ────────────
     for i, size in enumerate(sizes):
         flags = TCP_ACK | (TCP_PSH if random.random() < psh_probability else 0)
-        emit(client, server, flags, os.urandom(size), "c2s", f"DATA[{i}]")
+        emit(client, server, flags, _repeat_payload(size), "c2s", f"DATA[{i}]")
         emit(server, client, TCP_ACK, b"", "s2c", f"ACK[{i}]")
 
     # ── Four-way teardown ─────────────────────────────────────────────────────
