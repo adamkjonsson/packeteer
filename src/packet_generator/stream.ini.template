@@ -1,0 +1,142 @@
+# packeteer stream config file template
+#
+# Copy this file, fill in client_ip, server_ip, and an output path, then run:
+#
+#   packeteer stream --config my_stream.ini
+#
+# CLI flags override values set here, so you can use a config file as a
+# base profile and tweak individual parameters on the command line:
+#
+#   packeteer stream --config my_stream.ini --packets 100 --distribution bimodal
+#
+# Required keys: client_ip, server_ip, and exactly one of pcap / pcapng.
+# All other keys are optional and fall back to the defaults shown below.
+#
+# Key names use underscores and match the CLI long flags (hyphens → underscores).
+# The one exception is packet_loss (CLI: --packet-loss).
+
+[stream]
+
+# ── Endpoints ──────────────────────────────────────────────────────────────────
+
+# client_ip  (required)
+#   IP address of the simulated client.
+#   Accepts IPv4 dotted-decimal (e.g. 10.0.0.1) or IPv6 colon-hex
+#   (e.g. 2001:db8::1).  Both endpoints must use the same IP version.
+client_ip = 10.0.0.1
+
+# server_ip  (required)
+#   IP address of the simulated server.  Same format rules as client_ip.
+server_ip = 10.0.0.2
+
+# client_port  (default: 54321)
+#   TCP source port used by the client.  Valid range: 1–65535.
+client_port = 54321
+
+# server_port  (default: 80)
+#   TCP destination port used by the server (e.g. 80 for HTTP, 443 for HTTPS).
+#   Valid range: 1–65535.
+server_port = 80
+
+# client_mac  (default: 00:00:00:00:00:01)
+#   Ethernet MAC address of the client, written as six colon-separated hex
+#   pairs.  Ignored when no_ethernet = true.
+client_mac = 00:00:00:00:00:01
+
+# server_mac  (default: 00:00:00:00:00:02)
+#   Ethernet MAC address of the server.  Ignored when no_ethernet = true.
+server_mac = 00:00:00:00:00:02
+
+# ── Output ─────────────────────────────────────────────────────────────────────
+
+# pcap  (mutually exclusive with pcapng)
+#   Write the generated stream to a libpcap (.pcap) file at this path.
+#   Exactly one of pcap or pcapng must be set, either here or on the CLI.
+pcap = out.pcap
+
+# pcapng  (mutually exclusive with pcap)
+#   Write the generated stream to a pcapng (.pcapng) file at this path.
+#   Prefer pcapng when you need nanosecond timestamps or interface metadata.
+# pcapng = out.pcapng
+
+# ── Stream shape ───────────────────────────────────────────────────────────────
+
+# packets  (default: 10)
+#   Number of data segments (PSH+ACK) sent by the client.  The total packet
+#   count in the capture is 2 * packets + 7 (handshake + data + server ACKs
+#   + teardown).
+packets = 10
+
+# min_payload  (default: 40)
+#   Minimum application payload size in bytes for data segments.
+#   Must be <= max_payload.
+min_payload = 40
+
+# max_payload  (default: 1460)
+#   Maximum application payload size in bytes.  1460 is the typical MSS for
+#   Ethernet (1500 byte MTU minus 20-byte IP header minus 20-byte TCP header).
+max_payload = 1460
+
+# distribution  (default: uniform)
+#   Controls how per-packet payload sizes are chosen.  Options:
+#
+#     uniform  — each size is chosen at random between min_payload and
+#                max_payload with equal probability.
+#
+#     bimodal  — 70 % of segments are small (near min_payload) and 30 % are
+#                large (near max_payload), approximating mixed HTTP/TLS traffic
+#                where small control messages and bulk data segments coexist.
+#
+#     fixed    — every segment is exactly max_payload bytes.
+distribution = uniform
+
+# ── Timing ─────────────────────────────────────────────────────────────────────
+
+# gap  (default: 0.001)
+#   Base inter-packet gap in seconds.  Packet n is logically sent at
+#   base_time + n * gap before any jitter is applied.
+gap = 0.001
+
+# gap_jitter  (default: 0.0)
+#   Maximum interception delay in seconds.  Each packet n is assigned a
+#   capture timestamp of (base_time + n * gap) + uniform(0, gap_jitter).
+#   Because delays are drawn independently, a later packet can overtake an
+#   earlier one; the stream is sorted by timestamp before writing, matching
+#   what a real capture would show.  Set to 0.0 for perfectly uniform spacing.
+gap_jitter = 0.0
+
+# ── Realism ────────────────────────────────────────────────────────────────────
+
+# psh_probability  (default: 0.5)
+#   Probability (0.0–1.0) that the TCP PSH flag is set on each data segment.
+#   Real stacks set PSH to signal the receiver to flush its buffer immediately,
+#   but not on every segment.  Use 1.0 to always set PSH, 0.0 to never set it.
+psh_probability = 0.5
+
+# packet_loss  (default: 0.0)
+#   Probability (0.0–1.0) that any individual packet is silently omitted from
+#   the capture, simulating loss on the wire.  Sequence and acknowledgement
+#   numbers are computed as if every packet was transmitted, so gaps in sequence
+#   numbers remain visible to analysers — exactly as with real packet loss.
+#   Example: 0.02 drops roughly 2 % of packets.
+packet_loss = 0.0
+
+# ── IP / TCP ───────────────────────────────────────────────────────────────────
+
+# ttl  (default: 64)
+#   IP Time To Live (IPv4) or Hop Limit (IPv6) set on every packet.
+#   Typical values: 64 (Linux/macOS), 128 (Windows), 255 (routers).
+ttl = 64
+
+# window  (default: 65535)
+#   TCP receive window size in bytes advertised by both endpoints.
+#   Modern systems use window scaling to exceed this; for synthetic captures
+#   65535 is a safe, widely-compatible value.
+window = 65535
+
+# no_ethernet  (default: false)
+#   When true, Ethernet II headers are omitted and each packet starts directly
+#   with the IP header.  Use the LINKTYPE_RAW link type when opening such
+#   captures in Wireshark or other tools.  client_mac and server_mac are
+#   ignored when this is true.
+no_ethernet = false

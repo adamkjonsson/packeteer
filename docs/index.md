@@ -17,7 +17,8 @@ and the standard library only.
 - **GRE** tunnels (RFC 2784 / RFC 2890) — optional Key, Sequence Number, and Checksum fields; TEB (Transparent Ethernet Bridging) supported
 - **IPv4 and IPv6 fragmentation** (RFC 791 / RFC 8200 §4.5)
 - **pcap and pcapng** file I/O — read and write with microsecond or nanosecond timestamps
-- **CLI** (`packeteer`) — build packets from a JSON config, parse captures back to JSON, or sanitise configs by replacing sensitive fields with synthetic data
+- **TCP stream generation** — produce a complete connection (handshake, data, teardown) with correct sequence numbers and configurable payload distribution
+- **CLI** (`packeteer`) — build packets from a JSON config, parse captures back to JSON, sanitise configs, or generate synthetic TCP streams
 
 ## In this documentation
 
@@ -31,6 +32,7 @@ sanitiser
 cli
 json-config
 fragmentation
+stream
 api/index
 reference/packet-sizes
 reference/rfc-references

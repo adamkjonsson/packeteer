@@ -185,6 +185,7 @@ from .tcp import (
 from .udp import UDPHeader
 from .icmp import ICMPHeader
 from .icmpv6 import ICMPv6Header
+from .tcp_stream import generate_tcp_stream, TCPStream, TCPStreamPacket
 
 __all__ = [
     "PacketBuilder",
@@ -233,6 +234,9 @@ __all__ = [
     "PPPOE_TAG_HOST_UNIQ",
     "PPPOE_TAG_AC_COOKIE",
     "PPPOE_TAG_GENERIC_ERROR",
+    "generate_tcp_stream",
+    "TCPStream",
+    "TCPStreamPacket",
     "fragment_ipv4",
     "fragment_ipv6",
     "write_pcap",
