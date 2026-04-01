@@ -468,6 +468,8 @@ def _cmd_stream(args: argparse.Namespace) -> None:
             ip_ttl=args.ttl,
             window=args.window,
             inter_packet_gap=args.gap,
+            gap_jitter=args.gap_jitter,
+            psh_probability=args.psh_probability,
             include_ethernet=not args.no_ethernet,
         )
     except (ValueError, OSError) as e:
@@ -621,6 +623,10 @@ def main():
                                help="TCP receive window size (default: 65535)")
     stream_parser.add_argument("--gap", type=float, default=0.001, metavar="SECONDS",
                                help="Inter-packet gap in seconds (default: 0.001)")
+    stream_parser.add_argument("--gap-jitter", type=float, default=0.0, metavar="SECONDS",
+                               help="Max additional delay per gap; each gap is drawn from [gap, gap+jitter] and packets are re-sorted by timestamp (default: 0.0)")
+    stream_parser.add_argument("--psh-probability", type=float, default=0.5, metavar="PROB",
+                               help="Probability (0.0-1.0) that PSH is set on each data segment (default: 0.5)")
     stream_parser.add_argument("--no-ethernet", action="store_true",
                                help="Omit Ethernet headers (write raw IP packets)")
     # Output (mutually exclusive, one required)

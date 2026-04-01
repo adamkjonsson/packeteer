@@ -128,15 +128,17 @@ class TestSeqAckCorrectness(unittest.TestCase):
         self.assertEqual(self.pkts[3].seq, _CLIENT_ISN + 1)
 
     def test_data_seq_advances_by_payload_length(self):
+        data_pkts = [p for p in self.pkts if p.label.startswith("DATA")]
         for i in range(2):
             with self.subTest(i=i):
-                cur = self.pkts[3 + i]
-                nxt = self.pkts[3 + i + 1]
+                cur = data_pkts[i]
+                nxt = data_pkts[i + 1]
                 self.assertEqual(nxt.seq, (cur.seq + cur.payload_len) % _WRAP)
 
     def test_data_seq_chain(self):
-        self.assertEqual(self.pkts[4].seq, _CLIENT_ISN + 1 + 100)
-        self.assertEqual(self.pkts[5].seq, _CLIENT_ISN + 1 + 100 + 200)
+        data_pkts = [p for p in self.pkts if p.label.startswith("DATA")]
+        self.assertEqual(data_pkts[1].seq, _CLIENT_ISN + 1 + 100)
+        self.assertEqual(data_pkts[2].seq, _CLIENT_ISN + 1 + 100 + 200)
 
     def test_fin_consumes_one_seq(self):
         # Server ACK of client FIN must ack client_fin.seq + 1
@@ -180,16 +182,16 @@ class TestSeqWrapAround(unittest.TestCase):
 class TestPacketCount(unittest.TestCase):
 
     def test_total_count_formula(self):
-        # handshake(3) + data(n) + server_ack(1) + teardown(4) = n + 8
+        # handshake(3) + data+ack(2*n) + teardown(4) = 2*n + 7
         for n in (0, 1, 5, 10):
             with self.subTest(n=n):
-                self.assertEqual(len(_stream(num_data_packets=n).packets), n + 8)
+                self.assertEqual(len(_stream(num_data_packets=n).packets), 2 * n + 7)
 
     def test_zero_data_packets_labels(self):
         pkts = _stream(num_data_packets=0).packets
         self.assertEqual(
             [p.label for p in pkts],
-            ["SYN", "SYN-ACK", "ACK", "ACK", "FIN-ACK", "ACK", "FIN-ACK", "ACK"],
+            ["SYN", "SYN-ACK", "ACK", "FIN-ACK", "ACK", "FIN-ACK", "ACK"],
         )
 
     def test_data_labels(self):
@@ -292,7 +294,7 @@ class TestPcapIntegration(unittest.TestCase):
     def test_to_pcap_tuples_length(self):
         n = 5
         stream = _stream(num_data_packets=n)
-        self.assertEqual(len(stream.to_pcap_tuples()), n + 8)
+        self.assertEqual(len(stream.to_pcap_tuples()), 2 * n + 7)
 
     def test_write_pcap_roundtrip(self):
         stream = _stream(num_data_packets=3)
@@ -337,6 +339,38 @@ class TestTimestamps(unittest.TestCase):
         t1 = pkts[1].ts_sec * 1_000_000 + pkts[1].ts_usec
         self.assertEqual(t1 - t0, int(gap * 1_000_000))
 
+    def test_jitter_output_sorted_by_timestamp(self):
+        # With large jitter packets will be reordered; the returned list must
+        # still be sorted by (ts_sec, ts_usec).
+        pkts = _stream(
+            num_data_packets=20,
+            inter_packet_gap=0.001,
+            gap_jitter=0.002,
+            base_time=0.0,
+        ).packets
+        times = [p.ts_sec * 1_000_000 + p.ts_usec for p in pkts]
+        self.assertEqual(times, sorted(times))
+
+    def test_jitter_timestamps_within_expected_range(self):
+        # Each packet n has timestamp: base + n*gap + delay, delay in [0, jitter].
+        # The last packet (index N-1) is sent at (N-1)*gap and can arrive at most
+        # (N-1)*gap + jitter after base.
+        gap = 0.010
+        jitter = 0.005
+        pkts = _stream(
+            num_data_packets=50,
+            inter_packet_gap=gap,
+            gap_jitter=jitter,
+            base_time=0.0,
+        ).packets
+        times = [p.ts_sec * 1_000_000 + p.ts_usec for p in pkts]
+        n = len(pkts) - 1
+        gap_usec = int(gap * 1_000_000)
+        jitter_usec = int(jitter * 1_000_000)
+        for i, t in enumerate(times):
+            # Packet i was sent at index i*gap (before sorting, so we bound by n)
+            self.assertLessEqual(t, n * gap_usec + jitter_usec)
+
 
 # ── Group 10: IPv6 support ────────────────────────────────────────────────────
 
@@ -351,7 +385,7 @@ class TestIPv6Support(unittest.TestCase):
             num_data_packets=2,
             payload_sizes=[20, 20],
         )
-        self.assertEqual(len(stream.packets), 10)
+        self.assertEqual(len(stream.packets), 11)
 
     def test_ipv6_no_ethernet_ip_version(self):
         pkts = generate_tcp_stream(
@@ -378,7 +412,7 @@ class TestPacketHooks(unittest.TestCase):
 
         stream = _stream(num_data_packets=3, packet_hooks=[drop_index_2])
         # One packet fewer than normal
-        self.assertEqual(len(stream.packets), 3 + 8 - 1)
+        self.assertEqual(len(stream.packets), 2 * 3 + 7 - 1)
         # The dropped packet's label must not appear
         labels = [p.label for p in stream.packets]
         # packets[2] was "ACK" (handshake); it's gone, so DATA[0] follows SYN-ACK

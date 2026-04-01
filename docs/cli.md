@@ -1,11 +1,12 @@
 # CLI Reference
 
-`packeteer` is the command-line entry point with three subcommands:
+`packeteer` is the command-line entry point with four subcommands:
 `build` constructs packets and writes them to a pcap or pcapng file;
 `parse` reads a capture and produces a JSON config that can be fed back
 to `build` for replay;
 `sanitise` replaces sensitive field values in a JSON config with synthetic
-data drawn from IANA-reserved ranges.
+data drawn from IANA-reserved ranges;
+`stream` generates a complete synthetic TCP stream directly to pcap or pcapng.
 
 ---
 
@@ -115,6 +116,66 @@ packeteer build clean.json --pcap clean.pcap
 ```
 
 See {doc}`sanitiser` for the full reference including the Python API.
+
+---
+
+## `stream`
+
+```
+packeteer stream --client-ip IP --server-ip IP (--pcap FILE | --pcapng FILE) [options]
+```
+
+Generates a complete synthetic TCP stream — three-way handshake,
+`--packets` data segments from client to server, and four-way teardown —
+and writes it directly to a pcap or pcapng file.  Sequence and
+acknowledgement numbers are computed correctly for every packet.
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--client-ip IP` | *(required)* | Client IP address (IPv4 or IPv6) |
+| `--server-ip IP` | *(required)* | Server IP address (same family) |
+| `--pcap FILE` | *(required*)* | Write to a libpcap (`.pcap`) file |
+| `--pcapng FILE` | *(required*)* | Write to a pcapng (`.pcapng`) file |
+| `--client-port PORT` | `54321` | Client source port |
+| `--server-port PORT` | `80` | Server destination port |
+| `--client-mac MAC` | `00:00:00:00:00:01` | Client MAC address |
+| `--server-mac MAC` | `00:00:00:00:00:02` | Server MAC address |
+| `--packets N` | `10` | Number of data packets sent by the client |
+| `--min-payload BYTES` | `40` | Minimum payload size |
+| `--max-payload BYTES` | `1460` | Maximum payload size |
+| `--distribution` | `uniform` | Payload size strategy: `uniform`, `bimodal`, or `fixed` |
+| `--ttl N` | `64` | IP TTL / hop limit |
+| `--window BYTES` | `65535` | TCP receive window size |
+| `--gap SECONDS` | `0.001` | Inter-packet gap (1 ms) |
+| `--gap-jitter SECONDS` | `0.0` | Max additional delay per gap, drawn from `[gap, gap+jitter]`; output is re-sorted by timestamp |
+| `--psh-probability PROB` | `0.5` | Probability (0.0–1.0) that PSH is set on each data segment |
+| `--no-ethernet` | off | Omit Ethernet headers (raw IP packets) |
+
+`--pcap` and `--pcapng` are mutually exclusive; one is required.
+
+### Examples
+
+```bash
+# 50-packet HTTP session
+packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
+    --packets 50 --pcap out.pcap
+
+# HTTPS session with bimodal payload sizes
+packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
+    --server-port 443 --distribution bimodal --pcapng tls.pcapng
+
+# IPv6, fixed 512-byte payloads, 10 ms inter-packet gap
+packeteer stream --client-ip 2001:db8::1 --server-ip 2001:db8::2 \
+    --server-port 8080 --distribution fixed --max-payload 512 \
+    --gap 0.01 --pcap out.pcap
+
+# Raw IP (no Ethernet headers)
+packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
+    --no-ethernet --packets 20 --pcap raw.pcap
+```
+
+See {doc}`stream` for the full Python API, payload distribution options,
+error injection via hooks, and IPv6 usage.
 
 ---
 

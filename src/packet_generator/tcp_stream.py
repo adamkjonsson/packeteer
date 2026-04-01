@@ -218,6 +218,8 @@ def generate_tcp_stream(
     window: int = 65535,
     base_time: float | None = None,
     inter_packet_gap: float = 0.001,
+    gap_jitter: float = 0.0,
+    psh_probability: float = 0.5,
     packet_hooks: list[Callable[[TCPStreamPacket, int], TCPStreamPacket | None]] | None = None,
 ) -> TCPStream:
     """Generate a complete TCP stream as a sequence of :class:`TCPStreamPacket` objects.
@@ -225,11 +227,11 @@ def generate_tcp_stream(
     Produces a realistic exchange in this order:
 
     1. Three-way handshake: SYN → SYN-ACK → ACK
-    2. Data transfer: *num_data_packets* PSH+ACK segments (client→server)
-    3. Server acknowledgement: one ACK
-    4. Four-way teardown: FIN-ACK → ACK → FIN-ACK → ACK
+    2. Data transfer: *num_data_packets* PSH+ACK segments (client→server),
+       each immediately acknowledged by the server
+    3. Four-way teardown: FIN-ACK → ACK → FIN-ACK → ACK
 
-    Total packet count is always ``num_data_packets + 8``.
+    Total packet count is always ``2 * num_data_packets + 7``.
 
     Args:
         client_ip: Client IP address (IPv4 dotted-decimal or IPv6 colon-hex).
@@ -270,6 +272,17 @@ def generate_tcp_stream(
             to the current time.
         inter_packet_gap: Seconds between consecutive packets.  Defaults to
             ``0.001`` (1 ms).
+        gap_jitter: Maximum interception delay in seconds.  Packet *n* is
+            sent at ``base_time + n * inter_packet_gap`` and assigned a
+            capture timestamp of ``sent_time + uniform(0, gap_jitter)``.
+            Because delays are independent, a later packet can overtake an
+            earlier one; the final list is sorted by timestamp before being
+            returned, matching what a real capture would show.
+            Defaults to ``0.0`` (no jitter).
+        psh_probability: Probability (0.0–1.0) that the PSH flag is set on
+            each data segment.  Real TCP stacks set PSH to signal the receiver
+            to flush its buffer, but not on every segment.  Defaults to
+            ``0.5``.
         packet_hooks: Optional list of callables applied to each packet after
             it is built.  Each hook has the signature::
 
@@ -307,7 +320,8 @@ def generate_tcp_stream(
         base_time = time.time()
 
     gap_usec = int(inter_packet_gap * 1_000_000)
-    ts_usec_total = int(base_time * 1_000_000)
+    jitter_usec = int(gap_jitter * 1_000_000)
+    base_usec = int(base_time * 1_000_000)
 
     client = _TCPEndpoint(
         ip=client_ip, port=client_port, mac=client_mac,
@@ -339,7 +353,7 @@ def generate_tcp_stream(
         label: str,
         options: TCPOptions | None = None,
     ) -> None:
-        nonlocal ts_usec_total, global_index
+        nonlocal global_index
 
         seq_before = src.seq
         ack_before = src.ack
@@ -348,7 +362,8 @@ def generate_tcp_stream(
         _advance_seq(src, flags, len(payload))
         dst.ack = src.seq
 
-        ts_sec, ts_usec = divmod(ts_usec_total, 1_000_000)
+        delay_usec = random.randint(0, jitter_usec) if jitter_usec else 0
+        ts_sec, ts_usec = divmod(base_usec + global_index * gap_usec + delay_usec, 1_000_000)
         pkt: TCPStreamPacket | None = TCPStreamPacket(
             raw=raw,
             ts_sec=ts_sec,
@@ -360,8 +375,6 @@ def generate_tcp_stream(
             payload_len=len(payload),
             label=label,
         )
-
-        ts_usec_total += gap_usec
 
         if packet_hooks:
             for hook in packet_hooks:
@@ -378,12 +391,11 @@ def generate_tcp_stream(
     emit(server, client, TCP_SYN | TCP_ACK, b"", "s2c", "SYN-ACK", options=server_options)
     emit(client, server, TCP_ACK,           b"", "c2s", "ACK")
 
-    # ── Data transfer (client → server) ───────────────────────────────────────
+    # ── Data transfer (client → server, server ACKs each packet) ────────────
     for i, size in enumerate(sizes):
-        emit(client, server, TCP_PSH | TCP_ACK, os.urandom(size), "c2s", f"DATA[{i}]")
-
-    # ── Server acknowledges all received data ──────────────────────────────────
-    emit(server, client, TCP_ACK, b"", "s2c", "ACK")
+        flags = TCP_ACK | (TCP_PSH if random.random() < psh_probability else 0)
+        emit(client, server, flags, os.urandom(size), "c2s", f"DATA[{i}]")
+        emit(server, client, TCP_ACK, b"", "s2c", f"ACK[{i}]")
 
     # ── Four-way teardown ─────────────────────────────────────────────────────
     emit(client, server, TCP_FIN | TCP_ACK, b"", "c2s", "FIN-ACK")
@@ -391,4 +403,5 @@ def generate_tcp_stream(
     emit(server, client, TCP_FIN | TCP_ACK, b"", "s2c", "FIN-ACK")
     emit(client, server, TCP_ACK,           b"", "c2s", "ACK")
 
+    packets.sort(key=lambda p: (p.ts_sec, p.ts_usec))
     return TCPStream(packets=packets)
