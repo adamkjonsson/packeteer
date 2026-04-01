@@ -279,6 +279,38 @@ write_pcap(stream.to_pcap_tuples(), path="retransmit.pcap")
 
 ---
 
+## Config file
+
+All `packeteer stream` parameters can be stored in an INI file and passed
+with `--config`.  CLI flags always override file values, so the file acts as
+a saved profile that individual runs can still adjust:
+
+```bash
+packeteer stream --config session.ini
+packeteer stream --config session.ini --packets 200 --distribution bimodal
+```
+
+A fully commented template is at
+[src/packet_generator/stream.ini.template](../src/packet_generator/stream.ini.template).
+The file uses a single `[stream]` section; key names match the CLI long flags
+with hyphens replaced by underscores (e.g. `gap_jitter`, `psh_probability`).
+The one exception is `packet_loss` (maps to `--packet-loss`).
+
+```ini
+[stream]
+client_ip = 10.0.0.1
+server_ip = 10.0.0.2
+pcap = out.pcap
+packets = 50
+distribution = bimodal
+gap = 0.002
+gap_jitter = 0.001
+psh_probability = 0.3
+packet_loss = 0.02
+```
+
+---
+
 ## CLI
 
 The `packeteer stream` subcommand exposes the most commonly used parameters

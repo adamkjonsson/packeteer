@@ -132,6 +132,7 @@ acknowledgement numbers are computed correctly for every packet.
 
 | Argument | Default | Description |
 |----------|---------|-------------|
+| `--config FILE` | — | INI config file with a `[stream]` section; CLI flags override file values |
 | `--client-ip IP` | *(required)* | Client IP address (IPv4 or IPv6) |
 | `--server-ip IP` | *(required)* | Server IP address (same family) |
 | `--pcap FILE` | *(required*)* | Write to a libpcap (`.pcap`) file |
@@ -154,10 +155,22 @@ acknowledgement numbers are computed correctly for every packet.
 
 `--pcap` and `--pcapng` are mutually exclusive; one is required.
 
+A template config file is provided at
+[src/packet_generator/stream.ini.template](../src/packet_generator/stream.ini.template) — copy it, edit as needed, and
+pass it with `--config`.  All keys are optional except `client_ip`,
+`server_ip`, and one of `pcap`/`pcapng`.  CLI flags always override config
+file values, so the file works as a saved profile.
+
 ### Examples
 
 ```bash
-# 50-packet HTTP session
+# Generate from a config file
+packeteer stream --config my_stream.ini
+
+# Config file as base profile, override packets on the CLI
+packeteer stream --config my_stream.ini --packets 100 --distribution bimodal
+
+# 50-packet HTTP session (no config file)
 packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
     --packets 50 --pcap out.pcap
 
