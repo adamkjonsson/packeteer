@@ -493,5 +493,371 @@ class TestPacketHooks(unittest.TestCase):
         self.assertGreater(len(stream.packets[0].raw), 54)
 
 
+# ── Group 13: Spurious retransmissions ───────────────────────────────────────
+
+class TestRetransmissions(unittest.TestCase):
+
+    def test_zero_probability_no_retransmits(self):
+        n = 5
+        stream = _stream(num_data_packets=n, retransmission_probability=0.0)
+        retrans = [p for p in stream.packets if p.label.startswith("RETRANS")]
+        self.assertEqual(retrans, [])
+        self.assertEqual(len(stream.packets), 2 * n + 7)
+
+    def test_full_probability_one_retransmit_per_data_packet(self):
+        n = 5
+        stream = _stream(num_data_packets=n, retransmission_probability=1.0)
+        retrans = [p for p in stream.packets if p.label.startswith("RETRANS")]
+        self.assertEqual(len(retrans), n)
+
+    def test_retransmit_labels_match_data_labels(self):
+        n = 4
+        stream = _stream(num_data_packets=n, retransmission_probability=1.0)
+        retrans_indices = {p.label for p in stream.packets if p.label.startswith("RETRANS")}
+        expected = {f"RETRANS[{i}]" for i in range(n)}
+        self.assertEqual(retrans_indices, expected)
+
+    def test_retransmit_has_same_seq_as_original(self):
+        stream = _stream(
+            num_data_packets=3,
+            payload_sizes=[100, 200, 300],
+            retransmission_probability=1.0,
+        )
+        for i in range(3):
+            orig  = next(p for p in stream.packets if p.label == f"DATA[{i}]")
+            retrans = next(p for p in stream.packets if p.label == f"RETRANS[{i}]")
+            self.assertEqual(retrans.seq, orig.seq)
+
+    def test_retransmit_has_same_payload_len_as_original(self):
+        stream = _stream(
+            num_data_packets=3,
+            payload_sizes=[100, 200, 300],
+            retransmission_probability=1.0,
+        )
+        for i in range(3):
+            orig    = next(p for p in stream.packets if p.label == f"DATA[{i}]")
+            retrans = next(p for p in stream.packets if p.label == f"RETRANS[{i}]")
+            self.assertEqual(retrans.payload_len, orig.payload_len)
+
+    def test_retransmit_timestamp_after_original(self):
+        rto = 0.1
+        stream = _stream(
+            num_data_packets=3,
+            retransmission_probability=1.0,
+            retransmission_timeout=rto,
+            base_time=0.0,
+        )
+        for i in range(3):
+            orig    = next(p for p in stream.packets if p.label == f"DATA[{i}]")
+            retrans = next(p for p in stream.packets if p.label == f"RETRANS[{i}]")
+            orig_usec   = orig.ts_sec   * 1_000_000 + orig.ts_usec
+            retrans_usec = retrans.ts_sec * 1_000_000 + retrans.ts_usec
+            self.assertGreaterEqual(retrans_usec, orig_usec + int(rto * 1_000_000))
+
+    def test_retransmit_timestamp_at_least_rto_after_original(self):
+        rto = 0.5
+        stream = _stream(
+            num_data_packets=5,
+            retransmission_probability=1.0,
+            retransmission_timeout=rto,
+            gap_jitter=0.0,
+            base_time=0.0,
+        )
+        rto_usec = int(rto * 1_000_000)
+        for pkt in stream.packets:
+            if not pkt.label.startswith("RETRANS"):
+                continue
+            i = int(pkt.label[8:-1])
+            orig = next(p for p in stream.packets if p.label == f"DATA[{i}]")
+            orig_usec   = orig.ts_sec * 1_000_000 + orig.ts_usec
+            retrans_usec = pkt.ts_sec  * 1_000_000 + pkt.ts_usec
+            self.assertEqual(retrans_usec, orig_usec + rto_usec)
+
+    def test_output_sorted_by_timestamp_with_retransmissions(self):
+        stream = _stream(
+            num_data_packets=10,
+            retransmission_probability=1.0,
+            retransmission_timeout=0.001,
+            base_time=0.0,
+        )
+        times = [p.ts_sec * 1_000_000 + p.ts_usec for p in stream.packets]
+        self.assertEqual(times, sorted(times))
+
+    def test_subsequent_data_seq_unaffected_by_retransmission(self):
+        # Retransmissions must not shift the sequence numbers of later segments.
+        stream_without = _stream(
+            num_data_packets=3,
+            payload_sizes=[100, 200, 300],
+            retransmission_probability=0.0,
+        )
+        stream_with = _stream(
+            num_data_packets=3,
+            payload_sizes=[100, 200, 300],
+            retransmission_probability=1.0,
+        )
+        for i in range(3):
+            seq_without = next(p for p in stream_without.packets if p.label == f"DATA[{i}]").seq
+            seq_with    = next(p for p in stream_with.packets    if p.label == f"DATA[{i}]").seq
+            self.assertEqual(seq_with, seq_without)
+
+    def test_handshake_and_teardown_not_retransmitted(self):
+        stream = _stream(num_data_packets=3, retransmission_probability=1.0)
+        non_data_labels = {"SYN", "SYN-ACK", "ACK", "FIN-ACK"}
+        retrans_labels = {p.label for p in stream.packets if p.label.startswith("RETRANS")}
+        for label in non_data_labels:
+            self.assertNotIn(label, retrans_labels)
+
+
+# ── Group 14: Server RST ──────────────────────────────────────────────────────
+
+class TestServerRst(unittest.TestCase):
+
+    def _rst_stream(self, n=10, **kwargs):
+        return _stream(num_data_packets=n, server_rst_probability=1.0, **kwargs)
+
+    def test_zero_probability_no_rst(self):
+        stream = _stream(num_data_packets=5, server_rst_probability=0.0)
+        self.assertFalse(any(p.label == "RST" for p in stream.packets))
+
+    def test_rst_present_when_probability_one(self):
+        stream = self._rst_stream()
+        self.assertTrue(any(p.label == "RST" for p in stream.packets))
+
+    def test_rst_exactly_one_packet(self):
+        stream = self._rst_stream()
+        self.assertEqual(sum(1 for p in stream.packets if p.label == "RST"), 1)
+
+    def test_no_teardown_after_rst(self):
+        stream = self._rst_stream()
+        labels = [p.label for p in stream.packets]
+        self.assertNotIn("FIN-ACK", labels)
+
+    def test_rst_direction_is_server_to_client(self):
+        stream = self._rst_stream()
+        rst = next(p for p in stream.packets if p.label == "RST")
+        self.assertEqual(rst.direction, "s2c")
+
+    def test_rst_flags(self):
+        from packet_generator.tcp import TCP_RST, TCP_ACK
+        stream = self._rst_stream()
+        rst = next(p for p in stream.packets if p.label == "RST")
+        self.assertEqual(rst.flags, TCP_RST | TCP_ACK)
+
+    def test_no_acks_after_split_point(self):
+        stream = self._rst_stream(n=8)
+        # Find highest ACK[i] index present
+        ack_indices = [int(p.label[4:-1]) for p in stream.packets
+                       if p.label.startswith("ACK[")]
+        if not ack_indices:
+            return  # split at 0, no normal ACKs — still valid
+        max_ack = max(ack_indices)
+        # All data packets with index > max_ack must have no corresponding ACK
+        data_indices = [int(p.label[5:-1]) for p in stream.packets
+                        if p.label.startswith("DATA[")]
+        for i in data_indices:
+            if i > max_ack:
+                self.assertNotIn(f"ACK[{i}]",
+                                 [p.label for p in stream.packets])
+
+    def test_some_data_packets_unacked(self):
+        # With n=8 and RST certain, at least one DATA must lack an ACK
+        stream = self._rst_stream(n=8)
+        data_indices = {int(p.label[5:-1]) for p in stream.packets
+                        if p.label.startswith("DATA[")}
+        ack_indices  = {int(p.label[4:-1]) for p in stream.packets
+                        if p.label.startswith("ACK[")}
+        self.assertTrue(data_indices - ack_indices)
+
+    def test_rst_timestamp_after_last_normal_ack(self):
+        stream = self._rst_stream(n=6, base_time=0.0)
+        rst = next(p for p in stream.packets if p.label == "RST")
+        ack_pkts = [p for p in stream.packets if p.label.startswith("ACK[")]
+        if ack_pkts:
+            last_ack_usec = max(p.ts_sec * 1_000_000 + p.ts_usec for p in ack_pkts)
+            rst_usec = rst.ts_sec * 1_000_000 + rst.ts_usec
+            self.assertGreater(rst_usec, last_ack_usec)
+
+    def test_no_client_data_after_rst_received(self):
+        # With zero propagation delay the client learns about the RST immediately;
+        # no DATA packet should have a timestamp after the RST.
+        stream = _stream(
+            num_data_packets=8,
+            server_rst_probability=1.0,
+            rst_propagation_delay=0.0,
+            base_time=0.0,
+            gap_jitter=0.0,
+        )
+        rst = next(p for p in stream.packets if p.label == "RST")
+        rst_usec = rst.ts_sec * 1_000_000 + rst.ts_usec
+        for p in stream.packets:
+            if p.label.startswith("DATA["):
+                self.assertLessEqual(p.ts_sec * 1_000_000 + p.ts_usec, rst_usec)
+
+    def test_propagation_delay_allows_extra_data(self):
+        # With a propagation delay larger than the inter-packet gap the client
+        # sends at least one extra DATA packet before learning about the RST.
+        gap = 0.001
+        delay = 0.005  # 5 × gap → client sends ~5 extra packets
+        stream = _stream(
+            num_data_packets=20,
+            server_rst_probability=1.0,
+            rst_propagation_delay=delay,
+            inter_packet_gap=gap,
+            base_time=0.0,
+            gap_jitter=0.0,
+        )
+        rst = next(p for p in stream.packets if p.label == "RST")
+        rst_usec = rst.ts_sec * 1_000_000 + rst.ts_usec
+        ack_indices = {int(p.label[4:-1]) for p in stream.packets
+                       if p.label.startswith("ACK[")}
+        # DATA packets after the split but before client learns RST
+        extra = [p for p in stream.packets
+                 if p.label.startswith("DATA[")
+                 and int(p.label[5:-1]) not in ack_indices
+                 and (p.ts_sec * 1_000_000 + p.ts_usec) <= rst_usec +
+                     int(delay * 1_000_000)]
+        self.assertGreater(len(extra), 0)
+
+    def test_no_server_packets_after_rst(self):
+        # After the RST the server must not send any further packets.
+        stream = _stream(
+            num_data_packets=8,
+            server_rst_probability=1.0,
+            base_time=0.0,
+            gap_jitter=0.0,
+        )
+        rst = next(p for p in stream.packets if p.label == "RST")
+        rst_usec = rst.ts_sec * 1_000_000 + rst.ts_usec
+        for p in stream.packets:
+            if p.direction == "s2c" and p.label != "RST":
+                self.assertLessEqual(p.ts_sec * 1_000_000 + p.ts_usec, rst_usec)
+
+    def test_output_sorted_after_rst(self):
+        stream = self._rst_stream(n=8, base_time=0.0)
+        times = [p.ts_sec * 1_000_000 + p.ts_usec for p in stream.packets]
+        self.assertEqual(times, sorted(times))
+
+    def test_handshake_intact_after_rst(self):
+        stream = self._rst_stream()
+        labels = [p.label for p in stream.packets]
+        self.assertIn("SYN", labels)
+        self.assertIn("SYN-ACK", labels)
+        self.assertIn("ACK", labels)
+
+
+# ── Group 15: Payload corruption ─────────────────────────────────────────────
+
+class TestPayloadCorruption(unittest.TestCase):
+
+    def test_zero_probability_no_corruption(self):
+        stream = _stream(num_data_packets=5, payload_corruption_probability=0.0)
+        labels = [p.label for p in stream.packets]
+        self.assertFalse(any(l.startswith("CORRUPT") for l in labels))
+
+    def test_full_probability_one_corrupt_per_data_packet(self):
+        n = 4
+        stream = _stream(num_data_packets=n, payload_corruption_probability=1.0)
+        corrupt = [p for p in stream.packets if p.label.startswith("CORRUPT")]
+        self.assertEqual(len(corrupt), n)
+
+    def test_corrupt_labels_match_data_indices(self):
+        n = 3
+        stream = _stream(num_data_packets=n, payload_corruption_probability=1.0)
+        corrupt_indices = {p.label for p in stream.packets if p.label.startswith("CORRUPT")}
+        self.assertEqual(corrupt_indices, {f"CORRUPT[{i}]" for i in range(n)})
+
+    def test_corrupt_packet_has_same_seq_as_original(self):
+        stream = _stream(
+            num_data_packets=3,
+            payload_sizes=[100, 200, 300],
+            payload_corruption_probability=1.0,
+            retransmission_probability=0.0,
+        )
+        for i in range(3):
+            retrans = next(p for p in stream.packets if p.label == f"RETRANS[{i}]")
+            corrupt = next(p for p in stream.packets if p.label == f"CORRUPT[{i}]")
+            self.assertEqual(corrupt.seq, retrans.seq)
+
+    def test_corrupt_raw_differs_from_retransmit_raw(self):
+        stream = _stream(
+            num_data_packets=2,
+            payload_sizes=[100, 100],
+            payload_corruption_probability=1.0,
+        )
+        for i in range(2):
+            corrupt = next(p for p in stream.packets if p.label == f"CORRUPT[{i}]")
+            retrans = next(p for p in stream.packets if p.label == f"RETRANS[{i}]")
+            self.assertNotEqual(corrupt.raw, retrans.raw)
+
+    def test_corrupt_differs_by_exactly_one_byte(self):
+        stream = _stream(
+            num_data_packets=1,
+            payload_sizes=[50],
+            payload_corruption_probability=1.0,
+            gap_jitter=0.0,
+        )
+        corrupt = next(p for p in stream.packets if p.label == "CORRUPT[0]")
+        retrans = next(p for p in stream.packets if p.label == "RETRANS[0]")
+        diffs = sum(a != b for a, b in zip(corrupt.raw, retrans.raw))
+        self.assertEqual(diffs, 1)
+
+    def test_retransmit_timestamp_after_corrupt(self):
+        rto = 0.1
+        stream = _stream(
+            num_data_packets=3,
+            payload_corruption_probability=1.0,
+            retransmission_timeout=rto,
+            base_time=0.0,
+        )
+        rto_usec = int(rto * 1_000_000)
+        for i in range(3):
+            corrupt = next(p for p in stream.packets if p.label == f"CORRUPT[{i}]")
+            retrans = next(p for p in stream.packets if p.label == f"RETRANS[{i}]")
+            corrupt_usec = corrupt.ts_sec * 1_000_000 + corrupt.ts_usec
+            retrans_usec = retrans.ts_sec * 1_000_000 + retrans.ts_usec
+            self.assertGreaterEqual(retrans_usec, corrupt_usec + rto_usec)
+
+    def test_ack_timestamp_after_retransmit(self):
+        stream = _stream(
+            num_data_packets=3,
+            payload_corruption_probability=1.0,
+            retransmission_timeout=0.1,
+            base_time=0.0,
+            gap_jitter=0.0,
+        )
+        for i in range(3):
+            retrans = next(p for p in stream.packets if p.label == f"RETRANS[{i}]")
+            ack = next(p for p in stream.packets if p.label == f"ACK[{i}]")
+            retrans_usec = retrans.ts_sec * 1_000_000 + retrans.ts_usec
+            ack_usec = ack.ts_sec * 1_000_000 + ack.ts_usec
+            self.assertGreater(ack_usec, retrans_usec)
+
+    def test_output_sorted_by_timestamp_with_corruption(self):
+        stream = _stream(
+            num_data_packets=10,
+            payload_corruption_probability=1.0,
+            retransmission_timeout=0.001,
+            base_time=0.0,
+        )
+        times = [p.ts_sec * 1_000_000 + p.ts_usec for p in stream.packets]
+        self.assertEqual(times, sorted(times))
+
+    def test_subsequent_data_seq_unaffected_by_corruption(self):
+        stream_clean = _stream(
+            num_data_packets=3,
+            payload_sizes=[100, 200, 300],
+            payload_corruption_probability=0.0,
+        )
+        stream_corrupt = _stream(
+            num_data_packets=3,
+            payload_sizes=[100, 200, 300],
+            payload_corruption_probability=1.0,
+        )
+        for i in range(3):
+            seq_clean   = next(p for p in stream_clean.packets   if p.label == f"DATA[{i}]").seq
+            seq_corrupt = next(p for p in stream_corrupt.packets if p.label == f"RETRANS[{i}]").seq
+            self.assertEqual(seq_corrupt, seq_clean)
+
+
 if __name__ == "__main__":
     unittest.main()

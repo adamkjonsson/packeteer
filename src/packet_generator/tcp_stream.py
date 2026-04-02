@@ -27,12 +27,12 @@ from __future__ import annotations
 
 import random
 import time
+from dataclasses import dataclass, replace
 from pathlib import Path
 from collections.abc import Callable
-from dataclasses import dataclass
 
 from .builder import PacketBuilder
-from .tcp import TCPOptions, TCP_SYN, TCP_ACK, TCP_PSH, TCP_FIN
+from .tcp import TCPOptions, TCP_SYN, TCP_ACK, TCP_PSH, TCP_FIN, TCP_RST
 
 _WRAP = 2 ** 32
 
@@ -233,6 +233,11 @@ def generate_tcp_stream(
     gap_jitter: float = 0.0,
     psh_probability: float = 0.5,
     packet_loss_probability: float = 0.0,
+    retransmission_probability: float = 0.0,
+    retransmission_timeout: float = 0.2,
+    payload_corruption_probability: float = 0.0,
+    server_rst_probability: float = 0.0,
+    rst_propagation_delay: float = 0.0,
     packet_hooks: list[Callable[[TCPStreamPacket, int], TCPStreamPacket | None]] | None = None,
 ) -> TCPStream:
     """Generate a complete TCP stream as a sequence of :class:`TCPStreamPacket` objects.
@@ -240,11 +245,14 @@ def generate_tcp_stream(
     Produces a realistic exchange in this order:
 
     1. Three-way handshake: SYN → SYN-ACK → ACK
-    2. Data transfer: *num_data_packets* PSH+ACK segments (client→server),
-       each immediately acknowledged by the server
+    2. Data transfer: *num_data_packets* ACK segments (client→server, PSH set
+       with probability *psh_probability*), each immediately acknowledged by
+       the server
     3. Four-way teardown: FIN-ACK → ACK → FIN-ACK → ACK
 
-    Total packet count is always ``2 * num_data_packets + 7``.
+    The baseline packet count is ``2 * num_data_packets + 7``.  Anomaly
+    parameters (RST, corruption, retransmissions, packet loss) may add or
+    remove packets from the final list.
 
     Args:
         client_ip: Client IP address (IPv4 dotted-decimal or IPv6 colon-hex).
@@ -301,6 +309,37 @@ def generate_tcp_stream(
             loss on the wire.  Sequence and acknowledgement numbers are
             computed as if the packet was sent; only the capture record is
             omitted.  Defaults to ``0.0`` (no loss).
+        retransmission_probability: Probability (0.0–1.0) that each data
+            segment triggers a spurious retransmission.  A retransmission
+            carries the same sequence number, flags, and payload as the
+            original but is timestamped at the original send time plus
+            *retransmission_timeout*.  Handshake and teardown packets are
+            not affected.  Defaults to ``0.0`` (no retransmissions).
+        retransmission_timeout: Seconds after the original send time at which
+            the retransmission timer fires.  200 ms (the TCP minimum RTO) is
+            a realistic starting point.  Defaults to ``0.2``.
+        server_rst_probability: Probability (0.0–1.0) that the server
+            application terminates mid-stream, causing the OS to send a TCP
+            RST.  When triggered, a random split point *k* is chosen among
+            the data packets; packets 0…k are exchanged normally with ACKs.
+            The server sends ``RST`` at the same moment ``DATA[k+1]`` is
+            sent.  The client learns about the RST after
+            *rst_propagation_delay* seconds; during that window it keeps
+            sending data.  Once the RST arrives all further client and server
+            packets are suppressed and the normal four-way teardown is
+            omitted.  Defaults to ``0.0`` (no RST).
+        rst_propagation_delay: Seconds between the server sending the RST
+            and the client receiving it.  During this window the client
+            continues to send data.  Defaults to ``0.0`` (RST arrives
+            immediately — client sends no extra packets).
+        payload_corruption_probability: Probability (0.0–1.0) that each data
+            segment's payload is corrupted in transit.  One byte at the end
+            of the payload is XOR-flipped, invalidating the TCP checksum so
+            the receiver drops the packet without sending an ACK.  The
+            corrupted packet appears in the capture as ``CORRUPT[i]``; the
+            client retransmits after *retransmission_timeout* as
+            ``RETRANS[i]``; the existing ``ACK[i]`` timestamp is shifted to
+            follow the retransmit.  Defaults to ``0.0`` (no corruption).
         packet_hooks: Optional list of callables applied to each packet after
             it is built.  Each hook has the signature::
 
@@ -321,7 +360,7 @@ def generate_tcp_stream(
 
     Example::
 
-        from packet_generator.stream import generate_tcp_stream
+        from packet_generator.tcp_stream import generate_tcp_stream
         from packet_generator import write_pcap, TCPOptions
 
         stream = generate_tcp_stream(
@@ -423,6 +462,151 @@ def generate_tcp_stream(
     emit(server, client, TCP_ACK,           b"", "s2c", "ACK")
     emit(server, client, TCP_FIN | TCP_ACK, b"", "s2c", "FIN-ACK")
     emit(client, server, TCP_ACK,           b"", "c2s", "ACK")
+
+    # ── Server RST ───────────────────────────────────────────────────────────
+    if server_rst_probability and random.random() < server_rst_probability:
+        # Choose a split point: the last normally-ACKed data packet index.
+        # Need at least one normal exchange, so k is in [0, n-1).
+        data_pkts = [p for p in packets if p.label.startswith("DATA[")]
+        if len(data_pkts) >= 2:
+            k = random.randint(0, len(data_pkts) - 2)
+            split_label = data_pkts[k].label   # e.g. "DATA[3]"
+            split_idx   = split_label[5:-1]    # "3"
+
+            # Find the last normal ACK (ACK[k]) to get server seq/ack state
+            ack_k = next((p for p in packets if p.label == f"ACK[{split_idx}]"), None)
+
+            # Remove ACKs after the split point and the entire four-way teardown.
+            # The handshake ACK (label "ACK", direction "c2s") must be kept;
+            # teardown ACKs and FIN-ACKs all come after the first DATA packet.
+            first_data_usec = data_pkts[0].ts_sec * 1_000_000 + data_pkts[0].ts_usec
+
+            def _keep(p: TCPStreamPacket) -> bool:
+                ts = p.ts_sec * 1_000_000 + p.ts_usec
+                if p.label.startswith("ACK["):
+                    return int(p.label[4:-1]) <= k
+                if p.label in ("FIN-ACK",):
+                    return False
+                if p.label == "ACK" and ts > first_data_usec:
+                    return False   # teardown ACKs, not the handshake ACK
+                return True
+
+            packets = [p for p in packets if _keep(p)]
+
+            # Build RST packet: server → client
+            # Use ACK[k] fields to reconstruct server state, or fallback to SYN-ACK
+            ref = ack_k or next(p for p in packets if p.label == "SYN-ACK")
+            rst_src = _TCPEndpoint(
+                ip=server_ip, port=server_port, mac=server_mac,
+                seq=ref.seq, ack=ref.ack, window=window,
+            )
+            rst_dst = _TCPEndpoint(
+                ip=client_ip, port=client_port, mac=client_mac,
+                seq=0, ack=0, window=window,
+            )
+            # RST is sent by the server at the same moment DATA[k+1] is sent.
+            # The client learns about the RST after rst_propagation_delay.
+            next_data = data_pkts[k + 1]
+            rst_send_usec = next_data.ts_sec * 1_000_000 + next_data.ts_usec
+            rst_delay_usec = int(rst_propagation_delay * 1_000_000)
+            client_learns_rst_usec = rst_send_usec + rst_delay_usec
+
+            # Remove DATA packets the client sends after it receives the RST,
+            # and any server packets (ACKs from server after split already gone).
+            packets = [
+                p for p in packets
+                if not (p.label.startswith("DATA[")
+                        and (p.ts_sec * 1_000_000 + p.ts_usec) > client_learns_rst_usec)
+            ]
+
+            used_ts_rst: set[int] = {p.ts_sec * 1_000_000 + p.ts_usec for p in packets}
+            rst_usec = rst_send_usec
+            while rst_usec in used_ts_rst:
+                rst_usec += 1
+            rst_sec, rst_usec_part = divmod(rst_usec, 1_000_000)
+            rst_raw = _build_packet(rst_src, rst_dst, TCP_RST | TCP_ACK, b"",
+                                    include_ethernet, ip_ttl, None)
+            packets.append(TCPStreamPacket(
+                raw=rst_raw,
+                ts_sec=rst_sec,
+                ts_usec=rst_usec_part,
+                direction="s2c",
+                flags=TCP_RST | TCP_ACK,
+                seq=ref.seq,
+                ack=ref.ack,
+                payload_len=0,
+                label="RST",
+            ))
+
+    # ── Spurious retransmissions ──────────────────────────────────────────────
+    if retransmission_probability:
+        rto_usec = int(retransmission_timeout * 1_000_000)
+        retransmits: list[TCPStreamPacket] = []
+        used_ts: set[int] = {p.ts_sec * 1_000_000 + p.ts_usec for p in packets}
+        for pkt in packets:
+            if not pkt.label.startswith("DATA["):
+                continue
+            if random.random() >= retransmission_probability:
+                continue
+            i = pkt.label[5:-1]  # extract index from "DATA[i]"
+            orig_usec = pkt.ts_sec * 1_000_000 + pkt.ts_usec
+            delay_usec = random.randint(0, jitter_usec) if jitter_usec else 0
+            rt_usec = orig_usec + rto_usec + delay_usec
+            while rt_usec in used_ts:
+                rt_usec += 1
+            used_ts.add(rt_usec)
+            rt_sec, rt_usec_part = divmod(rt_usec, 1_000_000)
+            retransmits.append(replace(
+                pkt,
+                ts_sec=rt_sec,
+                ts_usec=rt_usec_part,
+                label=f"RETRANS[{i}]",
+            ))
+        packets.extend(retransmits)
+
+    # ── Payload corruption ────────────────────────────────────────────────────
+    if payload_corruption_probability:
+        rto_usec = int(retransmission_timeout * 1_000_000)
+        additions: list[TCPStreamPacket] = []
+        # Build an index of packets by label for O(1) ACK lookup
+        by_label: dict[str, TCPStreamPacket] = {p.label: p for p in packets}
+        used_ts: set[int] = {p.ts_sec * 1_000_000 + p.ts_usec for p in packets}
+        for idx, pkt in enumerate(packets):
+            if not pkt.label.startswith("DATA["):
+                continue
+            if random.random() >= payload_corruption_probability:
+                continue
+            i = pkt.label[5:-1]  # extract index from "DATA[i]"
+
+            # 1. Corrupt: flip the last byte of the payload in the raw frame
+            raw_corrupt = bytearray(pkt.raw)
+            raw_corrupt[-1] ^= 0xFF
+            packets[idx] = replace(pkt, raw=bytes(raw_corrupt), label=f"CORRUPT[{i}]")
+
+            # 2. Retransmit: clean copy of original, timestamped after RTO
+            orig_usec = pkt.ts_sec * 1_000_000 + pkt.ts_usec
+            delay_usec = random.randint(0, jitter_usec) if jitter_usec else 0
+            rt_usec = orig_usec + rto_usec + delay_usec
+            while rt_usec in used_ts:
+                rt_usec += 1
+            used_ts.add(rt_usec)
+            rt_sec, rt_usec_part = divmod(rt_usec, 1_000_000)
+            additions.append(replace(pkt, ts_sec=rt_sec, ts_usec=rt_usec_part,
+                                     label=f"RETRANS[{i}]"))
+
+            # 3. Shift the server ACK to follow the retransmit
+            ack_label = f"ACK[{i}]"
+            if ack_label in by_label:
+                ack_pkt = by_label[ack_label]
+                ack_usec = rt_usec + gap_usec
+                while ack_usec in used_ts:
+                    ack_usec += 1
+                used_ts.add(ack_usec)
+                ack_sec, ack_usec_part = divmod(ack_usec, 1_000_000)
+                ack_idx = packets.index(ack_pkt)
+                packets[ack_idx] = replace(ack_pkt, ts_sec=ack_sec,
+                                           ts_usec=ack_usec_part)
+        packets.extend(additions)
 
     packets.sort(key=lambda p: (p.ts_sec, p.ts_usec))
     return TCPStream(packets=packets)

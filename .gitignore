@@ -59,6 +59,7 @@ cover/
 *.pcap
 *.pcapng
 *.json
+*.ini
 
 # Django stuff:
 *.log

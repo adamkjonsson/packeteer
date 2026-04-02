@@ -121,6 +121,44 @@ psh_probability = 0.5
 #   Example: 0.02 drops roughly 2 % of packets.
 packet_loss = 0.0
 
+# retransmission_probability  (default: 0.0)
+#   Probability (0.0–1.0) that each data segment triggers a spurious
+#   retransmission.  The retransmit carries the same sequence number, flags,
+#   and payload as the original segment but is timestamped at the original
+#   capture time plus retransmission_timeout.  Handshake and teardown packets
+#   are never retransmitted.  Example: 0.05 retransmits roughly 5 % of data
+#   segments.
+retransmission_probability = 0.0
+
+# server_rst_probability  (default: 0.0)
+#   Probability (0.0–1.0) that the server application terminates mid-stream,
+#   causing the OS to send a TCP RST.  A random split point k is chosen; data
+#   packets 0..k are exchanged normally with ACKs; the server then sends a RST
+#   packet and the four-way teardown is omitted.  While the RST is in transit
+#   (rst_propagation_delay), the client keeps sending data with no ACKs.
+server_rst_probability = 0.0
+
+# rst_propagation_delay  (default: 0.0)
+#   Seconds between the server sending the RST and the client receiving it.
+#   During this window the client continues sending data packets that go
+#   unacknowledged.  Set to e.g. 0.05 to see a few extra unACKed segments.
+rst_propagation_delay = 0.0
+
+# payload_corruption_probability  (default: 0.0)
+#   Probability (0.0–1.0) that each data segment's payload is corrupted in
+#   transit.  The last byte of the payload is XOR-flipped, invalidating the
+#   TCP checksum.  The receiver drops the packet silently; the client
+#   retransmits after retransmission_timeout.  The corrupted packet appears
+#   in the capture as CORRUPT[i], the retransmit as RETRANS[i], and the
+#   server ACK is shifted to follow the retransmit.
+payload_corruption_probability = 0.0
+
+# retransmission_timeout  (default: 0.2)
+#   Seconds after the original segment's capture time that the retransmission
+#   timer fires.  200 ms is the TCP minimum RTO (RFC 6298).  Increase this to
+#   simulate slow links or high-latency paths.
+retransmission_timeout = 0.2
+
 # ── IP / TCP ───────────────────────────────────────────────────────────────────
 
 # ttl  (default: 64)

@@ -29,22 +29,24 @@ write_pcap(stream.to_pcap_tuples(), path="out.pcap")
 
 ## Packet sequence
 
-Every stream contains exactly `2 * num_data_packets + 7` packets in this order:
+The baseline stream contains `2 * num_data_packets + 7` packets in this order:
 
 | # | Sender | Flags | Label |
 |---|--------|-------|-------|
 | 0 | client | SYN | `"SYN"` |
 | 1 | server | SYN+ACK | `"SYN-ACK"` |
 | 2 | client | ACK | `"ACK"` |
-| 3, 5, … 2N+1 | client | PSH+ACK | `"DATA[0]"` … `"DATA[N-1]"` |
+| 3, 5, … 2N+1 | client | ACK (PSH with probability `psh_probability`) | `"DATA[0]"` … `"DATA[N-1]"` |
 | 4, 6, … 2N+2 | server | ACK | `"ACK[0]"` … `"ACK[N-1]"` |
 | 2N+3 | client | FIN+ACK | `"FIN-ACK"` |
 | 2N+4 | server | ACK | `"ACK"` |
 | 2N+5 | server | FIN+ACK | `"FIN-ACK"` |
 | 2N+6 | client | ACK | `"ACK"` |
 
-Data flows from client to server only.  Initial sequence numbers are chosen
-at random by default, matching real TCP behaviour.
+Anomaly parameters (RST, corruption, retransmissions, packet loss) may add
+or remove packets from the final list.  Data flows from client to server
+only.  Initial sequence numbers are chosen at random by default, matching
+real TCP behaviour.
 
 ---
 
@@ -59,13 +61,99 @@ timestamps.  `generate_tcp_stream` sorts the final list by timestamp before
 returning, matching what a real capture would show.
 
 ```python
-# 1 ms base gap with ±0.8 ms jitter — occasional out-of-order timestamps
+# 1 ms base gap with up to 0.8 ms extra delay — occasional out-of-order timestamps
 stream = generate_tcp_stream(
     client_ip="10.0.0.1",
     server_ip="10.0.0.2",
     num_data_packets=20,
     inter_packet_gap=0.001,
     gap_jitter=0.0008,
+)
+```
+
+---
+
+## Server RST (abrupt connection termination)
+
+Set `server_rst_probability` to simulate the server application crashing
+mid-stream.  The OS terminates the connection by sending a TCP RST rather than
+performing the normal four-way teardown.
+
+A random split point *k* is chosen among the data packets.  Packets 0…k are
+exchanged normally with ACKs.  The server then sends a `RST` packet.  Because
+the RST takes time to reach the client (`rst_propagation_delay` seconds), the
+client keeps sending the remaining data packets during that window — those
+segments arrive with no ACKs, exactly as a real analyser would see.
+
+| Label | Description |
+|---|---|
+| `DATA[0]`…`DATA[k]`, `ACK[0]`…`ACK[k]` | Normal exchange |
+| `DATA[k+1]`… | Client sends with no ACK (RST in transit) |
+| `RST` | Server OS sends RST\|ACK, connection terminated |
+
+```python
+# 20 % chance the server crashes; 50 ms RST propagation delay
+stream = generate_tcp_stream(
+    client_ip="10.0.0.1",
+    server_ip="10.0.0.2",
+    num_data_packets=20,
+    server_rst_probability=0.2,
+    rst_propagation_delay=0.05,
+)
+```
+
+---
+
+## Payload corruption
+
+Set `payload_corruption_probability` to simulate a data segment's payload
+being corrupted in transit.  The last byte of the payload is XOR-flipped,
+which invalidates the TCP checksum — the receiver silently drops the packet
+without sending an ACK.  The client's retransmission timer fires after
+`retransmission_timeout` seconds and resends the original clean data.
+
+The capture shows three events per corrupted segment:
+
+| Label | Description |
+|---|---|
+| `CORRUPT[i]` | Original packet with one byte flipped and bad checksum |
+| `RETRANS[i]` | Clean retransmit after RTO |
+| `ACK[i]` | Server ACK, timestamp shifted to follow the retransmit |
+
+```python
+# ~8 % of data segments corrupted, 300 ms RTO
+stream = generate_tcp_stream(
+    client_ip="10.0.0.1",
+    server_ip="10.0.0.2",
+    num_data_packets=50,
+    payload_corruption_probability=0.08,
+    retransmission_timeout=0.3,
+)
+```
+
+---
+
+## Spurious retransmissions
+
+Set `retransmission_probability` to simulate the client resending a segment
+because its retransmission timer fired before the server's ACK arrived.  Each
+data segment independently rolls against the probability; if it fires, a copy
+of that segment is added to the stream with the same sequence number, flags,
+and payload, but timestamped at the original capture time plus
+`retransmission_timeout`.  Because the RTO fires after the ACK was already in
+flight, the retransmit often appears *after* the ACK in the sorted stream —
+which is exactly what Wireshark labels as a spurious retransmission.
+
+Handshake and teardown packets are never retransmitted.
+
+```python
+# ~10 % of data segments retransmitted, 300 ms RTO
+stream = generate_tcp_stream(
+    client_ip="10.0.0.1",
+    server_ip="10.0.0.2",
+    num_data_packets=50,
+    retransmission_probability=0.1,
+    retransmission_timeout=0.3,
 )
 ```
 
@@ -294,7 +382,8 @@ A fully commented template is at
 [src/packet_generator/stream.ini.template](../src/packet_generator/stream.ini.template).
 The file uses a single `[stream]` section; key names match the CLI long flags
 with hyphens replaced by underscores (e.g. `gap_jitter`, `psh_probability`).
-The one exception is `packet_loss` (maps to `--packet-loss`).
+Two keys differ from their CLI flag names: `packet_loss` (CLI: `--packet-loss`)
+and `server_rst` (CLI: `--server-rst`).
 
 ```ini
 [stream]
@@ -307,6 +396,11 @@ gap = 0.002
 gap_jitter = 0.001
 psh_probability = 0.3
 packet_loss = 0.02
+retransmission_probability = 0.05
+retransmission_timeout = 0.2
+payload_corruption_probability = 0.02
+server_rst_probability = 0.0
+rst_propagation_delay = 0.0
 ```
 
 ---
