@@ -493,5 +493,120 @@ class TestPacketHooks(unittest.TestCase):
         self.assertGreater(len(stream.packets[0].raw), 54)
 
 
+# ── Group 13: Spurious retransmissions ───────────────────────────────────────
+
+class TestRetransmissions(unittest.TestCase):
+
+    def test_zero_probability_no_retransmits(self):
+        n = 5
+        stream = _stream(num_data_packets=n, retransmission_probability=0.0)
+        retrans = [p for p in stream.packets if p.label.startswith("RETRANS")]
+        self.assertEqual(retrans, [])
+        self.assertEqual(len(stream.packets), 2 * n + 7)
+
+    def test_full_probability_one_retransmit_per_data_packet(self):
+        n = 5
+        stream = _stream(num_data_packets=n, retransmission_probability=1.0)
+        retrans = [p for p in stream.packets if p.label.startswith("RETRANS")]
+        self.assertEqual(len(retrans), n)
+
+    def test_retransmit_labels_match_data_labels(self):
+        n = 4
+        stream = _stream(num_data_packets=n, retransmission_probability=1.0)
+        retrans_indices = {p.label for p in stream.packets if p.label.startswith("RETRANS")}
+        expected = {f"RETRANS[{i}]" for i in range(n)}
+        self.assertEqual(retrans_indices, expected)
+
+    def test_retransmit_has_same_seq_as_original(self):
+        stream = _stream(
+            num_data_packets=3,
+            payload_sizes=[100, 200, 300],
+            retransmission_probability=1.0,
+        )
+        for i in range(3):
+            orig  = next(p for p in stream.packets if p.label == f"DATA[{i}]")
+            retrans = next(p for p in stream.packets if p.label == f"RETRANS[{i}]")
+            self.assertEqual(retrans.seq, orig.seq)
+
+    def test_retransmit_has_same_payload_len_as_original(self):
+        stream = _stream(
+            num_data_packets=3,
+            payload_sizes=[100, 200, 300],
+            retransmission_probability=1.0,
+        )
+        for i in range(3):
+            orig    = next(p for p in stream.packets if p.label == f"DATA[{i}]")
+            retrans = next(p for p in stream.packets if p.label == f"RETRANS[{i}]")
+            self.assertEqual(retrans.payload_len, orig.payload_len)
+
+    def test_retransmit_timestamp_after_original(self):
+        rto = 0.1
+        stream = _stream(
+            num_data_packets=3,
+            retransmission_probability=1.0,
+            retransmission_timeout=rto,
+            base_time=0.0,
+        )
+        for i in range(3):
+            orig    = next(p for p in stream.packets if p.label == f"DATA[{i}]")
+            retrans = next(p for p in stream.packets if p.label == f"RETRANS[{i}]")
+            orig_usec   = orig.ts_sec   * 1_000_000 + orig.ts_usec
+            retrans_usec = retrans.ts_sec * 1_000_000 + retrans.ts_usec
+            self.assertGreaterEqual(retrans_usec, orig_usec + int(rto * 1_000_000))
+
+    def test_retransmit_timestamp_at_least_rto_after_original(self):
+        rto = 0.5
+        stream = _stream(
+            num_data_packets=5,
+            retransmission_probability=1.0,
+            retransmission_timeout=rto,
+            gap_jitter=0.0,
+            base_time=0.0,
+        )
+        rto_usec = int(rto * 1_000_000)
+        for pkt in stream.packets:
+            if not pkt.label.startswith("RETRANS"):
+                continue
+            i = int(pkt.label[8:-1])
+            orig = next(p for p in stream.packets if p.label == f"DATA[{i}]")
+            orig_usec   = orig.ts_sec * 1_000_000 + orig.ts_usec
+            retrans_usec = pkt.ts_sec  * 1_000_000 + pkt.ts_usec
+            self.assertEqual(retrans_usec, orig_usec + rto_usec)
+
+    def test_output_sorted_by_timestamp_with_retransmissions(self):
+        stream = _stream(
+            num_data_packets=10,
+            retransmission_probability=1.0,
+            retransmission_timeout=0.001,
+            base_time=0.0,
+        )
+        times = [p.ts_sec * 1_000_000 + p.ts_usec for p in stream.packets]
+        self.assertEqual(times, sorted(times))
+
+    def test_subsequent_data_seq_unaffected_by_retransmission(self):
+        # Retransmissions must not shift the sequence numbers of later segments.
+        stream_without = _stream(
+            num_data_packets=3,
+            payload_sizes=[100, 200, 300],
+            retransmission_probability=0.0,
+        )
+        stream_with = _stream(
+            num_data_packets=3,
+            payload_sizes=[100, 200, 300],
+            retransmission_probability=1.0,
+        )
+        for i in range(3):
+            seq_without = next(p for p in stream_without.packets if p.label == f"DATA[{i}]").seq
+            seq_with    = next(p for p in stream_with.packets    if p.label == f"DATA[{i}]").seq
+            self.assertEqual(seq_with, seq_without)
+
+    def test_handshake_and_teardown_not_retransmitted(self):
+        stream = _stream(num_data_packets=3, retransmission_probability=1.0)
+        non_data_labels = {"SYN", "SYN-ACK", "ACK", "FIN-ACK"}
+        retrans_labels = {p.label for p in stream.packets if p.label.startswith("RETRANS")}
+        for label in non_data_labels:
+            self.assertNotIn(label, retrans_labels)
+
+
 if __name__ == "__main__":
     unittest.main()

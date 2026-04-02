@@ -27,9 +27,9 @@ from __future__ import annotations
 
 import random
 import time
+from dataclasses import dataclass, replace
 from pathlib import Path
 from collections.abc import Callable
-from dataclasses import dataclass
 
 from .builder import PacketBuilder
 from .tcp import TCPOptions, TCP_SYN, TCP_ACK, TCP_PSH, TCP_FIN
@@ -233,6 +233,8 @@ def generate_tcp_stream(
     gap_jitter: float = 0.0,
     psh_probability: float = 0.5,
     packet_loss_probability: float = 0.0,
+    retransmission_probability: float = 0.0,
+    retransmission_timeout: float = 0.2,
     packet_hooks: list[Callable[[TCPStreamPacket, int], TCPStreamPacket | None]] | None = None,
 ) -> TCPStream:
     """Generate a complete TCP stream as a sequence of :class:`TCPStreamPacket` objects.
@@ -301,6 +303,15 @@ def generate_tcp_stream(
             loss on the wire.  Sequence and acknowledgement numbers are
             computed as if the packet was sent; only the capture record is
             omitted.  Defaults to ``0.0`` (no loss).
+        retransmission_probability: Probability (0.0–1.0) that each data
+            segment triggers a spurious retransmission.  A retransmission
+            carries the same sequence number, flags, and payload as the
+            original but is timestamped at the original send time plus
+            *retransmission_timeout*.  Handshake and teardown packets are
+            not affected.  Defaults to ``0.0`` (no retransmissions).
+        retransmission_timeout: Seconds after the original send time at which
+            the retransmission timer fires.  200 ms (the TCP minimum RTO) is
+            a realistic starting point.  Defaults to ``0.2``.
         packet_hooks: Optional list of callables applied to each packet after
             it is built.  Each hook has the signature::
 
@@ -423,6 +434,27 @@ def generate_tcp_stream(
     emit(server, client, TCP_ACK,           b"", "s2c", "ACK")
     emit(server, client, TCP_FIN | TCP_ACK, b"", "s2c", "FIN-ACK")
     emit(client, server, TCP_ACK,           b"", "c2s", "ACK")
+
+    # ── Spurious retransmissions ──────────────────────────────────────────────
+    if retransmission_probability:
+        rto_usec = int(retransmission_timeout * 1_000_000)
+        retransmits: list[TCPStreamPacket] = []
+        for pkt in packets:
+            if not pkt.label.startswith("DATA["):
+                continue
+            if random.random() >= retransmission_probability:
+                continue
+            i = pkt.label[5:-1]  # extract index from "DATA[i]"
+            orig_usec = pkt.ts_sec * 1_000_000 + pkt.ts_usec
+            delay_usec = random.randint(0, jitter_usec) if jitter_usec else 0
+            rt_sec, rt_usec_part = divmod(orig_usec + rto_usec + delay_usec, 1_000_000)
+            retransmits.append(replace(
+                pkt,
+                ts_sec=rt_sec,
+                ts_usec=rt_usec_part,
+                label=f"RETRANS[{i}]",
+            ))
+        packets.extend(retransmits)
 
     packets.sort(key=lambda p: (p.ts_sec, p.ts_usec))
     return TCPStream(packets=packets)

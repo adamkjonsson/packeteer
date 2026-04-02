@@ -71,6 +71,32 @@ stream = generate_tcp_stream(
 
 ---
 
+## Spurious retransmissions
+
+Set `retransmission_probability` to simulate the client resending a segment
+because its retransmission timer fired before the server's ACK arrived.  Each
+data segment independently rolls against the probability; if it fires, a copy
+of that segment is added to the stream with the same sequence number, flags,
+and payload, but timestamped at the original capture time plus
+`retransmission_timeout`.  Because the RTO fires after the ACK was already in
+flight, the retransmit often appears *after* the ACK in the sorted stream —
+which is exactly what Wireshark labels as a spurious retransmission.
+
+Handshake and teardown packets are never retransmitted.
+
+```python
+# ~10 % of data segments retransmitted, 300 ms RTO
+stream = generate_tcp_stream(
+    client_ip="10.0.0.1",
+    server_ip="10.0.0.2",
+    num_data_packets=50,
+    retransmission_probability=0.1,
+    retransmission_timeout=0.3,
+)
+```
+
+---
+
 ## Packet loss
 
 Set `packet_loss_probability` to simulate packets being lost on the wire.

@@ -473,8 +473,10 @@ _STREAM_CONFIG_KEYS: dict[str, tuple[str, type]] = {
     "gap":                ("gap",                     float),
     "gap_jitter":         ("gap_jitter",              float),
     "psh_probability":    ("psh_probability",         float),
-    "packet_loss":        ("packet_loss_probability", float),
-    "no_ethernet":        ("no_ethernet",             bool),
+    "packet_loss":                ("packet_loss_probability",    float),
+    "retransmission_probability": ("retransmission_probability", float),
+    "retransmission_timeout":     ("retransmission_timeout",     float),
+    "no_ethernet":                ("no_ethernet",                bool),
     "pcap":               ("pcap",                    str),
     "pcapng":             ("pcapng",                  str),
 }
@@ -493,8 +495,10 @@ _STREAM_DEFAULTS = {
     "gap":                     0.001,
     "gap_jitter":              0.0,
     "psh_probability":         0.5,
-    "packet_loss_probability": 0.0,
-    "no_ethernet":             False,
+    "packet_loss_probability":    0.0,
+    "retransmission_probability": 0.0,
+    "retransmission_timeout":     0.2,
+    "no_ethernet":                False,
     "pcap":                    None,
     "pcapng":                  None,
 }
@@ -599,6 +603,8 @@ def _cmd_stream(args: argparse.Namespace) -> None:
             gap_jitter=args.gap_jitter,
             psh_probability=args.psh_probability,
             packet_loss_probability=args.packet_loss_probability,
+            retransmission_probability=args.retransmission_probability,
+            retransmission_timeout=args.retransmission_timeout,
             include_ethernet=not args.no_ethernet,
         )
     except (ValueError, OSError) as e:
@@ -762,6 +768,10 @@ def main():
     stream_parser.add_argument("--packet-loss", type=float, default=None, metavar="PROB",
                                dest="packet_loss_probability",
                                help="Probability (0.0-1.0) that any packet is dropped from the capture (default: 0.0)")
+    stream_parser.add_argument("--retransmission-probability", type=float, default=None, metavar="PROB",
+                               help="Probability (0.0-1.0) that each data segment gets a spurious retransmission (default: 0.0)")
+    stream_parser.add_argument("--retransmission-timeout", type=float, default=None, metavar="SECONDS",
+                               help="Seconds after original send that the retransmission timer fires (default: 0.2)")
     stream_parser.add_argument("--no-ethernet", action="store_true", default=False,
                                help="Omit Ethernet headers (write raw IP packets)")
     # Output (may also be provided via --config; mutual exclusivity enforced in _cmd_stream)

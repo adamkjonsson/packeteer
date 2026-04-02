@@ -121,6 +121,21 @@ psh_probability = 0.5
 #   Example: 0.02 drops roughly 2 % of packets.
 packet_loss = 0.0
 
+# retransmission_probability  (default: 0.0)
+#   Probability (0.0–1.0) that each data segment triggers a spurious
+#   retransmission.  The retransmit carries the same sequence number, flags,
+#   and payload as the original segment but is timestamped at the original
+#   capture time plus retransmission_timeout.  Handshake and teardown packets
+#   are never retransmitted.  Example: 0.05 retransmits roughly 5 % of data
+#   segments.
+retransmission_probability = 0.0
+
+# retransmission_timeout  (default: 0.2)
+#   Seconds after the original segment's capture time that the retransmission
+#   timer fires.  200 ms is the TCP minimum RTO (RFC 6298).  Increase this to
+#   simulate slow links or high-latency paths.
+retransmission_timeout = 0.2
+
 # ── IP / TCP ───────────────────────────────────────────────────────────────────
 
 # ttl  (default: 64)

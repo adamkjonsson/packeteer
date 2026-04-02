@@ -38,6 +38,27 @@ packeteer build packets.json --pcapng out.pcapng
 Per-packet fragmentation is controlled via the `metadata.mtu` field in the
 JSON config — see {doc}`json-config` and {doc}`fragmentation`.
 
+### Programmatic equivalent
+
+{class}`packet_generator.PacketBuilder` is the Python API that `build` calls
+internally.  Use it to assemble and write packets without invoking the CLI:
+
+```python
+from packet_generator import PacketBuilder, write_pcap
+
+pkt = (
+    PacketBuilder()
+    .ethernet(src_mac="00:11:22:33:44:55", dst_mac="66:77:88:99:aa:bb")
+    .ip(src="10.0.0.1", dst="10.0.0.2")
+    .tcp(src_port=12345, dst_port=80, flags=0x002)
+    .payload(size=64)
+    .build()
+)
+write_pcap([(pkt, 0, 0)], path="out.pcap")
+```
+
+See {doc}`api/packet-builder` for the full builder API.
+
 ---
 
 ## `parse`
@@ -77,6 +98,22 @@ packeteer parse capture.pcapng --output config.json
 packeteer build config.json --pcapng out.pcapng
 ```
 
+### Programmatic equivalent
+
+{func}`packet_parser.parser.parse_pcap_file` is the Python API that `parse`
+calls internally.  Use it to read a capture and get back the same JSON string
+without invoking the CLI:
+
+```python
+from packet_parser.parser import parse_pcap_file
+
+json_str = parse_pcap_file(path="capture.pcap")
+print(json_str)
+```
+
+See {doc}`api/parser` for the full parsing API and {doc}`json-config` for the
+JSON config format that `parse` produces and `build` consumes.
+
 ---
 
 ## `sanitise`
@@ -115,7 +152,24 @@ packeteer sanitise capture.json --ports --payload --output clean.json
 packeteer build clean.json --pcap clean.pcap
 ```
 
-See {doc}`sanitiser` for the full reference including the Python API.
+### Programmatic equivalent
+
+{func}`replacer.sanitise` is the Python API that `sanitise` calls internally:
+
+```python
+import json
+from replacer import sanitise, SanitiseOptions
+
+with open("capture.json") as f:
+    config = json.load(f)
+
+result = sanitise(config, SanitiseOptions(ports=True, payload=True))
+
+with open("clean.json", "w") as f:
+    json.dump(result, f, indent=2)
+```
+
+See {doc}`sanitiser` for the full reference including all `SanitiseOptions` fields.
 
 ---
 
@@ -151,6 +205,8 @@ acknowledgement numbers are computed correctly for every packet.
 | `--gap-jitter SECONDS` | `0.0` | Max additional delay per gap, drawn from `[gap, gap+jitter]`; output is re-sorted by timestamp |
 | `--psh-probability PROB` | `0.5` | Probability (0.0–1.0) that PSH is set on each data segment |
 | `--packet-loss PROB` | `0.0` | Probability (0.0–1.0) that any packet is silently dropped from the capture |
+| `--retransmission-probability PROB` | `0.0` | Probability (0.0–1.0) that each data segment gets a spurious retransmission |
+| `--retransmission-timeout SECONDS` | `0.2` | Seconds after original send that the retransmission timer fires |
 | `--no-ethernet` | off | Omit Ethernet headers (raw IP packets) |
 
 `--pcap` and `--pcapng` are mutually exclusive; one is required.
@@ -188,22 +244,25 @@ packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
     --no-ethernet --packets 20 --pcap raw.pcap
 ```
 
-See {doc}`stream` for the full Python API, payload distribution options,
-error injection via hooks, and IPv6 usage.
+### Programmatic equivalent
 
----
-
-## Programmatic equivalent
-
-{func}`packet_parser.parser.parse_pcap_file` is the Python API that `parse`
-calls internally.  Use it to read a pcap and get back the same JSON string
-without invoking the CLI:
+{func}`packet_generator.tcp_stream.generate_tcp_stream` is the Python API
+that `stream` calls internally:
 
 ```python
-from packet_parser.parser import parse_pcap_file
+from packet_generator.tcp_stream import generate_tcp_stream
+from packet_generator.pcap import write_pcap, LINKTYPE_ETHERNET
 
-json_str = parse_pcap_file(path="capture.pcap")
-print(json_str)
+stream = generate_tcp_stream(
+    client_ip="10.0.0.1",
+    server_ip="10.0.0.2",
+    server_port=443,
+    num_data_packets=50,
+    payload_distribution="bimodal",
+    retransmission_probability=0.05,
+)
+write_pcap(stream.to_pcap_tuples(), path="out.pcap", link_type=LINKTYPE_ETHERNET)
 ```
 
-See {doc}`api/parser` for the full parsing API.
+See {doc}`stream` for the full Python API, payload distribution options,
+timing jitter, packet loss, retransmissions, and IPv6 usage.
