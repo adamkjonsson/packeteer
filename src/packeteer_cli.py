@@ -474,8 +474,11 @@ _STREAM_CONFIG_KEYS: dict[str, tuple[str, type]] = {
     "gap_jitter":         ("gap_jitter",              float),
     "psh_probability":    ("psh_probability",         float),
     "packet_loss":                ("packet_loss_probability",    float),
-    "retransmission_probability": ("retransmission_probability", float),
-    "retransmission_timeout":     ("retransmission_timeout",     float),
+    "retransmission_probability":   ("retransmission_probability",   float),
+    "retransmission_timeout":       ("retransmission_timeout",       float),
+    "payload_corruption_probability": ("payload_corruption_probability", float),
+    "server_rst_probability":         ("server_rst_probability",         float),
+    "rst_propagation_delay":          ("rst_propagation_delay",          float),
     "no_ethernet":                ("no_ethernet",                bool),
     "pcap":               ("pcap",                    str),
     "pcapng":             ("pcapng",                  str),
@@ -496,8 +499,11 @@ _STREAM_DEFAULTS = {
     "gap_jitter":              0.0,
     "psh_probability":         0.5,
     "packet_loss_probability":    0.0,
-    "retransmission_probability": 0.0,
-    "retransmission_timeout":     0.2,
+    "retransmission_probability":    0.0,
+    "retransmission_timeout":        0.2,
+    "payload_corruption_probability": 0.0,
+    "server_rst_probability":         0.0,
+    "rst_propagation_delay":          0.0,
     "no_ethernet":                False,
     "pcap":                    None,
     "pcapng":                  None,
@@ -605,6 +611,9 @@ def _cmd_stream(args: argparse.Namespace) -> None:
             packet_loss_probability=args.packet_loss_probability,
             retransmission_probability=args.retransmission_probability,
             retransmission_timeout=args.retransmission_timeout,
+            payload_corruption_probability=args.payload_corruption_probability,
+            server_rst_probability=args.server_rst_probability,
+            rst_propagation_delay=args.rst_propagation_delay,
             include_ethernet=not args.no_ethernet,
         )
     except (ValueError, OSError) as e:
@@ -772,6 +781,14 @@ def main():
                                help="Probability (0.0-1.0) that each data segment gets a spurious retransmission (default: 0.0)")
     stream_parser.add_argument("--retransmission-timeout", type=float, default=None, metavar="SECONDS",
                                help="Seconds after original send that the retransmission timer fires (default: 0.2)")
+    stream_parser.add_argument("--payload-corruption", type=float, default=None, metavar="PROB",
+                               dest="payload_corruption_probability",
+                               help="Probability (0.0-1.0) that each data segment's payload is corrupted in transit (default: 0.0)")
+    stream_parser.add_argument("--server-rst", type=float, default=None, metavar="PROB",
+                               dest="server_rst_probability",
+                               help="Probability (0.0-1.0) that the server terminates mid-stream with a RST (default: 0.0)")
+    stream_parser.add_argument("--rst-propagation-delay", type=float, default=None, metavar="SECONDS",
+                               help="Seconds for the RST to reach the client; client sends data during this window (default: 0.0)")
     stream_parser.add_argument("--no-ethernet", action="store_true", default=False,
                                help="Omit Ethernet headers (write raw IP packets)")
     # Output (may also be provided via --config; mutual exclusivity enforced in _cmd_stream)

@@ -207,6 +207,9 @@ acknowledgement numbers are computed correctly for every packet.
 | `--packet-loss PROB` | `0.0` | Probability (0.0–1.0) that any packet is silently dropped from the capture |
 | `--retransmission-probability PROB` | `0.0` | Probability (0.0–1.0) that each data segment gets a spurious retransmission |
 | `--retransmission-timeout SECONDS` | `0.2` | Seconds after original send that the retransmission timer fires |
+| `--payload-corruption PROB` | `0.0` | Probability (0.0–1.0) that each data segment's payload is corrupted in transit |
+| `--server-rst PROB` | `0.0` | Probability (0.0–1.0) that the server terminates mid-stream with a RST |
+| `--rst-propagation-delay SECONDS` | `0.0` | Seconds for the RST to reach the client; client sends data during this window |
 | `--no-ethernet` | off | Omit Ethernet headers (raw IP packets) |
 
 `--pcap` and `--pcapng` are mutually exclusive; one is required.
