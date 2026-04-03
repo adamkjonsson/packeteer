@@ -210,6 +210,7 @@ acknowledgement numbers are computed correctly for every packet.
 | `--payload-corruption PROB` | `0.0` | Probability (0.0–1.0) that each data segment's payload is corrupted in transit |
 | `--server-rst PROB` | `0.0` | Probability (0.0–1.0) that the server terminates mid-stream with a RST |
 | `--rst-propagation-delay SECONDS` | `0.0` | Seconds for the RST to reach the client; client sends data during this window |
+| `--middlebox-mtu BYTES` | off | Fragment packets as if they passed through a middlebox with this IP MTU (e.g. 576, 1280, 1400) |
 | `--no-ethernet` | off | Omit Ethernet headers (raw IP packets) |
 
 `--pcap` and `--pcapng` are mutually exclusive; one is required.

@@ -26,12 +26,18 @@ Typical usage::
 from __future__ import annotations
 
 import random
+import socket
+import struct
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 from collections.abc import Callable
 
 from .builder import PacketBuilder
+from .ethernet import EthernetHeader, ETHERTYPE_IPV4, ETHERTYPE_IPV6
+from .fragmentation import fragment_ipv4, fragment_ipv6
+from .ip import IPHeader
+from .ipv6 import IPv6Header
 from .tcp import TCPOptions, TCP_SYN, TCP_ACK, TCP_PSH, TCP_FIN, TCP_RST
 
 _WRAP = 2 ** 32
@@ -206,6 +212,112 @@ def _payload_sizes(
     )
 
 
+# ── IP fragmentation helper ───────────────────────────────────────────────────
+
+def _fragment_packet(
+    pkt: TCPStreamPacket,
+    mtu: int,
+    include_ethernet: bool,
+    used_ts: set[int],
+) -> list[TCPStreamPacket]:
+    """Split *pkt* into IP fragments if its IP-layer size exceeds *mtu*.
+
+    Returns a single-element list with the original packet unchanged when no
+    fragmentation is needed.  Otherwise returns one :class:`TCPStreamPacket`
+    per fragment, labelled ``FRAG[<orig_label>][<n>]``.  Fragment 0 carries
+    the TCP header; subsequent fragments carry only payload continuation bytes.
+
+    *used_ts* is updated in place: the original timestamp is removed and each
+    new fragment timestamp is added, ensuring global uniqueness.
+    """
+    raw = pkt.raw
+    ip_start = 14 if include_ethernet else 0
+
+    if len(raw) - ip_start <= mtu:
+        return [pkt]
+
+    ip_version = (raw[ip_start] >> 4)
+
+    if include_ethernet:
+        dst_mac = ':'.join(f'{b:02x}' for b in raw[0:6])
+        src_mac = ':'.join(f'{b:02x}' for b in raw[6:12])
+
+    if ip_version == 4:
+        (_, tos, _, ident, flags_frag, ttl, proto, _,
+         src_bytes, dst_bytes) = struct.unpack('!BBHHHBBH4s4s',
+                                               raw[ip_start:ip_start + 20])
+        ip_hdr = IPHeader(
+            src=socket.inet_ntoa(src_bytes),
+            dst=socket.inet_ntoa(dst_bytes),
+            protocol=proto, ttl=ttl, tos=tos,
+            identification=ident,
+            flags=(flags_frag >> 13) & 0x7,
+            fragment_offset=flags_frag & 0x1FFF,
+        )
+        transport_data = raw[ip_start + 20:]
+        eth_hdr = (EthernetHeader(dst_mac=dst_mac, src_mac=src_mac,
+                                  ethertype=ETHERTYPE_IPV4)
+                   if include_ethernet else None)
+        frag_raws = fragment_ipv4(ip_hdr, transport_data, mtu,
+                                  eth_header=eth_hdr)
+
+    elif ip_version == 6:
+        version_tc_fl = struct.unpack('!I', raw[ip_start:ip_start + 4])[0]
+        _, next_header, hop_limit = struct.unpack(
+            '!HBB', raw[ip_start + 4:ip_start + 8])
+        ip_hdr = IPv6Header(
+            src=socket.inet_ntop(socket.AF_INET6,
+                                 raw[ip_start + 8:ip_start + 24]),
+            dst=socket.inet_ntop(socket.AF_INET6,
+                                 raw[ip_start + 24:ip_start + 40]),
+            next_header=next_header,
+            hop_limit=hop_limit,
+            traffic_class=(version_tc_fl >> 20) & 0xFF,
+            flow_label=version_tc_fl & 0xFFFFF,
+        )
+        transport_data = raw[ip_start + 40:]
+        eth_hdr = (EthernetHeader(dst_mac=dst_mac, src_mac=src_mac,
+                                  ethertype=ETHERTYPE_IPV6)
+                   if include_ethernet else None)
+        frag_raws = fragment_ipv6(ip_hdr, transport_data, mtu,
+                                  eth_header=eth_hdr)
+
+    else:
+        return [pkt]
+
+    # Allow fragment 0 to reuse the original timestamp
+    orig_usec = pkt.ts_sec * 1_000_000 + pkt.ts_usec
+    used_ts.discard(orig_usec)
+
+    result: list[TCPStreamPacket] = []
+    current_usec = orig_usec
+    for frag_idx, frag_raw in enumerate(frag_raws):
+        while current_usec in used_ts:
+            current_usec += 1
+        used_ts.add(current_usec)
+        ts_sec, ts_usec = divmod(current_usec, 1_000_000)
+        label = f"FRAG[{pkt.label}][{frag_idx}]"
+        if frag_idx == 0:
+            result.append(replace(pkt, raw=frag_raw,
+                                  ts_sec=ts_sec, ts_usec=ts_usec,
+                                  label=label))
+        else:
+            result.append(TCPStreamPacket(
+                raw=frag_raw,
+                ts_sec=ts_sec,
+                ts_usec=ts_usec,
+                direction=pkt.direction,
+                flags=0,
+                seq=0,
+                ack=0,
+                payload_len=0,
+                label=label,
+            ))
+        current_usec += 1
+
+    return result
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def generate_tcp_stream(
@@ -238,6 +350,7 @@ def generate_tcp_stream(
     payload_corruption_probability: float = 0.0,
     server_rst_probability: float = 0.0,
     rst_propagation_delay: float = 0.0,
+    middlebox_mtu: int | None = None,
     packet_hooks: list[Callable[[TCPStreamPacket, int], TCPStreamPacket | None]] | None = None,
 ) -> TCPStream:
     """Generate a complete TCP stream as a sequence of :class:`TCPStreamPacket` objects.
@@ -340,6 +453,16 @@ def generate_tcp_stream(
             client retransmits after *retransmission_timeout* as
             ``RETRANS[i]``; the existing ``ACK[i]`` timestamp is shifted to
             follow the retransmit.  Defaults to ``0.0`` (no corruption).
+        middlebox_mtu: When set, every packet whose IP-layer size (excluding
+            any Ethernet header) exceeds this value is split into IP fragments
+            as if it had passed through a middlebox with a limited MTU.  All
+            packet types are subject to fragmentation, though only packets with
+            large payloads will actually be split in practice.  Fragment
+            packets are labelled ``FRAG[<orig>][<n>]`` where *n* starts at
+            zero; fragment 0 carries the TCP header and the first data chunk.
+            Typical low-MTU values: 576 (historical minimum for IPv4 routers),
+            1280 (IPv6 minimum), 1400 (VPN with overhead).  ``None`` (default)
+            disables fragmentation.
         packet_hooks: Optional list of callables applied to each packet after
             it is built.  Each hook has the signature::
 
@@ -607,6 +730,16 @@ def generate_tcp_stream(
                 packets[ack_idx] = replace(ack_pkt, ts_sec=ack_sec,
                                            ts_usec=ack_usec_part)
         packets.extend(additions)
+
+    # ── Middlebox fragmentation ───────────────────────────────────────────────
+    if middlebox_mtu is not None:
+        used_ts: set[int] = {p.ts_sec * 1_000_000 + p.ts_usec for p in packets}
+        fragmented: list[TCPStreamPacket] = []
+        for pkt in packets:
+            fragmented.extend(
+                _fragment_packet(pkt, middlebox_mtu, include_ethernet, used_ts)
+            )
+        packets = fragmented
 
     packets.sort(key=lambda p: (p.ts_sec, p.ts_usec))
     return TCPStream(packets=packets)

@@ -479,6 +479,7 @@ _STREAM_CONFIG_KEYS: dict[str, tuple[str, type]] = {
     "payload_corruption_probability": ("payload_corruption_probability", float),
     "server_rst_probability":         ("server_rst_probability",         float),
     "rst_propagation_delay":          ("rst_propagation_delay",          float),
+    "middlebox_mtu":                  ("middlebox_mtu",                  int),
     "no_ethernet":                ("no_ethernet",                bool),
     "pcap":               ("pcap",                    str),
     "pcapng":             ("pcapng",                  str),
@@ -504,6 +505,7 @@ _STREAM_DEFAULTS = {
     "payload_corruption_probability": 0.0,
     "server_rst_probability":         0.0,
     "rst_propagation_delay":          0.0,
+    "middlebox_mtu":                  None,
     "no_ethernet":                False,
     "pcap":                    None,
     "pcapng":                  None,
@@ -614,6 +616,7 @@ def _cmd_stream(args: argparse.Namespace) -> None:
             payload_corruption_probability=args.payload_corruption_probability,
             server_rst_probability=args.server_rst_probability,
             rst_propagation_delay=args.rst_propagation_delay,
+            middlebox_mtu=args.middlebox_mtu,
             include_ethernet=not args.no_ethernet,
         )
     except (ValueError, OSError) as e:
@@ -789,6 +792,8 @@ def main():
                                help="Probability (0.0-1.0) that the server terminates mid-stream with a RST (default: 0.0)")
     stream_parser.add_argument("--rst-propagation-delay", type=float, default=None, metavar="SECONDS",
                                help="Seconds for the RST to reach the client; client sends data during this window (default: 0.0)")
+    stream_parser.add_argument("--middlebox-mtu", type=int, default=None, metavar="BYTES",
+                               help="Fragment packets as if they passed through a middlebox with this IP MTU (e.g. 576, 1280, 1400). Default: no fragmentation")
     stream_parser.add_argument("--no-ethernet", action="store_true", default=False,
                                help="Omit Ethernet headers (write raw IP packets)")
     # Output (may also be provided via --config; mutual exclusivity enforced in _cmd_stream)

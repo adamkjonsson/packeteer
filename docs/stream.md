@@ -179,6 +179,44 @@ stream = generate_tcp_stream(
 
 ---
 
+## Middlebox fragmentation
+
+Set `middlebox_mtu` to simulate packets being fragmented by a router or other
+middlebox with a low MTU.  Any packet whose IP-layer size (excluding the
+Ethernet header) exceeds `middlebox_mtu` is replaced with a sequence of IP
+fragments.
+
+IPv4 uses the standard Flags/Fragment Offset fields (RFC 791).  IPv6 uses a
+Fragment Extension Header (next header = 44, RFC 8200 §4.5).
+
+Each fragment appears in the capture labelled `FRAG[<orig>][<n>]` where
+`<orig>` is the original packet label (e.g. `DATA[2]`) and `<n>` is the
+fragment index starting at zero.  Fragment 0 carries the TCP header and the
+first chunk of the payload; subsequent fragments carry only payload bytes.
+Handshake and teardown packets are typically small and will not be fragmented
+at realistic MTU values.
+
+```python
+# Simulate a 576-byte MTU middlebox (conservative router minimum for IPv4)
+stream = generate_tcp_stream(
+    client_ip="10.0.0.1",
+    server_ip="10.0.0.2",
+    num_data_packets=20,
+    middlebox_mtu=576,
+)
+```
+
+Typical `middlebox_mtu` values:
+
+| Value | Scenario |
+|-------|----------|
+| 576   | Historical IPv4 minimum (RFC 791) |
+| 1280  | IPv6 minimum link MTU (RFC 8200) |
+| 1400  | VPN tunnel with header overhead |
+| 1500  | Standard Ethernet (no fragmentation for typical traffic) |
+
+---
+
 ## PSH flag behaviour
 
 Real TCP stacks do not set PSH on every data segment — they use it to signal
@@ -401,6 +439,7 @@ retransmission_timeout = 0.2
 payload_corruption_probability = 0.02
 server_rst_probability = 0.0
 rst_propagation_delay = 0.0
+middlebox_mtu = 576
 ```
 
 ---

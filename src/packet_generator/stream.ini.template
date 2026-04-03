@@ -159,6 +159,16 @@ payload_corruption_probability = 0.0
 #   simulate slow links or high-latency paths.
 retransmission_timeout = 0.2
 
+# middlebox_mtu  (default: unset — no fragmentation)
+#   When set, every packet whose IP-layer size (excluding the Ethernet header)
+#   exceeds this value is split into IP fragments, simulating transit through a
+#   middlebox with a limited MTU.  All packet types are subject to
+#   fragmentation, though only packets with large payloads are affected in
+#   practice.  Fragment packets appear in the capture as FRAG[<orig>][<n>].
+#   Typical values: 576 (historical IPv4 minimum), 1280 (IPv6 minimum),
+#   1400 (VPN with overhead).  Leave unset or comment out to disable.
+# middlebox_mtu = 576
+
 # ── IP / TCP ───────────────────────────────────────────────────────────────────
 
 # ttl  (default: 64)
