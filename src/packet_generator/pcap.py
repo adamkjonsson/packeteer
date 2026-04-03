@@ -141,12 +141,14 @@ def write_pcap(
 
     Example (nanosecond timestamps)::
 
-        from packet_generator import PacketBuilder, Protocol, write_pcap
+        import time
+        from packet_generator import PacketBuilder, write_pcap
 
         now_ns = time.time_ns()
         now_sec, now_nsec = divmod(now_ns, 1_000_000_000)
         pkts = [
-            (PacketBuilder("10.0.0.1", "10.0.0.2", Protocol.TCP).build(), now_sec, now_nsec),
+            (PacketBuilder().ip(src="10.0.0.1", dst="10.0.0.2").tcp().build(),
+             now_sec, now_nsec),
         ]
         write_pcap(pkts, path="out.pcap", nanoseconds=True)
     """
@@ -232,10 +234,9 @@ def write_pcapng(
 
     Example::
 
-        from packet_generator import PacketBuilder, Protocol
-        from packet_generator.pcap import write_pcapng
+        from packet_generator import PacketBuilder, write_pcapng
 
-        pkt = PacketBuilder("10.0.0.1", "10.0.0.2", Protocol.TCP).build()
+        pkt = PacketBuilder().ip(src="10.0.0.1", dst="10.0.0.2").tcp().build()
         write_pcapng([(pkt, 1700000000, 500000)], path="out.pcapng")
     """
     if path is not None:

@@ -28,8 +28,7 @@ def packet_parser(data: bytes) -> tuple[int, int | None, UDPHeader | None]:
         return (0, None, None)
 
     try:
-        src_port, dst_port, length, checksum = struct.unpack("!HHHH", data[:8])
-        _ = checksum
+        src_port, dst_port, length, _ = struct.unpack("!HHHH", data[:8])
         if length < 8:
             return (0, None, None)
 

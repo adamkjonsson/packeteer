@@ -139,7 +139,7 @@ class TestPacketBuilderGRE(unittest.TestCase):
 
     def test_gre_checksum_correctness(self):
         """RFC 1071 checksum over GRE header + payload should verify to 0."""
-        from packet_generator.gre import _rfc1071_checksum
+        from packet_generator.checksum import ones_complement_checksum
         raw = (PacketBuilder()
             .ethernet()
             .ip(src="10.0.0.1", dst="10.0.0.2")
@@ -152,8 +152,8 @@ class TestPacketBuilderGRE(unittest.TestCase):
         gre_start = 34
         gre_data = raw[gre_start:]
         # Verify: ones-complement sum of all data including the checksum field
-        # folds to 0xFFFF, so _rfc1071_checksum returns ~0xFFFF & 0xFFFF = 0
-        self.assertEqual(_rfc1071_checksum(gre_data[:8] + gre_data[8:]), 0)
+        # folds to 0xFFFF, so ones_complement_checksum returns ~0xFFFF & 0xFFFF = 0
+        self.assertEqual(ones_complement_checksum(gre_data), 0)
 
     def test_gre_all_optional_fields(self):
         """C=1, K=1, S=1 produces a 16-byte GRE header."""

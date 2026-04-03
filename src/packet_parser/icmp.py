@@ -26,10 +26,9 @@ def packet_parser(data: bytes) -> tuple[int, int | None, ICMPHeader | None]:
         return (0, None, None)
 
     try:
-        icmp_type, code, checksum, identifier, sequence = struct.unpack(
+        icmp_type, code, _, identifier, sequence = struct.unpack(
             "!BBHHH", data[:8]
         )
-        _ = checksum
         hdr = ICMPHeader(type=icmp_type, code=code, identifier=identifier, sequence=sequence)
 
     except Exception:

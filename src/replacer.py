@@ -205,20 +205,13 @@ def _sanitise_packet(pkt: dict, r: _Replacer, opts: SanitiseOptions) -> None:
                 meta[key] = 0
 
     # ── Tunnel recursion ──────────────────────────────────────────────────────
-    if "ipip" in pkt:
-        _sanitise_packet(pkt["ipip"], r, opts)
-
-    if "gre" in pkt:
-        gre = pkt["gre"]
-        if "ethernet" in gre:
-            _sanitise_ethernet(gre["ethernet"], r, opts)
-        _sanitise_packet(gre, r, opts)
-
-    if "etherip" in pkt:
-        etherip = pkt["etherip"]
-        if "ethernet" in etherip:
-            _sanitise_ethernet(etherip["ethernet"], r, opts)
-        _sanitise_packet(etherip, r, opts)
+    for tunnel_key in ("ipip", "gre", "etherip"):
+        if tunnel_key not in pkt:
+            continue
+        inner = pkt[tunnel_key]
+        if "ethernet" in inner:
+            _sanitise_ethernet(inner["ethernet"], r, opts)
+        _sanitise_packet(inner, r, opts)
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
