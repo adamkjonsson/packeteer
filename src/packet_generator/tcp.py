@@ -1,8 +1,8 @@
 """TCP header construction (RFC 9293).
 
-This module builds the minimum 20-byte TCP header (data offset = 5, no
-options) and computes the TCP checksum over the appropriate IPv4 or IPv6
-pseudo-header as required by the respective RFCs.
+This module builds TCP headers (minimum 20 bytes with no options, up to 60
+bytes with options) and computes the TCP checksum over the appropriate IPv4
+or IPv6 pseudo-header as required by the respective RFCs.
 
 Pseudo-header formats used for checksum calculation:
 
@@ -181,12 +181,13 @@ def build_tcp_header(
     dst_ip: str,
     ip_version: int = 4,
 ) -> bytes:
-    """Build a 20-byte TCP header with a correct checksum.
+    """Build a TCP header with a correct checksum.
 
-    The data offset is fixed at 5 (20-byte header, no TCP options).
-    The checksum is computed over the appropriate pseudo-header (IPv4 or
-    IPv6) concatenated with the TCP header and *payload*, as required by
-    RFC 793 / RFC 8200.
+    The minimum header is 20 bytes (data offset = 5) with no options.  When
+    TCP options are present in *hdr*, the data offset and total header length
+    are adjusted accordingly (maximum 60 bytes per RFC 9293).  The checksum
+    is computed over the appropriate pseudo-header (IPv4 or IPv6) concatenated
+    with the TCP header and *payload*, as required by RFC 793 / RFC 8200.
 
     Args:
         hdr: A :class:`TCPHeader` instance with the desired field values.

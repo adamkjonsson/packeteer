@@ -43,6 +43,8 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass
 
+from .checksum import ones_complement_checksum
+
 #: IP protocol number for GRE (RFC 2784).
 IPPROTO_GRE: int = 47
 
@@ -78,16 +80,6 @@ class GREHeader:
     protocol_type: int = 0  # filled at build time
 
 
-def _rfc1071_checksum(data: bytes) -> int:
-    """Compute RFC 1071 ones-complement checksum over *data*."""
-    if len(data) % 2:
-        data += b'\x00'
-    s = sum(struct.unpack_from("!H", data, i)[0] for i in range(0, len(data), 2))
-    while s >> 16:
-        s = (s & 0xFFFF) + (s >> 16)
-    return ~s & 0xFFFF
-
-
 def build_gre_header(hdr: GREHeader, payload: bytes) -> bytes:
     """Build a GRE header from *hdr* and return its bytes (without *payload*).
 
@@ -104,9 +96,9 @@ def build_gre_header(hdr: GREHeader, payload: bytes) -> bytes:
     Returns:
         The encoded GRE header bytes (4 to 16 bytes depending on flags).
     """
-    c_flag = 1 if hdr.checksum else 0
-    k_flag = 1 if hdr.key is not None else 0
-    s_flag = 1 if hdr.seq is not None else 0
+    c_flag = int(hdr.checksum)
+    k_flag = int(hdr.key is not None)
+    s_flag = int(hdr.seq is not None)
 
     # Flags word: bits 15=C, 13=K, 12=S, bits 2-0=Ver (must be 0)
     flags_ver = (c_flag << 15) | (k_flag << 13) | (s_flag << 12)
@@ -120,7 +112,7 @@ def build_gre_header(hdr: GREHeader, payload: bytes) -> bytes:
         result += struct.pack("!I", hdr.seq)
 
     if c_flag:
-        cksum = _rfc1071_checksum(bytes(result) + payload)
+        cksum = ones_complement_checksum(bytes(result) + payload)
         struct.pack_into("!H", result, 4, cksum)
 
     return bytes(result)
