@@ -179,6 +179,40 @@ stream = generate_tcp_stream(
 
 ---
 
+## Stray packets (TCP hijacking simulation)
+
+Set `stray_packet_count` to inject forged packets from an attacker who has been
+passively sniffing the connection.  The attacker knows the exact TCP state and
+sends packets using the same source/destination endpoints as the real client,
+but with an all-`x` payload of random size and a seq/ack pair stolen from a
+randomly chosen data packet.
+
+Stray packet timestamps are drawn uniformly from the data-transfer window, so
+they may arrive before or after the real segment they overlap with — exactly as
+you would expect from an off-path attacker with imperfect timing.  Each stray
+packet is labelled `STRAY[n]` in the output.
+
+```python
+# Inject 5 forged packets scattered across the full data-transfer window
+stream = generate_tcp_stream(
+    client_ip="10.0.0.1",
+    server_ip="10.0.0.2",
+    num_data_packets=50,
+    stray_packet_count=5,
+)
+
+# Tighten timing: each stray arrives within 3 packets of its target segment
+stream = generate_tcp_stream(
+    client_ip="10.0.0.1",
+    server_ip="10.0.0.2",
+    num_data_packets=50,
+    stray_packet_count=5,
+    stray_timing_window=3,
+)
+```
+
+---
+
 ## Middlebox fragmentation
 
 Set `middlebox_mtu` to simulate packets being fragmented by a router or other
@@ -440,6 +474,7 @@ payload_corruption_probability = 0.02
 server_rst_probability = 0.0
 rst_propagation_delay = 0.0
 middlebox_mtu = 576
+stray_packet_count = 3
 ```
 
 ---
