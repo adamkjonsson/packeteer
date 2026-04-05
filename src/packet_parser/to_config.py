@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 
 from packet_generator.ethernet import EthernetHeader
 from packet_generator.etherip import EtherIPHeader, IPPROTO_ETHERIP
-from packet_generator.gre import GREHeader, IPPROTO_GRE
+from packet_generator.gre import GREHeader
 from packet_generator.ip import IPHeader
 from packet_generator.ipv6 import IPv6Header
 from packet_generator.mpls import MPLSLabel
@@ -51,17 +51,120 @@ from packet_generator.tcp import TCPHeader, TCPOptions
 from packet_generator.udp import UDPHeader
 from packet_generator.icmp import ICMPHeader
 from packet_generator.icmpv6 import ICMPv6Header
+from packet_generator.sctp import (
+    SCTPHeader,
+    SCTPDataChunk,
+    SCTPInitChunk,
+    SCTPInitAckChunk,
+    SCTPSackChunk,
+    SCTPHeartbeatChunk,
+    SCTPHeartbeatAckChunk,
+    SCTPAbortChunk,
+    SCTPShutdownChunk,
+    SCTPShutdownAckChunk,
+    SCTPErrorChunk,
+    SCTPCookieEchoChunk,
+    SCTPCookieAckChunk,
+    SCTPShutdownCompleteChunk,
+    SCTPGenericChunk,
+    SCTPChunk,
+)
 
 _PROTO_TO_STR: dict[int, str] = {
-    socket.IPPROTO_TCP:  "tcp",
-    socket.IPPROTO_UDP:  "udp",
-    socket.IPPROTO_ICMP: "icmp",
-    socket.IPPROTO_ICMPV6: "icmpv6",
-    IPPROTO_ETHERIP:     "etherip",
-    IPPROTO_GRE:         "gre",
-    4:                   "ipip",   # IPv4-in-IP (RFC 2003)
-    41:                  "ipip",   # IPv6-in-IP (RFC 4213)
+    socket.IPPROTO_TCP:      "tcp",       # 6
+    socket.IPPROTO_UDP:      "udp",       # 17
+    socket.IPPROTO_ICMP:     "icmp",      # 1
+    socket.IPPROTO_ICMPV6:   "icmpv6",    # 58
+    IPPROTO_ETHERIP:         "etherip",   # 97
+    socket.IPPROTO_GRE:      "gre",       # 47
+    socket.IPPROTO_SCTP:     "sctp",      # 132
+    socket.IPPROTO_IPV4:     "ipip",      # 4  — IPv4-in-IP (RFC 2003)
+    socket.IPPROTO_IPV6:     "ipip",      # 41 — IPv6-in-IP (RFC 4213)
 }
+
+# ── SCTP chunk serialisation ──────────────────────────────────────────────────
+
+_CHUNK_TYPE_TO_STR: dict[int, str] = {
+    0:  "data",
+    1:  "init",
+    2:  "init_ack",
+    3:  "sack",
+    4:  "heartbeat",
+    5:  "heartbeat_ack",
+    6:  "abort",
+    7:  "shutdown",
+    8:  "shutdown_ack",
+    9:  "error",
+    10: "cookie_echo",
+    11: "cookie_ack",
+    14: "shutdown_complete",
+}
+
+
+def _serialise_sctp_chunk(chunk: SCTPChunk) -> dict[str, Any]:
+    """Serialise one SCTP chunk to a JSON-compatible dict."""
+    if isinstance(chunk, SCTPDataChunk):
+        return {
+            "type":       "data",
+            "flags":      chunk.flags,
+            "tsn":        chunk.tsn,
+            "stream_id":  chunk.stream_id,
+            "stream_seq": chunk.stream_seq,
+            "ppid":       chunk.ppid,
+            "data":       chunk.data.hex(),
+        }
+    if isinstance(chunk, (SCTPInitChunk, SCTPInitAckChunk)):
+        d: dict[str, Any] = {
+            "type":             "init" if isinstance(chunk, SCTPInitChunk) else "init_ack",
+            "initiate_tag":     chunk.initiate_tag,
+            "a_rwnd":           chunk.a_rwnd,
+            "outbound_streams": chunk.outbound_streams,
+            "inbound_streams":  chunk.inbound_streams,
+            "initial_tsn":      chunk.initial_tsn,
+        }
+        if chunk.params:
+            d["params"] = chunk.params.hex()
+        return d
+    if isinstance(chunk, SCTPSackChunk):
+        return {
+            "type":            "sack",
+            "cum_tsn_ack":     chunk.cum_tsn_ack,
+            "a_rwnd":          chunk.a_rwnd,
+            "gap_ack_blocks":  [[s, e] for s, e in chunk.gap_ack_blocks],
+            "dup_tsns":        list(chunk.dup_tsns),
+        }
+    if isinstance(chunk, (SCTPHeartbeatChunk, SCTPHeartbeatAckChunk)):
+        return {
+            "type": "heartbeat" if isinstance(chunk, SCTPHeartbeatChunk) else "heartbeat_ack",
+            "info": chunk.info.hex(),
+        }
+    if isinstance(chunk, SCTPAbortChunk):
+        d = {"type": "abort", "flags": chunk.flags}
+        if chunk.causes:
+            d["causes"] = chunk.causes.hex()
+        return d
+    if isinstance(chunk, SCTPShutdownChunk):
+        return {"type": "shutdown", "cum_tsn_ack": chunk.cum_tsn_ack}
+    if isinstance(chunk, SCTPShutdownAckChunk):
+        return {"type": "shutdown_ack"}
+    if isinstance(chunk, SCTPErrorChunk):
+        d = {"type": "error"}
+        if chunk.causes:
+            d["causes"] = chunk.causes.hex()
+        return d
+    if isinstance(chunk, SCTPCookieEchoChunk):
+        return {"type": "cookie_echo", "cookie": chunk.cookie.hex()}
+    if isinstance(chunk, SCTPCookieAckChunk):
+        return {"type": "cookie_ack"}
+    if isinstance(chunk, SCTPShutdownCompleteChunk):
+        return {"type": "shutdown_complete", "flags": chunk.flags}
+    # SCTPGenericChunk
+    return {
+        "type":       "generic",
+        "chunk_type": chunk.chunk_type,
+        "flags":      chunk.flags,
+        "value":      chunk.value.hex(),
+    }
 
 
 def _apply_ethernet(config: dict[str, Any], hdr: EthernetHeader) -> None:
@@ -124,7 +227,7 @@ def _tcp_options_section(opts: TCPOptions) -> dict[str, Any]:
     return section
 
 
-def _apply_transport(config: dict[str, Any], hdr: TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header) -> None:
+def _apply_transport(config: dict[str, Any], hdr: TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | SCTPHeader) -> None:
     if isinstance(hdr, TCPHeader):
         section: dict[str, Any] = {
             "src_port": hdr.src_port,
@@ -146,6 +249,13 @@ def _apply_transport(config: dict[str, Any], hdr: TCPHeader | UDPHeader | ICMPHe
         section = {
             "src_port": hdr.src_port,
             "dst_port": hdr.dst_port,
+        }
+    elif isinstance(hdr, SCTPHeader):
+        section = {
+            "src_port":         hdr.src_port,
+            "dst_port":         hdr.dst_port,
+            "verification_tag": hdr.verification_tag,
+            "chunks":           [_serialise_sctp_chunk(c) for c in hdr.chunks],
         }
     else:  # ICMPHeader or ICMPv6Header
         section = {
@@ -257,7 +367,7 @@ def _apply_payload(config: dict[str, Any], payload: bytes) -> None:
 
 def update_config(
     config: dict[str, Any],
-    layer: EthernetHeader | PPPoEHeader | MPLSLabel | IPHeader | IPv6Header | TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | bytes,
+    layer: EthernetHeader | PPPoEHeader | MPLSLabel | IPHeader | IPv6Header | TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | SCTPHeader | bytes,
 ) -> dict[str, Any]:
     """Add a parsed protocol layer to *config* and return it.
 
@@ -302,7 +412,7 @@ def update_config(
         _apply_mpls(config, layer)
     elif isinstance(layer, (IPHeader, IPv6Header)):
         _apply_ip(config, layer)
-    elif isinstance(layer, (TCPHeader, UDPHeader, ICMPHeader, ICMPv6Header)):
+    elif isinstance(layer, (TCPHeader, UDPHeader, ICMPHeader, ICMPv6Header, SCTPHeader)):
         _apply_transport(config, layer)
     elif isinstance(layer, bytes):
         _apply_payload(config, layer)

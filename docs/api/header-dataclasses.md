@@ -182,3 +182,116 @@ Combine flags with `|`: `TCP_PSH | TCP_ACK` = `0x18` (data segment),
 .. autoclass:: packet_generator.icmpv6.ICMPv6Header
    :members:
 ```
+
+---
+
+## Layer 4 — SCTP
+
+```{eval-rst}
+.. autoclass:: packet_generator.sctp.SCTPHeader
+   :members:
+```
+
+```{eval-rst}
+.. autoclass:: packet_generator.sctp.SCTPDataChunk
+   :members:
+```
+
+```{eval-rst}
+.. autoclass:: packet_generator.sctp.SCTPInitChunk
+   :members:
+```
+
+```{eval-rst}
+.. autoclass:: packet_generator.sctp.SCTPInitAckChunk
+   :members:
+```
+
+```{eval-rst}
+.. autoclass:: packet_generator.sctp.SCTPSackChunk
+   :members:
+```
+
+```{eval-rst}
+.. autoclass:: packet_generator.sctp.SCTPHeartbeatChunk
+   :members:
+```
+
+```{eval-rst}
+.. autoclass:: packet_generator.sctp.SCTPHeartbeatAckChunk
+   :members:
+```
+
+```{eval-rst}
+.. autoclass:: packet_generator.sctp.SCTPAbortChunk
+   :members:
+```
+
+```{eval-rst}
+.. autoclass:: packet_generator.sctp.SCTPShutdownChunk
+   :members:
+```
+
+```{eval-rst}
+.. autoclass:: packet_generator.sctp.SCTPShutdownAckChunk
+   :members:
+```
+
+```{eval-rst}
+.. autoclass:: packet_generator.sctp.SCTPErrorChunk
+   :members:
+```
+
+```{eval-rst}
+.. autoclass:: packet_generator.sctp.SCTPCookieEchoChunk
+   :members:
+```
+
+```{eval-rst}
+.. autoclass:: packet_generator.sctp.SCTPCookieAckChunk
+   :members:
+```
+
+```{eval-rst}
+.. autoclass:: packet_generator.sctp.SCTPShutdownCompleteChunk
+   :members:
+```
+
+```{eval-rst}
+.. autoclass:: packet_generator.sctp.SCTPGenericChunk
+   :members:
+```
+
+SCTP DATA chunk flag constants:
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `SCTP_DATA_FLAG_ENDING` | `0x01` | E — last (or only) fragment of a user message |
+| `SCTP_DATA_FLAG_BEGINNING` | `0x02` | B — first (or only) fragment of a user message |
+| `SCTP_DATA_FLAG_UNORDERED` | `0x04` | U — unordered delivery |
+| `SCTP_DATA_FLAG_IMMEDIATE` | `0x08` | I — immediate send (RFC 9260 §3.3.1) |
+
+For a single, complete (unfragmented) message set both B and E:
+`SCTP_DATA_FLAG_BEGINNING | SCTP_DATA_FLAG_ENDING` = `0x03`.
+
+SCTP chunk type constants:
+
+| Constant | Value |
+|----------|-------|
+| `SCTP_CHUNK_DATA` | `0` |
+| `SCTP_CHUNK_INIT` | `1` |
+| `SCTP_CHUNK_INIT_ACK` | `2` |
+| `SCTP_CHUNK_SACK` | `3` |
+| `SCTP_CHUNK_HEARTBEAT` | `4` |
+| `SCTP_CHUNK_HEARTBEAT_ACK` | `5` |
+| `SCTP_CHUNK_ABORT` | `6` |
+| `SCTP_CHUNK_SHUTDOWN` | `7` |
+| `SCTP_CHUNK_SHUTDOWN_ACK` | `8` |
+| `SCTP_CHUNK_ERROR` | `9` |
+| `SCTP_CHUNK_COOKIE_ECHO` | `10` |
+| `SCTP_CHUNK_COOKIE_ACK` | `11` |
+| `SCTP_CHUNK_SHUTDOWN_COMPLETE` | `14` |
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `IPPROTO_SCTP` | `132` | IP protocol number for SCTP (RFC 9260) |

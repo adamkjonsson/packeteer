@@ -8,7 +8,7 @@ and the standard library only.
 
 - **Ethernet II**, 802.1Q VLAN (single/QinQ), MPLS label stacks, PPPoE
 - **IPv4** (RFC 791) and **IPv6** (RFC 8200) with automatic checksums
-- **TCP**, **UDP**, **ICMPv4**, **ICMPv6** with correct pseudo-header checksums
+- **TCP**, **UDP**, **SCTP** (RFC 9260), **ICMPv4**, **ICMPv6** with correct checksums
 - **Tunnels**: IP-in-IP (RFC 2003/4213), EtherIP (RFC 3378), GRE (RFC 2784/2890) with Key, Sequence, Checksum, and TEB
 - **IPv4 and IPv6 fragmentation** in one call
 - **pcap and pcapng** file I/O with microsecond or nanosecond timestamps
@@ -19,11 +19,26 @@ and the standard library only.
 ```python
 from packet_generator import PacketBuilder
 
+# TCP
 pkt = (PacketBuilder()
     .ethernet(src_mac="aa:bb:cc:dd:ee:01", dst_mac="aa:bb:cc:dd:ee:02")
     .ip(src="10.0.0.1", dst="10.0.0.2")
     .tcp(dst_port=80)
     .payload(size=64)
+    .build()
+)
+
+# SCTP (RFC 9260) — data lives inside chunks, not a separate payload layer
+from packet_generator.sctp import SCTPDataChunk
+
+pkt = (PacketBuilder()
+    .ip(src="10.0.0.1", dst="10.0.0.2")
+    .sctp(
+        src_port=1234,
+        dst_port=9999,
+        verification_tag=0xDEADBEEF,
+        chunks=[SCTPDataChunk(tsn=0, data=b"hello sctp")],
+    )
     .build()
 )
 ```

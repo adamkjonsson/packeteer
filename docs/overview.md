@@ -15,9 +15,9 @@ addresses, IP addresses, ports, flags, payload size, and so on.  Each protocol
 layer has its own JSON key so the structure mirrors the actual packet layout.
 
 **Building** (`packeteer build`) reads that JSON file and assembles the
-packets back into a new pcap.  All checksums (IP, TCP, UDP, ICMP, GRE, …) are
-recomputed from scratch, so edits to any field automatically produce a
-byte-perfect result without manual recalculation.
+packets back into a new pcap.  All checksums (IP, TCP, UDP, SCTP CRC-32c,
+ICMP, GRE, …) are recomputed from scratch, so edits to any field
+automatically produce a byte-perfect result without manual recalculation.
 
 ## Use cases
 
