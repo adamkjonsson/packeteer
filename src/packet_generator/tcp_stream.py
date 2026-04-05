@@ -356,6 +356,8 @@ def generate_tcp_stream(
     server_rst_probability: float = 0.0,
     rst_propagation_delay: float = 0.0,
     middlebox_mtu: int | None = None,
+    stray_packet_count: int = 0,
+    stray_timing_window: int | None = None,
     packet_hooks: list[Callable[[TCPStreamPacket, int], TCPStreamPacket | None]] | None = None,
 ) -> TCPStream:
     """Generate a complete TCP stream as a sequence of :class:`TCPStreamPacket` objects.
@@ -458,6 +460,25 @@ def generate_tcp_stream(
             client retransmits after *retransmission_timeout* as
             ``RETRANS[i]``; the existing ``ACK[i]`` timestamp is shifted to
             follow the retransmit.  Defaults to ``0.0`` (no corruption).
+        stray_timing_window: Constrains when stray packets can appear.
+            When ``None`` (default) each stray timestamp is drawn uniformly
+            from the full data-transfer window.  When set to a positive
+            integer *N*, the timestamp is instead drawn from the range
+            ``[sorted_packets[ref_idx − N].ts, sorted_packets[ref_idx + N].ts]``
+            where *ref_idx* is the position of the stolen reference DATA
+            packet in the timestamp-sorted stream.  This simulates an
+            attacker who injects packets close in time to the segment they
+            are trying to hijack.
+        stray_packet_count: Number of forged packets to inject into the
+            stream, simulating a TCP hijacking attempt by a passive attacker
+            who has been sniffing the connection.  Each stray packet is
+            sent client→server using the same endpoints as the real stream
+            but with a seq/ack pair stolen from a randomly chosen surviving
+            data packet, an all-``b'x'`` payload of random size, and a
+            timestamp scattered uniformly across the data-transfer window.
+            Because the attacker cannot predict the exact timing, stray
+            packets may arrive before or after the real segment they overlap
+            with.  Defaults to ``0`` (no stray packets).
         middlebox_mtu: When set, every packet whose IP-layer size (excluding
             any Ethernet header) exceeds this value is split into IP fragments
             as if it had passed through a middlebox with a limited MTU.  All
@@ -725,6 +746,66 @@ def generate_tcp_stream(
                 packets[ack_idx] = replace(packets[ack_idx],
                                            ts_sec=ack_sec, ts_usec=ack_usec_part)
         packets.extend(additions)
+
+    # ── Stray packet injection (TCP hijacking simulation) ─────────────────────
+    if stray_packet_count:
+        data_pkts = [p for p in packets if p.label.startswith("DATA[")
+                     or p.label.startswith("CORRUPT[")]
+        if data_pkts:
+            used_ts = {_pkt_usec(p) for p in packets}
+
+            # Sorted view used to resolve the timing window (Option B).
+            # Built once; stray packets added later do not affect these bounds.
+            sorted_pkts: list[TCPStreamPacket] = []
+            ts_index: dict[int, int] = {}
+            if stray_timing_window is not None:
+                sorted_pkts = sorted(packets, key=lambda p: (p.ts_sec, p.ts_usec))
+                ts_index = {_pkt_usec(p): i for i, p in enumerate(sorted_pkts)}
+
+            default_ts_lo = min(_pkt_usec(p) for p in data_pkts)
+            default_ts_hi = max(_pkt_usec(p) for p in data_pkts)
+
+            strays: list[TCPStreamPacket] = []
+            for n in range(stray_packet_count):
+                # Steal seq/ack from a randomly chosen data packet
+                ref = random.choice(data_pkts)
+                stray_src = _TCPEndpoint(
+                    ip=client_ip, port=client_port, mac=client_mac,
+                    seq=ref.seq, ack=ref.ack, window=window,
+                )
+                stray_dst = _TCPEndpoint(
+                    ip=server_ip, port=server_port, mac=server_mac,
+                    seq=0, ack=0, window=window,
+                )
+
+                if stray_timing_window is not None:
+                    ref_idx = ts_index[_pkt_usec(ref)]
+                    lo_idx = max(0, ref_idx - stray_timing_window)
+                    hi_idx = min(len(sorted_pkts) - 1, ref_idx + stray_timing_window)
+                    ts_lo = _pkt_usec(sorted_pkts[lo_idx])
+                    ts_hi = _pkt_usec(sorted_pkts[hi_idx])
+                else:
+                    ts_lo = default_ts_lo
+                    ts_hi = default_ts_hi
+
+                payload = b'x' * random.randint(min_payload, max_payload)
+                raw = _build_packet(stray_src, stray_dst, TCP_ACK | TCP_PSH,
+                                    payload, include_ethernet, ip_ttl, None)
+                ts_sec, ts_usec = divmod(
+                    _alloc_usec(random.randint(ts_lo, ts_hi), used_ts), 1_000_000
+                )
+                strays.append(TCPStreamPacket(
+                    raw=raw,
+                    ts_sec=ts_sec,
+                    ts_usec=ts_usec,
+                    direction="c2s",
+                    flags=TCP_ACK | TCP_PSH,
+                    seq=ref.seq,
+                    ack=ref.ack,
+                    payload_len=len(payload),
+                    label=f"STRAY[{n}]",
+                ))
+            packets.extend(strays)
 
     # ── Middlebox fragmentation ───────────────────────────────────────────────
     if middlebox_mtu is not None:

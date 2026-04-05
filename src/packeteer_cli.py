@@ -480,6 +480,8 @@ _STREAM_CONFIG_KEYS: dict[str, tuple[str, type]] = {
     "server_rst_probability":         ("server_rst_probability",         float),
     "rst_propagation_delay":          ("rst_propagation_delay",          float),
     "middlebox_mtu":                  ("middlebox_mtu",                  int),
+    "stray_packet_count":             ("stray_packet_count",             int),
+    "stray_timing_window":            ("stray_timing_window",            int),
     "no_ethernet":                ("no_ethernet",                bool),
     "pcap":               ("pcap",                    str),
     "pcapng":             ("pcapng",                  str),
@@ -506,6 +508,8 @@ _STREAM_DEFAULTS = {
     "server_rst_probability":         0.0,
     "rst_propagation_delay":          0.0,
     "middlebox_mtu":                  None,
+    "stray_packet_count":             0,
+    "stray_timing_window":            None,
     "no_ethernet":                False,
     "pcap":                    None,
     "pcapng":                  None,
@@ -617,6 +621,8 @@ def _cmd_stream(args: argparse.Namespace) -> None:
             server_rst_probability=args.server_rst_probability,
             rst_propagation_delay=args.rst_propagation_delay,
             middlebox_mtu=args.middlebox_mtu,
+            stray_packet_count=args.stray_packet_count,
+            stray_timing_window=args.stray_timing_window,
             include_ethernet=not args.no_ethernet,
         )
     except (ValueError, OSError) as e:
@@ -794,6 +800,12 @@ def main():
                                help="Seconds for the RST to reach the client; client sends data during this window (default: 0.0)")
     stream_parser.add_argument("--middlebox-mtu", type=int, default=None, metavar="BYTES",
                                help="Fragment packets as if they passed through a middlebox with this IP MTU (e.g. 576, 1280, 1400). Default: no fragmentation")
+    stream_parser.add_argument("--stray-packets", type=int, default=None, metavar="N",
+                               dest="stray_packet_count",
+                               help="Number of forged TCP hijack packets to inject (default: 0)")
+    stream_parser.add_argument("--stray-timing-window", type=int, default=None, metavar="N",
+                               dest="stray_timing_window",
+                               help="Constrain each stray packet timestamp to within N packets of its reference DATA packet (default: full data-transfer window)")
     stream_parser.add_argument("--no-ethernet", action="store_true", default=False,
                                help="Omit Ethernet headers (write raw IP packets)")
     # Output (may also be provided via --config; mutual exclusivity enforced in _cmd_stream)

@@ -4,7 +4,7 @@ from __future__ import annotations
 import io
 import unittest
 
-from packet_generator.tcp_stream import generate_tcp_stream, TCPStream, TCPStreamPacket
+from packet_generator.tcp_stream import generate_tcp_stream, TCPStream, TCPStreamPacket, _pkt_usec
 from packet_generator.tcp import TCP_SYN, TCP_ACK, TCP_PSH, TCP_FIN, TCPOptions
 from packet_generator.pcap import write_pcap, LINKTYPE_ETHERNET, LINKTYPE_RAW
 
@@ -1067,6 +1067,201 @@ class TestMiddleboxFragmentation(unittest.TestCase):
         # All 5 data packets → 5 frag-0 and 5 frag-1
         self.assertEqual(frag0_count, 5)
         self.assertEqual(frag1_count, 5)
+
+
+# ── Group 17: Stray packet injection ─────────────────────────────────────────
+
+class TestStrayPackets(unittest.TestCase):
+    """Group 17: stray_packet_count injects forged TCP hijack packets."""
+
+    def _make_stream(self, **kw):
+        defaults = dict(
+            client_ip="10.0.0.1",
+            server_ip="10.0.0.2",
+            num_data_packets=10,
+            min_payload=40,
+            max_payload=200,
+            client_isn=1000,
+            server_isn=2000,
+            base_time=1_000_000.0,
+            inter_packet_gap=0.001,
+        )
+        defaults.update(kw)
+        return generate_tcp_stream(**defaults)
+
+    def test_no_strays_by_default(self):
+        """No STRAY packets when stray_packet_count=0 (default)."""
+        stream = self._make_stream()
+        self.assertEqual([p for p in stream.packets if p.label.startswith("STRAY[")], [])
+
+    def test_correct_count(self):
+        """Exactly stray_packet_count STRAY packets are produced."""
+        for n in (1, 3, 10):
+            with self.subTest(n=n):
+                stream = self._make_stream(stray_packet_count=n)
+                strays = [p for p in stream.packets if p.label.startswith("STRAY[")]
+                self.assertEqual(len(strays), n)
+
+    def test_labels_sequential(self):
+        """Stray packets are labelled STRAY[0], STRAY[1], …"""
+        n = 5
+        stream = self._make_stream(stray_packet_count=n)
+        labels = {p.label for p in stream.packets if p.label.startswith("STRAY[")}
+        self.assertEqual(labels, {f"STRAY[{i}]" for i in range(n)})
+
+    def test_direction_c2s(self):
+        """All stray packets are client→server."""
+        stream = self._make_stream(stray_packet_count=5)
+        for p in stream.packets:
+            if p.label.startswith("STRAY["):
+                self.assertEqual(p.direction, "c2s")
+
+    def test_flags_psh_ack(self):
+        """Stray packets carry PSH|ACK flags."""
+        from packet_generator.tcp import TCP_ACK, TCP_PSH
+        stream = self._make_stream(stray_packet_count=5)
+        for p in stream.packets:
+            if p.label.startswith("STRAY["):
+                self.assertEqual(p.flags, TCP_ACK | TCP_PSH)
+
+    def test_payload_all_x(self):
+        """Stray packet payloads consist entirely of b'x' bytes."""
+        stream = self._make_stream(stray_packet_count=5)
+        eth_ip_tcp = 14 + 20 + 20  # Ethernet + IPv4 + TCP (no options)
+        for p in stream.packets:
+            if not p.label.startswith("STRAY["):
+                continue
+            # Payload starts after Ethernet+IP+TCP headers
+            payload = p.raw[eth_ip_tcp:]
+            self.assertTrue(payload, "stray packet has no payload")
+            self.assertEqual(payload, b'x' * len(payload))
+
+    def test_payload_size_within_range(self):
+        """Stray payload sizes are within [min_payload, max_payload]."""
+        stream = self._make_stream(stray_packet_count=10, min_payload=50, max_payload=150)
+        eth_ip_tcp = 14 + 20 + 20
+        for p in stream.packets:
+            if p.label.startswith("STRAY["):
+                payload_len = len(p.raw) - eth_ip_tcp
+                self.assertGreaterEqual(payload_len, 50)
+                self.assertLessEqual(payload_len, 150)
+
+    def test_seq_stolen_from_data(self):
+        """Each stray packet's seq matches a real DATA packet's seq."""
+        stream = self._make_stream(stray_packet_count=10)
+        data_seqs = {p.seq for p in stream.packets if p.label.startswith("DATA[")}
+        for p in stream.packets:
+            if p.label.startswith("STRAY["):
+                self.assertIn(p.seq, data_seqs,
+                              f"{p.label} seq={p.seq} not found in data seqs")
+
+    def test_same_endpoints(self):
+        """Stray packets use the same IP/port as the real client."""
+        import struct, socket
+        stream = self._make_stream(stray_packet_count=5)
+        # Get src IP from a real DATA packet for comparison
+        ref_data = next(p for p in stream.packets if p.label.startswith("DATA["))
+        ref_src_ip = ref_data.raw[26:30]   # IPv4 src at bytes 26-29
+        ref_src_port = struct.unpack("!H", ref_data.raw[34:36])[0]
+        for p in stream.packets:
+            if not p.label.startswith("STRAY["):
+                continue
+            self.assertEqual(p.raw[26:30], ref_src_ip)
+            self.assertEqual(struct.unpack("!H", p.raw[34:36])[0], ref_src_port)
+
+    def test_timestamps_unique(self):
+        """All packet timestamps are unique after stray injection."""
+        stream = self._make_stream(stray_packet_count=10)
+        ts_list = [_pkt_usec(p) for p in stream.packets]
+        self.assertEqual(len(ts_list), len(set(ts_list)))
+
+    def test_timestamps_sorted(self):
+        """Output is sorted by timestamp after stray injection."""
+        stream = self._make_stream(stray_packet_count=10)
+        ts_list = [(p.ts_sec, p.ts_usec) for p in stream.packets]
+        self.assertEqual(ts_list, sorted(ts_list))
+
+    def test_timestamps_within_data_window(self):
+        """Stray timestamps fall within the data-transfer time window."""
+        stream = self._make_stream(stray_packet_count=20)
+        data_pkts = [p for p in stream.packets if p.label.startswith("DATA[")]
+        ts_lo = min(_pkt_usec(p) for p in data_pkts)
+        ts_hi = max(_pkt_usec(p) for p in data_pkts)
+        for p in stream.packets:
+            if p.label.startswith("STRAY["):
+                ts = _pkt_usec(p)
+                self.assertGreaterEqual(ts, ts_lo)
+                self.assertLessEqual(ts, ts_hi)
+
+    def test_stream_seq_ack_unaffected(self):
+        """Stray injection does not alter the real stream's seq/ack numbers."""
+        kw = dict(client_isn=500, server_isn=900,
+                  min_payload=100, max_payload=100,
+                  payload_distribution="fixed")
+        ref = self._make_stream(**kw)
+        stream = self._make_stream(stray_packet_count=10, **kw)
+        ref_data = [(p.seq, p.ack) for p in ref.packets if p.label.startswith("DATA[")]
+        got_data = [(p.seq, p.ack) for p in stream.packets if p.label.startswith("DATA[")]
+        self.assertEqual(ref_data, got_data)
+
+    def test_timing_window_constrains_timestamps(self):
+        """With stray_timing_window=N each stray falls within N packets of its ref."""
+        window = 2
+        stream = self._make_stream(
+            stray_packet_count=10,
+            stray_timing_window=window,
+            inter_packet_gap=0.01,   # wider gap so the window is meaningful
+        )
+        # Replicate the pre-injection sorted view the implementation uses:
+        # exclude stray packets, which were not present when bounds were computed.
+        non_strays = sorted(
+            [p for p in stream.packets if not p.label.startswith("STRAY[")],
+            key=lambda p: (p.ts_sec, p.ts_usec),
+        )
+        ts_map = {id(p): i for i, p in enumerate(non_strays)}
+
+        # For each stray, find a data packet with matching seq and check bounds
+        data_by_seq = {p.seq: p for p in stream.packets if p.label.startswith("DATA[")}
+        for stray in stream.packets:
+            if not stray.label.startswith("STRAY["):
+                continue
+            ref = data_by_seq.get(stray.seq)
+            if ref is None:
+                continue  # ref may have been filtered by RST; skip
+            ref_idx = ts_map[id(ref)]
+            lo_idx = max(0, ref_idx - window)
+            hi_idx = min(len(non_strays) - 1, ref_idx + window)
+            ts_lo = _pkt_usec(non_strays[lo_idx])
+            ts_hi = _pkt_usec(non_strays[hi_idx])
+            stray_ts = _pkt_usec(stray)
+            self.assertGreaterEqual(stray_ts, ts_lo,
+                                    f"{stray.label} ts {stray_ts} < window lo {ts_lo}")
+            self.assertLessEqual(stray_ts, ts_hi,
+                                 f"{stray.label} ts {stray_ts} > window hi {ts_hi}")
+
+    def test_timing_window_none_uses_full_window(self):
+        """Without stray_timing_window strays can appear anywhere in the data window."""
+        # Use a large stream so the full window is much wider than any local window
+        stream = self._make_stream(
+            num_data_packets=50,
+            stray_packet_count=20,
+            stray_timing_window=None,
+            inter_packet_gap=0.01,
+        )
+        strays = [p for p in stream.packets if p.label.startswith("STRAY[")]
+        self.assertEqual(len(strays), 20)
+
+    def test_zero_data_packets_no_crash(self):
+        """stray_packet_count > 0 with num_data_packets=0 produces no stray packets."""
+        stream = generate_tcp_stream(
+            client_ip="10.0.0.1",
+            server_ip="10.0.0.2",
+            num_data_packets=0,
+            stray_packet_count=5,
+            base_time=1_000_000.0,
+        )
+        strays = [p for p in stream.packets if p.label.startswith("STRAY[")]
+        self.assertEqual(strays, [])
 
 
 if __name__ == "__main__":

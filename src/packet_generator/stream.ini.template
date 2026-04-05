@@ -159,6 +159,23 @@ payload_corruption_probability = 0.0
 #   simulate slow links or high-latency paths.
 retransmission_timeout = 0.2
 
+# stray_packet_count  (default: 0)
+#   Number of forged packets to inject, simulating a TCP hijacking attempt by a
+#   passive attacker who has been sniffing the connection.  Each stray packet is
+#   sent client→server with the same IP/port endpoints as the real stream but
+#   carries an all-'x' payload of random size and a seq/ack pair stolen from a
+#   randomly chosen data packet.  Timestamps are scattered uniformly across the
+#   data-transfer window so stray packets may arrive before or after the real
+#   segments they overlap with.  Labelled STRAY[n] in the output.
+# stray_packet_count = 3
+
+# stray_timing_window  (default: unset — full data-transfer window)
+#   When set, each stray packet's timestamp is constrained to within N packets
+#   of its reference DATA packet in the timestamp-sorted stream, i.e. bounded
+#   by the timestamps of the N-th packet before and after the reference.
+#   Simulates an attacker who injects close in time to the segment they target.
+# stray_timing_window = 3
+
 # middlebox_mtu  (default: unset — no fragmentation)
 #   When set, every packet whose IP-layer size (excluding the Ethernet header)
 #   exceeds this value is split into IP fragments, simulating transit through a

@@ -4,7 +4,15 @@ All notable changes to packeteer are recorded in this file.
 
 ---
 
-## Unreleased — 2026-04-03
+## Unreleased — 2026-04-05
+
+### TCP stream: stray packet injection (TCP hijacking simulation)
+- Added `stray_packet_count` parameter to `generate_tcp_stream()` and `--stray-packets N` CLI flag.  Injects forged client→server packets that reuse seq/ack values stolen from randomly chosen data segments, carrying an all-`x` payload of random size.  Simulates a passive attacker attempting to hijack a connection.  Stray packets are labelled `STRAY[n]`.
+- Added `stray_timing_window` parameter and `--stray-timing-window N` CLI flag.  When set, each stray packet's timestamp is constrained to within N packets of its reference DATA packet in the timestamp-sorted stream, simulating an attacker who injects close in time to the segment they are targeting.  Defaults to `None` (full data-transfer window).
+
+---
+
+## 2026-04-03
 
 ### TCP stream: middlebox MTU fragmentation
 - Added `middlebox_mtu` parameter to `generate_tcp_stream()` and `--middlebox-mtu` CLI flag.  Any packet whose IP-layer size exceeds the configured MTU is split into IP fragments (IPv4 Flags/Fragment Offset; IPv6 Fragment Extension Header) as if it had passed through a low-MTU router or VPN tunnel.  Fragment packets are labelled `FRAG[<orig>][<n>]`.
