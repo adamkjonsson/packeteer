@@ -53,6 +53,7 @@ from packet_generator.tcp import TCPHeader
 from packet_generator.udp import UDPHeader
 from packet_generator.icmp import ICMPHeader
 from packet_generator.icmpv6 import ICMPv6Header
+from packet_generator.sctp import SCTPHeader
 from packet_generator.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW
 
 from packet_parser.pcap import PcapFileHeader, read_pcap
@@ -68,12 +69,14 @@ from packet_parser.tcp import packet_parser as _tcp_parser
 from packet_parser.udp import packet_parser as _udp_parser
 from packet_parser.icmp import packet_parser as _icmp_parser
 from packet_parser.icmpv6 import packet_parser as _icmpv6_parser
+from packet_parser.sctp import packet_parser as _sctp_parser
 
 _TRANSPORT_PARSERS = {
     socket.IPPROTO_TCP:    _tcp_parser,
     socket.IPPROTO_UDP:    _udp_parser,
     socket.IPPROTO_ICMP:   _icmp_parser,
     socket.IPPROTO_ICMPV6: _icmpv6_parser,
+    socket.IPPROTO_SCTP:   _sctp_parser,
 }
 
 
@@ -125,7 +128,7 @@ class ParsedPacket:
     gre:       GREHeader | None = None
     etherip:   EtherIPHeader | None = None
     tunneled:  "ParsedPacket | None" = None
-    transport: TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | None = None
+    transport: TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | SCTPHeader | None = None
     payload:   bytes = field(default=b"")
     ts_sec:    int = 0
     ts_frac:   int = 0

@@ -1,11 +1,54 @@
-"""RFC 1071 internet checksum utility.
+"""Checksum utilities for network protocols.
 
-This module provides the one's-complement checksum algorithm used by IPv4,
-TCP, UDP, ICMP, and ICMPv6 to detect data corruption in transit.
+This module provides:
+
+* :func:`ones_complement_checksum` — RFC 1071 one's-complement checksum used
+  by IPv4, TCP, UDP, ICMP, and ICMPv6.
+* :func:`crc32c` — CRC-32c (Castagnoli) checksum used by SCTP (RFC 9260).
 """
 from __future__ import annotations
 
 import struct
+
+
+def _make_crc32c_table() -> list[int]:
+    """Build the 256-entry lookup table for CRC-32c (Castagnoli polynomial)."""
+    table = []
+    for i in range(256):
+        crc = i
+        for _ in range(8):
+            if crc & 1:
+                crc = (crc >> 1) ^ 0x82F63B78
+            else:
+                crc >>= 1
+        table.append(crc)
+    return table
+
+
+_CRC32C_TABLE: list[int] = _make_crc32c_table()
+
+
+def crc32c(data: bytes) -> int:
+    """Compute the CRC-32c (Castagnoli) checksum over *data*.
+
+    Uses the Castagnoli polynomial (0x1EDC6F41, reflected form 0x82F63B78).
+    This is the checksum algorithm mandated by SCTP (RFC 9260 §6.8).
+
+    Args:
+        data: The bytes to checksum.
+
+    Returns:
+        A 32-bit unsigned integer in the range ``[0, 2**32 - 1]``.
+
+    Example:
+        >>> from packet_generator.checksum import crc32c
+        >>> crc32c(b'\\x00' * 12) != 0
+        True
+    """
+    crc = 0xFFFFFFFF
+    for b in data:
+        crc = (crc >> 8) ^ _CRC32C_TABLE[(crc ^ b) & 0xFF]
+    return crc ^ 0xFFFFFFFF
 
 
 def ones_complement_checksum(data: bytes) -> int:

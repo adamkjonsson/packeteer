@@ -29,8 +29,77 @@ from packet_generator.tcp import TCPOptions
 from packet_generator.pcap import write_pcap, write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW
 from packet_generator.tcp_stream import generate_tcp_stream
 from packet_generator.pppoe import PPPoETag, PPPOE_CODE_SESSION
+from packet_generator.sctp import (
+    SCTPDataChunk, SCTPInitChunk, SCTPInitAckChunk, SCTPSackChunk,
+    SCTPHeartbeatChunk, SCTPHeartbeatAckChunk, SCTPAbortChunk,
+    SCTPShutdownChunk, SCTPShutdownAckChunk, SCTPErrorChunk,
+    SCTPCookieEchoChunk, SCTPCookieAckChunk, SCTPShutdownCompleteChunk,
+    SCTPGenericChunk, SCTPChunk,
+)
 from packet_parser.parser import parse_pcap_file
 from replacer import SanitiseOptions, sanitise
+
+
+def _parse_sctp_chunk(spec: dict, packet_num: int) -> SCTPChunk:
+    """Convert one JSON chunk dict to an SCTP chunk dataclass."""
+    chunk_type = spec.get("type", "generic")
+
+    try:
+        if chunk_type == "data":
+            return SCTPDataChunk(
+                tsn=spec.get("tsn", 0),
+                stream_id=spec.get("stream_id", 0),
+                stream_seq=spec.get("stream_seq", 0),
+                ppid=spec.get("ppid", 0),
+                data=bytes.fromhex(spec.get("data", "")),
+                flags=spec.get("flags", 0x03),
+            )
+        if chunk_type in ("init", "init_ack"):
+            cls = SCTPInitChunk if chunk_type == "init" else SCTPInitAckChunk
+            return cls(
+                initiate_tag=spec.get("initiate_tag", 0),
+                a_rwnd=spec.get("a_rwnd", 131072),
+                outbound_streams=spec.get("outbound_streams", 1),
+                inbound_streams=spec.get("inbound_streams", 1),
+                initial_tsn=spec.get("initial_tsn", 0),
+                params=bytes.fromhex(spec.get("params", "")),
+            )
+        if chunk_type == "sack":
+            return SCTPSackChunk(
+                cum_tsn_ack=spec.get("cum_tsn_ack", 0),
+                a_rwnd=spec.get("a_rwnd", 131072),
+                gap_ack_blocks=[tuple(b) for b in spec.get("gap_ack_blocks", [])],
+                dup_tsns=list(spec.get("dup_tsns", [])),
+            )
+        if chunk_type in ("heartbeat", "heartbeat_ack"):
+            cls = SCTPHeartbeatChunk if chunk_type == "heartbeat" else SCTPHeartbeatAckChunk
+            return cls(info=bytes.fromhex(spec.get("info", "")))
+        if chunk_type == "abort":
+            return SCTPAbortChunk(
+                causes=bytes.fromhex(spec.get("causes", "")),
+                flags=spec.get("flags", 0),
+            )
+        if chunk_type == "shutdown":
+            return SCTPShutdownChunk(cum_tsn_ack=spec.get("cum_tsn_ack", 0))
+        if chunk_type == "shutdown_ack":
+            return SCTPShutdownAckChunk()
+        if chunk_type == "error":
+            return SCTPErrorChunk(causes=bytes.fromhex(spec.get("causes", "")))
+        if chunk_type == "cookie_echo":
+            return SCTPCookieEchoChunk(cookie=bytes.fromhex(spec.get("cookie", "")))
+        if chunk_type == "cookie_ack":
+            return SCTPCookieAckChunk()
+        if chunk_type == "shutdown_complete":
+            return SCTPShutdownCompleteChunk(flags=spec.get("flags", 0))
+        # generic
+        return SCTPGenericChunk(
+            chunk_type=spec.get("chunk_type", 0),
+            flags=spec.get("flags", 0),
+            value=bytes.fromhex(spec.get("value", "")),
+        )
+    except (ValueError, TypeError) as e:
+        print(f"Error: packet {packet_num} SCTP chunk ({chunk_type!r}) decode error: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 def _parse_tcp_options(spec: dict | None) -> TCPOptions | None:
@@ -102,6 +171,17 @@ def _dispatch_transport(
             code=transport.get("code", 0),
             identifier=transport.get("identifier", 1),
             sequence=transport.get("sequence", 1),
+        )
+    if proto_lower == "sctp":
+        chunks = [
+            _parse_sctp_chunk(c, packet_num)
+            for c in transport.get("chunks", [])
+        ]
+        return b.sctp(
+            src_port=transport.get("src_port", 0),
+            dst_port=transport.get("dst_port", 0),
+            verification_tag=transport.get("verification_tag", 0),
+            chunks=chunks or None,
         )
     print(
         f"Error: packet {packet_num} {context}unknown protocol '{proto_lower}'",

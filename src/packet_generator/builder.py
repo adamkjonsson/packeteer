@@ -127,6 +127,7 @@ from .pppoe import (
     PPPOE_CODE_SESSION,
     build_pppoe_header,
 )
+from .sctp import SCTPHeader, SCTPChunk, IPPROTO_SCTP, build_sctp_packet
 
 # ── protocol-number helpers ───────────────────────────────────────────────────
 
@@ -147,6 +148,7 @@ _IP_PROTO_MAP: dict[type, int] = {
     IPv6Header:    41,  # IPv6-in-IPv4 (RFC 4213)
     EtherIPHeader: IPPROTO_ETHERIP,  # EtherIP (RFC 3378)
     GREHeader:     IPPROTO_GRE,      # GRE (RFC 2784)
+    SCTPHeader:    IPPROTO_SCTP,     # SCTP (RFC 9260)
 }
 
 # EtherType that a GRE header should advertise based on the next layer type
@@ -510,6 +512,57 @@ class PacketBuilder:
         ))
         return self
 
+    def sctp(
+        self,
+        *,
+        src_port: int = 0,
+        dst_port: int = 0,
+        verification_tag: int = 0,
+        chunks: list[SCTPChunk] | None = None,
+    ) -> "PacketBuilder":
+        """Append an SCTP transport header and chunk list (RFC 9260).
+
+        Unlike TCP and UDP, SCTP carries its data inside typed *chunks* rather
+        than as a separate payload layer.  Set :attr:`~.SCTPDataChunk.data` on
+        each :class:`~.SCTPDataChunk` directly; do **not** call
+        :meth:`payload` after :meth:`sctp`.
+
+        The CRC-32c checksum (Castagnoli, RFC 9260 §6.8) is computed
+        automatically at :meth:`build` time.
+
+        Args:
+            src_port: Source port number.
+            dst_port: Destination port number.
+            verification_tag: 32-bit Verification Tag negotiated during
+                the handshake.  Defaults to ``0``.
+            chunks: List of :data:`~.SCTPChunk` objects to encode.  When
+                ``None`` a single empty :class:`~.SCTPDataChunk` is used.
+
+        Example::
+
+            from packet_generator import PacketBuilder
+            from packet_generator.sctp import SCTPDataChunk
+
+            pkt = (PacketBuilder()
+                .ethernet()
+                .ip(src="10.0.0.1", dst="10.0.0.2")
+                .sctp(
+                    src_port=1234,
+                    dst_port=9999,
+                    verification_tag=0xDEADBEEF,
+                    chunks=[SCTPDataChunk(tsn=1, data=b"hello sctp")],
+                )
+                .build()
+            )
+        """
+        self._layers.append(SCTPHeader(
+            src_port=src_port,
+            dst_port=dst_port,
+            verification_tag=verification_tag,
+            chunks=chunks or [],
+        ))
+        return self
+
     def payload(self, *, size: int = 0, data: bytes | None = None) -> "PacketBuilder":
         """Set the packet payload.
 
@@ -602,6 +655,10 @@ class PacketBuilder:
                 ip = self._find_ip_before(i)
                 data = build_icmpv6_header(layer, data, ip.src, ip.dst) + data
 
+            elif isinstance(layer, SCTPHeader):
+                # SCTP data lives inside chunks; ignore downstream payload bytes.
+                data = build_sctp_packet(layer)
+
             elif isinstance(layer, IPHeader):
                 proto = _ip_proto_for(next_layer) if next_layer else 0
                 data = build_ip_header(self._clone_ip(layer, proto), data) + data
@@ -676,7 +733,7 @@ class PacketBuilder:
 
         has_ip = any(isinstance(l, (IPHeader, IPv6Header)) for l in self._layers)
         has_transport = any(
-            isinstance(l, (TCPHeader, UDPHeader, ICMPHeader, ICMPv6Header))
+            isinstance(l, (TCPHeader, UDPHeader, ICMPHeader, ICMPv6Header, SCTPHeader))
             for l in self._layers
         )
         if not has_ip:

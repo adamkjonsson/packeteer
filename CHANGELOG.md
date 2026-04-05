@@ -6,6 +6,17 @@ All notable changes to packeteer are recorded in this file.
 
 ## Unreleased — 2026-04-05
 
+### SCTP support (RFC 9260)
+- Added `SCTPHeader` dataclass and 13 typed chunk dataclasses (`SCTPDataChunk`, `SCTPInitChunk`, `SCTPInitAckChunk`, `SCTPSackChunk`, `SCTPHeartbeatChunk`, `SCTPHeartbeatAckChunk`, `SCTPAbortChunk`, `SCTPShutdownChunk`, `SCTPShutdownAckChunk`, `SCTPErrorChunk`, `SCTPCookieEchoChunk`, `SCTPCookieAckChunk`, `SCTPShutdownCompleteChunk`) plus `SCTPGenericChunk` for unknown types.
+- Added `build_sctp_packet()` in `packet_generator.sctp`: encodes all chunk types to wire format, pads to 4-byte boundaries, and computes the CRC-32c (Castagnoli) checksum per RFC 9260 §6.8.
+- Added `crc32c()` to `packet_generator.checksum`: pure-Python CRC-32c using a precomputed 256-entry lookup table (Castagnoli polynomial 0x82F63B78).
+- Added `PacketBuilder.sctp()` fluent method: appends an SCTP transport layer to the builder stack; IP protocol number 132 (`IPPROTO_SCTP`) set automatically.
+- Added SCTP parser in `packet_parser.sctp`: decodes the 12-byte common header and all chunk types; unknown types fall back to `SCTPGenericChunk`; checksum is read but not verified.
+- Registered `socket.IPPROTO_SCTP` in `_TRANSPORT_PARSERS` so `parse_packet` / `parse_pcap_file` handle SCTP automatically.
+- Added SCTP serialisation to `packet_parser.to_config`: `_serialise_sctp_chunk()` converts each chunk type to a JSON-compatible dict; `_apply_transport()` and `update_config()` extended.
+- Added `"sctp"` dispatch branch to `packeteer_cli._dispatch_transport()` and `_parse_sctp_chunk()` helper for building SCTP packets from JSON configs.
+- 69 new tests in `test_sctp.py` covering CRC-32c, all chunk encodings, multi-chunk packets, `PacketBuilder` integration, parser round-trips, `parse_packet` integration, and `to_config` serialisation.
+
 ### TCP stream: stray packet injection (TCP hijacking simulation)
 - Added `stray_packet_count` parameter to `generate_tcp_stream()` and `--stray-packets N` CLI flag.  Injects forged client→server packets that reuse seq/ack values stolen from randomly chosen data segments, carrying an all-`x` payload of random size.  Simulates a passive attacker attempting to hijack a connection.  Stray packets are labelled `STRAY[n]`.
 - Added `stray_timing_window` parameter and `--stray-timing-window N` CLI flag.  When set, each stray packet's timestamp is constrained to within N packets of its reference DATA packet in the timestamp-sorted stream, simulating an attacker who injects close in time to the segment they are targeting.  Defaults to `None` (full data-transfer window).

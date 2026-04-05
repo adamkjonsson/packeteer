@@ -8,6 +8,10 @@ to `build` for replay;
 data drawn from IANA-reserved ranges;
 `stream` generates a complete synthetic TCP stream directly to pcap or pcapng.
 
+Supported transport protocols for `build` / `parse`: TCP, UDP, SCTP (RFC 9260),
+ICMPv4, ICMPv6.  See {doc}`json-config` for the JSON format, including the
+SCTP chunk structure.
+
 ---
 
 ## `build`

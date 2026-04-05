@@ -215,7 +215,7 @@ nested `"gre"` key with `"protocol": "gre"` in the inner `"network"` spec.
 |-------|----------|-------------|
 | `src` | yes | Source IP address (IPv4 dotted-decimal or IPv6 colon-hex) |
 | `dst` | yes | Destination IP address in the same format |
-| `protocol` | yes | `"tcp"`, `"udp"`, `"icmp"`, `"icmpv6"`, `"gre"`, `"etherip"`, or `"ipip"` |
+| `protocol` | yes | `"tcp"`, `"udp"`, `"sctp"`, `"icmp"`, `"icmpv6"`, `"gre"`, `"etherip"`, or `"ipip"` |
 | `ttl` | no (default `64`) | TTL (IPv4) / Hop Limit (IPv6) |
 | `tos` | no (default `0`) | IPv4 Type of Service / DSCP byte |
 | `identification` | no (default `0`) | IPv4 16-bit packet identification |
@@ -255,6 +255,63 @@ are ignored when `src` is an IPv6 address and vice versa.
 TCP flag bit values: `TCP_FIN`=1, `TCP_SYN`=2, `TCP_RST`=4, `TCP_PSH`=8,
 `TCP_ACK`=16, `TCP_URG`=32, `TCP_ECE`=64, `TCP_CWR`=128.  Add values to
 combine (e.g. `24` for PSH+ACK).
+
+---
+
+(json-config-sctp)=
+## SCTP transport
+
+When `network.protocol` is `"sctp"` the `transport` object has a different
+shape — SCTP data lives inside typed **chunks** rather than in a separate
+`payload` key.  Do not include a `payload` key for SCTP packets.
+
+```json
+"network":   { "src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "sctp", "ttl": 64 },
+"transport": {
+  "src_port": 1234,
+  "dst_port": 9999,
+  "verification_tag": 3735928559,
+  "chunks": [
+    {
+      "type":       "data",
+      "flags":      3,
+      "tsn":        0,
+      "stream_id":  0,
+      "stream_seq": 0,
+      "ppid":       0,
+      "data":       "68656c6c6f2073637470"
+    }
+  ]
+}
+```
+
+**SCTP transport fields:**
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `src_port` | `0` | SCTP source port (16-bit) |
+| `dst_port` | `0` | SCTP destination port (16-bit) |
+| `verification_tag` | `0` | Verification Tag negotiated during the handshake (32-bit) |
+| `chunks` | `[]` | Array of chunk objects (see below).  An empty array produces a single empty DATA chunk. |
+
+**Chunk object fields by type:**
+
+| `type` | Extra fields |
+|--------|-------------|
+| `"data"` | `tsn` (int), `stream_id` (int), `stream_seq` (int), `ppid` (int), `data` (hex string), `flags` (int: B=2, E=1, U=4) |
+| `"init"` / `"init_ack"` | `initiate_tag`, `a_rwnd`, `outbound_streams`, `inbound_streams`, `initial_tsn` (all ints); `params` (hex string, optional) |
+| `"sack"` | `cum_tsn_ack`, `a_rwnd` (ints); `gap_ack_blocks` (array of `[start, end]`); `dup_tsns` (array of ints) |
+| `"heartbeat"` / `"heartbeat_ack"` | `info` (hex string) |
+| `"abort"` | `flags` (int); `causes` (hex string, optional) |
+| `"shutdown"` | `cum_tsn_ack` (int) |
+| `"shutdown_ack"` | *(no fields)* |
+| `"error"` | `causes` (hex string, optional) |
+| `"cookie_echo"` | `cookie` (hex string) |
+| `"cookie_ack"` | *(no fields)* |
+| `"shutdown_complete"` | `flags` (int) |
+| `"generic"` | `chunk_type` (int), `flags` (int), `value` (hex string) |
+
+The CRC-32c checksum (Castagnoli, RFC 9260 §6.8) is computed automatically.
 
 ---
 

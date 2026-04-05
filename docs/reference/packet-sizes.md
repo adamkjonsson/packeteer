@@ -24,6 +24,11 @@ common layer stacks.
 | TCP SACK block | +8 per block | Left edge (4) + Right edge (4) |
 | TCP Timestamps option | +10 | Kind (1) + Len (1) + TSval (4) + TSecr (4) |
 | UDP | 8 | Src port (2) + Dst port (2) + Length (2) + Checksum (2) |
+| SCTP common header | 12 | Src port (2) + Dst port (2) + Verification Tag (4) + CRC-32c checksum (4) |
+| SCTP chunk header | 4 per chunk | Type (1) + Flags (1) + Length (2); each chunk padded to 4-byte boundary |
+| SCTP DATA chunk (fixed) | 16 | 4 chunk header + TSN (4) + Stream ID (2) + Stream Seq (2) + PPID (4) |
+| SCTP INIT / INIT ACK (fixed) | 20 | 4 chunk header + Initiate Tag (4) + a_rwnd (4) + streams (2+2) + ISN (4) |
+| SCTP SACK (fixed) | 16 | 4 chunk header + Cum TSN (4) + a_rwnd (4) + gap/dup counts (2+2) |
 | ICMPv4 | 8 | Type (1) + Code (1) + Checksum (2) + ID (2) + Seq (2) |
 | ICMPv6 | 8 | Same layout as ICMPv4 |
 | EtherIP | 2 | Version+reserved (2); IP protocol 97 |

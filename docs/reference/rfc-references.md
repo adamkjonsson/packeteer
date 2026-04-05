@@ -72,6 +72,9 @@ RFCs implemented or referenced by this library.
 * - [RFC 8200](https://datatracker.ietf.org/doc/html/rfc8200)
   - Internet Protocol Version 6 (IPv6, obsoletes 2460)
   - `IPv6Header`, `fragment_ipv6`
+* - [RFC 9260](https://datatracker.ietf.org/doc/html/rfc9260)
+  - Stream Control Transmission Protocol (SCTP)
+  - `SCTPHeader` and all chunk dataclasses; `IPPROTO_SCTP`; CRC-32c checksum (§6.8)
 * - [IEEE 802.1Q](https://standards.ieee.org/ieee/802.1Q)
   - VLAN Tagging
   - `VLANTag`
