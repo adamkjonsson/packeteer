@@ -1,16 +1,32 @@
-# TCP Stream Generation
+# Stream Generation
 
-`generate_tcp_stream` produces a complete, realistic TCP connection as a
-sequence of byte-accurate packets: three-way handshake, data transfer, and
-four-way teardown.  Sequence and acknowledgement numbers are computed
-correctly for every packet, including 32-bit wrap-around.
+The stream generators produce complete, byte-accurate packet sequences for TCP,
+UDP, and SCTP traffic.  Each stream can be written directly to a pcap or pcapng
+file, or inspected packet-by-packet before writing.
 
-The stream can be written directly to a pcap or pcapng file, or accessed
-packet-by-packet for inspection or error injection before writing.
+Choose the generator that matches the transport protocol you need:
+
+| Generator | Protocol | Description |
+|-----------|----------|-------------|
+| `generate_tcp_stream` | TCP | Three-way handshake, data transfer, four-way teardown |
+| `generate_udp_stream` | UDP | Datagram sequence (client→server only, no connection state) |
+| `generate_sctp_stream` | SCTP | Full association: 4-way handshake, DATA+SACK pairs, graceful shutdown |
+
+All three generators share the same core parameters (`client_ip`, `server_ip`,
+`num_data_packets`, `inter_packet_gap`, `middlebox_mtu`, …) and return a stream
+object with `to_pcap_tuples()`, `client_packets()`, and `server_packets()`.
+
+From the CLI, use `packeteer stream --protocol tcp|udp|sctp`.
 
 ---
 
-## Quick example
+## TCP stream
+
+`generate_tcp_stream` produces a complete TCP connection as a sequence of
+byte-accurate packets.  Sequence and acknowledgement numbers are computed
+correctly for every packet, including 32-bit wrap-around.
+
+### Quick example
 
 ```python
 from packet_generator.tcp_stream import generate_tcp_stream
@@ -27,9 +43,9 @@ write_pcap(stream.to_pcap_tuples(), path="out.pcap")
 
 ---
 
-## Packet sequence
+### Packet sequence
 
-The baseline stream contains `2 * num_data_packets + 7` packets in this order:
+The baseline TCP stream contains `2 * num_data_packets + 7` packets in this order:
 
 | # | Sender | Flags | Label |
 |---|--------|-------|-------|
@@ -439,6 +455,134 @@ write_pcap(stream.to_pcap_tuples(), path="retransmit.pcap")
 
 ---
 
+## UDP stream
+
+`generate_udp_stream` produces a sequence of client-to-server UDP datagrams —
+suitable for simulating DNS queries, TFTP, syslog, or any other unidirectional
+datagram flow.  There is no handshake or teardown; all packets carry the
+direction `"c2s"`.
+
+### Packet sequence
+
+The stream contains exactly `num_data_packets` packets, each labelled
+`DATA[0]`, `DATA[1]`, … .
+
+### Quick example
+
+```python
+from packet_generator.udp_stream import generate_udp_stream
+from packet_generator import write_pcap
+
+stream = generate_udp_stream(
+    client_ip="10.0.0.1",
+    server_ip="10.0.0.2",
+    server_port=53,
+    num_data_packets=5,
+)
+write_pcap(stream.to_pcap_tuples(), path="dns_queries.pcap")
+```
+
+### Inspecting the stream
+
+`UDPStream.packets` is a list of `UDPStreamPacket` objects.  Each packet has
+the same `raw`, `ts_sec`, `ts_usec`, `direction`, `payload_len`, and `label`
+fields as its TCP counterpart.
+
+```python
+for pkt in stream.packets:
+    print(f"{pkt.label}  payload={pkt.payload_len}B")
+```
+
+### Full API reference
+
+```{eval-rst}
+.. autofunction:: packet_generator.udp_stream.generate_udp_stream
+```
+
+```{eval-rst}
+.. autoclass:: packet_generator.udp_stream.UDPStream
+   :members:
+```
+
+```{eval-rst}
+.. autoclass:: packet_generator.udp_stream.UDPStreamPacket
+```
+
+---
+
+## SCTP stream
+
+`generate_sctp_stream` produces a complete SCTP association with a four-way
+handshake, data transfer, and graceful shutdown, matching RFC 9260.
+Verification tags, TSNs, CRC-32c checksums, and State Cookie parameters are
+all computed correctly.
+
+### Packet sequence
+
+The stream contains `2 * num_data_packets + 7` packets in this order:
+
+| Phase | Direction | Chunk | Label |
+|-------|-----------|-------|-------|
+| Handshake | c2s | INIT | `"INIT"` |
+| Handshake | s2c | INIT ACK | `"INIT-ACK"` |
+| Handshake | c2s | COOKIE ECHO | `"COOKIE-ECHO"` |
+| Handshake | s2c | COOKIE ACK | `"COOKIE-ACK"` |
+| Data (×N) | c2s | DATA | `"DATA[0]"` … `"DATA[N-1]"` |
+| Data (×N) | s2c | SACK | `"SACK[0]"` … `"SACK[N-1]"` |
+| Shutdown | c2s | SHUTDOWN | `"SHUTDOWN"` |
+| Shutdown | s2c | SHUTDOWN ACK | `"SHUTDOWN-ACK"` |
+| Shutdown | c2s | SHUTDOWN COMPLETE | `"SHUTDOWN-COMPLETE"` |
+
+Verification tag rules (RFC 9260 §5.1): the INIT is sent with vtag=0; all
+subsequent client→server packets carry the server's Initiate Tag, and all
+server→client packets carry the client's Initiate Tag.
+
+### Quick example
+
+```python
+from packet_generator.sctp_stream import generate_sctp_stream
+from packet_generator import write_pcap
+
+stream = generate_sctp_stream(
+    client_ip="10.0.0.1",
+    server_ip="10.0.0.2",
+    server_port=9999,
+    num_data_packets=10,
+    payload_distribution="bimodal",
+)
+write_pcap(stream.to_pcap_tuples(), path="sctp_flow.pcap")
+```
+
+### Inspecting the stream
+
+`SCTPStream.packets` is a list of `SCTPStreamPacket` objects.  Each packet
+has the same `raw`, `ts_sec`, `ts_usec`, `direction`, `payload_len`, and
+`label` fields as the TCP/UDP stream packets, plus a `tsn` field that holds
+the DATA chunk TSN (0 for control packets).
+
+```python
+for pkt in stream.packets:
+    tsn_str = f"  tsn={pkt.tsn}" if pkt.label.startswith("DATA") else ""
+    print(f"{pkt.label:20s}  {pkt.direction}  payload={pkt.payload_len}B{tsn_str}")
+```
+
+### Full API reference
+
+```{eval-rst}
+.. autofunction:: packet_generator.sctp_stream.generate_sctp_stream
+```
+
+```{eval-rst}
+.. autoclass:: packet_generator.sctp_stream.SCTPStream
+   :members:
+```
+
+```{eval-rst}
+.. autoclass:: packet_generator.sctp_stream.SCTPStreamPacket
+```
+
+---
+
 ## Config file
 
 All `packeteer stream` parameters can be stored in an INI file and passed
@@ -462,19 +606,20 @@ and `server_rst` (CLI: `--server-rst`).
 client_ip = 10.0.0.1
 server_ip = 10.0.0.2
 pcap = out.pcap
+protocol = tcp          # tcp (default), udp, or sctp
 packets = 50
 distribution = bimodal
 gap = 0.002
 gap_jitter = 0.001
-psh_probability = 0.3
+psh_probability = 0.3   # TCP only
 packet_loss = 0.02
-retransmission_probability = 0.05
-retransmission_timeout = 0.2
-payload_corruption_probability = 0.02
-server_rst_probability = 0.0
-rst_propagation_delay = 0.0
+retransmission_probability = 0.05   # TCP only
+retransmission_timeout = 0.2        # TCP only
+payload_corruption_probability = 0.02  # TCP only
+server_rst_probability = 0.0           # TCP only
+rst_propagation_delay = 0.0            # TCP only
 middlebox_mtu = 576
-stray_packet_count = 3
+stray_packet_count = 3  # TCP only
 ```
 
 ---
@@ -482,11 +627,22 @@ stray_packet_count = 3
 ## CLI
 
 The `packeteer stream` subcommand exposes the most commonly used parameters
-without writing any Python.  See {doc}`cli` for the full flag reference.
+without writing any Python.  Use `--protocol` to select the transport (default:
+`tcp`).  See {doc}`cli` for the full flag reference.
 
 ```bash
-# 50-packet stream to a pcap file
+# TCP: 50-packet HTTP session
 packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 --packets 50 --pcap out.pcap
+
+# UDP: DNS-like flow (5 datagrams to port 53)
+packeteer stream --protocol udp \
+    --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
+    --server-port 53 --packets 5 --pcap dns.pcap
+
+# SCTP: full association with bimodal payload sizes
+packeteer stream --protocol sctp \
+    --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
+    --server-port 9999 --packets 20 --distribution bimodal --pcap sctp.pcap
 
 # HTTPS session with bimodal payload distribution, written as pcapng
 packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \

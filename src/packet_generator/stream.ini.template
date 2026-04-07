@@ -34,8 +34,8 @@ server_ip = 10.0.0.2
 client_port = 54321
 
 # server_port  (default: 80)
-#   TCP destination port used by the server (e.g. 80 for HTTP, 443 for HTTPS).
-#   Valid range: 1–65535.
+#   Destination port used by the server (e.g. 80 for HTTP, 443 for HTTPS,
+#   53 for DNS/UDP, 9999 for SCTP applications).  Valid range: 1–65535.
 server_port = 80
 
 # client_mac  (default: 00:00:00:00:00:01)
@@ -61,10 +61,30 @@ pcap = out.pcap
 
 # ── Stream shape ───────────────────────────────────────────────────────────────
 
+# protocol  (default: tcp)
+#   Transport protocol to use for the generated stream.  Options:
+#
+#     tcp   — three-way handshake, data transfer, four-way teardown.
+#             Total packets: 2 * packets + 7 (plus any anomaly packets).
+#
+#     udp   — datagram sequence, client→server only, no connection state.
+#             Total packets: packets.
+#
+#     sctp  — full SCTP association per RFC 9260: four-way handshake
+#             (INIT / INIT-ACK / COOKIE-ECHO / COOKIE-ACK), data transfer
+#             (DATA + SACK pairs), and graceful shutdown.
+#             Total packets: 2 * packets + 7.
+#
+#   TCP-only options (psh_probability, packet_loss, retransmission_probability,
+#   retransmission_timeout, server_rst_probability, rst_propagation_delay,
+#   payload_corruption_probability, stray_packet_count, stray_timing_window,
+#   window) are silently ignored for udp and sctp.
+protocol = tcp
+
 # packets  (default: 10)
-#   Number of data segments (PSH+ACK) sent by the client.  The total packet
-#   count in the capture is 2 * packets + 7 (handshake + data + server ACKs
-#   + teardown).
+#   Number of data segments sent by the client.  For TCP and SCTP the total
+#   packet count in the capture is 2 * packets + 7 (handshake + data + server
+#   ACKs/SACKs + teardown).  For UDP it is exactly packets.
 packets = 10
 
 # min_payload  (default: 40)
@@ -107,13 +127,13 @@ gap_jitter = 0.0
 
 # ── Realism ────────────────────────────────────────────────────────────────────
 
-# psh_probability  (default: 0.5)
+# psh_probability  (default: 0.5)  [TCP only]
 #   Probability (0.0–1.0) that the TCP PSH flag is set on each data segment.
 #   Real stacks set PSH to signal the receiver to flush its buffer immediately,
 #   but not on every segment.  Use 1.0 to always set PSH, 0.0 to never set it.
 psh_probability = 0.5
 
-# packet_loss  (default: 0.0)
+# packet_loss  (default: 0.0)  [TCP only]
 #   Probability (0.0–1.0) that any individual packet is silently omitted from
 #   the capture, simulating loss on the wire.  Sequence and acknowledgement
 #   numbers are computed as if every packet was transmitted, so gaps in sequence
@@ -121,7 +141,7 @@ psh_probability = 0.5
 #   Example: 0.02 drops roughly 2 % of packets.
 packet_loss = 0.0
 
-# retransmission_probability  (default: 0.0)
+# retransmission_probability  (default: 0.0)  [TCP only]
 #   Probability (0.0–1.0) that each data segment triggers a spurious
 #   retransmission.  The retransmit carries the same sequence number, flags,
 #   and payload as the original segment but is timestamped at the original
@@ -130,7 +150,7 @@ packet_loss = 0.0
 #   segments.
 retransmission_probability = 0.0
 
-# server_rst_probability  (default: 0.0)
+# server_rst_probability  (default: 0.0)  [TCP only]
 #   Probability (0.0–1.0) that the server application terminates mid-stream,
 #   causing the OS to send a TCP RST.  A random split point k is chosen; data
 #   packets 0..k are exchanged normally with ACKs; the server then sends a RST
@@ -138,13 +158,13 @@ retransmission_probability = 0.0
 #   (rst_propagation_delay), the client keeps sending data with no ACKs.
 server_rst_probability = 0.0
 
-# rst_propagation_delay  (default: 0.0)
+# rst_propagation_delay  (default: 0.0)  [TCP only]
 #   Seconds between the server sending the RST and the client receiving it.
 #   During this window the client continues sending data packets that go
 #   unacknowledged.  Set to e.g. 0.05 to see a few extra unACKed segments.
 rst_propagation_delay = 0.0
 
-# payload_corruption_probability  (default: 0.0)
+# payload_corruption_probability  (default: 0.0)  [TCP only]
 #   Probability (0.0–1.0) that each data segment's payload is corrupted in
 #   transit.  The last byte of the payload is XOR-flipped, invalidating the
 #   TCP checksum.  The receiver drops the packet silently; the client
@@ -153,13 +173,13 @@ rst_propagation_delay = 0.0
 #   server ACK is shifted to follow the retransmit.
 payload_corruption_probability = 0.0
 
-# retransmission_timeout  (default: 0.2)
+# retransmission_timeout  (default: 0.2)  [TCP only]
 #   Seconds after the original segment's capture time that the retransmission
 #   timer fires.  200 ms is the TCP minimum RTO (RFC 6298).  Increase this to
 #   simulate slow links or high-latency paths.
 retransmission_timeout = 0.2
 
-# stray_packet_count  (default: 0)
+# stray_packet_count  (default: 0)  [TCP only]
 #   Number of forged packets to inject, simulating a TCP hijacking attempt by a
 #   passive attacker who has been sniffing the connection.  Each stray packet is
 #   sent client→server with the same IP/port endpoints as the real stream but
@@ -169,7 +189,7 @@ retransmission_timeout = 0.2
 #   segments they overlap with.  Labelled STRAY[n] in the output.
 # stray_packet_count = 3
 
-# stray_timing_window  (default: unset — full data-transfer window)
+# stray_timing_window  (default: unset — full data-transfer window)  [TCP only]
 #   When set, each stray packet's timestamp is constrained to within N packets
 #   of its reference DATA packet in the timestamp-sorted stream, i.e. bounded
 #   by the timestamps of the N-th packet before and after the reference.
@@ -193,10 +213,10 @@ retransmission_timeout = 0.2
 #   Typical values: 64 (Linux/macOS), 128 (Windows), 255 (routers).
 ttl = 64
 
-# window  (default: 65535)
+# window  (default: 65535)  [TCP only]
 #   TCP receive window size in bytes advertised by both endpoints.
 #   Modern systems use window scaling to exceed this; for synthetic captures
-#   65535 is a safe, widely-compatible value.
+#   65535 is a safe, widely-compatible value.  Ignored for udp and sctp.
 window = 65535
 
 # no_ethernet  (default: false)

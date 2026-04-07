@@ -6,7 +6,7 @@ Subcommands:
   build     Build packets from a JSON config file and write to a pcap or pcapng file
   parse     Parse a pcap or pcapng file and produce a JSON config
   sanitise  Replace sensitive fields in a JSON config with synthetic data
-  stream    Generate a synthetic TCP stream and write to a pcap or pcapng file
+  stream    Generate a synthetic network stream (TCP, UDP, or SCTP) and write to a pcap or pcapng file
 
 Examples:
   packeteer build packets.json --pcap out.pcap
@@ -16,7 +16,8 @@ Examples:
   packeteer sanitise capture.json --output clean.json
   packeteer sanitise capture.json --ports --payload --output clean.json
   packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 --packets 50 --pcap out.pcap
-  packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 --server-port 443 --distribution bimodal --pcapng tls.pcapng
+  packeteer stream --protocol udp --client-ip 10.0.0.1 --server-ip 10.0.0.2 --server-port 53 --packets 5 --pcap dns.pcap
+  packeteer stream --protocol sctp --client-ip 10.0.0.1 --server-ip 10.0.0.2 --server-port 9999 --packets 20 --pcap sctp.pcap
 """
 # This module is the entry point for the `packeteer` CLI command.
 # The mapping is declared in pyproject.toml: [project.scripts] packeteer = "packeteer_cli:main"
@@ -28,6 +29,8 @@ from packet_generator import PacketBuilder
 from packet_generator.tcp import TCPOptions
 from packet_generator.pcap import write_pcap, write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW
 from packet_generator.tcp_stream import generate_tcp_stream
+from packet_generator.udp_stream import generate_udp_stream
+from packet_generator.sctp_stream import generate_sctp_stream
 from packet_generator.pppoe import PPPoETag, PPPOE_CODE_SESSION
 from packet_generator.sctp import (
     SCTPDataChunk, SCTPInitChunk, SCTPInitAckChunk, SCTPSackChunk,
@@ -538,6 +541,7 @@ def _cmd_sanitise(args: argparse.Namespace) -> None:
 # Maps config-file key → (argparse dest attr, type converter).
 # Keys use underscores; values are cast with the given callable.
 _STREAM_CONFIG_KEYS: dict[str, tuple[str, type]] = {
+    "protocol":           ("protocol",                str),
     "client_ip":          ("client_ip",               str),
     "server_ip":          ("server_ip",               str),
     "client_port":        ("client_port",             int),
@@ -568,6 +572,7 @@ _STREAM_CONFIG_KEYS: dict[str, tuple[str, type]] = {
 }
 
 _STREAM_DEFAULTS = {
+    "protocol":                "tcp",
     "client_port":             54321,
     "server_port":             80,
     "client_mac":              "00:00:00:00:00:01",
@@ -677,34 +682,50 @@ def _cmd_stream(args: argparse.Namespace) -> None:
         print("Error: --pcap and --pcapng are mutually exclusive.", file=sys.stderr)
         sys.exit(1)
 
+    protocol = args.protocol.lower()
+    if protocol not in ("tcp", "udp", "sctp"):
+        print(f"Error: --protocol must be 'tcp', 'udp', or 'sctp', got '{args.protocol}'",
+              file=sys.stderr)
+        sys.exit(1)
+
+    # Common keyword arguments shared by all protocol generators
+    common = dict(
+        client_ip=args.client_ip,
+        server_ip=args.server_ip,
+        client_port=args.client_port,
+        server_port=args.server_port,
+        client_mac=args.client_mac,
+        server_mac=args.server_mac,
+        num_data_packets=args.packets,
+        min_payload=args.min_payload,
+        max_payload=args.max_payload,
+        payload_distribution=args.distribution,
+        include_ethernet=not args.no_ethernet,
+        ip_ttl=args.ttl,
+        inter_packet_gap=args.gap,
+        gap_jitter=args.gap_jitter,
+        middlebox_mtu=args.middlebox_mtu,
+    )
+
     try:
-        stream = generate_tcp_stream(
-            client_ip=args.client_ip,
-            server_ip=args.server_ip,
-            client_port=args.client_port,
-            server_port=args.server_port,
-            client_mac=args.client_mac,
-            server_mac=args.server_mac,
-            num_data_packets=args.packets,
-            min_payload=args.min_payload,
-            max_payload=args.max_payload,
-            payload_distribution=args.distribution,
-            ip_ttl=args.ttl,
-            window=args.window,
-            inter_packet_gap=args.gap,
-            gap_jitter=args.gap_jitter,
-            psh_probability=args.psh_probability,
-            packet_loss_probability=args.packet_loss_probability,
-            retransmission_probability=args.retransmission_probability,
-            retransmission_timeout=args.retransmission_timeout,
-            payload_corruption_probability=args.payload_corruption_probability,
-            server_rst_probability=args.server_rst_probability,
-            rst_propagation_delay=args.rst_propagation_delay,
-            middlebox_mtu=args.middlebox_mtu,
-            stray_packet_count=args.stray_packet_count,
-            stray_timing_window=args.stray_timing_window,
-            include_ethernet=not args.no_ethernet,
-        )
+        if protocol == "tcp":
+            stream = generate_tcp_stream(
+                **common,
+                window=args.window,
+                psh_probability=args.psh_probability,
+                packet_loss_probability=args.packet_loss_probability,
+                retransmission_probability=args.retransmission_probability,
+                retransmission_timeout=args.retransmission_timeout,
+                payload_corruption_probability=args.payload_corruption_probability,
+                server_rst_probability=args.server_rst_probability,
+                rst_propagation_delay=args.rst_propagation_delay,
+                stray_packet_count=args.stray_packet_count,
+                stray_timing_window=args.stray_timing_window,
+            )
+        elif protocol == "udp":
+            stream = generate_udp_stream(**common)
+        else:  # sctp
+            stream = generate_sctp_stream(**common)
     except (ValueError, OSError) as e:
         print(f"Error generating stream: {e}", file=sys.stderr)
         sys.exit(1)
@@ -817,17 +838,23 @@ def main():
     # ── stream subcommand ─────────────────────────────────────────────────────
     stream_parser = subparsers.add_parser(
         "stream",
-        help="Generate a synthetic TCP stream",
+        help="Generate a synthetic protocol stream",
         description=(
-            "Generate a realistic TCP stream — three-way handshake, data transfer, "
-            "and four-way teardown — and write it to a pcap or pcapng file. "
-            "Sequence and acknowledgement numbers are computed correctly for all packets."
+            "Generate a realistic protocol stream and write it to a pcap or pcapng file.\n\n"
+            "  tcp   — three-way handshake, data transfer, four-way teardown; "
+            "seq/ack numbers computed correctly.\n"
+            "  udp   — sequence of datagrams with realistic inter-packet timestamps.\n"
+            "  sctp  — four-way handshake (INIT/INIT-ACK/COOKIE-ECHO/COOKIE-ACK), "
+            "DATA+SACK pairs, graceful shutdown; CRC-32c checksums computed automatically."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     # Config file (optional — CLI flags take precedence over config values)
     stream_parser.add_argument("--config", metavar="FILE",
                                help="INI config file with a [stream] section; CLI flags override file values")
+    stream_parser.add_argument("--protocol", default=None,
+                               choices=["tcp", "udp", "sctp"],
+                               help="Transport protocol to simulate (default: tcp)")
     # Required endpoints (may also be provided via --config)
     stream_parser.add_argument("--client-ip", default=None, metavar="IP",
                                help="Client IP address (IPv4 or IPv6)")
@@ -856,7 +883,7 @@ def main():
     stream_parser.add_argument("--ttl", type=int, default=None, metavar="N",
                                help="IP TTL / hop limit (default: 64)")
     stream_parser.add_argument("--window", type=int, default=None, metavar="BYTES",
-                               help="TCP receive window size (default: 65535)")
+                               help="TCP receive window size — TCP only (default: 65535)")
     stream_parser.add_argument("--gap", type=float, default=None, metavar="SECONDS",
                                help="Inter-packet gap in seconds (default: 0.001)")
     stream_parser.add_argument("--gap-jitter", type=float, default=None, metavar="SECONDS",

@@ -11,7 +11,8 @@ This package constructs byte-accurate network packets at all layers:
   EtherIP tunnels (:class:`EtherIPHeader`, RFC 3378);
   GRE tunnels (:class:`GREHeader`, RFC 2784 / RFC 2890)
 * **Layer 4** — TCP (:class:`TCPHeader`), UDP (:class:`UDPHeader`),
-  ICMPv4 (:class:`ICMPHeader`), ICMPv6 (:class:`ICMPv6Header`)
+  SCTP (:class:`SCTPHeader`, RFC 9260), ICMPv4 (:class:`ICMPHeader`),
+  ICMPv6 (:class:`ICMPv6Header`)
 
 All IP and transport-layer checksums are computed automatically per their
 respective RFCs (RFC 791, RFC 8200, RFC 768, RFC 793, RFC 792, RFC 4443).
@@ -221,6 +222,8 @@ from .sctp import (
     SCTP_DATA_FLAG_IMMEDIATE,
 )
 from .tcp_stream import generate_tcp_stream, TCPStream, TCPStreamPacket
+from .udp_stream import generate_udp_stream, UDPStream, UDPStreamPacket
+from .sctp_stream import generate_sctp_stream, SCTPStream, SCTPStreamPacket
 
 __all__ = [
     "PacketBuilder",
@@ -305,6 +308,12 @@ __all__ = [
     "generate_tcp_stream",
     "TCPStream",
     "TCPStreamPacket",
+    "generate_udp_stream",
+    "UDPStream",
+    "UDPStreamPacket",
+    "generate_sctp_stream",
+    "SCTPStream",
+    "SCTPStreamPacket",
     "fragment_ipv4",
     "fragment_ipv6",
     "write_pcap",

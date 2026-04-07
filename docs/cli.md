@@ -6,7 +6,8 @@
 to `build` for replay;
 `sanitise` replaces sensitive field values in a JSON config with synthetic
 data drawn from IANA-reserved ranges;
-`stream` generates a complete synthetic TCP stream directly to pcap or pcapng.
+`stream` generates a complete synthetic network stream (TCP, UDP, or SCTP)
+directly to pcap or pcapng.
 
 Supported transport protocols for `build` / `parse`: TCP, UDP, SCTP (RFC 9260),
 ICMPv4, ICMPv6.  See {doc}`json-config` for the JSON format, including the
@@ -183,10 +184,14 @@ See {doc}`sanitiser` for the full reference including all `SanitiseOptions` fiel
 packeteer stream --client-ip IP --server-ip IP (--pcap FILE | --pcapng FILE) [options]
 ```
 
-Generates a complete synthetic TCP stream — three-way handshake,
-`--packets` data segments from client to server, and four-way teardown —
-and writes it directly to a pcap or pcapng file.  Sequence and
-acknowledgement numbers are computed correctly for every packet.
+Generates a complete synthetic network stream and writes it directly to a pcap
+or pcapng file.  The `--protocol` flag selects the transport:
+
+| Protocol | Description |
+|----------|-------------|
+| `tcp` *(default)* | Three-way handshake, data transfer, four-way teardown |
+| `udp` | Datagram sequence (client→server only, no connection state) |
+| `sctp` | Full SCTP association: 4-way handshake, DATA+SACK pairs, graceful shutdown (RFC 9260) |
 
 | Argument | Default | Description |
 |----------|---------|-------------|
@@ -195,6 +200,7 @@ acknowledgement numbers are computed correctly for every packet.
 | `--server-ip IP` | *(required)* | Server IP address (same family) |
 | `--pcap FILE` | *(required*)* | Write to a libpcap (`.pcap`) file |
 | `--pcapng FILE` | *(required*)* | Write to a pcapng (`.pcapng`) file |
+| `--protocol` | `tcp` | Transport protocol: `tcp`, `udp`, or `sctp` |
 | `--client-port PORT` | `54321` | Client source port |
 | `--server-port PORT` | `80` | Server destination port |
 | `--client-mac MAC` | `00:00:00:00:00:01` | Client MAC address |
@@ -204,19 +210,19 @@ acknowledgement numbers are computed correctly for every packet.
 | `--max-payload BYTES` | `1460` | Maximum payload size |
 | `--distribution` | `uniform` | Payload size strategy: `uniform`, `bimodal`, or `fixed` |
 | `--ttl N` | `64` | IP TTL / hop limit |
-| `--window BYTES` | `65535` | TCP receive window size |
+| `--window BYTES` | `65535` | TCP receive window size (TCP only) |
 | `--gap SECONDS` | `0.001` | Inter-packet gap (1 ms) |
 | `--gap-jitter SECONDS` | `0.0` | Max additional delay per gap, drawn from `[gap, gap+jitter]`; output is re-sorted by timestamp |
-| `--psh-probability PROB` | `0.5` | Probability (0.0–1.0) that PSH is set on each data segment |
-| `--packet-loss PROB` | `0.0` | Probability (0.0–1.0) that any packet is silently dropped from the capture |
-| `--retransmission-probability PROB` | `0.0` | Probability (0.0–1.0) that each data segment gets a spurious retransmission |
-| `--retransmission-timeout SECONDS` | `0.2` | Seconds after original send that the retransmission timer fires |
-| `--payload-corruption PROB` | `0.0` | Probability (0.0–1.0) that each data segment's payload is corrupted in transit |
-| `--server-rst PROB` | `0.0` | Probability (0.0–1.0) that the server terminates mid-stream with a RST |
-| `--rst-propagation-delay SECONDS` | `0.0` | Seconds for the RST to reach the client; client sends data during this window |
+| `--psh-probability PROB` | `0.5` | Probability (0.0–1.0) that PSH is set on each data segment (TCP only) |
+| `--packet-loss PROB` | `0.0` | Probability (0.0–1.0) that any packet is silently dropped from the capture (TCP only) |
+| `--retransmission-probability PROB` | `0.0` | Probability (0.0–1.0) that each data segment gets a spurious retransmission (TCP only) |
+| `--retransmission-timeout SECONDS` | `0.2` | Seconds after original send that the retransmission timer fires (TCP only) |
+| `--payload-corruption PROB` | `0.0` | Probability (0.0–1.0) that each data segment's payload is corrupted in transit (TCP only) |
+| `--server-rst PROB` | `0.0` | Probability (0.0–1.0) that the server terminates mid-stream with a RST (TCP only) |
+| `--rst-propagation-delay SECONDS` | `0.0` | Seconds for the RST to reach the client; client sends data during this window (TCP only) |
 | `--middlebox-mtu BYTES` | off | Fragment packets as if they passed through a middlebox with this IP MTU (e.g. 576, 1280, 1400) |
-| `--stray-packets N` | `0` | Inject N forged TCP hijack packets with stolen seq/ack values and all-`x` payload |
-| `--stray-timing-window N` | off | Constrain each stray timestamp to within N packets of its reference DATA packet |
+| `--stray-packets N` | `0` | Inject N forged TCP hijack packets with stolen seq/ack values and all-`x` payload (TCP only) |
+| `--stray-timing-window N` | off | Constrain each stray timestamp to within N packets of its reference DATA packet (TCP only) |
 | `--no-ethernet` | off | Omit Ethernet headers (raw IP packets) |
 
 `--pcap` and `--pcapng` are mutually exclusive; one is required.
@@ -236,9 +242,19 @@ packeteer stream --config my_stream.ini
 # Config file as base profile, override packets on the CLI
 packeteer stream --config my_stream.ini --packets 100 --distribution bimodal
 
-# 50-packet HTTP session (no config file)
+# TCP: 50-packet HTTP session
 packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
     --packets 50 --pcap out.pcap
+
+# UDP: DNS-like datagram flow (5 queries to port 53)
+packeteer stream --protocol udp \
+    --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
+    --server-port 53 --packets 5 --pcap dns.pcap
+
+# SCTP: full association with bimodal payloads
+packeteer stream --protocol sctp \
+    --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
+    --server-port 9999 --packets 20 --distribution bimodal --pcap sctp.pcap
 
 # HTTPS session with bimodal payload sizes
 packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
@@ -256,23 +272,39 @@ packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
 
 ### Programmatic equivalent
 
-{func}`packet_generator.tcp_stream.generate_tcp_stream` is the Python API
-that `stream` calls internally:
+The `stream` subcommand calls one of three generators depending on `--protocol`:
 
 ```python
+# TCP (default)
 from packet_generator.tcp_stream import generate_tcp_stream
-from packet_generator.pcap import write_pcap, LINKTYPE_ETHERNET
+from packet_generator import write_pcap, LINKTYPE_ETHERNET
 
 stream = generate_tcp_stream(
-    client_ip="10.0.0.1",
-    server_ip="10.0.0.2",
-    server_port=443,
-    num_data_packets=50,
-    payload_distribution="bimodal",
-    retransmission_probability=0.05,
+    client_ip="10.0.0.1", server_ip="10.0.0.2",
+    server_port=443, num_data_packets=50,
+    payload_distribution="bimodal", retransmission_probability=0.05,
 )
 write_pcap(stream.to_pcap_tuples(), path="out.pcap", link_type=LINKTYPE_ETHERNET)
+
+# UDP
+from packet_generator.udp_stream import generate_udp_stream
+
+stream = generate_udp_stream(
+    client_ip="10.0.0.1", server_ip="10.0.0.2",
+    server_port=53, num_data_packets=5,
+)
+write_pcap(stream.to_pcap_tuples(), path="dns.pcap")
+
+# SCTP
+from packet_generator.sctp_stream import generate_sctp_stream
+
+stream = generate_sctp_stream(
+    client_ip="10.0.0.1", server_ip="10.0.0.2",
+    server_port=9999, num_data_packets=20,
+    payload_distribution="bimodal",
+)
+write_pcap(stream.to_pcap_tuples(), path="sctp.pcap")
 ```
 
 See {doc}`stream` for the full Python API, payload distribution options,
-timing jitter, packet loss, retransmissions, and IPv6 usage.
+timing jitter, packet loss, retransmissions, and per-protocol details.
