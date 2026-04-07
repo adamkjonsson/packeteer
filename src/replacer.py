@@ -197,6 +197,15 @@ def _sanitise_packet(pkt: dict, r: _Replacer, opts: SanitiseOptions) -> None:
         if "data" in pl and isinstance(pl["data"], str):
             pl["data"] = "00" * (len(pl["data"]) // 2)
 
+    if opts.payload and "transport" in pkt:
+        t = pkt["transport"]
+        if t.get("protocol") == "sctp":
+            for chunk in t.get("chunks", []):
+                # Zero all opaque binary hex fields present in any chunk type
+                for key in ("data", "params", "cookie", "info", "causes", "value"):
+                    if key in chunk and isinstance(chunk[key], str):
+                        chunk[key] = "00" * (len(chunk[key]) // 2)
+
     if opts.timestamps and "metadata" in pkt:
         meta = pkt["metadata"]
         meta["timestamp_s"] = 0

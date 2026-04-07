@@ -26,6 +26,13 @@ All notable changes to packeteer are recorded in this file.
 - Added `protocol` key to `stream.ini.template` with full commentary; all TCP-only keys annotated `[TCP only]`.
 - 73 new tests: `test_udp_stream.py` (26 tests across basic structure, packet contents, timestamps, payload, and middlebox MTU) and `test_sctp_stream.py` (47 tests covering packet count formula, label order, per-packet directions, verification tag correctness, TSN incrementing, timestamps, payload sizes, raw packet contents, and middlebox MTU fragmentation).
 
+### Sanitiser: SCTP payload support
+- `replacer.sanitise()` now zeroes opaque binary fields inside SCTP chunks when `opts.payload = True`: `data` (DATA chunks), `params` (INIT/INIT-ACK State Cookie), `cookie` (COOKIE ECHO), `info` (HEARTBEAT/HEARTBEAT-ACK), `causes` (ERROR/ABORT), and `value` (generic chunks).  Port sanitisation already worked via the existing `transport.src_port`/`dst_port` path.
+- 12 new tests in `TestSCTPSanitise` covering port replacement, per-chunk-type payload zeroing, unchanged-by-default behaviour, IP replacement, verification tag preservation, and original-not-mutated guarantee.
+
+### Bug fix: SCTP INIT-ACK State Cookie malformed
+- `sctp_stream.py`: the State Cookie was passed as raw bytes in the INIT-ACK `params` field.  RFC 9260 §3.3.3 requires it to be wrapped in a parameter TLV (Type=7, Length=4+n).  Wireshark reported the INIT-ACK as malformed.  Fixed by building `struct.pack("!HH", 7, 4 + len(cookie)) + cookie` before passing to `SCTPInitAckChunk.params`.
+
 ### Documentation updates
 - `docs/stream.md` restructured as a multi-protocol reference: top-level `## TCP stream`, `## UDP stream`, and `## SCTP stream` sections, each with a packet-sequence table, quick example, and API autodoc stubs.  Config file template section updated with `protocol` key and `[TCP only]` annotations.
 - `docs/cli.md`: `stream` subcommand table updated with `--protocol` row and `[TCP only]` annotations on TCP-specific flags; examples extended to show UDP and SCTP usage; programmatic-equivalent section updated.

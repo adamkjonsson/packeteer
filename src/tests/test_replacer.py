@@ -296,6 +296,136 @@ class TestTunnelRecursion(unittest.TestCase):
         self.assertNotEqual(inner["network"]["dst"], "10.1.1.2")
 
 
+def _sctp_config() -> dict:
+    """Minimal SCTP packet: one DATA chunk and one INIT-ACK chunk."""
+    return {
+        "packets": [{
+            "ethernet": {"src_mac": "aa:00:00:00:00:01", "dst_mac": "aa:00:00:00:00:02"},
+            "network":   {"src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "sctp"},
+            "transport": {
+                "protocol":         "sctp",
+                "src_port":         54321,
+                "dst_port":         9999,
+                "verification_tag": 0xDEADBEEF,
+                "chunks": [
+                    {
+                        "type":       "data",
+                        "flags":      3,
+                        "tsn":        100,
+                        "stream_id":  0,
+                        "stream_seq": 0,
+                        "ppid":       0,
+                        "data":       "deadbeef01020304",
+                    },
+                    {
+                        "type":             "init_ack",
+                        "initiate_tag":     0x12345678,
+                        "a_rwnd":           131072,
+                        "outbound_streams": 1,
+                        "inbound_streams":  1,
+                        "initial_tsn":      42,
+                        "params":           "aabbccdd",
+                    },
+                    {
+                        "type": "cookie_echo",
+                        "cookie": "cafebabe",
+                    },
+                    {
+                        "type": "heartbeat",
+                        "info": "11223344",
+                    },
+                ],
+            },
+            "metadata": {"timestamp_s": 0, "timestamp_us": 0},
+        }]
+    }
+
+
+class TestSCTPSanitise(unittest.TestCase):
+    """SCTP-specific sanitisation tests."""
+
+    # ── Ports ─────────────────────────────────────────────────────────────────
+
+    def test_sctp_ports_replaced_when_enabled(self):
+        out = sanitise(_sctp_config(), SanitiseOptions(ports=True))
+        t = out["packets"][0]["transport"]
+        self.assertNotEqual(t["src_port"], 54321)
+        self.assertNotEqual(t["dst_port"], 9999)
+
+    def test_sctp_ports_unchanged_by_default(self):
+        out = sanitise(_sctp_config())
+        t = out["packets"][0]["transport"]
+        self.assertEqual(t["src_port"], 54321)
+        self.assertEqual(t["dst_port"], 9999)
+
+    def test_sctp_ports_in_synthetic_range(self):
+        out = sanitise(_sctp_config(), SanitiseOptions(ports=True))
+        t = out["packets"][0]["transport"]
+        self.assertGreaterEqual(t["src_port"], 10000)
+        self.assertLessEqual(t["src_port"], 59999)
+
+    # ── Payload ───────────────────────────────────────────────────────────────
+
+    def test_sctp_data_chunk_zeroed(self):
+        out = sanitise(_sctp_config(), SanitiseOptions(payload=True))
+        chunks = out["packets"][0]["transport"]["chunks"]
+        data_chunk = next(c for c in chunks if c["type"] == "data")
+        self.assertEqual(data_chunk["data"], "00" * 8)  # 16 hex chars → 8 bytes
+
+    def test_sctp_data_chunk_length_preserved(self):
+        out = sanitise(_sctp_config(), SanitiseOptions(payload=True))
+        chunks = out["packets"][0]["transport"]["chunks"]
+        data_chunk = next(c for c in chunks if c["type"] == "data")
+        self.assertEqual(len(data_chunk["data"]), len("deadbeef01020304"))
+
+    def test_sctp_params_zeroed(self):
+        out = sanitise(_sctp_config(), SanitiseOptions(payload=True))
+        chunks = out["packets"][0]["transport"]["chunks"]
+        init_ack = next(c for c in chunks if c["type"] == "init_ack")
+        self.assertEqual(init_ack["params"], "00" * 4)  # "aabbccdd" → 4 bytes
+
+    def test_sctp_cookie_zeroed(self):
+        out = sanitise(_sctp_config(), SanitiseOptions(payload=True))
+        chunks = out["packets"][0]["transport"]["chunks"]
+        cookie = next(c for c in chunks if c["type"] == "cookie_echo")
+        self.assertEqual(cookie["cookie"], "00" * 4)
+
+    def test_sctp_info_zeroed(self):
+        out = sanitise(_sctp_config(), SanitiseOptions(payload=True))
+        chunks = out["packets"][0]["transport"]["chunks"]
+        hb = next(c for c in chunks if c["type"] == "heartbeat")
+        self.assertEqual(hb["info"], "00" * 4)
+
+    def test_sctp_payload_unchanged_by_default(self):
+        out = sanitise(_sctp_config())
+        chunks = out["packets"][0]["transport"]["chunks"]
+        data_chunk = next(c for c in chunks if c["type"] == "data")
+        self.assertEqual(data_chunk["data"], "deadbeef01020304")
+
+    # ── IPs ───────────────────────────────────────────────────────────────────
+
+    def test_sctp_ips_replaced(self):
+        out = sanitise(_sctp_config())
+        net = out["packets"][0]["network"]
+        self.assertNotEqual(net["src"], "10.0.0.1")
+        self.assertNotEqual(net["dst"], "10.0.0.2")
+
+    # ── Verification tag untouched ────────────────────────────────────────────
+
+    def test_sctp_verification_tag_untouched(self):
+        out = sanitise(_sctp_config())
+        t = out["packets"][0]["transport"]
+        self.assertEqual(t["verification_tag"], 0xDEADBEEF)
+
+    # ── Original not mutated ──────────────────────────────────────────────────
+
+    def test_original_not_mutated(self):
+        cfg = _sctp_config()
+        original_data = cfg["packets"][0]["transport"]["chunks"][0]["data"]
+        sanitise(cfg, SanitiseOptions(payload=True))
+        self.assertEqual(cfg["packets"][0]["transport"]["chunks"][0]["data"], original_data)
+
+
 class TestMissingKey(unittest.TestCase):
     def test_raises_on_missing_packets_key(self):
         with self.assertRaises(ValueError):
