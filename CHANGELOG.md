@@ -4,7 +4,7 @@ All notable changes to packeteer are recorded in this file.
 
 ---
 
-## Unreleased — 2026-04-05
+## Unreleased — 2026-04-07
 
 ### SCTP support (RFC 9260)
 - Added `SCTPHeader` dataclass and 13 typed chunk dataclasses (`SCTPDataChunk`, `SCTPInitChunk`, `SCTPInitAckChunk`, `SCTPSackChunk`, `SCTPHeartbeatChunk`, `SCTPHeartbeatAckChunk`, `SCTPAbortChunk`, `SCTPShutdownChunk`, `SCTPShutdownAckChunk`, `SCTPErrorChunk`, `SCTPCookieEchoChunk`, `SCTPCookieAckChunk`, `SCTPShutdownCompleteChunk`) plus `SCTPGenericChunk` for unknown types.
@@ -16,6 +16,22 @@ All notable changes to packeteer are recorded in this file.
 - Added SCTP serialisation to `packet_parser.to_config`: `_serialise_sctp_chunk()` converts each chunk type to a JSON-compatible dict; `_apply_transport()` and `update_config()` extended.
 - Added `"sctp"` dispatch branch to `packeteer_cli._dispatch_transport()` and `_parse_sctp_chunk()` helper for building SCTP packets from JSON configs.
 - 69 new tests in `test_sctp.py` covering CRC-32c, all chunk encodings, multi-chunk packets, `PacketBuilder` integration, parser round-trips, `parse_packet` integration, and `to_config` serialisation.
+
+### Multi-protocol stream generation
+- Added `generate_udp_stream()` in `packet_generator.udp_stream`: generates a unidirectional client→server UDP datagram flow (`num_data_packets` packets labelled `DATA[0]`…`DATA[N-1]`).  Shares continuous-payload, timestamp-jitter, and middlebox-MTU fragmentation behaviour with the TCP generator.
+- Added `generate_sctp_stream()` in `packet_generator.sctp_stream`: generates a complete SCTP association per RFC 9260 — four-way handshake (INIT / INIT-ACK / COOKIE-ECHO / COOKIE-ACK), `num_data_packets` DATA+SACK pairs, and graceful shutdown (SHUTDOWN / SHUTDOWN-ACK / SHUTDOWN-COMPLETE).  Verification tags, TSNs, CRC-32c checksums, and the State Cookie TLV (Type=7) are all computed correctly.  Total packet count: `2 * num_data_packets + 7`.
+- Added `UDPStream`, `UDPStreamPacket`, `SCTPStream`, `SCTPStreamPacket` dataclasses with `to_pcap_tuples()`, `client_packets()`, and `server_packets()` helpers, matching the `TCPStream` API.
+- All three generators are exported from `packet_generator.__init__`.
+- Added `--protocol tcp|udp|sctp` flag to `packeteer stream` (default: `tcp`, fully backward-compatible).  TCP-only flags (`--window`, `--psh-probability`, `--packet-loss`, `--retransmission-*`, `--payload-corruption`, `--server-rst`, `--rst-propagation-delay`, `--stray-packets`, `--stray-timing-window`) are silently ignored for `udp` and `sctp`.
+- Added `protocol` key to `stream.ini.template` with full commentary; all TCP-only keys annotated `[TCP only]`.
+- 73 new tests: `test_udp_stream.py` (26 tests across basic structure, packet contents, timestamps, payload, and middlebox MTU) and `test_sctp_stream.py` (47 tests covering packet count formula, label order, per-packet directions, verification tag correctness, TSN incrementing, timestamps, payload sizes, raw packet contents, and middlebox MTU fragmentation).
+
+### Documentation updates
+- `docs/stream.md` restructured as a multi-protocol reference: top-level `## TCP stream`, `## UDP stream`, and `## SCTP stream` sections, each with a packet-sequence table, quick example, and API autodoc stubs.  Config file template section updated with `protocol` key and `[TCP only]` annotations.
+- `docs/cli.md`: `stream` subcommand table updated with `--protocol` row and `[TCP only]` annotations on TCP-specific flags; examples extended to show UDP and SCTP usage; programmatic-equivalent section updated.
+- `docs/index.md`: feature list updated from "TCP stream generation" to "Stream generation" covering all three protocols.
+- `src/packeteer_cli.py` module docstring: stream subcommand description and examples updated.
+- `src/packet_generator/__init__.py` package docstring: SCTP added to the Layer 4 protocol list.
 
 ### TCP stream: stray packet injection (TCP hijacking simulation)
 - Added `stray_packet_count` parameter to `generate_tcp_stream()` and `--stray-packets N` CLI flag.  Injects forged client→server packets that reuse seq/ack values stolen from randomly chosen data segments, carrying an all-`x` payload of random size.  Simulates a passive attacker attempting to hijack a connection.  Stray packets are labelled `STRAY[n]`.
