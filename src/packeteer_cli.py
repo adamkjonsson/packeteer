@@ -542,106 +542,60 @@ def _cmd_sanitise(args: argparse.Namespace) -> None:
 
 # ── stream config-file support ────────────────────────────────────────────────
 
-# Maps config-file key → (argparse dest attr, type converter).
-# Keys use underscores; values are cast with the given callable.
-_STREAM_CONFIG_KEYS: dict[str, tuple[str, "type | object"]] = {  # type: ignore[type-arg]
-    "protocol":           ("protocol",                str),
-    "client_ip":          ("client_ip",               str),
-    "server_ip":          ("server_ip",               str),
-    "client_port":        ("client_port",             int),
-    "server_port":        ("server_port",             int),
-    "client_mac":         ("client_mac",              str),
-    "server_mac":         ("server_mac",              str),
-    "packets":            ("packets",                 int),
-    "min_payload":        ("min_payload",             int),
-    "max_payload":        ("max_payload",             int),
-    "distribution":       ("distribution",            str),
-    "ttl":                ("ttl",                     int),
-    "window":             ("window",                  int),
-    "gap":                ("gap",                     float),
-    "gap_jitter":         ("gap_jitter",              float),
-    "psh_probability":    ("psh_probability",         float),
-    "packet_loss":                ("packet_loss_probability",    float),
-    "retransmission_probability":   ("retransmission_probability",   float),
-    "retransmission_timeout":       ("retransmission_timeout",       float),
-    "payload_corruption_probability": ("payload_corruption_probability", float),
-    "server_rst_probability":         ("server_rst_probability",         float),
-    "rst_propagation_delay":          ("rst_propagation_delay",          float),
-    "middlebox_mtu":                  ("middlebox_mtu",                  int),
-    "stray_packet_count":             ("stray_packet_count",             int),
-    "stray_timing_window":            ("stray_timing_window",            int),
-    "no_ethernet":                ("no_ethernet",                bool),
-    "pcap":               ("pcap",                    str),
-    "pcapng":             ("pcapng",                  str),
-    # Encapsulation — values are cast via callables (not strict `type` objects)
-    "vlan":             ("vlan",             int),
-    "vlan_pcp":         ("vlan_pcp",         int),
-    "vlan_dei":         ("vlan_dei",         int),
-    "qinq":             ("qinq",             lambda s: [int(x) for x in s.split()]),
-    "qinq_outer_pcp":   ("qinq_outer_pcp",   int),
-    "qinq_outer_dei":   ("qinq_outer_dei",   int),
-    "qinq_inner_pcp":   ("qinq_inner_pcp",   int),
-    "qinq_inner_dei":   ("qinq_inner_dei",   int),
-    "mpls":             ("mpls",             lambda s: [int(x) for x in s.split()]),
-    "mpls_tc":          ("mpls_tc",          int),
-    "mpls_ttl":         ("mpls_ttl",         int),
-    "pppoe":            ("pppoe",            int),
-    "gre":              ("gre",              lambda s: s.split()),
-    "gre_key":          ("gre_key",          int),
-    "gre_ttl":          ("gre_ttl",          int),
-    "etherip":          ("etherip",          lambda s: s.split()),
-    "etherip_ttl":      ("etherip_ttl",      int),
-    "ipip":             ("ipip",             lambda s: s.split()),
-    "ipip_ttl":         ("ipip_ttl",         int),
-}
-
-_STREAM_DEFAULTS = {
-    "protocol":                "tcp",
-    "client_port":             54321,
-    "server_port":             80,
-    "client_mac":              "00:00:00:00:00:01",
-    "server_mac":              "00:00:00:00:00:02",
-    "packets":                 10,
-    "min_payload":             40,
-    "max_payload":             1460,
-    "distribution":            "uniform",
-    "ttl":                     64,
-    "window":                  65535,
-    "gap":                     0.001,
-    "gap_jitter":              0.0,
-    "psh_probability":         0.5,
-    "packet_loss_probability":    0.0,
-    "retransmission_probability":    0.0,
-    "retransmission_timeout":        0.2,
-    "payload_corruption_probability": 0.0,
-    "server_rst_probability":         0.0,
-    "rst_propagation_delay":          0.0,
-    "middlebox_mtu":                  None,
-    "stray_packet_count":             0,
-    "stray_timing_window":            None,
-    "no_ethernet":                False,
-    "pcap":                    None,
-    "pcapng":                  None,
-    # Encapsulation (all default to None = unset)
-    "vlan":           None,
-    "vlan_pcp":       None,
-    "vlan_dei":       None,
-    "qinq":           None,
-    "qinq_outer_pcp": None,
-    "qinq_outer_dei": None,
-    "qinq_inner_pcp": None,
-    "qinq_inner_dei": None,
-    "mpls":           None,
-    "mpls_tc":        None,
-    "mpls_ttl":       None,
-    "pppoe":          None,
-    "gre":            None,
-    "gre_key":        None,
-    "gre_ttl":        None,
-    "etherip":        None,
-    "etherip_ttl":    None,
-    "ipip":           None,
-    "ipip_ttl":       None,
+# Maps INI config key → (argparse dest attr, type converter, default value).
+# Keys use underscores (matching INI file convention).  The converter is called
+# on the raw string value; use `bool` to trigger configparser's boolean parsing.
+# `None` as a default means the field has no built-in fallback (it must be
+# supplied on the CLI or in a config file).
+_STREAM_PARAMS: dict[str, tuple[str, object, object]] = {
+    "protocol":           ("protocol",                        str,   "tcp"),
+    "client_ip":          ("client_ip",                       str,   None),
+    "server_ip":          ("server_ip",                       str,   None),
+    "client_port":        ("client_port",                     int,   54321),
+    "server_port":        ("server_port",                     int,   80),
+    "client_mac":         ("client_mac",                      str,   "00:00:00:00:00:01"),
+    "server_mac":         ("server_mac",                      str,   "00:00:00:00:00:02"),
+    "packets":            ("packets",                         int,   10),
+    "min_payload":        ("min_payload",                     int,   40),
+    "max_payload":        ("max_payload",                     int,   1460),
+    "distribution":       ("distribution",                    str,   "uniform"),
+    "ttl":                ("ttl",                             int,   64),
+    "window":             ("window",                          int,   65535),
+    "gap":                ("gap",                             float, 0.001),
+    "gap_jitter":         ("gap_jitter",                      float, 0.0),
+    "psh_probability":    ("psh_probability",                 float, 0.5),
+    "packet_loss":        ("packet_loss_probability",         float, 0.0),
+    "retransmission_probability":     ("retransmission_probability",     float, 0.0),
+    "retransmission_timeout":         ("retransmission_timeout",         float, 0.2),
+    "payload_corruption_probability": ("payload_corruption_probability", float, 0.0),
+    "server_rst_probability":         ("server_rst_probability",         float, 0.0),
+    "rst_propagation_delay":          ("rst_propagation_delay",          float, 0.0),
+    "middlebox_mtu":      ("middlebox_mtu",                   int,   None),
+    "stray_packet_count": ("stray_packet_count",              int,   0),
+    "stray_timing_window":("stray_timing_window",             int,   None),
+    "no_ethernet":        ("no_ethernet",                     bool,  False),
+    "pcap":               ("pcap",                            str,   None),
+    "pcapng":             ("pcapng",                          str,   None),
+    # Encapsulation — all default to None (= not set)
+    "vlan":           ("vlan",           int,                                    None),
+    "vlan_pcp":       ("vlan_pcp",       int,                                    None),
+    "vlan_dei":       ("vlan_dei",       int,                                    None),
+    "qinq":           ("qinq",           lambda s: [int(x) for x in s.split()], None),
+    "qinq_outer_pcp": ("qinq_outer_pcp", int,                                    None),
+    "qinq_outer_dei": ("qinq_outer_dei", int,                                    None),
+    "qinq_inner_pcp": ("qinq_inner_pcp", int,                                    None),
+    "qinq_inner_dei": ("qinq_inner_dei", int,                                    None),
+    "mpls":           ("mpls",           lambda s: [int(x) for x in s.split()], None),
+    "mpls_tc":        ("mpls_tc",        int,                                    None),
+    "mpls_ttl":       ("mpls_ttl",       int,                                    None),
+    "pppoe":          ("pppoe",          int,                                    None),
+    "gre":            ("gre",            lambda s: s.split(),                    None),
+    "gre_key":        ("gre_key",        int,                                    None),
+    "gre_ttl":        ("gre_ttl",        int,                                    None),
+    "etherip":        ("etherip",        lambda s: s.split(),                    None),
+    "etherip_ttl":    ("etherip_ttl",    int,                                    None),
+    "ipip":           ("ipip",           lambda s: s.split(),                    None),
+    "ipip_ttl":       ("ipip_ttl",       int,                                    None),
 }
 
 
@@ -666,16 +620,13 @@ def _load_stream_config(path: str) -> dict:
     section = cp["stream"]
     result = {}
     for key, raw in section.items():
-        if key not in _STREAM_CONFIG_KEYS:
+        if key not in _STREAM_PARAMS:
             print(f"Warning: unknown key '{key}' in config file '{path}' — ignored",
                   file=sys.stderr)
             continue
-        dest, cast = _STREAM_CONFIG_KEYS[key]
+        dest, cast, _ = _STREAM_PARAMS[key]
         try:
-            if cast is bool:
-                value = cp.getboolean("stream", key)
-            else:
-                value = cast(raw)
+            value = cp.getboolean("stream", key) if cast is bool else cast(raw)  # type: ignore[operator]
         except (ValueError, configparser.Error):
             print(
                 f"Error: invalid value for '{key}' in config file '{path}': {raw!r}",
@@ -699,9 +650,9 @@ def _apply_stream_defaults(args: argparse.Namespace) -> None:
         if getattr(args, dest, None) is None:
             setattr(args, dest, value)
 
-    for dest, value in _STREAM_DEFAULTS.items():
+    for dest, _, default in _STREAM_PARAMS.values():
         if getattr(args, dest, None) is None:
-            setattr(args, dest, value)
+            setattr(args, dest, default)
 
 
 def _parse_stream_encap(args: argparse.Namespace) -> "list[StreamEncap] | None":
@@ -785,10 +736,11 @@ def _parse_stream_encap(args: argparse.Namespace) -> "list[StreamEncap] | None":
     return layers if layers else None
 
 
-def _cmd_stream(args: argparse.Namespace) -> None:
-    _apply_stream_defaults(args)
+def _validate_stream_args(args: argparse.Namespace) -> str:
+    """Validate stream args after defaults are applied.  Returns the protocol string.
 
-    # Validate required fields that may come from CLI or config file
+    Exits with an error message on any validation failure.
+    """
     missing = [f for f in ("client_ip", "server_ip") if not getattr(args, f, None)]
     if missing:
         print(
@@ -806,12 +758,17 @@ def _cmd_stream(args: argparse.Namespace) -> None:
     if args.pcap and args.pcapng:
         print("Error: --pcap and --pcapng are mutually exclusive.", file=sys.stderr)
         sys.exit(1)
-
     protocol = args.protocol.lower()
     if protocol not in ("tcp", "udp", "sctp"):
         print(f"Error: --protocol must be 'tcp', 'udp', or 'sctp', got '{args.protocol}'",
               file=sys.stderr)
         sys.exit(1)
+    return protocol
+
+
+def _cmd_stream(args: argparse.Namespace) -> None:
+    _apply_stream_defaults(args)
+    protocol = _validate_stream_args(args)
 
     encap = _parse_stream_encap(args)
 

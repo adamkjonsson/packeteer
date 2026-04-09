@@ -12,13 +12,13 @@ from unittest.mock import patch
 from packeteer_cli import (
     _load_stream_config,
     _apply_stream_defaults,
-    _STREAM_DEFAULTS,
+    _STREAM_PARAMS,
 )
 
 
 def _args(**kwargs) -> argparse.Namespace:
     """Return a Namespace with all stream attrs set to None, then override with kwargs."""
-    base = {k: None for k in _STREAM_DEFAULTS}
+    base = {dest: None for dest, _, _ in _STREAM_PARAMS.values()}
     base["config"] = None
     base["no_ethernet"] = False
     base.update(kwargs)

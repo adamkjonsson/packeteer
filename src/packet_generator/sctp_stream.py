@@ -67,25 +67,22 @@ Typical usage::
 from __future__ import annotations
 
 import random
-import socket
 import struct
 import time
 from dataclasses import dataclass
 
 from .builder import PacketBuilder
-from .ethernet import EthernetHeader, ETHERTYPE_IPV4, ETHERTYPE_IPV6
-from .fragmentation import fragment_ipv4, fragment_ipv6
-from .ip import IPHeader
-from .ipv6 import IPv6Header
+from ._stream_common import (
+    _alloc_usec, _fragment_ip_raw, _payload_sizes, _pkt_usec, _repeat_payload,
+)
 from .stream_encap import (EncapSpec, StreamEncap,  # noqa: F401  (StreamEncap needed for Sphinx type resolution)
-                           _apply_encap, _encap_ip_start, _fix_encap_prefix)
+                           _apply_encap, _encap_ip_start)
 from .sctp import (
     SCTPHeader, SCTPDataChunk, SCTPInitChunk, SCTPInitAckChunk,
     SCTPSackChunk, SCTPShutdownChunk, SCTPShutdownAckChunk,
     SCTPCookieEchoChunk, SCTPCookieAckChunk, SCTPShutdownCompleteChunk,
     SCTP_DATA_FLAG_BEGINNING, SCTP_DATA_FLAG_ENDING,
 )
-from .tcp_stream import _payload_sizes, _repeat_payload, _alloc_usec
 
 _WRAP = 2 ** 32
 
@@ -138,9 +135,6 @@ class SCTPStream:
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
-def _pkt_usec(pkt: SCTPStreamPacket) -> int:
-    return pkt.ts_sec * 1_000_000 + pkt.ts_usec
-
 
 def _build_sctp(
     src_ip: str,
@@ -175,42 +169,9 @@ def _fragment_sctp_pkt(
     encap: EncapSpec = None,
 ) -> list[SCTPStreamPacket]:
     """Split *pkt* into IP fragments if its IP-layer size exceeds *mtu*."""
-    raw = pkt.raw
     ip_start = _encap_ip_start(encap, include_ethernet)
-
-    if len(raw) - ip_start <= mtu:
-        return [pkt]
-
-    ip_version = (raw[ip_start] >> 4)
-    prefix = raw[:ip_start]
-
-    if ip_version == 4:
-        (_, tos, _, ident, flags_frag, ttl, proto, _,
-         src_bytes, dst_bytes) = struct.unpack('!BBHHHBBH4s4s', raw[ip_start:ip_start + 20])
-        ip_hdr = IPHeader(
-            src=socket.inet_ntoa(src_bytes), dst=socket.inet_ntoa(dst_bytes),
-            protocol=proto, ttl=ttl, tos=tos, identification=ident,
-            flags=(flags_frag >> 13) & 0x7, fragment_offset=flags_frag & 0x1FFF,
-        )
-        transport_data = raw[ip_start + 20:]
-        inner_frags = fragment_ipv4(ip_hdr, transport_data, mtu, eth_header=None)
-        frag_raws = [_fix_encap_prefix(prefix, encap, len(f)) + f for f in inner_frags]
-
-    elif ip_version == 6:
-        version_tc_fl = struct.unpack('!I', raw[ip_start:ip_start + 4])[0]
-        _, next_header, hop_limit = struct.unpack('!HBB', raw[ip_start + 4:ip_start + 8])
-        ip_hdr = IPv6Header(
-            src=socket.inet_ntop(socket.AF_INET6, raw[ip_start + 8:ip_start + 24]),
-            dst=socket.inet_ntop(socket.AF_INET6, raw[ip_start + 24:ip_start + 40]),
-            next_header=next_header, hop_limit=hop_limit,
-            traffic_class=(version_tc_fl >> 20) & 0xFF,
-            flow_label=version_tc_fl & 0xFFFFF,
-        )
-        transport_data = raw[ip_start + 40:]
-        inner_frags = fragment_ipv6(ip_hdr, transport_data, mtu, eth_header=None)
-        frag_raws = [_fix_encap_prefix(prefix, encap, len(f)) + f for f in inner_frags]
-
-    else:
+    frag_raws = _fragment_ip_raw(pkt.raw, ip_start, mtu, encap)
+    if frag_raws is None:
         return [pkt]
 
     orig_usec = _pkt_usec(pkt)
