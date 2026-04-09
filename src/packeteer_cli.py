@@ -18,6 +18,7 @@ Examples:
   packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 --packets 50 --pcap out.pcap
   packeteer stream --protocol udp --client-ip 10.0.0.1 --server-ip 10.0.0.2 --server-port 53 --packets 5 --pcap dns.pcap
   packeteer stream --protocol sctp --client-ip 10.0.0.1 --server-ip 10.0.0.2 --server-port 9999 --packets 20 --pcap sctp.pcap
+  packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 --packets 10 --json stream.json
 """
 # This module is the entry point for the `packeteer` CLI command.
 # The mapping is declared in pyproject.toml: [project.scripts] packeteer = "packeteer_cli:main"
@@ -43,7 +44,11 @@ from packet_generator.sctp import (
     SCTPCookieEchoChunk, SCTPCookieAckChunk, SCTPShutdownCompleteChunk,
     SCTPGenericChunk, SCTPChunk,
 )
-from packet_parser.parser import parse_pcap_file
+from packet_parser.parser import parse_pcap_file, parse_packet
+from packet_parser.to_config import (
+    update_config, to_json_config, to_json_string,
+    _apply_ipip, _apply_gre, _apply_etherip,
+)
 from replacer import SanitiseOptions, sanitise
 
 
@@ -576,6 +581,7 @@ _STREAM_PARAMS: dict[str, tuple[str, object, object]] = {
     "no_ethernet":        ("no_ethernet",                     bool,  False),
     "pcap":               ("pcap",                            str,   None),
     "pcapng":             ("pcapng",                          str,   None),
+    "json":               ("json",                            str,   None),
     # Encapsulation — all default to None (= not set)
     "vlan":           ("vlan",           int,                                    None),
     "vlan_pcp":       ("vlan_pcp",       int,                                    None),
@@ -736,6 +742,50 @@ def _parse_stream_encap(args: argparse.Namespace) -> "list[StreamEncap] | None":
     return layers if layers else None
 
 
+def _stream_to_json(packets: list, include_ethernet: bool) -> str:
+    """Serialise *packets* (from any stream generator) as a JSON config string.
+
+    Each packet's raw bytes are parsed with :func:`parse_packet` and converted
+    to the same JSON format produced by ``packeteer parse``, so the output can
+    be replayed with ``packeteer build``.
+
+    The per-packet ``metadata`` block contains ``timestamp_s``,
+    ``timestamp_us``, ``direction`` (``"c2s"`` / ``"s2c"``), and ``label``
+    (e.g. ``"SYN"``, ``"DATA[0]"``).
+    """
+    link_type = LINKTYPE_ETHERNET if include_ethernet else LINKTYPE_RAW
+    packet_configs: list[dict] = []
+    for pkt_obj in packets:
+        pkt = parse_packet(pkt_obj.raw, link_type=link_type)
+        cfg: dict = {}
+        if pkt.ethernet is not None:
+            update_config(cfg, pkt.ethernet)
+        for mpls_label in pkt.mpls:
+            update_config(cfg, mpls_label)
+        if pkt.pppoe is not None:
+            update_config(cfg, pkt.pppoe)
+        if pkt.ip is not None:
+            update_config(cfg, pkt.ip)
+        if pkt.ipip and pkt.tunneled is not None:
+            _apply_ipip(cfg, pkt.tunneled)
+        elif pkt.gre is not None and pkt.tunneled is not None:
+            _apply_gre(cfg, pkt.gre, pkt.tunneled)
+        elif pkt.etherip is not None and pkt.tunneled is not None:
+            _apply_etherip(cfg, pkt.etherip, pkt.tunneled)
+        elif pkt.transport is not None:
+            update_config(cfg, pkt.transport)
+            if pkt.payload:
+                update_config(cfg, pkt.payload)
+        cfg["metadata"] = {
+            "timestamp_s":  pkt_obj.ts_sec,
+            "timestamp_us": pkt_obj.ts_usec,
+            "direction":    pkt_obj.direction,
+            "label":        pkt_obj.label,
+        }
+        packet_configs.append(cfg)
+    return to_json_string(to_json_config(packet_configs))
+
+
 def _validate_stream_args(args: argparse.Namespace) -> str:
     """Validate stream args after defaults are applied.  Returns the protocol string.
 
@@ -749,11 +799,15 @@ def _validate_stream_args(args: argparse.Namespace) -> str:
             file=sys.stderr,
         )
         sys.exit(1)
-    if not args.pcap and not args.pcapng:
+    json_out = getattr(args, "json", None)
+    if not json_out and not args.pcap and not args.pcapng:
         print(
-            "Error: one of --pcap or --pcapng is required (on the command line or in the config file).",
+            "Error: one of --pcap, --pcapng, or --json is required (on the command line or in the config file).",
             file=sys.stderr,
         )
+        sys.exit(1)
+    if json_out and (args.pcap or args.pcapng):
+        print("Error: --json cannot be combined with --pcap or --pcapng.", file=sys.stderr)
         sys.exit(1)
     if args.pcap and args.pcapng:
         print("Error: --pcap and --pcapng are mutually exclusive.", file=sys.stderr)
@@ -815,19 +869,31 @@ def _cmd_stream(args: argparse.Namespace) -> None:
         print(f"Error generating stream: {e}", file=sys.stderr)
         sys.exit(1)
 
-    tuples = stream.to_pcap_tuples()
-    link_type = LINKTYPE_RAW if args.no_ethernet else LINKTYPE_ETHERNET
+    include_ethernet = not args.no_ethernet
+    link_type = LINKTYPE_ETHERNET if include_ethernet else LINKTYPE_RAW
 
-    try:
-        if args.pcap:
-            write_pcap(tuples, path=args.pcap, link_type=link_type)
-            print(f"Wrote {len(tuples)} packet(s) to {args.pcap} (link type: {link_type})")
-        else:
-            write_pcapng(tuples, path=args.pcapng, link_type=link_type)
-            print(f"Wrote {len(tuples)} packet(s) to {args.pcapng} (link type: {link_type})")
-    except OSError as e:
-        print(f"Error writing output: {e}", file=sys.stderr)
-        sys.exit(1)
+    if args.json:
+        json_str = _stream_to_json(stream.packets, include_ethernet)
+        try:
+            with open(args.json, "w") as f:
+                f.write(json_str)
+                f.write("\n")
+        except OSError as e:
+            print(f"Error writing '{args.json}': {e}", file=sys.stderr)
+            sys.exit(1)
+        print(f"Wrote {len(stream.packets)} packet(s) to {args.json} (JSON config)")
+    else:
+        tuples = stream.to_pcap_tuples()
+        try:
+            if args.pcap:
+                write_pcap(tuples, path=args.pcap, link_type=link_type)
+                print(f"Wrote {len(tuples)} packet(s) to {args.pcap} (link type: {link_type})")
+            else:
+                write_pcapng(tuples, path=args.pcapng, link_type=link_type)
+                print(f"Wrote {len(tuples)} packet(s) to {args.pcapng} (link type: {link_type})")
+        except OSError as e:
+            print(f"Error writing output: {e}", file=sys.stderr)
+            sys.exit(1)
 
 
 def main():
@@ -1065,6 +1131,8 @@ def main():
                                help="Write to a libpcap (.pcap) file")
     stream_parser.add_argument("--pcapng", default=None, metavar="FILE",
                                help="Write to a pcapng (.pcapng) file")
+    stream_parser.add_argument("--json", default=None, metavar="FILE",
+                               help="Write packets as a JSON config file (same format produced by 'packeteer parse', replayable with 'packeteer build')")
     stream_parser.set_defaults(func=_cmd_stream)
 
     args = parser.parse_args()

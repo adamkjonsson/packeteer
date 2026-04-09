@@ -1,8 +1,8 @@
 # Stream Generation
 
 The stream generators produce complete, byte-accurate packet sequences for TCP,
-UDP, and SCTP traffic.  Each stream can be written directly to a pcap or pcapng
-file, or inspected packet-by-packet before writing.
+UDP, and SCTP traffic.  Each stream can be written to a pcap, pcapng, or JSON
+config file, or inspected packet-by-packet before writing.
 
 Choose the generator that matches the transport protocol you need:
 
