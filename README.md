@@ -12,8 +12,8 @@ and the standard library only.
 - **Tunnels**: IP-in-IP (RFC 2003/4213), EtherIP (RFC 3378), GRE (RFC 2784/2890) with Key, Sequence, Checksum, and TEB
 - **IPv4 and IPv6 fragmentation** in one call
 - **pcap and pcapng** file I/O with microsecond or nanosecond timestamps
-- **Stream generation** — complete TCP / UDP / SCTP flows written directly to pcap/pcapng; all streams can be wrapped in any encapsulation layer (VLAN, QinQ, MPLS, PPPoE, GRE, EtherIP, IP-in-IP), combined as a stack, and fragmented through a simulated low-MTU middlebox
-- **CLI** (`packeteer`) — build from JSON config, parse captures back to JSON, sanitise configs by replacing sensitive fields with synthetic data, or generate synthetic streams with `packeteer stream`
+- **Stream generation** — complete TCP / UDP / SCTP flows written to pcap, pcapng, or JSON config; all streams can be wrapped in any encapsulation layer (VLAN, QinQ, MPLS, PPPoE, GRE, EtherIP, IP-in-IP), combined as a stack, and fragmented through a simulated low-MTU middlebox
+- **CLI** (`packeteer`) — build packets from a JSON config, parse captures back to JSON, sanitise configs by replacing sensitive fields with synthetic data, or generate synthetic streams with `packeteer stream`
 
 ## Quick start
 
@@ -82,11 +82,13 @@ Or read the source pages directly:
 |------|---------|
 | [docs/installation.md](docs/installation.md) | Install, run tests, build docs |
 | [docs/quickstart.md](docs/quickstart.md) | Five worked examples |
-| [docs/overview.md](docs/overview.md) | Purpose and use cases (synthetic test data, sanitising captures) |
-| [docs/sanitiser.md](docs/sanitiser.md) | Replacing sensitive fields with synthetic data |
-| [docs/cli.md](docs/cli.md) | `packeteer build` / `parse` / `sanitise` reference |
-| [docs/json-config.md](docs/json-config.md) | JSON config format reference |
-| [docs/stream.md](docs/stream.md) | TCP / UDP / SCTP stream generation and encapsulation |
+| [docs/overview.md](docs/overview.md) | Purpose and use cases |
+| [docs/build.md](docs/build.md) | `packeteer build` CLI and `PacketBuilder` Python API |
+| [docs/parse.md](docs/parse.md) | `packeteer parse` CLI and `packet_parser` Python API |
+| [docs/sanitiser.md](docs/sanitiser.md) | `packeteer sanitise` — replacing sensitive fields with synthetic data |
+| [docs/stream.md](docs/stream.md) | `packeteer stream` CLI and TCP / UDP / SCTP stream generators |
+| [docs/cli.md](docs/cli.md) | Full CLI flag reference for all subcommands |
+| [docs/json-config.md](docs/json-config.md) | JSON config format field reference |
 | [docs/fragmentation.md](docs/fragmentation.md) | IPv4 and IPv6 fragmentation |
 | [docs/api/packet-builder.md](docs/api/packet-builder.md) | `PacketBuilder` API |
 | [docs/api/header-dataclasses.md](docs/api/header-dataclasses.md) | Header dataclasses and constants |

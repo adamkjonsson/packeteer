@@ -31,11 +31,24 @@ All notable changes to packeteer are recorded in this file.
 - Merged the parallel `_STREAM_CONFIG_KEYS` and `_STREAM_DEFAULTS` dicts in `packeteer_cli.py` into a single `_STREAM_PARAMS: dict[str, tuple[dest, cast, default]]`, giving one canonical source of truth for all stream parameters.
 - Extracted `_validate_stream_args(args) -> str` from `_cmd_stream`, separating protocol validation from argument defaulting.
 
+### API change: `middlebox_mtu` renamed to `mtu`
+
+- The `middlebox_mtu` parameter on all three stream generators and the `--middlebox-mtu` CLI flag have been renamed to `mtu` / `--mtu`.  The INI key, test suite, and all documentation updated accordingly.
+
+### API addition: `apply_tunneled`
+
+- `packet_parser.to_config.apply_tunneled(config, pkt)` is now a public function.  It serialises the tunnel layers (IP-in-IP, GRE, EtherIP) of a `ParsedPacket` into a config dict, handling all three types through a single call.  Previously callers had to import and invoke three private helpers directly; this was the root cause of `_stream_to_json` in `packeteer_cli.py` importing private names from `to_config`.
+
 ### Documentation
 
+- Added `docs/build.md`: comprehensive reference for `packeteer build` and the `PacketBuilder` Python API, covering every layer method, assembly, checksums, fragmentation, and pcap I/O.
+- Added `docs/parse.md`: comprehensive reference for `packeteer parse` and the `packet_parser` Python API, covering `parse_packet`, `ParsedPacket`, `parse_pcap_file`, `update_config`/`apply_tunneled`, and the per-protocol parser functions.
+- `docs/overview.md`: new "Packet stream generation" section describing the stream workflow.
+- `docs/stream.md`: fully rewritten to match the structure of `build.md` and `parse.md` — CLI first (all flags, encapsulation, INI config, examples), then Python API (all three generators, parameters, anomalies, inspection, encapsulation, hooks).  Moved after `sanitiser.md` in the toctree.
+- `docs/cli.md`: `--json FILE` flag added to the `stream` reference; updated mutual-exclusion note; JSON examples added.
+- `stream.ini.template`: `json` key documented alongside `pcap` and `pcapng`.
 - `docs/stream.md`: new "Encapsulation" section covering all seven types, single-layer and stacked examples, constraints, and fragmentation behaviour.  Template path corrected (`stream.ini.template` at repo root).
 - `docs/cli.md`: encapsulation flags table added to the `stream` reference; four new CLI examples; template path corrected.
-- `stream.ini.template` (at repo root): encapsulation section documenting all flags and a MPLS+IPIP stacking example.
 - Docstrings for `generate_tcp_stream`, `generate_udp_stream`, `generate_sctp_stream` updated with `encap` parameter documentation.
 
 ---

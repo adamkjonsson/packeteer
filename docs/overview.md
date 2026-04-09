@@ -48,6 +48,37 @@ for dst_port in [80, 443, 8080]:
 write_pcap(packets, path="syn-sweep.pcap")
 ```
 
+### Packet stream generation
+
+`packeteer stream` generates a complete, realistic network stream — a full TCP
+connection, UDP datagram flow, or SCTP association — without any live traffic
+or capture setup.  It handles all the protocol mechanics automatically:
+three-way handshakes, correct sequence and acknowledgement numbers, CRC-32c
+checksums, inter-packet timestamps, and graceful teardowns.
+
+A few flags control the shape of the traffic:
+
+```bash
+# 50-packet HTTP session with bimodal payload sizes written to pcap
+packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
+    --server-port 80 --packets 50 --distribution bimodal --pcap session.pcap
+
+# UDP flow, output as a JSON config for further editing
+packeteer stream --protocol udp --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
+    --server-port 53 --packets 5 --json dns.json
+```
+
+Optional features let you inject realistic impairments — packet loss,
+retransmissions, payload corruption, server RST — and wrap every packet in
+one or more encapsulation layers (VLAN, QinQ, MPLS, PPPoE, GRE, EtherIP,
+IP-in-IP) to match the encapsulation stack of the network under test.  The
+`--mtu` flag causes packets that exceed the limit to be fragmented as they
+would be by a real low-MTU middlebox.
+
+Streams can be written directly to pcap or pcapng, or exported as a JSON
+config so they can be edited and rebuilt with `packeteer build`, or sanitised
+with `packeteer sanitise` before sharing.
+
 ### Sanitising captured traffic
 
 Real captures often contain sensitive data — credentials, personal information,

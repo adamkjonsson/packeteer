@@ -25,14 +25,16 @@ and the standard library only.
 ```{toctree}
 :maxdepth: 1
 
+overview
 installation
 quickstart
-overview
+build
+parse
 sanitiser
+stream
 cli
 json-config
 fragmentation
-stream
 api/index
 reference/packet-sizes
 reference/rfc-references
