@@ -749,7 +749,7 @@ class TestCmdStreamWithEncap(unittest.TestCase):
             server_rst_probability=None,
             rst_propagation_delay=None,
             no_ethernet=False,
-            middlebox_mtu=None,
+            mtu=None,
             stray_packet_count=None,
             stray_timing_window=None,
             pcap=None, pcapng=None,

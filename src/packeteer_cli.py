@@ -574,7 +574,7 @@ _STREAM_PARAMS: dict[str, tuple[str, object, object]] = {
     "payload_corruption_probability": ("payload_corruption_probability", float, 0.0),
     "server_rst_probability":         ("server_rst_probability",         float, 0.0),
     "rst_propagation_delay":          ("rst_propagation_delay",          float, 0.0),
-    "middlebox_mtu":      ("middlebox_mtu",                   int,   None),
+    "mtu":      ("mtu",                   int,   None),
     "stray_packet_count": ("stray_packet_count",              int,   0),
     "stray_timing_window":("stray_timing_window",             int,   None),
     "no_ethernet":        ("no_ethernet",                     bool,  False),
@@ -837,7 +837,7 @@ def _cmd_stream(args: argparse.Namespace) -> None:
         ip_ttl=args.ttl,
         inter_packet_gap=args.gap,
         gap_jitter=args.gap_jitter,
-        middlebox_mtu=args.middlebox_mtu,
+        mtu=args.mtu,
         encap=encap,
     )
 
@@ -1051,7 +1051,7 @@ def main():
                                help="Probability (0.0-1.0) that the server terminates mid-stream with a RST (default: 0.0)")
     stream_parser.add_argument("--rst-propagation-delay", type=float, default=None, metavar="SECONDS",
                                help="Seconds for the RST to reach the client; client sends data during this window (default: 0.0)")
-    stream_parser.add_argument("--middlebox-mtu", type=int, default=None, metavar="BYTES",
+    stream_parser.add_argument("--mtu", type=int, default=None, metavar="BYTES",
                                help="Fragment packets as if they passed through a middlebox with this IP MTU (e.g. 576, 1280, 1400). Default: no fragmentation")
     stream_parser.add_argument("--stray-packets", type=int, default=None, metavar="N",
                                dest="stray_packet_count",

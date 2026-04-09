@@ -83,7 +83,7 @@ All notable changes to packeteer are recorded in this file.
 ## 2026-04-03
 
 ### TCP stream: middlebox MTU fragmentation
-- Added `middlebox_mtu` parameter to `generate_tcp_stream()` and `--middlebox-mtu` CLI flag.  Any packet whose IP-layer size exceeds the configured MTU is split into IP fragments (IPv4 Flags/Fragment Offset; IPv6 Fragment Extension Header) as if it had passed through a low-MTU router or VPN tunnel.  Fragment packets are labelled `FRAG[<orig>][<n>]`.
+- Added `mtu` parameter to `generate_tcp_stream()` and `--mtu` CLI flag.  Any packet whose IP-layer size exceeds the configured MTU is split into IP fragments (IPv4 Flags/Fragment Offset; IPv6 Fragment Extension Header) as if it had passed through a low-MTU router or VPN tunnel.  Fragment packets are labelled `FRAG[<orig>][<n>]`.
 
 ### TCP stream: continuous payload stream
 - Data segments now carry a continuous slice of the default payload across the entire transfer rather than each packet independently restarting from byte 0, matching the behaviour of a real application writing to a socket.

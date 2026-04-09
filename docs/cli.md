@@ -221,7 +221,7 @@ or JSON config file.  The `--protocol` flag selects the transport:
 | `--payload-corruption PROB` | `0.0` | Probability (0.0–1.0) that each data segment's payload is corrupted in transit (TCP only) |
 | `--server-rst PROB` | `0.0` | Probability (0.0–1.0) that the server terminates mid-stream with a RST (TCP only) |
 | `--rst-propagation-delay SECONDS` | `0.0` | Seconds for the RST to reach the client; client sends data during this window (TCP only) |
-| `--middlebox-mtu BYTES` | off | Fragment packets as if they passed through a middlebox with this IP MTU (e.g. 576, 1280, 1400) |
+| `--mtu BYTES` | off | Fragment packets as if they passed through a middlebox with this IP MTU (e.g. 576, 1280, 1400) |
 | `--stray-packets N` | `0` | Inject N forged TCP hijack packets with stolen seq/ack values and all-`x` payload (TCP only) |
 | `--stray-timing-window N` | off | Constrain each stray timestamp to within N packets of its reference DATA packet (TCP only) |
 | `--no-ethernet` | off | Omit Ethernet headers (raw IP packets) |
@@ -312,7 +312,7 @@ packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
 
 # QinQ (double VLAN) with 576-byte middlebox fragmentation
 packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
-    --qinq 100 200 --middlebox-mtu 576 --pcap qinq_frag.pcap
+    --qinq 100 200 --mtu 576 --pcap qinq_frag.pcap
 
 # Generate a JSON config instead of a pcap (replayable with 'packeteer build')
 packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \

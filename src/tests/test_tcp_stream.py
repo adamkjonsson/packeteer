@@ -862,7 +862,7 @@ class TestPayloadCorruption(unittest.TestCase):
 # ── Group 16: Middlebox fragmentation ────────────────────────────────────────
 
 class TestMiddleboxFragmentation(unittest.TestCase):
-    """Group 16: middlebox_mtu causes large packets to be IP-fragmented."""
+    """Group 16: mtu causes large packets to be IP-fragmented."""
 
     # Use a small MTU that will fragment typical data packets.
     # Each data packet has at least 40 bytes payload + 20 IP + 20 TCP = 80 bytes.
@@ -887,7 +887,7 @@ class TestMiddleboxFragmentation(unittest.TestCase):
         return generate_tcp_stream(**defaults)
 
     def test_no_fragmentation_when_mtu_none(self):
-        """No FRAG packets appear when middlebox_mtu is None (default)."""
+        """No FRAG packets appear when mtu is None (default)."""
         stream = self._make_stream()
         frag_pkts = [p for p in stream.packets if p.label.startswith("FRAG[")]
         self.assertEqual(frag_pkts, [])
@@ -895,25 +895,25 @@ class TestMiddleboxFragmentation(unittest.TestCase):
     def test_no_fragmentation_when_packets_fit(self):
         """No fragmentation when all packets fit within the MTU."""
         # SYN/ACK/FIN are tiny; data payloads are 40 bytes → IP = 80 bytes
-        stream = self._make_stream(min_payload=40, max_payload=40, middlebox_mtu=1500)
+        stream = self._make_stream(min_payload=40, max_payload=40, mtu=1500)
         frag_pkts = [p for p in stream.packets if p.label.startswith("FRAG[")]
         self.assertEqual(frag_pkts, [])
 
     def test_data_packets_are_fragmented(self):
         """Large data packets are replaced by FRAG[DATA[i]][n] entries."""
-        stream = self._make_stream(middlebox_mtu=self._MTU)
+        stream = self._make_stream(mtu=self._MTU)
         frag_pkts = [p for p in stream.packets if p.label.startswith("FRAG[DATA[")]
         self.assertGreater(len(frag_pkts), 0)
 
     def test_original_data_labels_absent(self):
         """After fragmentation, no original DATA[i] label remains."""
-        stream = self._make_stream(middlebox_mtu=self._MTU)
+        stream = self._make_stream(mtu=self._MTU)
         data_pkts = [p for p in stream.packets if p.label.startswith("DATA[")]
         self.assertEqual(data_pkts, [])
 
     def test_frag_indices_start_at_zero(self):
         """The first fragment of each DATA packet is labelled FRAG[DATA[i]][0]."""
-        stream = self._make_stream(middlebox_mtu=self._MTU)
+        stream = self._make_stream(mtu=self._MTU)
         for i in range(5):
             frag0 = next(
                 (p for p in stream.packets if p.label == f"FRAG[DATA[{i}]][0]"),
@@ -922,9 +922,9 @@ class TestMiddleboxFragmentation(unittest.TestCase):
             self.assertIsNotNone(frag0, f"FRAG[DATA[{i}]][0] not found")
 
     def test_each_fragment_fits_in_mtu(self):
-        """Every fragment's IP-layer size is ≤ middlebox_mtu."""
+        """Every fragment's IP-layer size is ≤ mtu."""
         mtu = self._MTU
-        stream = self._make_stream(middlebox_mtu=mtu)
+        stream = self._make_stream(mtu=mtu)
         eth_offset = 14  # Ethernet header
         for pkt in stream.packets:
             ip_size = len(pkt.raw) - eth_offset
@@ -935,19 +935,19 @@ class TestMiddleboxFragmentation(unittest.TestCase):
 
     def test_timestamps_unique(self):
         """All fragment packets have unique timestamps."""
-        stream = self._make_stream(middlebox_mtu=self._MTU)
+        stream = self._make_stream(mtu=self._MTU)
         ts_list = [(p.ts_sec, p.ts_usec) for p in stream.packets]
         self.assertEqual(len(ts_list), len(set(ts_list)))
 
     def test_timestamps_sorted(self):
         """Output is sorted by timestamp after fragmentation."""
-        stream = self._make_stream(middlebox_mtu=self._MTU)
+        stream = self._make_stream(mtu=self._MTU)
         ts_list = [(p.ts_sec, p.ts_usec) for p in stream.packets]
         self.assertEqual(ts_list, sorted(ts_list))
 
     def test_frag0_direction_preserved(self):
         """Fragment 0 inherits direction from the original packet."""
-        stream = self._make_stream(middlebox_mtu=self._MTU)
+        stream = self._make_stream(mtu=self._MTU)
         for pkt in stream.packets:
             if pkt.label.startswith("FRAG[DATA[") and pkt.label.endswith("][0]"):
                 self.assertEqual(pkt.direction, "c2s")
@@ -961,7 +961,7 @@ class TestMiddleboxFragmentation(unittest.TestCase):
         # Generate without fragmentation to get reference seq/ack values;
         # fix ISNs so both streams agree on sequence numbers.
         ref = self._make_stream(client_isn=500, server_isn=900)
-        stream = self._make_stream(middlebox_mtu=self._MTU,
+        stream = self._make_stream(mtu=self._MTU,
                                    client_isn=500, server_isn=900)
         for i in range(5):
             ref_data = next(p for p in ref.packets if p.label == f"DATA[{i}]")
@@ -972,7 +972,7 @@ class TestMiddleboxFragmentation(unittest.TestCase):
 
     def test_subsequent_frags_have_zero_seq(self):
         """Fragments after index 0 have seq=0, ack=0, flags=0."""
-        stream = self._make_stream(middlebox_mtu=self._MTU)
+        stream = self._make_stream(mtu=self._MTU)
         for pkt in stream.packets:
             if not pkt.label.startswith("FRAG[DATA["):
                 continue
@@ -985,7 +985,7 @@ class TestMiddleboxFragmentation(unittest.TestCase):
 
     def test_small_packets_not_fragmented(self):
         """Handshake and teardown packets (SYN, ACK, FIN-ACK) are not fragmented."""
-        stream = self._make_stream(middlebox_mtu=self._MTU)
+        stream = self._make_stream(mtu=self._MTU)
         for label in ("SYN", "SYN-ACK", "FIN-ACK", "ACK"):
             frag = next(
                 (p for p in stream.packets
@@ -997,7 +997,7 @@ class TestMiddleboxFragmentation(unittest.TestCase):
 
     def test_server_acks_not_fragmented(self):
         """Server ACK[i] packets (pure ACKs, no payload) are not fragmented."""
-        stream = self._make_stream(middlebox_mtu=self._MTU)
+        stream = self._make_stream(mtu=self._MTU)
         frag_acks = [p for p in stream.packets
                      if p.label.startswith("FRAG[ACK[")]
         self.assertEqual(frag_acks, [])
@@ -1015,7 +1015,7 @@ class TestMiddleboxFragmentation(unittest.TestCase):
             client_isn=1000,
             server_isn=2000,
             base_time=1_000_000.0,
-            middlebox_mtu=self._MTU,
+            mtu=self._MTU,
         )
         frag_pkts = [p for p in stream.packets if p.label.startswith("FRAG[DATA[")]
         self.assertGreater(len(frag_pkts), 0)
@@ -1043,7 +1043,7 @@ class TestMiddleboxFragmentation(unittest.TestCase):
             server_isn=2000,
             base_time=1_000_000.0,
             include_ethernet=False,
-            middlebox_mtu=self._MTU,
+            mtu=self._MTU,
         )
         frag_pkts = [p for p in stream.packets if p.label.startswith("FRAG[DATA[")]
         self.assertGreater(len(frag_pkts), 0)
@@ -1055,7 +1055,7 @@ class TestMiddleboxFragmentation(unittest.TestCase):
         # IPv4 with Ethernet: IP header=20, transport_data = 20 (TCP) + 600 (payload) = 620 bytes
         # MTU=576: max_data = (576-20) & ~7 = 552 bytes
         # fragments = ceil(620 / 552) = 2
-        stream = self._make_stream(middlebox_mtu=576)
+        stream = self._make_stream(mtu=576)
         frag0_count = sum(
             1 for p in stream.packets if p.label.endswith("][0]")
             and p.label.startswith("FRAG[DATA[")

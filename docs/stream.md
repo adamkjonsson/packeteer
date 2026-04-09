@@ -13,7 +13,7 @@ Choose the generator that matches the transport protocol you need:
 | `generate_sctp_stream` | SCTP | Full association: 4-way handshake, DATA+SACK pairs, graceful shutdown |
 
 All three generators share the same core parameters (`client_ip`, `server_ip`,
-`num_data_packets`, `inter_packet_gap`, `middlebox_mtu`, …) and return a stream
+`num_data_packets`, `inter_packet_gap`, `mtu`, …) and return a stream
 object with `to_pcap_tuples()`, `client_packets()`, and `server_packets()`.
 
 From the CLI, use `packeteer stream --protocol tcp|udp|sctp`.
@@ -231,9 +231,9 @@ stream = generate_tcp_stream(
 
 ## Middlebox fragmentation
 
-Set `middlebox_mtu` to simulate packets being fragmented by a router or other
+Set `mtu` to simulate packets being fragmented by a router or other
 middlebox with a low MTU.  Any packet whose IP-layer size (excluding the
-Ethernet header) exceeds `middlebox_mtu` is replaced with a sequence of IP
+Ethernet header) exceeds `mtu` is replaced with a sequence of IP
 fragments.
 
 IPv4 uses the standard Flags/Fragment Offset fields (RFC 791).  IPv6 uses a
@@ -252,11 +252,11 @@ stream = generate_tcp_stream(
     client_ip="10.0.0.1",
     server_ip="10.0.0.2",
     num_data_packets=20,
-    middlebox_mtu=576,
+    mtu=576,
 )
 ```
 
-Typical `middlebox_mtu` values:
+Typical `mtu` values:
 
 | Value | Scenario |
 |-------|----------|
@@ -663,7 +663,7 @@ stream = generate_tcp_stream(
 
 ### Fragmentation with encapsulation
 
-`middlebox_mtu` works correctly with all encapsulation types.  For tag-based
+`mtu` works correctly with all encapsulation types.  For tag-based
 encapsulations the inner IP is fragmented at the correct offset; for tunnel
 encapsulations the outer IP datagram is fragmented.  PPPoE payload length
 fields are automatically updated in each fragment.
@@ -673,7 +673,7 @@ fields are automatically updated in each fragment.
 stream = generate_tcp_stream(
     client_ip="10.0.0.1", server_ip="10.0.0.2",
     encap=VLANEncap(vid=100),
-    middlebox_mtu=576,
+    mtu=576,
 )
 ```
 
@@ -719,7 +719,7 @@ retransmission_timeout = 0.2        # TCP only
 payload_corruption_probability = 0.02  # TCP only
 server_rst_probability = 0.0           # TCP only
 rst_propagation_delay = 0.0            # TCP only
-middlebox_mtu = 576
+mtu = 576
 stray_packet_count = 3  # TCP only
 ```
 
