@@ -4,7 +4,41 @@ All notable changes to packeteer are recorded in this file.
 
 ---
 
-## Unreleased — 2026-04-07
+## Unreleased — 2026-04-09
+
+### Stream JSON output
+
+- `packeteer stream` gains a `--json FILE` output flag, mutually exclusive with `--pcap`/`--pcapng`.  The flag serialises the generated stream as a JSON config file in exactly the same format produced by `packeteer parse`, making it replayable with `packeteer build` and sanitisable with `packeteer sanitise`.
+- Each per-packet `metadata` block carries `timestamp_s`, `timestamp_us`, `direction` (`"c2s"` / `"s2c"`), and `label` (e.g. `"SYN"`, `"DATA[0]"`) alongside the standard layer fields.
+- All three protocols (TCP, UDP, SCTP) and all encapsulation types are supported; the raw bytes are parsed back through the existing `parse_packet` + `to_config` pipeline, so every layer is reproduced correctly.
+- `json` key accepted in INI config files (consistent with `pcap` / `pcapng`).
+
+### Stream encapsulation
+
+- Added `packet_generator.stream_encap` module with seven encapsulation descriptor dataclasses: `VLANEncap` (802.1Q), `QinQEncap` (double 802.1Q), `MPLSEncap` (RFC 3032), `PPPoEEncap` (RFC 2516), `GREEncap` (RFC 2784/2890), `EtherIPEncap` (RFC 3378), `IPIPEncap` (RFC 2003/4213).
+- `generate_tcp_stream`, `generate_udp_stream`, and `generate_sctp_stream` all accept a new `encap` keyword argument (`EncapSpec = StreamEncap | list[StreamEncap] | None`).  Passing a list stacks multiple layers (e.g. `[MPLSEncap(labels=[100]), IPIPEncap("203.0.113.1", "203.0.113.2")]` produces eth → MPLS → outer-IP → inner-IP → transport).
+- Middlebox MTU fragmentation works correctly with all encapsulation types: tag-based layers (VLAN/QinQ/MPLS/PPPoE) fragment the inner IP at the correct offset; tunnel layers (GRE/EtherIP/IPIP) fragment the outer IP datagram; PPPoE payload length fields are automatically patched in each fragment.
+- `packeteer stream` gains 20 encap flags: `--vlan VID`, `--vlan-pcp`, `--vlan-dei`, `--qinq OUTER INNER`, `--qinq-outer-pcp/dei`, `--qinq-inner-pcp/dei`, `--mpls LABEL…`, `--mpls-tc`, `--mpls-ttl`, `--pppoe SESSION_ID`, `--gre SRC DST`, `--gre-key`, `--gre-ttl`, `--etherip SRC DST`, `--etherip-ttl`, `--ipip SRC DST`, `--ipip-ttl`.  All are supported in INI config files.  Mutual exclusion is enforced: `--vlan`/`--qinq` are exclusive; at most one tunnel type.
+- All seven encap types and their combinations exported from `packet_generator.__init__`.
+- 57 new tests in `test_stream_encap.py` (99% coverage) and 32 new tests in `test_cli.py` covering `_parse_stream_encap` and end-to-end stream generation.
+
+### Code quality
+
+- Extracted `_stream_common.py` module to house helpers shared by all three stream generators (`_repeat_payload`, `_alloc_usec`, `_pkt_usec`, `_payload_sizes`, `_fragment_ip_raw`), eliminating duplicate implementations and cross-module private imports.
+- `_fragment_ip_raw()` consolidates the IPv4 and IPv6 fragmentation logic that was previously duplicated across `tcp_stream.py`, `udp_stream.py`, and `sctp_stream.py`.  Each per-protocol fragment helper is now ~15 lines instead of ~55.
+- Removed all `from .tcp_stream import _private_function` imports from `udp_stream.py` and `sctp_stream.py`.
+- Normalised fragment timestamp loops across all three generators to the same `orig_usec + i` / `ts // 1_000_000` / `ts % 1_000_000` pattern.
+- Merged the parallel `_STREAM_CONFIG_KEYS` and `_STREAM_DEFAULTS` dicts in `packeteer_cli.py` into a single `_STREAM_PARAMS: dict[str, tuple[dest, cast, default]]`, giving one canonical source of truth for all stream parameters.
+- Extracted `_validate_stream_args(args) -> str` from `_cmd_stream`, separating protocol validation from argument defaulting.
+
+### Documentation
+
+- `docs/stream.md`: new "Encapsulation" section covering all seven types, single-layer and stacked examples, constraints, and fragmentation behaviour.  Template path corrected (`stream.ini.template` at repo root).
+- `docs/cli.md`: encapsulation flags table added to the `stream` reference; four new CLI examples; template path corrected.
+- `stream.ini.template` (at repo root): encapsulation section documenting all flags and a MPLS+IPIP stacking example.
+- Docstrings for `generate_tcp_stream`, `generate_udp_stream`, `generate_sctp_stream` updated with `encap` parameter documentation.
+
+---
 
 ### SCTP support (RFC 9260)
 - Added `SCTPHeader` dataclass and 13 typed chunk dataclasses (`SCTPDataChunk`, `SCTPInitChunk`, `SCTPInitAckChunk`, `SCTPSackChunk`, `SCTPHeartbeatChunk`, `SCTPHeartbeatAckChunk`, `SCTPAbortChunk`, `SCTPShutdownChunk`, `SCTPShutdownAckChunk`, `SCTPErrorChunk`, `SCTPCookieEchoChunk`, `SCTPCookieAckChunk`, `SCTPShutdownCompleteChunk`) plus `SCTPGenericChunk` for unknown types.

@@ -18,6 +18,7 @@ Examples:
   packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 --packets 50 --pcap out.pcap
   packeteer stream --protocol udp --client-ip 10.0.0.1 --server-ip 10.0.0.2 --server-port 53 --packets 5 --pcap dns.pcap
   packeteer stream --protocol sctp --client-ip 10.0.0.1 --server-ip 10.0.0.2 --server-port 9999 --packets 20 --pcap sctp.pcap
+  packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 --packets 10 --json stream.json
 """
 # This module is the entry point for the `packeteer` CLI command.
 # The mapping is declared in pyproject.toml: [project.scripts] packeteer = "packeteer_cli:main"
@@ -31,6 +32,10 @@ from packet_generator.pcap import write_pcap, write_pcapng, LINKTYPE_ETHERNET, L
 from packet_generator.tcp_stream import generate_tcp_stream
 from packet_generator.udp_stream import generate_udp_stream
 from packet_generator.sctp_stream import generate_sctp_stream
+from packet_generator.stream_encap import (
+    StreamEncap, VLANEncap, QinQEncap, MPLSEncap, PPPoEEncap,
+    GREEncap, EtherIPEncap, IPIPEncap,
+)
 from packet_generator.pppoe import PPPoETag, PPPOE_CODE_SESSION
 from packet_generator.sctp import (
     SCTPDataChunk, SCTPInitChunk, SCTPInitAckChunk, SCTPSackChunk,
@@ -39,7 +44,11 @@ from packet_generator.sctp import (
     SCTPCookieEchoChunk, SCTPCookieAckChunk, SCTPShutdownCompleteChunk,
     SCTPGenericChunk, SCTPChunk,
 )
-from packet_parser.parser import parse_pcap_file
+from packet_parser.parser import parse_pcap_file, parse_packet
+from packet_parser.to_config import (
+    update_config, to_json_config, to_json_string,
+    _apply_ipip, _apply_gre, _apply_etherip,
+)
 from replacer import SanitiseOptions, sanitise
 
 
@@ -538,66 +547,61 @@ def _cmd_sanitise(args: argparse.Namespace) -> None:
 
 # ── stream config-file support ────────────────────────────────────────────────
 
-# Maps config-file key → (argparse dest attr, type converter).
-# Keys use underscores; values are cast with the given callable.
-_STREAM_CONFIG_KEYS: dict[str, tuple[str, type]] = {
-    "protocol":           ("protocol",                str),
-    "client_ip":          ("client_ip",               str),
-    "server_ip":          ("server_ip",               str),
-    "client_port":        ("client_port",             int),
-    "server_port":        ("server_port",             int),
-    "client_mac":         ("client_mac",              str),
-    "server_mac":         ("server_mac",              str),
-    "packets":            ("packets",                 int),
-    "min_payload":        ("min_payload",             int),
-    "max_payload":        ("max_payload",             int),
-    "distribution":       ("distribution",            str),
-    "ttl":                ("ttl",                     int),
-    "window":             ("window",                  int),
-    "gap":                ("gap",                     float),
-    "gap_jitter":         ("gap_jitter",              float),
-    "psh_probability":    ("psh_probability",         float),
-    "packet_loss":                ("packet_loss_probability",    float),
-    "retransmission_probability":   ("retransmission_probability",   float),
-    "retransmission_timeout":       ("retransmission_timeout",       float),
-    "payload_corruption_probability": ("payload_corruption_probability", float),
-    "server_rst_probability":         ("server_rst_probability",         float),
-    "rst_propagation_delay":          ("rst_propagation_delay",          float),
-    "middlebox_mtu":                  ("middlebox_mtu",                  int),
-    "stray_packet_count":             ("stray_packet_count",             int),
-    "stray_timing_window":            ("stray_timing_window",            int),
-    "no_ethernet":                ("no_ethernet",                bool),
-    "pcap":               ("pcap",                    str),
-    "pcapng":             ("pcapng",                  str),
-}
-
-_STREAM_DEFAULTS = {
-    "protocol":                "tcp",
-    "client_port":             54321,
-    "server_port":             80,
-    "client_mac":              "00:00:00:00:00:01",
-    "server_mac":              "00:00:00:00:00:02",
-    "packets":                 10,
-    "min_payload":             40,
-    "max_payload":             1460,
-    "distribution":            "uniform",
-    "ttl":                     64,
-    "window":                  65535,
-    "gap":                     0.001,
-    "gap_jitter":              0.0,
-    "psh_probability":         0.5,
-    "packet_loss_probability":    0.0,
-    "retransmission_probability":    0.0,
-    "retransmission_timeout":        0.2,
-    "payload_corruption_probability": 0.0,
-    "server_rst_probability":         0.0,
-    "rst_propagation_delay":          0.0,
-    "middlebox_mtu":                  None,
-    "stray_packet_count":             0,
-    "stray_timing_window":            None,
-    "no_ethernet":                False,
-    "pcap":                    None,
-    "pcapng":                  None,
+# Maps INI config key → (argparse dest attr, type converter, default value).
+# Keys use underscores (matching INI file convention).  The converter is called
+# on the raw string value; use `bool` to trigger configparser's boolean parsing.
+# `None` as a default means the field has no built-in fallback (it must be
+# supplied on the CLI or in a config file).
+_STREAM_PARAMS: dict[str, tuple[str, object, object]] = {
+    "protocol":           ("protocol",                        str,   "tcp"),
+    "client_ip":          ("client_ip",                       str,   None),
+    "server_ip":          ("server_ip",                       str,   None),
+    "client_port":        ("client_port",                     int,   54321),
+    "server_port":        ("server_port",                     int,   80),
+    "client_mac":         ("client_mac",                      str,   "00:00:00:00:00:01"),
+    "server_mac":         ("server_mac",                      str,   "00:00:00:00:00:02"),
+    "packets":            ("packets",                         int,   10),
+    "min_payload":        ("min_payload",                     int,   40),
+    "max_payload":        ("max_payload",                     int,   1460),
+    "distribution":       ("distribution",                    str,   "uniform"),
+    "ttl":                ("ttl",                             int,   64),
+    "window":             ("window",                          int,   65535),
+    "gap":                ("gap",                             float, 0.001),
+    "gap_jitter":         ("gap_jitter",                      float, 0.0),
+    "psh_probability":    ("psh_probability",                 float, 0.5),
+    "packet_loss":        ("packet_loss_probability",         float, 0.0),
+    "retransmission_probability":     ("retransmission_probability",     float, 0.0),
+    "retransmission_timeout":         ("retransmission_timeout",         float, 0.2),
+    "payload_corruption_probability": ("payload_corruption_probability", float, 0.0),
+    "server_rst_probability":         ("server_rst_probability",         float, 0.0),
+    "rst_propagation_delay":          ("rst_propagation_delay",          float, 0.0),
+    "middlebox_mtu":      ("middlebox_mtu",                   int,   None),
+    "stray_packet_count": ("stray_packet_count",              int,   0),
+    "stray_timing_window":("stray_timing_window",             int,   None),
+    "no_ethernet":        ("no_ethernet",                     bool,  False),
+    "pcap":               ("pcap",                            str,   None),
+    "pcapng":             ("pcapng",                          str,   None),
+    "json":               ("json",                            str,   None),
+    # Encapsulation — all default to None (= not set)
+    "vlan":           ("vlan",           int,                                    None),
+    "vlan_pcp":       ("vlan_pcp",       int,                                    None),
+    "vlan_dei":       ("vlan_dei",       int,                                    None),
+    "qinq":           ("qinq",           lambda s: [int(x) for x in s.split()], None),
+    "qinq_outer_pcp": ("qinq_outer_pcp", int,                                    None),
+    "qinq_outer_dei": ("qinq_outer_dei", int,                                    None),
+    "qinq_inner_pcp": ("qinq_inner_pcp", int,                                    None),
+    "qinq_inner_dei": ("qinq_inner_dei", int,                                    None),
+    "mpls":           ("mpls",           lambda s: [int(x) for x in s.split()], None),
+    "mpls_tc":        ("mpls_tc",        int,                                    None),
+    "mpls_ttl":       ("mpls_ttl",       int,                                    None),
+    "pppoe":          ("pppoe",          int,                                    None),
+    "gre":            ("gre",            lambda s: s.split(),                    None),
+    "gre_key":        ("gre_key",        int,                                    None),
+    "gre_ttl":        ("gre_ttl",        int,                                    None),
+    "etherip":        ("etherip",        lambda s: s.split(),                    None),
+    "etherip_ttl":    ("etherip_ttl",    int,                                    None),
+    "ipip":           ("ipip",           lambda s: s.split(),                    None),
+    "ipip_ttl":       ("ipip_ttl",       int,                                    None),
 }
 
 
@@ -622,16 +626,13 @@ def _load_stream_config(path: str) -> dict:
     section = cp["stream"]
     result = {}
     for key, raw in section.items():
-        if key not in _STREAM_CONFIG_KEYS:
+        if key not in _STREAM_PARAMS:
             print(f"Warning: unknown key '{key}' in config file '{path}' — ignored",
                   file=sys.stderr)
             continue
-        dest, cast = _STREAM_CONFIG_KEYS[key]
+        dest, cast, _ = _STREAM_PARAMS[key]
         try:
-            if cast is bool:
-                value = cp.getboolean("stream", key)
-            else:
-                value = cast(raw)
+            value = cp.getboolean("stream", key) if cast is bool else cast(raw)  # type: ignore[operator]
         except (ValueError, configparser.Error):
             print(
                 f"Error: invalid value for '{key}' in config file '{path}': {raw!r}",
@@ -655,15 +656,141 @@ def _apply_stream_defaults(args: argparse.Namespace) -> None:
         if getattr(args, dest, None) is None:
             setattr(args, dest, value)
 
-    for dest, value in _STREAM_DEFAULTS.items():
+    for dest, _, default in _STREAM_PARAMS.values():
         if getattr(args, dest, None) is None:
-            setattr(args, dest, value)
+            setattr(args, dest, default)
 
 
-def _cmd_stream(args: argparse.Namespace) -> None:
-    _apply_stream_defaults(args)
+def _parse_stream_encap(args: argparse.Namespace) -> "list[StreamEncap] | None":
+    """Build an ordered list of encapsulation layers from CLI / config-file args.
 
-    # Validate required fields that may come from CLI or config file
+    Multiple encapsulations may be combined (e.g. ``--mpls 100 --ipip ...``
+    produces MPLS labels followed by an IP-in-IP tunnel).  The order of layers
+    in the returned list is fixed: tag-based layers first (VLAN/QinQ → MPLS →
+    PPPoE), then at most one tunnel layer (GRE / EtherIP / IPIP).
+
+    Constraints enforced:
+    - ``--vlan`` and ``--qinq`` are mutually exclusive (both are VLAN tags).
+    - At most one tunnel type (``--gre``, ``--etherip``, ``--ipip``).
+
+    Returns ``None`` when no encapsulation was requested.
+    """
+    def _int(attr: str, default: int) -> int:
+        v = getattr(args, attr, None)
+        return int(v) if v is not None else default
+
+    layers: list[StreamEncap] = []
+
+    # ── Layer-2 tag encaps (order: VLAN/QinQ → MPLS → PPPoE) ─────────────────
+    vlan_set  = getattr(args, "vlan", None) is not None
+    qinq_set  = getattr(args, "qinq", None) is not None
+    if vlan_set and qinq_set:
+        print("Error: --vlan and --qinq are mutually exclusive.", file=sys.stderr)
+        sys.exit(1)
+
+    if vlan_set:
+        layers.append(VLANEncap(
+            vid=int(args.vlan),
+            pcp=_int("vlan_pcp", 0),
+            dei=_int("vlan_dei", 0),
+        ))
+    if qinq_set:
+        outer, inner = args.qinq
+        layers.append(QinQEncap(
+            outer_vid=int(outer),
+            inner_vid=int(inner),
+            outer_pcp=_int("qinq_outer_pcp", 0),
+            outer_dei=_int("qinq_outer_dei", 0),
+            inner_pcp=_int("qinq_inner_pcp", 0),
+            inner_dei=_int("qinq_inner_dei", 0),
+        ))
+    if getattr(args, "mpls", None) is not None:
+        layers.append(MPLSEncap(
+            labels=[int(x) for x in args.mpls],
+            tc=_int("mpls_tc", 0),
+            ttl=_int("mpls_ttl", 64),
+        ))
+    if getattr(args, "pppoe", None) is not None:
+        layers.append(PPPoEEncap(session_id=int(args.pppoe)))
+
+    # ── Tunnel encap (at most one) ─────────────────────────────────────────────
+    tunnel_names = [n for n in ("gre", "etherip", "ipip")
+                    if getattr(args, n, None) is not None]
+    if len(tunnel_names) > 1:
+        print(
+            "Error: tunnel encap options are mutually exclusive; got: "
+            + ", ".join(f"--{n}" for n in tunnel_names),
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if "gre" in tunnel_names:
+        src, dst = args.gre
+        key = getattr(args, "gre_key", None)
+        layers.append(GREEncap(
+            src_ip=src, dst_ip=dst,
+            key=int(key) if key is not None else None,
+            ttl=_int("gre_ttl", 64),
+        ))
+    elif "etherip" in tunnel_names:
+        src, dst = args.etherip
+        layers.append(EtherIPEncap(src_ip=src, dst_ip=dst, ttl=_int("etherip_ttl", 64)))
+    elif "ipip" in tunnel_names:
+        src, dst = args.ipip
+        layers.append(IPIPEncap(src_ip=src, dst_ip=dst, ttl=_int("ipip_ttl", 64)))
+
+    return layers if layers else None
+
+
+def _stream_to_json(packets: list, include_ethernet: bool) -> str:
+    """Serialise *packets* (from any stream generator) as a JSON config string.
+
+    Each packet's raw bytes are parsed with :func:`parse_packet` and converted
+    to the same JSON format produced by ``packeteer parse``, so the output can
+    be replayed with ``packeteer build``.
+
+    The per-packet ``metadata`` block contains ``timestamp_s``,
+    ``timestamp_us``, ``direction`` (``"c2s"`` / ``"s2c"``), and ``label``
+    (e.g. ``"SYN"``, ``"DATA[0]"``).
+    """
+    link_type = LINKTYPE_ETHERNET if include_ethernet else LINKTYPE_RAW
+    packet_configs: list[dict] = []
+    for pkt_obj in packets:
+        pkt = parse_packet(pkt_obj.raw, link_type=link_type)
+        cfg: dict = {}
+        if pkt.ethernet is not None:
+            update_config(cfg, pkt.ethernet)
+        for mpls_label in pkt.mpls:
+            update_config(cfg, mpls_label)
+        if pkt.pppoe is not None:
+            update_config(cfg, pkt.pppoe)
+        if pkt.ip is not None:
+            update_config(cfg, pkt.ip)
+        if pkt.ipip and pkt.tunneled is not None:
+            _apply_ipip(cfg, pkt.tunneled)
+        elif pkt.gre is not None and pkt.tunneled is not None:
+            _apply_gre(cfg, pkt.gre, pkt.tunneled)
+        elif pkt.etherip is not None and pkt.tunneled is not None:
+            _apply_etherip(cfg, pkt.etherip, pkt.tunneled)
+        elif pkt.transport is not None:
+            update_config(cfg, pkt.transport)
+            if pkt.payload:
+                update_config(cfg, pkt.payload)
+        cfg["metadata"] = {
+            "timestamp_s":  pkt_obj.ts_sec,
+            "timestamp_us": pkt_obj.ts_usec,
+            "direction":    pkt_obj.direction,
+            "label":        pkt_obj.label,
+        }
+        packet_configs.append(cfg)
+    return to_json_string(to_json_config(packet_configs))
+
+
+def _validate_stream_args(args: argparse.Namespace) -> str:
+    """Validate stream args after defaults are applied.  Returns the protocol string.
+
+    Exits with an error message on any validation failure.
+    """
     missing = [f for f in ("client_ip", "server_ip") if not getattr(args, f, None)]
     if missing:
         print(
@@ -672,21 +799,32 @@ def _cmd_stream(args: argparse.Namespace) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
-    if not args.pcap and not args.pcapng:
+    json_out = getattr(args, "json", None)
+    if not json_out and not args.pcap and not args.pcapng:
         print(
-            "Error: one of --pcap or --pcapng is required (on the command line or in the config file).",
+            "Error: one of --pcap, --pcapng, or --json is required (on the command line or in the config file).",
             file=sys.stderr,
         )
+        sys.exit(1)
+    if json_out and (args.pcap or args.pcapng):
+        print("Error: --json cannot be combined with --pcap or --pcapng.", file=sys.stderr)
         sys.exit(1)
     if args.pcap and args.pcapng:
         print("Error: --pcap and --pcapng are mutually exclusive.", file=sys.stderr)
         sys.exit(1)
-
     protocol = args.protocol.lower()
     if protocol not in ("tcp", "udp", "sctp"):
         print(f"Error: --protocol must be 'tcp', 'udp', or 'sctp', got '{args.protocol}'",
               file=sys.stderr)
         sys.exit(1)
+    return protocol
+
+
+def _cmd_stream(args: argparse.Namespace) -> None:
+    _apply_stream_defaults(args)
+    protocol = _validate_stream_args(args)
+
+    encap = _parse_stream_encap(args)
 
     # Common keyword arguments shared by all protocol generators
     common = dict(
@@ -705,6 +843,7 @@ def _cmd_stream(args: argparse.Namespace) -> None:
         inter_packet_gap=args.gap,
         gap_jitter=args.gap_jitter,
         middlebox_mtu=args.middlebox_mtu,
+        encap=encap,
     )
 
     try:
@@ -730,19 +869,31 @@ def _cmd_stream(args: argparse.Namespace) -> None:
         print(f"Error generating stream: {e}", file=sys.stderr)
         sys.exit(1)
 
-    tuples = stream.to_pcap_tuples()
-    link_type = LINKTYPE_RAW if args.no_ethernet else LINKTYPE_ETHERNET
+    include_ethernet = not args.no_ethernet
+    link_type = LINKTYPE_ETHERNET if include_ethernet else LINKTYPE_RAW
 
-    try:
-        if args.pcap:
-            write_pcap(tuples, path=args.pcap, link_type=link_type)
-            print(f"Wrote {len(tuples)} packet(s) to {args.pcap} (link type: {link_type})")
-        else:
-            write_pcapng(tuples, path=args.pcapng, link_type=link_type)
-            print(f"Wrote {len(tuples)} packet(s) to {args.pcapng} (link type: {link_type})")
-    except OSError as e:
-        print(f"Error writing output: {e}", file=sys.stderr)
-        sys.exit(1)
+    if args.json:
+        json_str = _stream_to_json(stream.packets, include_ethernet)
+        try:
+            with open(args.json, "w") as f:
+                f.write(json_str)
+                f.write("\n")
+        except OSError as e:
+            print(f"Error writing '{args.json}': {e}", file=sys.stderr)
+            sys.exit(1)
+        print(f"Wrote {len(stream.packets)} packet(s) to {args.json} (JSON config)")
+    else:
+        tuples = stream.to_pcap_tuples()
+        try:
+            if args.pcap:
+                write_pcap(tuples, path=args.pcap, link_type=link_type)
+                print(f"Wrote {len(tuples)} packet(s) to {args.pcap} (link type: {link_type})")
+            else:
+                write_pcapng(tuples, path=args.pcapng, link_type=link_type)
+                print(f"Wrote {len(tuples)} packet(s) to {args.pcapng} (link type: {link_type})")
+        except OSError as e:
+            print(f"Error writing output: {e}", file=sys.stderr)
+            sys.exit(1)
 
 
 def main():
@@ -915,11 +1066,73 @@ def main():
                                help="Constrain each stray packet timestamp to within N packets of its reference DATA packet (default: full data-transfer window)")
     stream_parser.add_argument("--no-ethernet", action="store_true", default=False,
                                help="Omit Ethernet headers (write raw IP packets)")
+    # ── Encapsulation (mutually exclusive primary flags + optional detail flags) ─
+    encap_group = stream_parser.add_argument_group(
+        "encapsulation",
+        "Wrap each packet in an additional protocol layer.  Exactly one primary "
+        "encap flag may be used per stream.  Detail flags refine the selected encap.",
+    )
+    encap_group.add_argument("--vlan", type=int, default=None, metavar="VID",
+                             help="Single 802.1Q VLAN tag with the given VLAN ID (1–4094)")
+    encap_group.add_argument("--vlan-pcp", type=int, default=None, metavar="N",
+                             dest="vlan_pcp",
+                             help="VLAN Priority Code Point (0–7, default 0); used with --vlan")
+    encap_group.add_argument("--vlan-dei", type=int, default=None, metavar="N",
+                             dest="vlan_dei",
+                             help="VLAN Drop Eligible Indicator (0 or 1, default 0); used with --vlan")
+    encap_group.add_argument("--qinq", nargs=2, type=int, default=None,
+                             metavar=("OUTER_VID", "INNER_VID"),
+                             help="QinQ double VLAN tag (outer VID then inner VID)")
+    encap_group.add_argument("--qinq-outer-pcp", type=int, default=None, metavar="N",
+                             dest="qinq_outer_pcp",
+                             help="Outer VLAN PCP (0–7, default 0); used with --qinq")
+    encap_group.add_argument("--qinq-outer-dei", type=int, default=None, metavar="N",
+                             dest="qinq_outer_dei",
+                             help="Outer VLAN DEI (0 or 1, default 0); used with --qinq")
+    encap_group.add_argument("--qinq-inner-pcp", type=int, default=None, metavar="N",
+                             dest="qinq_inner_pcp",
+                             help="Inner VLAN PCP (0–7, default 0); used with --qinq")
+    encap_group.add_argument("--qinq-inner-dei", type=int, default=None, metavar="N",
+                             dest="qinq_inner_dei",
+                             help="Inner VLAN DEI (0 or 1, default 0); used with --qinq")
+    encap_group.add_argument("--mpls", nargs="+", type=int, default=None, metavar="LABEL",
+                             help="MPLS label stack (one or more 20-bit labels, outermost first)")
+    encap_group.add_argument("--mpls-tc", type=int, default=None, metavar="N",
+                             dest="mpls_tc",
+                             help="MPLS Traffic Class for all labels (0–7, default 0)")
+    encap_group.add_argument("--mpls-ttl", type=int, default=None, metavar="N",
+                             dest="mpls_ttl",
+                             help="MPLS TTL for all labels (0–255, default 64)")
+    encap_group.add_argument("--pppoe", type=int, default=None, metavar="SESSION_ID",
+                             help="PPPoE session frame with the given 16-bit session ID")
+    encap_group.add_argument("--gre", nargs=2, default=None,
+                             metavar=("OUTER_SRC", "OUTER_DST"),
+                             help="GRE tunnel; specify outer IP source and destination")
+    encap_group.add_argument("--gre-key", type=int, default=None, metavar="KEY",
+                             dest="gre_key",
+                             help="RFC 2890 32-bit GRE Key field; used with --gre")
+    encap_group.add_argument("--gre-ttl", type=int, default=None, metavar="N",
+                             dest="gre_ttl",
+                             help="Outer IP TTL for GRE tunnel (default 64)")
+    encap_group.add_argument("--etherip", nargs=2, default=None,
+                             metavar=("OUTER_SRC", "OUTER_DST"),
+                             help="EtherIP tunnel (RFC 3378); specify outer IP source and destination")
+    encap_group.add_argument("--etherip-ttl", type=int, default=None, metavar="N",
+                             dest="etherip_ttl",
+                             help="Outer IP TTL for EtherIP tunnel (default 64)")
+    encap_group.add_argument("--ipip", nargs=2, default=None,
+                             metavar=("OUTER_SRC", "OUTER_DST"),
+                             help="IP-in-IP tunnel (RFC 2003/4213); specify outer IP source and destination")
+    encap_group.add_argument("--ipip-ttl", type=int, default=None, metavar="N",
+                             dest="ipip_ttl",
+                             help="Outer IP TTL for IP-in-IP tunnel (default 64)")
     # Output (may also be provided via --config; mutual exclusivity enforced in _cmd_stream)
     stream_parser.add_argument("--pcap", default=None, metavar="FILE",
                                help="Write to a libpcap (.pcap) file")
     stream_parser.add_argument("--pcapng", default=None, metavar="FILE",
                                help="Write to a pcapng (.pcapng) file")
+    stream_parser.add_argument("--json", default=None, metavar="FILE",
+                               help="Write packets as a JSON config file (same format produced by 'packeteer parse', replayable with 'packeteer build')")
     stream_parser.set_defaults(func=_cmd_stream)
 
     args = parser.parse_args()

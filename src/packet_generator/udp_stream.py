@@ -29,17 +29,15 @@ Typical usage::
 from __future__ import annotations
 
 import random
-import socket
-import struct
 import time
 from dataclasses import dataclass
 
 from .builder import PacketBuilder
-from .ethernet import EthernetHeader, ETHERTYPE_IPV4, ETHERTYPE_IPV6
-from .fragmentation import fragment_ipv4, fragment_ipv6
-from .ip import IPHeader
-from .ipv6 import IPv6Header
-from .tcp_stream import _payload_sizes, _repeat_payload, _alloc_usec
+from ._stream_common import (
+    _alloc_usec, _fragment_ip_raw, _payload_sizes, _pkt_usec, _repeat_payload,
+)
+from .stream_encap import (EncapSpec, StreamEncap,  # noqa: F401  (StreamEncap needed for Sphinx type resolution)
+                           _apply_encap, _encap_ip_start)
 
 
 # ── Data model ────────────────────────────────────────────────────────────────
@@ -88,9 +86,6 @@ class UDPStream:
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
-def _pkt_usec(pkt: UDPStreamPacket) -> int:
-    return pkt.ts_sec * 1_000_000 + pkt.ts_usec
-
 
 def _build_udp_packet(
     src_ip: str,
@@ -102,10 +97,12 @@ def _build_udp_packet(
     payload: bytes,
     include_ethernet: bool,
     ip_ttl: int,
+    encap: EncapSpec = None,
 ) -> bytes:
     b = PacketBuilder()
     if include_ethernet:
         b = b.ethernet(src_mac=src_mac, dst_mac=dst_mac)
+    b = _apply_encap(b, encap, src_mac, dst_mac)
     return (b
         .ip(src=src_ip, dst=dst_ip, ttl=ip_ttl)
         .udp(src_port=src_port, dst_port=dst_port)
@@ -119,55 +116,12 @@ def _fragment_udp_pkt(
     mtu: int,
     include_ethernet: bool,
     used_ts: set[int],
+    encap: EncapSpec = None,
 ) -> list[UDPStreamPacket]:
     """Split *pkt* into IP fragments if its IP-layer size exceeds *mtu*."""
-    raw = pkt.raw
-    ip_start = 14 if include_ethernet else 0
-
-    if len(raw) - ip_start <= mtu:
-        return [pkt]
-
-    ip_version = (raw[ip_start] >> 4)
-
-    if ip_version == 4:
-        (_, tos, _, ident, flags_frag, ttl, proto, _,
-         src_bytes, dst_bytes) = struct.unpack('!BBHHHBBH4s4s', raw[ip_start:ip_start + 20])
-        ip_hdr = IPHeader(
-            src=socket.inet_ntoa(src_bytes), dst=socket.inet_ntoa(dst_bytes),
-            protocol=proto, ttl=ttl, tos=tos, identification=ident,
-            flags=(flags_frag >> 13) & 0x7, fragment_offset=flags_frag & 0x1FFF,
-        )
-        transport_data = raw[ip_start + 20:]
-        eth_hdr: EthernetHeader | None = None
-        if include_ethernet:
-            eth_hdr = EthernetHeader(
-                dst_mac=':'.join(f'{b:02x}' for b in raw[0:6]),
-                src_mac=':'.join(f'{b:02x}' for b in raw[6:12]),
-                ethertype=ETHERTYPE_IPV4,
-            )
-        frag_raws = fragment_ipv4(ip_hdr, transport_data, mtu, eth_header=eth_hdr)
-
-    elif ip_version == 6:
-        version_tc_fl = struct.unpack('!I', raw[ip_start:ip_start + 4])[0]
-        _, next_header, hop_limit = struct.unpack('!HBB', raw[ip_start + 4:ip_start + 8])
-        ip_hdr = IPv6Header(
-            src=socket.inet_ntop(socket.AF_INET6, raw[ip_start + 8:ip_start + 24]),
-            dst=socket.inet_ntop(socket.AF_INET6, raw[ip_start + 24:ip_start + 40]),
-            next_header=next_header, hop_limit=hop_limit,
-            traffic_class=(version_tc_fl >> 20) & 0xFF,
-            flow_label=version_tc_fl & 0xFFFFF,
-        )
-        transport_data = raw[ip_start + 40:]
-        eth_hdr = None
-        if include_ethernet:
-            eth_hdr = EthernetHeader(
-                dst_mac=':'.join(f'{b:02x}' for b in raw[0:6]),
-                src_mac=':'.join(f'{b:02x}' for b in raw[6:12]),
-                ethertype=ETHERTYPE_IPV6,
-            )
-        frag_raws = fragment_ipv6(ip_hdr, transport_data, mtu, eth_header=eth_hdr)
-
-    else:
+    ip_start = _encap_ip_start(encap, include_ethernet)
+    frag_raws = _fragment_ip_raw(pkt.raw, ip_start, mtu, encap)
+    if frag_raws is None:
         return [pkt]
 
     orig_usec = _pkt_usec(pkt)
@@ -207,6 +161,7 @@ def generate_udp_stream(
     inter_packet_gap: float = 0.001,
     gap_jitter: float = 0.0,
     middlebox_mtu: int | None = None,
+    encap: EncapSpec = None,
 ) -> UDPStream:
     """Generate a sequence of UDP datagrams from client to server.
 
@@ -240,6 +195,12 @@ def generate_udp_stream(
             timestamp.  Defaults to ``0.0`` (no jitter).
         middlebox_mtu: When set, fragment packets whose IP-layer size exceeds
             this value, simulating a middlebox with a lower MTU.
+        encap: One or more encapsulation layers to wrap every packet in.
+            Accepts a single descriptor, a list of descriptors (applied
+            outermost first), or ``None`` (default, no encapsulation).
+            See :mod:`packet_generator.stream_encap` for available types
+            (VLANEncap, QinQEncap, MPLSEncap, PPPoEEncap, GREEncap,
+            EtherIPEncap, IPIPEncap) and combination rules.
 
     Returns:
         A :class:`UDPStream` whose :attr:`~UDPStream.packets` list contains
@@ -286,6 +247,7 @@ def generate_udp_stream(
             payload=chunk,
             include_ethernet=include_ethernet,
             ip_ttl=ip_ttl,
+            encap=encap,
         )
         packets.append(UDPStreamPacket(
             raw=raw,
@@ -305,7 +267,7 @@ def generate_udp_stream(
         used_ts = {_pkt_usec(p) for p in packets}
         fragmented: list[UDPStreamPacket] = []
         for pkt in packets:
-            fragmented.extend(_fragment_udp_pkt(pkt, middlebox_mtu, include_ethernet, used_ts))
+            fragmented.extend(_fragment_udp_pkt(pkt, middlebox_mtu, include_ethernet, used_ts, encap))
         packets = fragmented
         packets.sort(key=lambda p: (p.ts_sec, p.ts_usec))
 

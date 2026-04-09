@@ -225,3 +225,51 @@ window = 65535
 #   captures in Wireshark or other tools.  client_mac and server_mac are
 #   ignored when this is true.
 no_ethernet = false
+
+# ── Encapsulation ──────────────────────────────────────────────────────────────
+#
+# Encapsulation layers are stacked in this fixed order (outermost first):
+#   1. vlan or qinq   (mutually exclusive)
+#   2. mpls
+#   3. pppoe
+#   4. gre, etherip, or ipip   (at most one tunnel type)
+#
+# Any combination of the above is allowed.  For example, MPLS + IP-in-IP:
+#   mpls = 100 200
+#   ipip = 203.0.113.1 203.0.113.2
+#
+# All encap keys are optional and default to unset (no encapsulation).
+#
+# vlan  — single IEEE 802.1Q VLAN tag
+#   Accepts a VLAN ID (1–4094).
+# vlan = 100
+# vlan_pcp = 0        Priority Code Point (0–7, default 0)
+# vlan_dei = 0        Drop Eligible Indicator (0 or 1, default 0)
+#
+# qinq  — QinQ double VLAN tag; space-separated outer then inner VID
+# qinq = 100 200
+# qinq_outer_pcp = 0
+# qinq_outer_dei = 0
+# qinq_inner_pcp = 0
+# qinq_inner_dei = 0
+#
+# mpls  — MPLS label stack; space-separated labels, outermost first
+# mpls = 100 200 300
+# mpls_tc = 0         Traffic Class for all labels (0–7, default 0)
+# mpls_ttl = 64       TTL for all labels (0–255, default 64)
+#
+# pppoe  — PPPoE session frame (RFC 2516); requires Ethernet framing
+# pppoe = 1           16-bit session ID
+#
+# gre  — GRE tunnel (RFC 2784/2890); space-separated outer src and dst IP
+# gre = 203.0.113.1 203.0.113.2
+# gre_key = 1234      optional 32-bit RFC 2890 Key field
+# gre_ttl = 64        outer IP TTL (default 64)
+#
+# etherip  — EtherIP tunnel (RFC 3378)
+# etherip = 203.0.113.1 203.0.113.2
+# etherip_ttl = 64
+#
+# ipip  — IP-in-IP tunnel (RFC 2003/4213)
+# ipip = 203.0.113.1 203.0.113.2
+# ipip_ttl = 64

@@ -224,6 +224,10 @@ from .sctp import (
 from .tcp_stream import generate_tcp_stream, TCPStream, TCPStreamPacket
 from .udp_stream import generate_udp_stream, UDPStream, UDPStreamPacket
 from .sctp_stream import generate_sctp_stream, SCTPStream, SCTPStreamPacket
+from .stream_encap import (
+    StreamEncap, EncapSpec, VLANEncap, QinQEncap, MPLSEncap, PPPoEEncap,
+    GREEncap, EtherIPEncap, IPIPEncap,
+)
 
 __all__ = [
     "PacketBuilder",
@@ -314,6 +318,15 @@ __all__ = [
     "generate_sctp_stream",
     "SCTPStream",
     "SCTPStreamPacket",
+    "StreamEncap",
+    "EncapSpec",
+    "VLANEncap",
+    "QinQEncap",
+    "MPLSEncap",
+    "PPPoEEncap",
+    "GREEncap",
+    "EtherIPEncap",
+    "IPIPEncap",
     "fragment_ipv4",
     "fragment_ipv6",
     "write_pcap",

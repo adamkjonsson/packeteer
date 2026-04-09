@@ -7,7 +7,7 @@ to `build` for replay;
 `sanitise` replaces sensitive field values in a JSON config with synthetic
 data drawn from IANA-reserved ranges;
 `stream` generates a complete synthetic network stream (TCP, UDP, or SCTP)
-directly to pcap or pcapng.
+and writes it to a pcap, pcapng, or JSON config file.
 
 Supported transport protocols for `build` / `parse`: TCP, UDP, SCTP (RFC 9260),
 ICMPv4, ICMPv6.  See {doc}`json-config` for the JSON format, including the
@@ -181,11 +181,11 @@ See {doc}`sanitiser` for the full reference including all `SanitiseOptions` fiel
 ## `stream`
 
 ```
-packeteer stream --client-ip IP --server-ip IP (--pcap FILE | --pcapng FILE) [options]
+packeteer stream --client-ip IP --server-ip IP (--pcap FILE | --pcapng FILE | --json FILE) [options]
 ```
 
-Generates a complete synthetic network stream and writes it directly to a pcap
-or pcapng file.  The `--protocol` flag selects the transport:
+Generates a complete synthetic network stream and writes it to a pcap, pcapng,
+or JSON config file.  The `--protocol` flag selects the transport:
 
 | Protocol | Description |
 |----------|-------------|
@@ -200,6 +200,7 @@ or pcapng file.  The `--protocol` flag selects the transport:
 | `--server-ip IP` | *(required)* | Server IP address (same family) |
 | `--pcap FILE` | *(required*)* | Write to a libpcap (`.pcap`) file |
 | `--pcapng FILE` | *(required*)* | Write to a pcapng (`.pcapng`) file |
+| `--json FILE` | *(required*)* | Write as a JSON config file (same format as `packeteer parse` output; replayable with `packeteer build`) |
 | `--protocol` | `tcp` | Transport protocol: `tcp`, `udp`, or `sctp` |
 | `--client-port PORT` | `54321` | Client source port |
 | `--server-port PORT` | `80` | Server destination port |
@@ -225,13 +226,41 @@ or pcapng file.  The `--protocol` flag selects the transport:
 | `--stray-timing-window N` | off | Constrain each stray timestamp to within N packets of its reference DATA packet (TCP only) |
 | `--no-ethernet` | off | Omit Ethernet headers (raw IP packets) |
 
-`--pcap` and `--pcapng` are mutually exclusive; one is required.
+`--pcap`, `--pcapng`, and `--json` are mutually exclusive; exactly one is required.
+
+### Encapsulation flags
+
+Wrap every packet in one or more encapsulation layers.  Layers are applied in
+the fixed order VLAN/QinQ → MPLS → PPPoE → tunnel.  `--vlan` and `--qinq`
+are mutually exclusive; at most one tunnel type may be used.
+
+| Flag | Description |
+|------|-------------|
+| `--vlan VID` | Single 802.1Q VLAN tag |
+| `--vlan-pcp N` | VLAN Priority Code Point (0–7, default 0) |
+| `--vlan-dei N` | VLAN Drop Eligible Indicator (0 or 1, default 0) |
+| `--qinq OUTER INNER` | Double 802.1Q tags (QinQ): outer and inner VID |
+| `--qinq-outer-pcp N` | Outer tag PCP (default 0) |
+| `--qinq-outer-dei N` | Outer tag DEI (default 0) |
+| `--qinq-inner-pcp N` | Inner tag PCP (default 0) |
+| `--qinq-inner-dei N` | Inner tag DEI (default 0) |
+| `--mpls LABEL…` | MPLS label stack (one or more 20-bit labels, outermost first) |
+| `--mpls-tc N` | MPLS Traffic Class for all labels (0–7, default 0) |
+| `--mpls-ttl N` | MPLS TTL for all labels (default 64) |
+| `--pppoe SESSION_ID` | PPPoE session frame with given 16-bit session ID |
+| `--gre SRC_IP DST_IP` | GRE tunnel; stream IPs become inner; outer IPs are SRC/DST |
+| `--gre-key N` | RFC 2890 GRE Key field (omitted by default) |
+| `--gre-ttl N` | Outer IP TTL for GRE (default 64) |
+| `--etherip SRC_IP DST_IP` | EtherIP tunnel (RFC 3378) |
+| `--etherip-ttl N` | Outer IP TTL for EtherIP (default 64) |
+| `--ipip SRC_IP DST_IP` | IP-in-IP tunnel (RFC 2003 / 4213) |
+| `--ipip-ttl N` | Outer IP TTL for IPIP (default 64) |
 
 A template config file is provided at
-[src/packet_generator/stream.ini.template](../src/packet_generator/stream.ini.template) — copy it, edit as needed, and
+[stream.ini.template](../stream.ini.template) — copy it, edit as needed, and
 pass it with `--config`.  All keys are optional except `client_ip`,
-`server_ip`, and one of `pcap`/`pcapng`.  CLI flags always override config
-file values, so the file works as a saved profile.
+`server_ip`, and one of `pcap`/`pcapng`/`json`.  CLI flags always override
+config file values, so the file works as a saved profile.
 
 ### Examples
 
@@ -268,6 +297,32 @@ packeteer stream --client-ip 2001:db8::1 --server-ip 2001:db8::2 \
 # Raw IP (no Ethernet headers)
 packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
     --no-ethernet --packets 20 --pcap raw.pcap
+
+# VLAN-tagged TCP stream (802.1Q VID 100, PCP 3)
+packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
+    --vlan 100 --vlan-pcp 3 --packets 20 --pcap vlan.pcap
+
+# MPLS label stack (two labels) + IP-in-IP tunnel
+packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
+    --mpls 100 200 --ipip 203.0.113.1 203.0.113.2 --pcap mpls_ipip.pcap
+
+# GRE tunnel with key
+packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
+    --gre 203.0.113.1 203.0.113.2 --gre-key 12345 --pcap gre.pcap
+
+# QinQ (double VLAN) with 576-byte middlebox fragmentation
+packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
+    --qinq 100 200 --middlebox-mtu 576 --pcap qinq_frag.pcap
+
+# Generate a JSON config instead of a pcap (replayable with 'packeteer build')
+packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
+    --packets 10 --json stream.json
+
+# JSON then sanitise then rebuild — full generate→sanitise→replay workflow
+packeteer stream --client-ip 192.168.1.1 --server-ip 192.168.1.2 \
+    --protocol sctp --packets 20 --json raw.json
+packeteer sanitise raw.json --ports --payload --output clean.json
+packeteer build clean.json --pcap clean.pcap
 ```
 
 ### Programmatic equivalent
@@ -304,6 +359,39 @@ stream = generate_sctp_stream(
     payload_distribution="bimodal",
 )
 write_pcap(stream.to_pcap_tuples(), path="sctp.pcap")
+```
+
+To get the JSON config equivalent of `--json`, parse the raw bytes back through
+the standard parser pipeline — the same approach `packeteer stream --json` uses
+internally:
+
+```python
+import json
+from packet_generator.tcp_stream import generate_tcp_stream
+from packet_parser.parser import parse_packet
+from packet_parser.to_config import update_config, to_json_config, to_json_string
+from packet_generator.pcap import LINKTYPE_ETHERNET
+
+stream = generate_tcp_stream(client_ip="10.0.0.1", server_ip="10.0.0.2",
+                              num_data_packets=5)
+packet_configs = []
+for pkt in stream.packets:
+    parsed = parse_packet(pkt.raw, link_type=LINKTYPE_ETHERNET)
+    cfg = {}
+    if parsed.ethernet:
+        update_config(cfg, parsed.ethernet)
+    if parsed.ip:
+        update_config(cfg, parsed.ip)
+    if parsed.transport:
+        update_config(cfg, parsed.transport)
+        if parsed.payload:
+            update_config(cfg, parsed.payload)
+    cfg["metadata"] = {"timestamp_s": pkt.ts_sec, "timestamp_us": pkt.ts_usec,
+                        "direction": pkt.direction, "label": pkt.label}
+    packet_configs.append(cfg)
+
+with open("stream.json", "w") as f:
+    f.write(to_json_string(to_json_config(packet_configs)))
 ```
 
 See {doc}`stream` for the full Python API, payload distribution options,

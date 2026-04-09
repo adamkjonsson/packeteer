@@ -26,33 +26,19 @@ Typical usage::
 from __future__ import annotations
 
 import random
-import socket
-import struct
 import time
 from dataclasses import dataclass, replace
-from pathlib import Path
 from collections.abc import Callable
 
 from .builder import PacketBuilder
-from .ethernet import EthernetHeader, ETHERTYPE_IPV4, ETHERTYPE_IPV6
-from .fragmentation import fragment_ipv4, fragment_ipv6
-from .ip import IPHeader
-from .ipv6 import IPv6Header
+from ._stream_common import (
+    _alloc_usec, _fragment_ip_raw, _payload_sizes, _pkt_usec, _repeat_payload,
+)
+from .stream_encap import (EncapSpec, StreamEncap,  # noqa: F401  (StreamEncap needed for Sphinx type resolution)
+                           _apply_encap, _encap_ip_start)
 from .tcp import TCPOptions, TCP_SYN, TCP_ACK, TCP_PSH, TCP_FIN, TCP_RST
 
 _WRAP = 2 ** 32
-
-_DEFAULT_PAYLOAD = (
-    Path(__file__).with_name("default_payload.txt").read_bytes()
-)
-
-
-def _repeat_payload(size: int) -> bytes:
-    """Return *size* bytes of the default payload, repeating as needed."""
-    if size <= 0:
-        return b""
-    times, remainder = divmod(size, len(_DEFAULT_PAYLOAD))
-    return _DEFAULT_PAYLOAD * times + _DEFAULT_PAYLOAD[:remainder]
 
 
 # ── Data model ────────────────────────────────────────────────────────────────
@@ -127,19 +113,6 @@ class TCPStream:
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
-def _pkt_usec(pkt: TCPStreamPacket) -> int:
-    """Return the packet timestamp as a single microsecond integer."""
-    return pkt.ts_sec * 1_000_000 + pkt.ts_usec
-
-
-def _alloc_usec(start: int, used: set[int]) -> int:
-    """Return the smallest integer >= *start* not in *used*, and add it to *used*."""
-    ts = start
-    while ts in used:
-        ts += 1
-    used.add(ts)
-    return ts
-
 def _advance_seq(ep: _TCPEndpoint, flags: int, payload_len: int) -> None:
     """Advance *ep*.seq by the number of sequence numbers this segment consumes.
 
@@ -162,11 +135,13 @@ def _build_packet(
     include_ethernet: bool,
     ip_ttl: int,
     options: TCPOptions | None,
+    encap: EncapSpec = None,
 ) -> bytes:
     """Assemble one raw packet using PacketBuilder."""
     b = PacketBuilder()
     if include_ethernet:
         b = b.ethernet(src_mac=src.mac, dst_mac=dst.mac)
+    b = _apply_encap(b, encap, src.mac, dst.mac)
     b = (b
         .ip(src=src.ip, dst=dst.ip, ttl=ip_ttl)
         .tcp(
@@ -184,54 +159,14 @@ def _build_packet(
     return b.build()
 
 
-def _payload_sizes(
-    n: int,
-    min_payload: int,
-    max_payload: int,
-    distribution: str,
-    explicit: list[int] | None,
-) -> list[int]:
-    """Return a list of *n* payload sizes according to the requested strategy."""
-    if explicit is not None:
-        if len(explicit) != n:
-            raise ValueError(
-                f"payload_sizes has {len(explicit)} entries but "
-                f"num_data_packets={n}"
-            )
-        return list(explicit)
-
-    if distribution == "fixed":
-        return [max_payload] * n
-
-    if distribution == "uniform":
-        return [random.randint(min_payload, max_payload) for _ in range(n)]
-
-    if distribution == "bimodal":
-        # 70% small (near min), 30% large (near max) — approximates mixed
-        # HTTP/TLS traffic where small control messages and bulk segments coexist.
-        small_hi = min(min_payload + 100, max_payload)
-        large_lo = max(max_payload - 100, min_payload)
-        sizes = []
-        for _ in range(n):
-            if random.random() < 0.7:
-                sizes.append(random.randint(min_payload, small_hi))
-            else:
-                sizes.append(random.randint(large_lo, max_payload))
-        return sizes
-
-    raise ValueError(
-        f"Unknown payload_distribution {distribution!r}; "
-        "choose 'uniform', 'bimodal', or 'fixed'"
-    )
-
-
-# ── IP fragmentation helper ───────────────────────────────────────────────────
+# ── IP fragmentation ─────────────────────────────────────────────────────────
 
 def _fragment_packet(
     pkt: TCPStreamPacket,
     mtu: int,
     include_ethernet: bool,
     used_ts: set[int],
+    encap: EncapSpec = None,
 ) -> list[TCPStreamPacket]:
     """Split *pkt* into IP fragments if its IP-layer size exceeds *mtu*.
 
@@ -243,83 +178,30 @@ def _fragment_packet(
     *used_ts* is updated in place: the original timestamp is removed and each
     new fragment timestamp is added, ensuring global uniqueness.
     """
-    raw = pkt.raw
-    ip_start = 14 if include_ethernet else 0
-
-    if len(raw) - ip_start <= mtu:
+    ip_start = _encap_ip_start(encap, include_ethernet)
+    frag_raws = _fragment_ip_raw(pkt.raw, ip_start, mtu, encap)
+    if frag_raws is None:
         return [pkt]
 
-    ip_version = (raw[ip_start] >> 4)
-    eth_hdr: EthernetHeader | None = None
-
-    if ip_version == 4:
-        (_, tos, _, ident, flags_frag, ttl, proto, _,
-         src_bytes, dst_bytes) = struct.unpack('!BBHHHBBH4s4s',
-                                               raw[ip_start:ip_start + 20])
-        ip_hdr = IPHeader(
-            src=socket.inet_ntoa(src_bytes),
-            dst=socket.inet_ntoa(dst_bytes),
-            protocol=proto, ttl=ttl, tos=tos,
-            identification=ident,
-            flags=(flags_frag >> 13) & 0x7,
-            fragment_offset=flags_frag & 0x1FFF,
-        )
-        transport_data = raw[ip_start + 20:]
-        if include_ethernet:
-            eth_hdr = EthernetHeader(
-                dst_mac=':'.join(f'{b:02x}' for b in raw[0:6]),
-                src_mac=':'.join(f'{b:02x}' for b in raw[6:12]),
-                ethertype=ETHERTYPE_IPV4,
-            )
-        frag_raws = fragment_ipv4(ip_hdr, transport_data, mtu, eth_header=eth_hdr)
-
-    elif ip_version == 6:
-        version_tc_fl = struct.unpack('!I', raw[ip_start:ip_start + 4])[0]
-        _, next_header, hop_limit = struct.unpack(
-            '!HBB', raw[ip_start + 4:ip_start + 8])
-        ip_hdr = IPv6Header(
-            src=socket.inet_ntop(socket.AF_INET6, raw[ip_start + 8:ip_start + 24]),
-            dst=socket.inet_ntop(socket.AF_INET6, raw[ip_start + 24:ip_start + 40]),
-            next_header=next_header,
-            hop_limit=hop_limit,
-            traffic_class=(version_tc_fl >> 20) & 0xFF,
-            flow_label=version_tc_fl & 0xFFFFF,
-        )
-        transport_data = raw[ip_start + 40:]
-        if include_ethernet:
-            eth_hdr = EthernetHeader(
-                dst_mac=':'.join(f'{b:02x}' for b in raw[0:6]),
-                src_mac=':'.join(f'{b:02x}' for b in raw[6:12]),
-                ethertype=ETHERTYPE_IPV6,
-            )
-        frag_raws = fragment_ipv6(ip_hdr, transport_data, mtu, eth_header=eth_hdr)
-
-    else:
-        return [pkt]
-
-    # Allow fragment 0 to reuse the original timestamp
     orig_usec = _pkt_usec(pkt)
     used_ts.discard(orig_usec)
 
     result: list[TCPStreamPacket] = []
-    current_usec = orig_usec
-    for frag_idx, frag_raw in enumerate(frag_raws):
-        ts_sec, ts_usec = divmod(_alloc_usec(current_usec, used_ts), 1_000_000)
-        label = f"FRAG[{pkt.label}][{frag_idx}]"
-        if frag_idx == 0:
+    for i, frag_raw in enumerate(frag_raws):
+        ts = _alloc_usec(orig_usec + i, used_ts)
+        label = f"FRAG[{pkt.label}][{i}]"
+        if i == 0:
             result.append(replace(pkt, raw=frag_raw,
-                                  ts_sec=ts_sec, ts_usec=ts_usec,
+                                  ts_sec=ts // 1_000_000, ts_usec=ts % 1_000_000,
                                   label=label))
         else:
             result.append(TCPStreamPacket(
                 raw=frag_raw,
-                ts_sec=ts_sec, ts_usec=ts_usec,
+                ts_sec=ts // 1_000_000, ts_usec=ts % 1_000_000,
                 direction=pkt.direction,
                 flags=0, seq=0, ack=0, payload_len=0,
                 label=label,
             ))
-        current_usec = ts_sec * 1_000_000 + ts_usec + 1
-
     return result
 
 
@@ -359,6 +241,7 @@ def generate_tcp_stream(
     stray_packet_count: int = 0,
     stray_timing_window: int | None = None,
     packet_hooks: list[Callable[[TCPStreamPacket, int], TCPStreamPacket | None]] | None = None,
+    encap: EncapSpec = None,
 ) -> TCPStream:
     """Generate a complete TCP stream as a sequence of :class:`TCPStreamPacket` objects.
 
@@ -498,6 +381,24 @@ def generate_tcp_stream(
             from the stream.  This is the primary extensibility seam for
             future error and anomaly injection (e.g. packet drops, duplicates,
             checksum corruption, reordering).
+        encap: One or more encapsulation layers to wrap every packet in.
+            Accepts a single descriptor, a list of descriptors (applied
+            outermost first), or ``None`` (default, no encapsulation).
+            Available types (all from :mod:`packet_generator.stream_encap`):
+
+            * :class:`~packet_generator.stream_encap.VLANEncap` — 802.1Q tag
+            * :class:`~packet_generator.stream_encap.QinQEncap` — double 802.1Q tags
+            * :class:`~packet_generator.stream_encap.MPLSEncap` — MPLS label stack
+            * :class:`~packet_generator.stream_encap.PPPoEEncap` — PPPoE session frame
+            * :class:`~packet_generator.stream_encap.GREEncap` — GRE tunnel
+            * :class:`~packet_generator.stream_encap.EtherIPEncap` — EtherIP tunnel
+            * :class:`~packet_generator.stream_encap.IPIPEncap` — IP-in-IP tunnel
+
+            Layers may be combined, e.g.
+            ``[MPLSEncap(labels=[100]), IPIPEncap("203.0.113.1", "203.0.113.2")]``
+            produces eth → MPLS → outer-IP → inner-IP → TCP.
+            Fragmentation (``middlebox_mtu``) is applied correctly regardless
+            of which encapsulation layers are present.
 
     Returns:
         A :class:`TCPStream` containing all assembled packets in wire order.
@@ -564,7 +465,7 @@ def generate_tcp_stream(
         seq_before = src.seq
         ack_before = src.ack
 
-        raw = _build_packet(src, dst, flags, payload, include_ethernet, ip_ttl, options)
+        raw = _build_packet(src, dst, flags, payload, include_ethernet, ip_ttl, options, encap)
         _advance_seq(src, flags, len(payload))
         dst.ack = src.seq
 
@@ -677,7 +578,7 @@ def generate_tcp_stream(
                 _alloc_usec(rst_send_usec, used_ts_rst), 1_000_000
             )
             rst_raw = _build_packet(rst_src, rst_dst, TCP_RST | TCP_ACK, b"",
-                                    include_ethernet, ip_ttl, None)
+                                    include_ethernet, ip_ttl, None, encap)
             packets.append(TCPStreamPacket(
                 raw=rst_raw,
                 ts_sec=rst_sec,
@@ -790,7 +691,7 @@ def generate_tcp_stream(
 
                 payload = b'x' * random.randint(min_payload, max_payload)
                 raw = _build_packet(stray_src, stray_dst, TCP_ACK | TCP_PSH,
-                                    payload, include_ethernet, ip_ttl, None)
+                                    payload, include_ethernet, ip_ttl, None, encap)
                 ts_sec, ts_usec = divmod(
                     _alloc_usec(random.randint(ts_lo, ts_hi), used_ts), 1_000_000
                 )
@@ -813,7 +714,7 @@ def generate_tcp_stream(
         fragmented: list[TCPStreamPacket] = []
         for pkt in packets:
             fragmented.extend(
-                _fragment_packet(pkt, middlebox_mtu, include_ethernet, used_ts)
+                _fragment_packet(pkt, middlebox_mtu, include_ethernet, used_ts, encap)
             )
         packets = fragmented
 
