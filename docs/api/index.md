@@ -17,6 +17,7 @@ convention.
 
 packet-builder
 header-dataclasses
+stream-encap
 pcap-io
 parser
 ```

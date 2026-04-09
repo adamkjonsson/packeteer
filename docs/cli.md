@@ -227,7 +227,7 @@ or pcapng file.  The `--protocol` flag selects the transport:
 
 `--pcap` and `--pcapng` are mutually exclusive; one is required.
 
-#### Encapsulation flags
+### Encapsulation flags
 
 Wrap every packet in one or more encapsulation layers.  Layers are applied in
 the fixed order VLAN/QinQ → MPLS → PPPoE → tunnel.  `--vlan` and `--qinq`

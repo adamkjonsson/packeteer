@@ -679,11 +679,8 @@ stream = generate_tcp_stream(
 
 ### Full API reference
 
-```{eval-rst}
-.. automodule:: packet_generator.stream_encap
-   :members:
-   :undoc-members:
-```
+See {doc}`api/stream-encap` for the complete class reference with all
+constructor parameters.
 
 ---
 

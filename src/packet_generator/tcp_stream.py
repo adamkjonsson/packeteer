@@ -38,7 +38,8 @@ from .ethernet import EthernetHeader, ETHERTYPE_IPV4, ETHERTYPE_IPV6
 from .fragmentation import fragment_ipv4, fragment_ipv6
 from .ip import IPHeader
 from .ipv6 import IPv6Header
-from .stream_encap import EncapSpec, _apply_encap, _encap_ip_start, _fix_encap_prefix
+from .stream_encap import (EncapSpec, StreamEncap,  # noqa: F401  (StreamEncap needed for Sphinx type resolution)
+                           _apply_encap, _encap_ip_start, _fix_encap_prefix)
 from .tcp import TCPOptions, TCP_SYN, TCP_ACK, TCP_PSH, TCP_FIN, TCP_RST
 
 _WRAP = 2 ** 32
