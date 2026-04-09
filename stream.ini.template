@@ -49,15 +49,19 @@ server_mac = 00:00:00:00:00:02
 
 # ── Output ─────────────────────────────────────────────────────────────────────
 
-# pcap  (mutually exclusive with pcapng)
+# pcap  (mutually exclusive with pcapng and json)
 #   Write the generated stream to a libpcap (.pcap) file at this path.
 #   Exactly one of pcap or pcapng must be set, either here or on the CLI.
-pcap = out.pcap
+# pcap = out.pcap
 
-# pcapng  (mutually exclusive with pcap)
+# pcapng  (mutually exclusive with pcap and json)
 #   Write the generated stream to a pcapng (.pcapng) file at this path.
 #   Prefer pcapng when you need nanosecond timestamps or interface metadata.
 # pcapng = out.pcapng
+
+# json  (mutually exclusive with pcap and pcapng)
+#   Write the generated stream to a json-config (.json) file at this path.
+# json = out.json
 
 # ── Stream shape ───────────────────────────────────────────────────────────────
 

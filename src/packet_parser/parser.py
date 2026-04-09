@@ -57,7 +57,7 @@ from packet_generator.sctp import SCTPHeader
 from packet_generator.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW
 
 from packet_parser.pcap import PcapFileHeader, read_pcap
-from packet_parser.to_config import update_config, to_json_config, to_json_string, _apply_etherip, _apply_ipip, _apply_gre
+from packet_parser.to_config import update_config, to_json_config, to_json_string, apply_tunneled
 
 from packet_parser.ethernet import packet_parser as _ethernet_parser
 from packet_parser.etherip import packet_parser as _etherip_parser
@@ -361,12 +361,8 @@ def parse_pcap_file(
             update_config(cfg, pkt.pppoe)
         if pkt.ip is not None:
             update_config(cfg, pkt.ip)
-        if pkt.ipip and pkt.tunneled is not None:
-            _apply_ipip(cfg, pkt.tunneled)
-        elif pkt.gre is not None and pkt.tunneled is not None:
-            _apply_gre(cfg, pkt.gre, pkt.tunneled)
-        elif pkt.etherip is not None and pkt.tunneled is not None:
-            _apply_etherip(cfg, pkt.etherip, pkt.tunneled)
+        if pkt.ipip or pkt.gre is not None or pkt.etherip is not None:
+            apply_tunneled(cfg, pkt)
         elif pkt.transport is not None:
             update_config(cfg, pkt.transport)
             if pkt.payload:

@@ -377,14 +377,11 @@ def update_config(
     - :class:`~packet_generator.mpls.MPLSLabel` → appended to the ``mpls`` array
     - :class:`~packet_generator.pppoe.PPPoEHeader` → ``pppoe`` section
     - :class:`~packet_generator.ip.IPHeader` / :class:`~packet_generator.ipv6.IPv6Header` → ``network`` section
-    - :class:`~packet_generator.etherip.EtherIPHeader` → handled via
-      :func:`_apply_etherip` in :func:`~packet_parser.parser.parse_pcap_file`
-      (requires the inner :class:`~packet_parser.parser.ParsedPacket` as a
-      second argument — not dispatchable through ``update_config`` alone)
-    - :class:`~packet_generator.gre.GREHeader` → handled via
-      :func:`_apply_gre` in :func:`~packet_parser.parser.parse_pcap_file`
-      (requires the inner :class:`~packet_parser.parser.ParsedPacket` as a
-      second argument — not dispatchable through ``update_config`` alone)
+    - :class:`~packet_generator.etherip.EtherIPHeader` / GRE /
+      IP-in-IP → use :func:`apply_tunneled` instead; tunnel serialisation
+      requires the inner :class:`~packet_parser.parser.ParsedPacket` as
+      additional context and cannot be dispatched through ``update_config``
+      alone.
     - :class:`~packet_generator.tcp.TCPHeader` → ``transport`` section (TCP fields)
     - :class:`~packet_generator.udp.UDPHeader` → ``transport`` section (UDP fields)
     - :class:`~packet_generator.icmp.ICMPHeader` / :class:`~packet_generator.icmpv6.ICMPv6Header` → ``transport`` section (ICMP fields)
@@ -419,6 +416,31 @@ def update_config(
     else:
         raise TypeError(f"update_config: unrecognised layer type {type(layer).__name__!r}")
     return config
+
+
+def apply_tunneled(config: dict[str, Any], pkt: "ParsedPacket") -> None:
+    """Serialise the tunnel layers of *pkt* into *config*.
+
+    Handles all three tunnel types — IP-in-IP, GRE, and EtherIP — by
+    dispatching to the appropriate private helper.  Call this after the
+    outer IP layer has been written via :func:`update_config` whenever
+    :attr:`~packet_parser.parser.ParsedPacket.ipip`,
+    :attr:`~packet_parser.parser.ParsedPacket.gre`, or
+    :attr:`~packet_parser.parser.ParsedPacket.etherip` is set on *pkt*.
+
+    Modifies *config* in place.  Does nothing when *pkt* carries no tunnel.
+
+    Args:
+        config: The packet config dict to update (same dict passed to
+            :func:`update_config` for the outer layers).
+        pkt: The parsed packet whose tunnel fields should be serialised.
+    """
+    if pkt.ipip and pkt.tunneled is not None:
+        _apply_ipip(config, pkt.tunneled)
+    elif pkt.gre is not None and pkt.tunneled is not None:
+        _apply_gre(config, pkt.gre, pkt.tunneled)
+    elif pkt.etherip is not None and pkt.tunneled is not None:
+        _apply_etherip(config, pkt.etherip, pkt.tunneled)
 
 
 def to_json_config(
