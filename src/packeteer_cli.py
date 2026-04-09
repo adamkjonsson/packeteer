@@ -31,6 +31,10 @@ from packet_generator.pcap import write_pcap, write_pcapng, LINKTYPE_ETHERNET, L
 from packet_generator.tcp_stream import generate_tcp_stream
 from packet_generator.udp_stream import generate_udp_stream
 from packet_generator.sctp_stream import generate_sctp_stream
+from packet_generator.stream_encap import (
+    StreamEncap, VLANEncap, QinQEncap, MPLSEncap, PPPoEEncap,
+    GREEncap, EtherIPEncap, IPIPEncap,
+)
 from packet_generator.pppoe import PPPoETag, PPPOE_CODE_SESSION
 from packet_generator.sctp import (
     SCTPDataChunk, SCTPInitChunk, SCTPInitAckChunk, SCTPSackChunk,
@@ -540,7 +544,7 @@ def _cmd_sanitise(args: argparse.Namespace) -> None:
 
 # Maps config-file key → (argparse dest attr, type converter).
 # Keys use underscores; values are cast with the given callable.
-_STREAM_CONFIG_KEYS: dict[str, tuple[str, type]] = {
+_STREAM_CONFIG_KEYS: dict[str, tuple[str, "type | object"]] = {  # type: ignore[type-arg]
     "protocol":           ("protocol",                str),
     "client_ip":          ("client_ip",               str),
     "server_ip":          ("server_ip",               str),
@@ -569,6 +573,26 @@ _STREAM_CONFIG_KEYS: dict[str, tuple[str, type]] = {
     "no_ethernet":                ("no_ethernet",                bool),
     "pcap":               ("pcap",                    str),
     "pcapng":             ("pcapng",                  str),
+    # Encapsulation — values are cast via callables (not strict `type` objects)
+    "vlan":             ("vlan",             int),
+    "vlan_pcp":         ("vlan_pcp",         int),
+    "vlan_dei":         ("vlan_dei",         int),
+    "qinq":             ("qinq",             lambda s: [int(x) for x in s.split()]),
+    "qinq_outer_pcp":   ("qinq_outer_pcp",   int),
+    "qinq_outer_dei":   ("qinq_outer_dei",   int),
+    "qinq_inner_pcp":   ("qinq_inner_pcp",   int),
+    "qinq_inner_dei":   ("qinq_inner_dei",   int),
+    "mpls":             ("mpls",             lambda s: [int(x) for x in s.split()]),
+    "mpls_tc":          ("mpls_tc",          int),
+    "mpls_ttl":         ("mpls_ttl",         int),
+    "pppoe":            ("pppoe",            int),
+    "gre":              ("gre",              lambda s: s.split()),
+    "gre_key":          ("gre_key",          int),
+    "gre_ttl":          ("gre_ttl",          int),
+    "etherip":          ("etherip",          lambda s: s.split()),
+    "etherip_ttl":      ("etherip_ttl",      int),
+    "ipip":             ("ipip",             lambda s: s.split()),
+    "ipip_ttl":         ("ipip_ttl",         int),
 }
 
 _STREAM_DEFAULTS = {
@@ -598,6 +622,26 @@ _STREAM_DEFAULTS = {
     "no_ethernet":                False,
     "pcap":                    None,
     "pcapng":                  None,
+    # Encapsulation (all default to None = unset)
+    "vlan":           None,
+    "vlan_pcp":       None,
+    "vlan_dei":       None,
+    "qinq":           None,
+    "qinq_outer_pcp": None,
+    "qinq_outer_dei": None,
+    "qinq_inner_pcp": None,
+    "qinq_inner_dei": None,
+    "mpls":           None,
+    "mpls_tc":        None,
+    "mpls_ttl":       None,
+    "pppoe":          None,
+    "gre":            None,
+    "gre_key":        None,
+    "gre_ttl":        None,
+    "etherip":        None,
+    "etherip_ttl":    None,
+    "ipip":           None,
+    "ipip_ttl":       None,
 }
 
 
@@ -660,6 +704,87 @@ def _apply_stream_defaults(args: argparse.Namespace) -> None:
             setattr(args, dest, value)
 
 
+def _parse_stream_encap(args: argparse.Namespace) -> "list[StreamEncap] | None":
+    """Build an ordered list of encapsulation layers from CLI / config-file args.
+
+    Multiple encapsulations may be combined (e.g. ``--mpls 100 --ipip ...``
+    produces MPLS labels followed by an IP-in-IP tunnel).  The order of layers
+    in the returned list is fixed: tag-based layers first (VLAN/QinQ → MPLS →
+    PPPoE), then at most one tunnel layer (GRE / EtherIP / IPIP).
+
+    Constraints enforced:
+    - ``--vlan`` and ``--qinq`` are mutually exclusive (both are VLAN tags).
+    - At most one tunnel type (``--gre``, ``--etherip``, ``--ipip``).
+
+    Returns ``None`` when no encapsulation was requested.
+    """
+    def _int(attr: str, default: int) -> int:
+        v = getattr(args, attr, None)
+        return int(v) if v is not None else default
+
+    layers: list[StreamEncap] = []
+
+    # ── Layer-2 tag encaps (order: VLAN/QinQ → MPLS → PPPoE) ─────────────────
+    vlan_set  = getattr(args, "vlan", None) is not None
+    qinq_set  = getattr(args, "qinq", None) is not None
+    if vlan_set and qinq_set:
+        print("Error: --vlan and --qinq are mutually exclusive.", file=sys.stderr)
+        sys.exit(1)
+
+    if vlan_set:
+        layers.append(VLANEncap(
+            vid=int(args.vlan),
+            pcp=_int("vlan_pcp", 0),
+            dei=_int("vlan_dei", 0),
+        ))
+    if qinq_set:
+        outer, inner = args.qinq
+        layers.append(QinQEncap(
+            outer_vid=int(outer),
+            inner_vid=int(inner),
+            outer_pcp=_int("qinq_outer_pcp", 0),
+            outer_dei=_int("qinq_outer_dei", 0),
+            inner_pcp=_int("qinq_inner_pcp", 0),
+            inner_dei=_int("qinq_inner_dei", 0),
+        ))
+    if getattr(args, "mpls", None) is not None:
+        layers.append(MPLSEncap(
+            labels=[int(x) for x in args.mpls],
+            tc=_int("mpls_tc", 0),
+            ttl=_int("mpls_ttl", 64),
+        ))
+    if getattr(args, "pppoe", None) is not None:
+        layers.append(PPPoEEncap(session_id=int(args.pppoe)))
+
+    # ── Tunnel encap (at most one) ─────────────────────────────────────────────
+    tunnel_names = [n for n in ("gre", "etherip", "ipip")
+                    if getattr(args, n, None) is not None]
+    if len(tunnel_names) > 1:
+        print(
+            "Error: tunnel encap options are mutually exclusive; got: "
+            + ", ".join(f"--{n}" for n in tunnel_names),
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if "gre" in tunnel_names:
+        src, dst = args.gre
+        key = getattr(args, "gre_key", None)
+        layers.append(GREEncap(
+            src_ip=src, dst_ip=dst,
+            key=int(key) if key is not None else None,
+            ttl=_int("gre_ttl", 64),
+        ))
+    elif "etherip" in tunnel_names:
+        src, dst = args.etherip
+        layers.append(EtherIPEncap(src_ip=src, dst_ip=dst, ttl=_int("etherip_ttl", 64)))
+    elif "ipip" in tunnel_names:
+        src, dst = args.ipip
+        layers.append(IPIPEncap(src_ip=src, dst_ip=dst, ttl=_int("ipip_ttl", 64)))
+
+    return layers if layers else None
+
+
 def _cmd_stream(args: argparse.Namespace) -> None:
     _apply_stream_defaults(args)
 
@@ -688,6 +813,8 @@ def _cmd_stream(args: argparse.Namespace) -> None:
               file=sys.stderr)
         sys.exit(1)
 
+    encap = _parse_stream_encap(args)
+
     # Common keyword arguments shared by all protocol generators
     common = dict(
         client_ip=args.client_ip,
@@ -705,6 +832,7 @@ def _cmd_stream(args: argparse.Namespace) -> None:
         inter_packet_gap=args.gap,
         gap_jitter=args.gap_jitter,
         middlebox_mtu=args.middlebox_mtu,
+        encap=encap,
     )
 
     try:
@@ -915,6 +1043,66 @@ def main():
                                help="Constrain each stray packet timestamp to within N packets of its reference DATA packet (default: full data-transfer window)")
     stream_parser.add_argument("--no-ethernet", action="store_true", default=False,
                                help="Omit Ethernet headers (write raw IP packets)")
+    # ── Encapsulation (mutually exclusive primary flags + optional detail flags) ─
+    encap_group = stream_parser.add_argument_group(
+        "encapsulation",
+        "Wrap each packet in an additional protocol layer.  Exactly one primary "
+        "encap flag may be used per stream.  Detail flags refine the selected encap.",
+    )
+    encap_group.add_argument("--vlan", type=int, default=None, metavar="VID",
+                             help="Single 802.1Q VLAN tag with the given VLAN ID (1–4094)")
+    encap_group.add_argument("--vlan-pcp", type=int, default=None, metavar="N",
+                             dest="vlan_pcp",
+                             help="VLAN Priority Code Point (0–7, default 0); used with --vlan")
+    encap_group.add_argument("--vlan-dei", type=int, default=None, metavar="N",
+                             dest="vlan_dei",
+                             help="VLAN Drop Eligible Indicator (0 or 1, default 0); used with --vlan")
+    encap_group.add_argument("--qinq", nargs=2, type=int, default=None,
+                             metavar=("OUTER_VID", "INNER_VID"),
+                             help="QinQ double VLAN tag (outer VID then inner VID)")
+    encap_group.add_argument("--qinq-outer-pcp", type=int, default=None, metavar="N",
+                             dest="qinq_outer_pcp",
+                             help="Outer VLAN PCP (0–7, default 0); used with --qinq")
+    encap_group.add_argument("--qinq-outer-dei", type=int, default=None, metavar="N",
+                             dest="qinq_outer_dei",
+                             help="Outer VLAN DEI (0 or 1, default 0); used with --qinq")
+    encap_group.add_argument("--qinq-inner-pcp", type=int, default=None, metavar="N",
+                             dest="qinq_inner_pcp",
+                             help="Inner VLAN PCP (0–7, default 0); used with --qinq")
+    encap_group.add_argument("--qinq-inner-dei", type=int, default=None, metavar="N",
+                             dest="qinq_inner_dei",
+                             help="Inner VLAN DEI (0 or 1, default 0); used with --qinq")
+    encap_group.add_argument("--mpls", nargs="+", type=int, default=None, metavar="LABEL",
+                             help="MPLS label stack (one or more 20-bit labels, outermost first)")
+    encap_group.add_argument("--mpls-tc", type=int, default=None, metavar="N",
+                             dest="mpls_tc",
+                             help="MPLS Traffic Class for all labels (0–7, default 0)")
+    encap_group.add_argument("--mpls-ttl", type=int, default=None, metavar="N",
+                             dest="mpls_ttl",
+                             help="MPLS TTL for all labels (0–255, default 64)")
+    encap_group.add_argument("--pppoe", type=int, default=None, metavar="SESSION_ID",
+                             help="PPPoE session frame with the given 16-bit session ID")
+    encap_group.add_argument("--gre", nargs=2, default=None,
+                             metavar=("OUTER_SRC", "OUTER_DST"),
+                             help="GRE tunnel; specify outer IP source and destination")
+    encap_group.add_argument("--gre-key", type=int, default=None, metavar="KEY",
+                             dest="gre_key",
+                             help="RFC 2890 32-bit GRE Key field; used with --gre")
+    encap_group.add_argument("--gre-ttl", type=int, default=None, metavar="N",
+                             dest="gre_ttl",
+                             help="Outer IP TTL for GRE tunnel (default 64)")
+    encap_group.add_argument("--etherip", nargs=2, default=None,
+                             metavar=("OUTER_SRC", "OUTER_DST"),
+                             help="EtherIP tunnel (RFC 3378); specify outer IP source and destination")
+    encap_group.add_argument("--etherip-ttl", type=int, default=None, metavar="N",
+                             dest="etherip_ttl",
+                             help="Outer IP TTL for EtherIP tunnel (default 64)")
+    encap_group.add_argument("--ipip", nargs=2, default=None,
+                             metavar=("OUTER_SRC", "OUTER_DST"),
+                             help="IP-in-IP tunnel (RFC 2003/4213); specify outer IP source and destination")
+    encap_group.add_argument("--ipip-ttl", type=int, default=None, metavar="N",
+                             dest="ipip_ttl",
+                             help="Outer IP TTL for IP-in-IP tunnel (default 64)")
     # Output (may also be provided via --config; mutual exclusivity enforced in _cmd_stream)
     stream_parser.add_argument("--pcap", default=None, metavar="FILE",
                                help="Write to a libpcap (.pcap) file")

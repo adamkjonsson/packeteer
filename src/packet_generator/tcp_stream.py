@@ -38,6 +38,7 @@ from .ethernet import EthernetHeader, ETHERTYPE_IPV4, ETHERTYPE_IPV6
 from .fragmentation import fragment_ipv4, fragment_ipv6
 from .ip import IPHeader
 from .ipv6 import IPv6Header
+from .stream_encap import EncapSpec, _apply_encap, _encap_ip_start, _fix_encap_prefix
 from .tcp import TCPOptions, TCP_SYN, TCP_ACK, TCP_PSH, TCP_FIN, TCP_RST
 
 _WRAP = 2 ** 32
@@ -162,11 +163,13 @@ def _build_packet(
     include_ethernet: bool,
     ip_ttl: int,
     options: TCPOptions | None,
+    encap: EncapSpec = None,
 ) -> bytes:
     """Assemble one raw packet using PacketBuilder."""
     b = PacketBuilder()
     if include_ethernet:
         b = b.ethernet(src_mac=src.mac, dst_mac=dst.mac)
+    b = _apply_encap(b, encap, src.mac, dst.mac)
     b = (b
         .ip(src=src.ip, dst=dst.ip, ttl=ip_ttl)
         .tcp(
@@ -232,6 +235,7 @@ def _fragment_packet(
     mtu: int,
     include_ethernet: bool,
     used_ts: set[int],
+    encap: EncapSpec = None,
 ) -> list[TCPStreamPacket]:
     """Split *pkt* into IP fragments if its IP-layer size exceeds *mtu*.
 
@@ -244,13 +248,13 @@ def _fragment_packet(
     new fragment timestamp is added, ensuring global uniqueness.
     """
     raw = pkt.raw
-    ip_start = 14 if include_ethernet else 0
+    ip_start = _encap_ip_start(encap, include_ethernet)
 
     if len(raw) - ip_start <= mtu:
         return [pkt]
 
     ip_version = (raw[ip_start] >> 4)
-    eth_hdr: EthernetHeader | None = None
+    prefix = raw[:ip_start]
 
     if ip_version == 4:
         (_, tos, _, ident, flags_frag, ttl, proto, _,
@@ -265,13 +269,8 @@ def _fragment_packet(
             fragment_offset=flags_frag & 0x1FFF,
         )
         transport_data = raw[ip_start + 20:]
-        if include_ethernet:
-            eth_hdr = EthernetHeader(
-                dst_mac=':'.join(f'{b:02x}' for b in raw[0:6]),
-                src_mac=':'.join(f'{b:02x}' for b in raw[6:12]),
-                ethertype=ETHERTYPE_IPV4,
-            )
-        frag_raws = fragment_ipv4(ip_hdr, transport_data, mtu, eth_header=eth_hdr)
+        inner_frags = fragment_ipv4(ip_hdr, transport_data, mtu, eth_header=None)
+        frag_raws = [_fix_encap_prefix(prefix, encap, len(f)) + f for f in inner_frags]
 
     elif ip_version == 6:
         version_tc_fl = struct.unpack('!I', raw[ip_start:ip_start + 4])[0]
@@ -286,13 +285,8 @@ def _fragment_packet(
             flow_label=version_tc_fl & 0xFFFFF,
         )
         transport_data = raw[ip_start + 40:]
-        if include_ethernet:
-            eth_hdr = EthernetHeader(
-                dst_mac=':'.join(f'{b:02x}' for b in raw[0:6]),
-                src_mac=':'.join(f'{b:02x}' for b in raw[6:12]),
-                ethertype=ETHERTYPE_IPV6,
-            )
-        frag_raws = fragment_ipv6(ip_hdr, transport_data, mtu, eth_header=eth_hdr)
+        inner_frags = fragment_ipv6(ip_hdr, transport_data, mtu, eth_header=None)
+        frag_raws = [_fix_encap_prefix(prefix, encap, len(f)) + f for f in inner_frags]
 
     else:
         return [pkt]
@@ -359,6 +353,7 @@ def generate_tcp_stream(
     stray_packet_count: int = 0,
     stray_timing_window: int | None = None,
     packet_hooks: list[Callable[[TCPStreamPacket, int], TCPStreamPacket | None]] | None = None,
+    encap: EncapSpec = None,
 ) -> TCPStream:
     """Generate a complete TCP stream as a sequence of :class:`TCPStreamPacket` objects.
 
@@ -564,7 +559,7 @@ def generate_tcp_stream(
         seq_before = src.seq
         ack_before = src.ack
 
-        raw = _build_packet(src, dst, flags, payload, include_ethernet, ip_ttl, options)
+        raw = _build_packet(src, dst, flags, payload, include_ethernet, ip_ttl, options, encap)
         _advance_seq(src, flags, len(payload))
         dst.ack = src.seq
 
@@ -677,7 +672,7 @@ def generate_tcp_stream(
                 _alloc_usec(rst_send_usec, used_ts_rst), 1_000_000
             )
             rst_raw = _build_packet(rst_src, rst_dst, TCP_RST | TCP_ACK, b"",
-                                    include_ethernet, ip_ttl, None)
+                                    include_ethernet, ip_ttl, None, encap)
             packets.append(TCPStreamPacket(
                 raw=rst_raw,
                 ts_sec=rst_sec,
@@ -790,7 +785,7 @@ def generate_tcp_stream(
 
                 payload = b'x' * random.randint(min_payload, max_payload)
                 raw = _build_packet(stray_src, stray_dst, TCP_ACK | TCP_PSH,
-                                    payload, include_ethernet, ip_ttl, None)
+                                    payload, include_ethernet, ip_ttl, None, encap)
                 ts_sec, ts_usec = divmod(
                     _alloc_usec(random.randint(ts_lo, ts_hi), used_ts), 1_000_000
                 )
@@ -813,7 +808,7 @@ def generate_tcp_stream(
         fragmented: list[TCPStreamPacket] = []
         for pkt in packets:
             fragmented.extend(
-                _fragment_packet(pkt, middlebox_mtu, include_ethernet, used_ts)
+                _fragment_packet(pkt, middlebox_mtu, include_ethernet, used_ts, encap)
             )
         packets = fragmented
 

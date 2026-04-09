@@ -77,6 +77,7 @@ from .ethernet import EthernetHeader, ETHERTYPE_IPV4, ETHERTYPE_IPV6
 from .fragmentation import fragment_ipv4, fragment_ipv6
 from .ip import IPHeader
 from .ipv6 import IPv6Header
+from .stream_encap import EncapSpec, _apply_encap, _encap_ip_start, _fix_encap_prefix
 from .sctp import (
     SCTPHeader, SCTPDataChunk, SCTPInitChunk, SCTPInitAckChunk,
     SCTPSackChunk, SCTPShutdownChunk, SCTPShutdownAckChunk,
@@ -151,10 +152,12 @@ def _build_sctp(
     chunks: list,
     include_ethernet: bool,
     ip_ttl: int,
+    encap: EncapSpec = None,
 ) -> bytes:
     b = PacketBuilder()
     if include_ethernet:
         b = b.ethernet(src_mac=src_mac, dst_mac=dst_mac)
+    b = _apply_encap(b, encap, src_mac, dst_mac)
     return (b
         .ip(src=src_ip, dst=dst_ip, ttl=ip_ttl)
         .sctp(src_port=src_port, dst_port=dst_port,
@@ -168,15 +171,17 @@ def _fragment_sctp_pkt(
     mtu: int,
     include_ethernet: bool,
     used_ts: set[int],
+    encap: EncapSpec = None,
 ) -> list[SCTPStreamPacket]:
     """Split *pkt* into IP fragments if its IP-layer size exceeds *mtu*."""
     raw = pkt.raw
-    ip_start = 14 if include_ethernet else 0
+    ip_start = _encap_ip_start(encap, include_ethernet)
 
     if len(raw) - ip_start <= mtu:
         return [pkt]
 
     ip_version = (raw[ip_start] >> 4)
+    prefix = raw[:ip_start]
 
     if ip_version == 4:
         (_, tos, _, ident, flags_frag, ttl, proto, _,
@@ -187,14 +192,8 @@ def _fragment_sctp_pkt(
             flags=(flags_frag >> 13) & 0x7, fragment_offset=flags_frag & 0x1FFF,
         )
         transport_data = raw[ip_start + 20:]
-        eth_hdr: EthernetHeader | None = None
-        if include_ethernet:
-            eth_hdr = EthernetHeader(
-                dst_mac=':'.join(f'{b:02x}' for b in raw[0:6]),
-                src_mac=':'.join(f'{b:02x}' for b in raw[6:12]),
-                ethertype=ETHERTYPE_IPV4,
-            )
-        frag_raws = fragment_ipv4(ip_hdr, transport_data, mtu, eth_header=eth_hdr)
+        inner_frags = fragment_ipv4(ip_hdr, transport_data, mtu, eth_header=None)
+        frag_raws = [_fix_encap_prefix(prefix, encap, len(f)) + f for f in inner_frags]
 
     elif ip_version == 6:
         version_tc_fl = struct.unpack('!I', raw[ip_start:ip_start + 4])[0]
@@ -207,14 +206,8 @@ def _fragment_sctp_pkt(
             flow_label=version_tc_fl & 0xFFFFF,
         )
         transport_data = raw[ip_start + 40:]
-        eth_hdr = None
-        if include_ethernet:
-            eth_hdr = EthernetHeader(
-                dst_mac=':'.join(f'{b:02x}' for b in raw[0:6]),
-                src_mac=':'.join(f'{b:02x}' for b in raw[6:12]),
-                ethertype=ETHERTYPE_IPV6,
-            )
-        frag_raws = fragment_ipv6(ip_hdr, transport_data, mtu, eth_header=eth_hdr)
+        inner_frags = fragment_ipv6(ip_hdr, transport_data, mtu, eth_header=None)
+        frag_raws = [_fix_encap_prefix(prefix, encap, len(f)) + f for f in inner_frags]
 
     else:
         return [pkt]
@@ -268,6 +261,7 @@ def generate_sctp_stream(
     inter_packet_gap: float = 0.001,
     gap_jitter: float = 0.0,
     middlebox_mtu: int | None = None,
+    encap: EncapSpec = None,
 ) -> SCTPStream:
     """Generate a complete SCTP association with data transfer and shutdown.
 
@@ -370,6 +364,7 @@ def generate_sctp_stream(
             src_mac=client_mac, dst_mac=server_mac,
             vtag=vtag, chunks=chunks,
             include_ethernet=include_ethernet, ip_ttl=ip_ttl,
+            encap=encap,
         )
         emit("c2s", raw, tsn, plen, label)
 
@@ -380,6 +375,7 @@ def generate_sctp_stream(
             src_mac=server_mac, dst_mac=client_mac,
             vtag=vtag, chunks=chunks,
             include_ethernet=include_ethernet, ip_ttl=ip_ttl,
+            encap=encap,
         )
         emit("s2c", raw, tsn, plen, label)
 
@@ -463,7 +459,7 @@ def generate_sctp_stream(
         used_ts = {_pkt_usec(p) for p in packets}
         fragmented: list[SCTPStreamPacket] = []
         for pkt in packets:
-            fragmented.extend(_fragment_sctp_pkt(pkt, middlebox_mtu, include_ethernet, used_ts))
+            fragmented.extend(_fragment_sctp_pkt(pkt, middlebox_mtu, include_ethernet, used_ts, encap))
         packets = fragmented
         packets.sort(key=lambda p: (p.ts_sec, p.ts_usec))
 
