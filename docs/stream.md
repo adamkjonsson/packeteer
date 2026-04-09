@@ -583,6 +583,110 @@ for pkt in stream.packets:
 
 ---
 
+## Encapsulation
+
+All three stream generators accept an `encap` keyword argument that wraps every
+packet in one or more encapsulation layers.  Pass a single descriptor, a list
+of descriptors (outermost first), or ``None`` (default — no encapsulation).
+
+```python
+from packet_generator.stream_encap import (
+    VLANEncap, QinQEncap, MPLSEncap, PPPoEEncap,
+    GREEncap, EtherIPEncap, IPIPEncap,
+)
+from packet_generator.tcp_stream import generate_tcp_stream
+```
+
+### Available encapsulation types
+
+| Type | Description |
+|------|-------------|
+| `VLANEncap(vid, pcp=0, dei=0)` | Single IEEE 802.1Q VLAN tag |
+| `QinQEncap(outer_vid, inner_vid, …)` | Double 802.1Q tags (QinQ / 802.1ad) |
+| `MPLSEncap(labels, tc=0, ttl=64)` | One or more MPLS label stack entries (RFC 3032) |
+| `PPPoEEncap(session_id=1)` | PPPoE session frame (RFC 2516) |
+| `GREEncap(src_ip, dst_ip, key=None, ttl=64)` | GRE tunnel (RFC 2784 / 2890) |
+| `EtherIPEncap(src_ip, dst_ip, ttl=64)` | EtherIP tunnel (RFC 3378) |
+| `IPIPEncap(src_ip, dst_ip, ttl=64)` | IP-in-IP tunnel (RFC 2003 / 4213) |
+
+### Single-layer examples
+
+```python
+# 802.1Q VLAN-tagged TCP stream
+stream = generate_tcp_stream(
+    client_ip="10.0.0.1", server_ip="10.0.0.2",
+    encap=VLANEncap(vid=100),
+)
+
+# GRE-tunnelled UDP stream (stream IPs become inner; outer IPs wrap them)
+from packet_generator.udp_stream import generate_udp_stream
+
+stream = generate_udp_stream(
+    client_ip="10.0.0.1", server_ip="10.0.0.2",
+    encap=GREEncap(src_ip="203.0.113.1", dst_ip="203.0.113.2"),
+)
+
+# IP-in-IP tunnel with custom TTL
+stream = generate_tcp_stream(
+    client_ip="10.0.0.1", server_ip="10.0.0.2",
+    encap=IPIPEncap(src_ip="203.0.113.1", dst_ip="203.0.113.2", ttl=128),
+)
+```
+
+### Stacking multiple layers
+
+Pass a list to combine tag-based and tunnel encapsulations.  Layers are applied
+outermost first; tag-based layers (VLAN / QinQ / MPLS / PPPoE) are inserted
+between the Ethernet header and the inner IP; tunnel layers (GRE / EtherIP /
+IPIP) add an outer IP header.
+
+```python
+# VLAN + GRE: eth → vlan(100) → outer-IP(GRE) → inner-IP → TCP
+stream = generate_tcp_stream(
+    client_ip="10.0.0.1", server_ip="10.0.0.2",
+    encap=[VLANEncap(vid=100), GREEncap("203.0.113.1", "203.0.113.2")],
+)
+
+# MPLS + IP-in-IP: eth → MPLS(100) → MPLS(200) → outer-IP → inner-IP → TCP
+stream = generate_tcp_stream(
+    client_ip="10.0.0.1", server_ip="10.0.0.2",
+    encap=[MPLSEncap(labels=[100, 200]), IPIPEncap("203.0.113.1", "203.0.113.2")],
+)
+```
+
+### Encapsulation constraints
+
+- `VLANEncap` and `QinQEncap` are mutually exclusive (both occupy the VLAN tag slot).
+- At most one tunnel type (`GREEncap`, `EtherIPEncap`, `IPIPEncap`) per stack.
+- Tag-based layers may be freely combined with each other and with a tunnel,
+  in the order: VLAN/QinQ → MPLS → PPPoE → tunnel.
+
+### Fragmentation with encapsulation
+
+`middlebox_mtu` works correctly with all encapsulation types.  For tag-based
+encapsulations the inner IP is fragmented at the correct offset; for tunnel
+encapsulations the outer IP datagram is fragmented.  PPPoE payload length
+fields are automatically updated in each fragment.
+
+```python
+# VLAN-tagged stream fragmented at 576 bytes
+stream = generate_tcp_stream(
+    client_ip="10.0.0.1", server_ip="10.0.0.2",
+    encap=VLANEncap(vid=100),
+    middlebox_mtu=576,
+)
+```
+
+### Full API reference
+
+```{eval-rst}
+.. automodule:: packet_generator.stream_encap
+   :members:
+   :undoc-members:
+```
+
+---
+
 ## Config file
 
 All `packeteer stream` parameters can be stored in an INI file and passed
@@ -595,7 +699,7 @@ packeteer stream --config session.ini --packets 200 --distribution bimodal
 ```
 
 A fully commented template is at
-[src/packet_generator/stream.ini.template](../src/packet_generator/stream.ini.template).
+[stream.ini.template](../stream.ini.template).
 The file uses a single `[stream]` section; key names match the CLI long flags
 with hyphens replaced by underscores (e.g. `gap_jitter`, `psh_probability`).
 Two keys differ from their CLI flag names: `packet_loss` (CLI: `--packet-loss`)

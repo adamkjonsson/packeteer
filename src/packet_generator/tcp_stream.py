@@ -493,6 +493,24 @@ def generate_tcp_stream(
             from the stream.  This is the primary extensibility seam for
             future error and anomaly injection (e.g. packet drops, duplicates,
             checksum corruption, reordering).
+        encap: One or more encapsulation layers to wrap every packet in.
+            Accepts a single descriptor, a list of descriptors (applied
+            outermost first), or ``None`` (default, no encapsulation).
+            Available types (all from :mod:`packet_generator.stream_encap`):
+
+            * :class:`~packet_generator.stream_encap.VLANEncap` — 802.1Q tag
+            * :class:`~packet_generator.stream_encap.QinQEncap` — double 802.1Q tags
+            * :class:`~packet_generator.stream_encap.MPLSEncap` — MPLS label stack
+            * :class:`~packet_generator.stream_encap.PPPoEEncap` — PPPoE session frame
+            * :class:`~packet_generator.stream_encap.GREEncap` — GRE tunnel
+            * :class:`~packet_generator.stream_encap.EtherIPEncap` — EtherIP tunnel
+            * :class:`~packet_generator.stream_encap.IPIPEncap` — IP-in-IP tunnel
+
+            Layers may be combined, e.g.
+            ``[MPLSEncap(labels=[100]), IPIPEncap("203.0.113.1", "203.0.113.2")]``
+            produces eth → MPLS → outer-IP → inner-IP → TCP.
+            Fragmentation (``middlebox_mtu``) is applied correctly regardless
+            of which encapsulation layers are present.
 
     Returns:
         A :class:`TCPStream` containing all assembled packets in wire order.

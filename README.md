@@ -12,7 +12,8 @@ and the standard library only.
 - **Tunnels**: IP-in-IP (RFC 2003/4213), EtherIP (RFC 3378), GRE (RFC 2784/2890) with Key, Sequence, Checksum, and TEB
 - **IPv4 and IPv6 fragmentation** in one call
 - **pcap and pcapng** file I/O with microsecond or nanosecond timestamps
-- **CLI** (`packeteer`) — build from JSON config, parse captures back to JSON, or sanitise configs by replacing sensitive fields with synthetic data
+- **Stream generation** — complete TCP / UDP / SCTP flows written directly to pcap/pcapng; all streams can be wrapped in any encapsulation layer (VLAN, QinQ, MPLS, PPPoE, GRE, EtherIP, IP-in-IP), combined as a stack, and fragmented through a simulated low-MTU middlebox
+- **CLI** (`packeteer`) — build from JSON config, parse captures back to JSON, sanitise configs by replacing sensitive fields with synthetic data, or generate synthetic streams with `packeteer stream`
 
 ## Quick start
 
@@ -43,6 +44,28 @@ pkt = (PacketBuilder()
 )
 ```
 
+```python
+# Generate a GRE-tunnelled TCP stream and write it to pcap
+from packet_generator.tcp_stream import generate_tcp_stream
+from packet_generator.stream_encap import GREEncap, VLANEncap, MPLSEncap, IPIPEncap
+from packet_generator import write_pcap
+
+stream = generate_tcp_stream(
+    client_ip="10.0.0.1",
+    server_ip="10.0.0.2",
+    encap=GREEncap(src_ip="203.0.113.1", dst_ip="203.0.113.2"),
+    num_data_packets=20,
+)
+write_pcap(stream.to_pcap_tuples(), path="gre_tunnel.pcap")
+
+# Stack MPLS labels + IP-in-IP tunnel
+stream = generate_tcp_stream(
+    client_ip="10.0.0.1",
+    server_ip="10.0.0.2",
+    encap=[MPLSEncap(labels=[100, 200]), IPIPEncap("203.0.113.1", "203.0.113.2")],
+)
+```
+
 ## Documentation
 
 Full documentation lives in [`docs/`](docs/).  Build it locally:
@@ -63,6 +86,7 @@ Or read the source pages directly:
 | [docs/sanitiser.md](docs/sanitiser.md) | Replacing sensitive fields with synthetic data |
 | [docs/cli.md](docs/cli.md) | `packeteer build` / `parse` / `sanitise` reference |
 | [docs/json-config.md](docs/json-config.md) | JSON config format reference |
+| [docs/stream.md](docs/stream.md) | TCP / UDP / SCTP stream generation and encapsulation |
 | [docs/fragmentation.md](docs/fragmentation.md) | IPv4 and IPv6 fragmentation |
 | [docs/api/packet-builder.md](docs/api/packet-builder.md) | `PacketBuilder` API |
 | [docs/api/header-dataclasses.md](docs/api/header-dataclasses.md) | Header dataclasses and constants |

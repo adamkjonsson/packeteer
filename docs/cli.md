@@ -227,8 +227,36 @@ or pcapng file.  The `--protocol` flag selects the transport:
 
 `--pcap` and `--pcapng` are mutually exclusive; one is required.
 
+#### Encapsulation flags
+
+Wrap every packet in one or more encapsulation layers.  Layers are applied in
+the fixed order VLAN/QinQ → MPLS → PPPoE → tunnel.  `--vlan` and `--qinq`
+are mutually exclusive; at most one tunnel type may be used.
+
+| Flag | Description |
+|------|-------------|
+| `--vlan VID` | Single 802.1Q VLAN tag |
+| `--vlan-pcp N` | VLAN Priority Code Point (0–7, default 0) |
+| `--vlan-dei N` | VLAN Drop Eligible Indicator (0 or 1, default 0) |
+| `--qinq OUTER INNER` | Double 802.1Q tags (QinQ): outer and inner VID |
+| `--qinq-outer-pcp N` | Outer tag PCP (default 0) |
+| `--qinq-outer-dei N` | Outer tag DEI (default 0) |
+| `--qinq-inner-pcp N` | Inner tag PCP (default 0) |
+| `--qinq-inner-dei N` | Inner tag DEI (default 0) |
+| `--mpls LABEL…` | MPLS label stack (one or more 20-bit labels, outermost first) |
+| `--mpls-tc N` | MPLS Traffic Class for all labels (0–7, default 0) |
+| `--mpls-ttl N` | MPLS TTL for all labels (default 64) |
+| `--pppoe SESSION_ID` | PPPoE session frame with given 16-bit session ID |
+| `--gre SRC_IP DST_IP` | GRE tunnel; stream IPs become inner; outer IPs are SRC/DST |
+| `--gre-key N` | RFC 2890 GRE Key field (omitted by default) |
+| `--gre-ttl N` | Outer IP TTL for GRE (default 64) |
+| `--etherip SRC_IP DST_IP` | EtherIP tunnel (RFC 3378) |
+| `--etherip-ttl N` | Outer IP TTL for EtherIP (default 64) |
+| `--ipip SRC_IP DST_IP` | IP-in-IP tunnel (RFC 2003 / 4213) |
+| `--ipip-ttl N` | Outer IP TTL for IPIP (default 64) |
+
 A template config file is provided at
-[src/packet_generator/stream.ini.template](../src/packet_generator/stream.ini.template) — copy it, edit as needed, and
+[stream.ini.template](../stream.ini.template) — copy it, edit as needed, and
 pass it with `--config`.  All keys are optional except `client_ip`,
 `server_ip`, and one of `pcap`/`pcapng`.  CLI flags always override config
 file values, so the file works as a saved profile.
@@ -268,6 +296,22 @@ packeteer stream --client-ip 2001:db8::1 --server-ip 2001:db8::2 \
 # Raw IP (no Ethernet headers)
 packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
     --no-ethernet --packets 20 --pcap raw.pcap
+
+# VLAN-tagged TCP stream (802.1Q VID 100, PCP 3)
+packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
+    --vlan 100 --vlan-pcp 3 --packets 20 --pcap vlan.pcap
+
+# MPLS label stack (two labels) + IP-in-IP tunnel
+packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
+    --mpls 100 200 --ipip 203.0.113.1 203.0.113.2 --pcap mpls_ipip.pcap
+
+# GRE tunnel with key
+packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
+    --gre 203.0.113.1 203.0.113.2 --gre-key 12345 --pcap gre.pcap
+
+# QinQ (double VLAN) with 576-byte middlebox fragmentation
+packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
+    --qinq 100 200 --middlebox-mtu 576 --pcap qinq_frag.pcap
 ```
 
 ### Programmatic equivalent

@@ -234,6 +234,12 @@ def generate_udp_stream(
             timestamp.  Defaults to ``0.0`` (no jitter).
         middlebox_mtu: When set, fragment packets whose IP-layer size exceeds
             this value, simulating a middlebox with a lower MTU.
+        encap: One or more encapsulation layers to wrap every packet in.
+            Accepts a single descriptor, a list of descriptors (applied
+            outermost first), or ``None`` (default, no encapsulation).
+            See :mod:`packet_generator.stream_encap` for available types
+            (VLANEncap, QinQEncap, MPLSEncap, PPPoEEncap, GREEncap,
+            EtherIPEncap, IPIPEncap) and combination rules.
 
     Returns:
         A :class:`UDPStream` whose :attr:`~UDPStream.packets` list contains
