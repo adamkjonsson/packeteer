@@ -26,10 +26,10 @@ Typical usage::
         payload = raw[eth_size + ip_size + tcp_size:]
         if payload:
             update_config(cfg, payload)
-        cfg.setdefault("metadata", {}).update({"timestamp_s": ts_sec, "timestamp_us": ts_frac})
+        cfg.setdefault("packet_metadata", {}).update({"timestamp_s": ts_sec, "timestamp_us": ts_frac})
         packet_configs.append(cfg)
 
-    print(to_json_string(to_json_config(packet_configs, file_metadata={"from_file": "capture.pcap", "type": "pcap"})))
+    print(to_json_string(to_json_config(packet_configs, metadata={"from_file": "capture.pcap", "type": "pcap"})))
 """
 from __future__ import annotations
 
@@ -446,23 +446,28 @@ def apply_tunneled(config: dict[str, Any], pkt: "ParsedPacket") -> None:
 def to_json_config(
     packets: list[dict[str, Any]],
     *,
-    file_metadata: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Wrap a list of packet config dicts into a top-level config dict.
 
+    The top-level ``metadata`` block is always written.  ``nanoseconds``
+    defaults to ``False`` when not supplied by the caller.
+
     Args:
         packets: List of per-packet dicts built with :func:`update_config`.
-        file_metadata: Top-level ``file_metadata`` block (e.g.
-            ``{"from_file": "capture.pcap", "type": "pcap"}``).
-            Omitted when ``None``.
+        metadata: Extra fields to merge into the top-level ``metadata`` block
+            (e.g. ``{"from_file": "capture.pcap", "type": "pcap",
+            "nanoseconds": False}``).  ``nanoseconds`` is added automatically
+            when absent.
 
     Returns:
         A dict matching the top-level JSON config format accepted by
         ``packeteer build``.
     """
     cfg: dict[str, Any] = {}
-    if file_metadata is not None:
-        cfg["file_metadata"] = file_metadata
+    top_meta: dict[str, Any] = dict(metadata) if metadata is not None else {}
+    top_meta.setdefault("nanoseconds", False)
+    cfg["metadata"] = top_meta
     cfg["packets"] = packets
     return cfg
 

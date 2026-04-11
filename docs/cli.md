@@ -80,8 +80,8 @@ are auto-detected from the first four bytes — no extension checking needed.
 |--------|-------------|
 | `capture` | *(required)* Path to a `.pcap` or `.pcapng` file |
 | `--output FILE`, `-o FILE` | Write the JSON config to FILE instead of printing to stdout |
-| `--replay-pcap FILE` | Embed `file_metadata.type = "pcap"` and `file_metadata.pcap = FILE` in the generated config |
-| `--replay-pcapng FILE` | Embed `file_metadata.type = "pcapng"` (mutually exclusive with `--replay-pcap`) |
+| `--replay-pcap FILE` | Embed `metadata.type = "pcap"` and `metadata.from_file = FILE` in the generated config |
+| `--replay-pcapng FILE` | Embed `metadata.type = "pcapng"` (mutually exclusive with `--replay-pcap`) |
 
 ### Examples
 

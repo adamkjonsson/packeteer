@@ -39,6 +39,10 @@ by `packeteer build`.
 ```
 
 ```{eval-rst}
+.. autofunction:: packet_parser.to_config.apply_tunneled
+```
+
+```{eval-rst}
 .. autofunction:: packet_parser.to_config.to_json_config
 ```
 

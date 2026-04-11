@@ -50,7 +50,7 @@ headers such as Ethernet — each fragment's IP layer (plus its payload) will
 fit within `mtu` bytes.
 
 Fragmentation can also be triggered per-packet from the CLI via the
-`metadata.mtu` field in the {doc}`json-config`.
+`packet_metadata.mtu` field in the {doc}`json-config`.
 
 ---
 

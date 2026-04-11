@@ -206,8 +206,8 @@ def _sanitise_packet(pkt: dict, r: _Replacer, opts: SanitiseOptions) -> None:
                     if key in chunk and isinstance(chunk[key], str):
                         chunk[key] = "00" * (len(chunk[key]) // 2)
 
-    if opts.timestamps and "metadata" in pkt:
-        meta = pkt["metadata"]
+    if opts.timestamps and "packet_metadata" in pkt:
+        meta = pkt["packet_metadata"]
         meta["timestamp_s"] = 0
         for key in ("timestamp_us", "timestamp_ns"):
             if key in meta:
@@ -232,7 +232,7 @@ def sanitise(
     """Return a sanitised deep copy of *config*.
 
     *config* must be a dict in the format produced by ``packeteer parse``
-    — a top-level ``"packets"`` list, with an optional ``"file_metadata"``
+    — a top-level ``"packets"`` list, with an optional ``"metadata"``
     block.
 
     The original dict is never modified.

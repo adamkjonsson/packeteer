@@ -41,13 +41,13 @@ innermost; missing layers are simply omitted.
       "ethernet":  { "src_mac": "00:00:00:00:00:01", "dst_mac": "00:00:00:00:00:02" },
       "network":   { "src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "tcp", "ttl": 64 },
       "transport": { "src_port": 54321, "dst_port": 80, "flags": 2 },
-      "metadata":  { "timestamp_s": 1700000000, "timestamp_us": 0 }
+      "packet_metadata":  { "timestamp_s": 1700000000, "timestamp_us": 0 }
     }
   ]
 }
 ```
 
-The `"metadata"` object carries the capture timestamp and an optional `"mtu"`
+The `"packet_metadata"` object carries the capture timestamp and an optional `"mtu"`
 field for per-packet fragmentation (see [Fragmentation](#fragmentation) below).
 
 See {doc}`json-config` for the complete field reference for every layer.
@@ -70,7 +70,7 @@ Any combination of these layers can be stacked:
 
 ### Fragmentation
 
-Set `"mtu"` in a packet's `"metadata"` object to trigger IP fragmentation.
+Set `"mtu"` in a packet's `"packet_metadata"` object to trigger IP fragmentation.
 The packet is split so that each IP datagram (header + payload) is at most
 `mtu` bytes.  The Ethernet header, if present, is replicated on each fragment
 but does not count against the MTU.
@@ -83,7 +83,7 @@ but does not count against the MTU.
       "network":   { "src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "udp" },
       "transport": { "dst_port": 5000 },
       "payload":   { "size": 4000 },
-      "metadata":  { "timestamp_s": 0, "timestamp_us": 0, "mtu": 1500 }
+      "packet_metadata":  { "timestamp_s": 0, "timestamp_us": 0, "mtu": 1500 }
     }
   ]
 }
@@ -103,7 +103,7 @@ cat > syn.json << 'EOF'
     "ethernet":  { "src_mac": "00:00:00:00:00:01", "dst_mac": "00:00:00:00:00:02" },
     "network":   { "src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "tcp" },
     "transport": { "dst_port": 443, "flags": 2 },
-    "metadata":  { "timestamp_s": 0, "timestamp_us": 0 }
+    "packet_metadata":  { "timestamp_s": 0, "timestamp_us": 0 }
   }]
 }
 EOF
@@ -119,7 +119,7 @@ packeteer build syn.json --pcap syn.pcap
     "network":   { "src": "2001:db8::1", "dst": "2001:db8::2", "protocol": "udp" },
     "transport": { "dst_port": 5353 },
     "payload":   { "data": "48656c6c6f" },
-    "metadata":  { "timestamp_s": 0, "timestamp_us": 0 }
+    "packet_metadata":  { "timestamp_s": 0, "timestamp_us": 0 }
   }]
 }
 ```
@@ -133,7 +133,7 @@ packeteer build syn.json --pcap syn.pcap
     "mpls":      [{ "label": 100, "ttl": 64 }, { "label": 200, "ttl": 64 }],
     "network":   { "src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "tcp" },
     "transport": { "dst_port": 80, "flags": 2 },
-    "metadata":  { "timestamp_s": 0, "timestamp_us": 0 }
+    "packet_metadata":  { "timestamp_s": 0, "timestamp_us": 0 }
   }]
 }
 ```
@@ -150,7 +150,7 @@ packeteer build syn.json --pcap syn.pcap
       "network":   { "src": "192.168.1.1", "dst": "192.168.1.2", "protocol": "tcp", "ttl": 64 },
       "transport": { "dst_port": 80, "flags": 2 }
     },
-    "metadata": { "timestamp_s": 0, "timestamp_us": 0 }
+    "packet_metadata": { "timestamp_s": 0, "timestamp_us": 0 }
   }]
 }
 ```
@@ -164,13 +164,13 @@ packeteer build syn.json --pcap syn.pcap
       "ethernet":  { "src_mac": "00:00:00:00:00:01", "dst_mac": "00:00:00:00:00:02" },
       "network":   { "src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "tcp" },
       "transport": { "dst_port": 80, "flags": 2, "seq": 1000 },
-      "metadata":  { "timestamp_s": 1700000000, "timestamp_us": 0 }
+      "packet_metadata":  { "timestamp_s": 1700000000, "timestamp_us": 0 }
     },
     {
       "ethernet":  { "src_mac": "00:00:00:00:00:02", "dst_mac": "00:00:00:00:00:01" },
       "network":   { "src": "10.0.0.2", "dst": "10.0.0.1", "protocol": "tcp" },
       "transport": { "dst_port": 54321, "flags": 18, "seq": 5000, "ack": 1001 },
-      "metadata":  { "timestamp_s": 1700000000, "timestamp_us": 500 }
+      "packet_metadata":  { "timestamp_s": 1700000000, "timestamp_us": 500 }
     }
   ]
 }

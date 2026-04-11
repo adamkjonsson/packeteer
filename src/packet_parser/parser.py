@@ -332,7 +332,7 @@ def parse_pcap_file(
         path: Path to the ``.pcap`` file.
         file_object: Readable binary file-like object positioned at the start
             of the pcap data.
-        output: Extra fields to merge into the top-level ``file_metadata``
+        output: Extra fields to merge into the top-level ``metadata``
             block (e.g. ``{"from_file": "capture.pcap", "type": "pcap"}``).
             ``"nanoseconds"`` is set automatically from the source file and
             must not be supplied here.
@@ -367,7 +367,7 @@ def parse_pcap_file(
             update_config(cfg, pkt.transport)
             if pkt.payload:
                 update_config(cfg, pkt.payload)
-        cfg["metadata"] = {"timestamp_s": pkt.ts_sec, ts_frac_key: pkt.ts_frac}
+        cfg["packet_metadata"] = {"timestamp_s": pkt.ts_sec, ts_frac_key: pkt.ts_frac}
         packet_configs.append(cfg)
 
     global_output: dict[str, Any] = dict(output) if output is not None else {}
@@ -377,7 +377,4 @@ def parse_pcap_file(
         file_type = "pcapng" if pcap.header.version_major == 1 else "pcap"
         global_output.setdefault("type", file_type)
 
-    # Include the output block when the caller explicitly provided one (even
-    # empty), or when it has content added automatically (e.g. nanoseconds).
-    include_output = output is not None or bool(global_output)
-    return to_json_string(to_json_config(packet_configs, file_metadata=global_output if include_output else None))
+    return to_json_string(to_json_config(packet_configs, metadata=global_output))

@@ -27,8 +27,8 @@ by hand or programmatically before rebuilding.
 |----------|-------------|
 | `capture` | *(required)* Path to a `.pcap` or `.pcapng` file |
 | `--output FILE` / `-o FILE` | Write JSON to FILE instead of printing to stdout |
-| `--replay-pcap FILE` | Embed `"type": "pcap"` in `file_metadata` so the config can be replayed |
-| `--replay-pcapng FILE` | Embed `"type": "pcapng"` in `file_metadata` (mutually exclusive with `--replay-pcap`) |
+| `--replay-pcap FILE` | Add `"type": "pcap"` and `"from_file"` to the top-level `metadata` block |
+| `--replay-pcapng FILE` | Add `"type": "pcapng"` and `"from_file"` to the top-level `metadata` block (mutually exclusive with `--replay-pcap`) |
 
 ### What gets parsed
 
@@ -60,12 +60,14 @@ recomputed from scratch on rebuild).
 ### Output format
 
 Each packet becomes one object in the top-level `"packets"` array.  A
-`"metadata"` object records the capture timestamp.  A `"file_metadata"` block
-is included when `--replay-pcap` or `--replay-pcapng` is given:
+`"packet_metadata"` object records the capture timestamp.  The top-level
+`"metadata"` block is always present and always contains `"nanoseconds"`.
+`"from_file"` and `"type"` are added when `--replay-pcap` or `--replay-pcapng`
+is given:
 
 ```json
 {
-  "file_metadata": {
+  "metadata": {
     "from_file": "capture.pcap",
     "type": "pcap",
     "nanoseconds": false
@@ -91,7 +93,7 @@ is included when `--replay-pcap` or `--replay-pcapng` is given:
         "flags": 2,
         "window": 65535
       },
-      "metadata": {
+      "packet_metadata": {
         "timestamp_s": 1700000000,
         "timestamp_us": 123456
       }
@@ -293,8 +295,8 @@ with open("capture.pcap", "rb") as f:
 json_str = parse_pcap_file(file_object=io.BytesIO(data))
 ```
 
-Pass an `output` dict to embed `file_metadata` in the result (the same effect
-as `--replay-pcap` on the CLI):
+Pass an `output` dict to embed a top-level `metadata` block in the result (the
+same effect as `--replay-pcap` on the CLI):
 
 ```python
 json_str = parse_pcap_file(
@@ -339,7 +341,7 @@ for record in pcap.packets:
         update_config(cfg, pkt.transport)
         if pkt.payload:
             update_config(cfg, pkt.payload)
-    cfg["metadata"] = {"timestamp_s": pkt.ts_sec, ts_key: pkt.ts_frac}
+    cfg["packet_metadata"] = {"timestamp_s": pkt.ts_sec, ts_key: pkt.ts_frac}
     packet_configs.append(cfg)
 
 json_str = to_json_string(to_json_config(packet_configs))

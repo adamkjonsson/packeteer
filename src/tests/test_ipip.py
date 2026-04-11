@@ -288,7 +288,7 @@ class TestIPIPRoundTrip(unittest.TestCase):
                                 "protocol": "tcp", "ttl": 64},
                     "transport": {"src_port": 12345, "dst_port": 80},
                 },
-                "metadata": {"timestamp_s": 0, "timestamp_us": 0},
+                "packet_metadata": {"timestamp_s": 0, "timestamp_us": 0},
             }]
         }
         with tempfile.NamedTemporaryFile(suffix=".json", mode="w", delete=False) as jf:

@@ -18,7 +18,7 @@ pcap  ──parse──▶  JSON  ──sanitise──▶  clean JSON  ──bui
 | Ethernet `src_mac` / `dst_mac` | **on** | Replaced with locally-administered unicast addresses (02:00:00:xx:xx:xx) |
 | TCP/UDP `src_port` / `dst_port` | off | Enable with `--ports` |
 | `payload.data` | off | Enable with `--payload`; zeroed to same byte length |
-| `metadata` timestamps | off | Enable with `--timestamps`; set to zero |
+| `packet_metadata` timestamps | off | Enable with `--timestamps`; set to zero |
 
 Replacements are **consistent within a single run**: the same original value
 always produces the same synthetic value across all packets and all tunnel
@@ -148,7 +148,7 @@ Ports are unchanged because `--ports` was not given.
 - TCP flags, window size, sequence numbers, TTL, DSCP/TOS
 - VLAN IDs, MPLS labels, GRE keys
 - Packet count and order
-- `file_metadata` block
+- top-level `metadata` block
 
 Checksums are not stored in the JSON config — they are always recomputed from
 scratch when the config is rebuilt with `packeteer build`.

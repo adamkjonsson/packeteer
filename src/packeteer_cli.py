@@ -423,8 +423,8 @@ def _apply_spec_to_builder(
 
 def _run_multi_packet(cfg: dict, pcap_path: str | None = None, pcapng_path: str | None = None) -> None:
     """Build and output all packets defined in a JSON config."""
-    file_metadata = cfg.get("file_metadata", {})
-    nanoseconds: bool = file_metadata.get("nanoseconds", False)
+    top_metadata = cfg.get("metadata", {})
+    nanoseconds: bool = top_metadata.get("nanoseconds", False)
 
     if "packets" not in cfg:
         print("Error: config file must have a top-level 'packets' array", file=sys.stderr)
@@ -443,7 +443,7 @@ def _run_multi_packet(cfg: dict, pcap_path: str | None = None, pcapng_path: str 
     collected: list[tuple[bytes, int, int]] = []
 
     for i, spec in enumerate(specs, 1):
-        out = spec.get("metadata", {})
+        out = spec.get("packet_metadata", {})
         try:
             b, is_terminal = _apply_spec_to_builder(PacketBuilder(), spec, i)
             if is_terminal:
@@ -771,7 +771,7 @@ def _stream_to_json(packets: list, include_ethernet: bool) -> str:
             update_config(cfg, pkt.transport)
             if pkt.payload:
                 update_config(cfg, pkt.payload)
-        cfg["metadata"] = {
+        cfg["packet_metadata"] = {
             "timestamp_s":  pkt_obj.ts_sec,
             "timestamp_us": pkt_obj.ts_usec,
             "direction":    pkt_obj.direction,
@@ -933,12 +933,12 @@ def main():
     replay_group.add_argument(
         "--replay-pcap",
         metavar="FILE",
-        help="Set type=pcap in the generated file_metadata so the config can be replayed as a pcap",
+        help="Set type=pcap in the generated metadata so the config can be replayed as a pcap",
     )
     replay_group.add_argument(
         "--replay-pcapng",
         metavar="FILE",
-        help="Set type=pcapng in the generated file_metadata so the config can be replayed as a pcapng",
+        help="Set type=pcapng in the generated metadata so the config can be replayed as a pcapng",
     )
     parse_parser.set_defaults(func=_cmd_parse)
 
