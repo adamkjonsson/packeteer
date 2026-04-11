@@ -174,7 +174,7 @@ with open("clean.json", "w") as f:
     json.dump(result, f, indent=2)
 ```
 
-See {doc}`sanitiser` for the full reference including all `SanitiseOptions` fields.
+See {doc}`sanitiser/index` for the full reference including all `SanitiseOptions` fields.
 
 ---
 

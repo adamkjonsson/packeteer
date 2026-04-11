@@ -30,7 +30,7 @@ installation
 quickstart
 build/index
 parse/index
-sanitiser
+sanitiser/index
 stream
 cli
 json-config
