@@ -1,161 +1,6 @@
-# Parsing Captures
+# Python API
 
-packeteer parses captures in two ways: from the CLI using `packeteer parse`,
-or directly from Python using the `packet_parser` API.  Both paths produce the
-same output — a JSON config that mirrors the packet structure layer by layer and
-can be fed straight back into `packeteer build` for replay.
-
----
-
-## `packeteer parse` — CLI
-
-```
-packeteer parse <capture> [--output FILE] [--replay-pcap FILE | --replay-pcapng FILE]
-```
-
-Reads every packet in a pcap or pcapng file, decodes each one through all
-recognised protocol layers, and writes a JSON config to stdout or a file.  The
-file format (pcap vs. pcapng, microsecond vs. nanosecond timestamps) is
-auto-detected from the first four bytes — no flags or file extensions required.
-
-The produced JSON is directly replayable with `packeteer build` and editable
-by hand or programmatically before rebuilding.
-
-### Arguments
-
-| Argument | Description |
-|----------|-------------|
-| `capture` | *(required)* Path to a `.pcap` or `.pcapng` file |
-| `--output FILE` / `-o FILE` | Write JSON to FILE instead of printing to stdout |
-| `--replay-pcap FILE` | Add `"type": "pcap"` and `"from_file"` to the top-level `metadata` block |
-| `--replay-pcapng FILE` | Add `"type": "pcapng"` and `"from_file"` to the top-level `metadata` block (mutually exclusive with `--replay-pcap`) |
-
-### What gets parsed
-
-Every packet is decoded layer by layer.  Recognised layers are written as
-named keys in the per-packet JSON object:
-
-| Detected layer | JSON key | Notes |
-|----------------|----------|-------|
-| Ethernet II | `ethernet` | Includes VLAN tag as `ethernet.vlan` when present |
-| MPLS label stack | `mpls` | Array of entries, outermost first |
-| PPPoE | `pppoe` | Discovery and session frames |
-| IPv4 / IPv6 | `network` | Auto-detected from the IP version nibble |
-| TCP | `transport` | Full header including options (MSS, window scale, SACK, timestamps) |
-| UDP | `transport` | Ports and length |
-| ICMP / ICMPv6 | `transport` | Type, code, identifier, sequence |
-| SCTP | `transport` | Per-chunk objects with all fields |
-| IP-in-IP | `ipip` | Inner spec nested recursively; no inner `ethernet` key |
-| GRE | `gre` | Key, sequence, checksum flags preserved; TEB has inner `ethernet` |
-| EtherIP | `etherip` | Inner Ethernet frame nested recursively |
-| Payload | `payload` | Raw bytes encoded as a hex string |
-
-Bytes that follow the last recognised header are captured in `payload.data`.
-Unrecognised EtherTypes and IP protocol numbers stop layer parsing early —
-remaining bytes go into `payload`.
-
-Checksums are decoded from the wire but not stored in the JSON (they are
-recomputed from scratch on rebuild).
-
-### Output format
-
-Each packet becomes one object in the top-level `"packets"` array.  A
-`"packet_metadata"` object records the capture timestamp.  The top-level
-`"metadata"` block is always present and always contains `"nanoseconds"`.
-`"from_file"` and `"type"` are added when `--replay-pcap` or `--replay-pcapng`
-is given:
-
-```json
-{
-  "metadata": {
-    "from_file": "capture.pcap",
-    "type": "pcap",
-    "nanoseconds": false
-  },
-  "packets": [
-    {
-      "ethernet": {
-        "src_mac": "00:11:22:33:44:55",
-        "dst_mac": "66:77:88:99:aa:bb",
-        "enabled": true
-      },
-      "network": {
-        "src": "10.0.0.1",
-        "dst": "10.0.0.2",
-        "protocol": "tcp",
-        "ttl": 64
-      },
-      "transport": {
-        "src_port": 54321,
-        "dst_port": 80,
-        "seq": 3639743571,
-        "ack": 0,
-        "flags": 2,
-        "window": 65535
-      },
-      "packet_metadata": {
-        "timestamp_s": 1700000000,
-        "timestamp_us": 123456
-      }
-    }
-  ]
-}
-```
-
-See {doc}`json-config` for the complete field reference.
-
-### Examples
-
-**Print JSON to stdout:**
-
-```bash
-packeteer parse capture.pcap
-```
-
-**Save to a file:**
-
-```bash
-packeteer parse capture.pcap --output config.json
-```
-
-**Parse a pcapng file (auto-detected):**
-
-```bash
-packeteer parse capture.pcapng --output config.json
-```
-
-**Round-trip: parse → rebuild:**
-
-```bash
-packeteer parse capture.pcap --output config.json
-packeteer build config.json --pcap replayed.pcap
-```
-
-**Parse → edit → rebuild:**
-
-```bash
-# Step 1: capture to JSON
-packeteer parse capture.pcap --output config.json
-
-# Step 2: edit config.json — change IPs, ports, payloads, add a VLAN tag, etc.
-
-# Step 3: rebuild
-packeteer build config.json --pcap modified.pcap
-```
-
-**Parse → sanitise → rebuild (shareable capture):**
-
-```bash
-packeteer parse capture.pcap --output raw.json
-packeteer sanitise raw.json --ports --payload --output clean.json
-packeteer build clean.json --pcap clean.pcap
-```
-
----
-
-## Python API
-
-### `parse_packet` — single raw packet
+## `parse_packet` — single raw packet
 
 {func}`packet_parser.parser.parse_packet` decodes a raw `bytes` object through
 all protocol layers and returns a {class}`~packet_parser.parser.ParsedPacket`
@@ -191,7 +36,7 @@ raw = PacketBuilder().ip(src="10.0.0.1", dst="10.0.0.2").udp().build()
 pkt = parse_packet(raw, link_type=LINKTYPE_RAW)
 ```
 
-### `ParsedPacket` fields
+## `ParsedPacket` fields
 
 | Field | Type | Content |
 |-------|------|---------|
@@ -208,7 +53,7 @@ pkt = parse_packet(raw, link_type=LINKTYPE_RAW)
 | `ts_sec` | `int` | Capture timestamp — whole seconds (set by `parse_pcap_packet`) |
 | `ts_frac` | `int` | Capture timestamp — microsecond or nanosecond fraction (set by `parse_pcap_packet`) |
 
-### Tunnel packets
+## Tunnel packets
 
 Tunneled packets are parsed recursively.  The inner packet is a full
 `ParsedPacket` stored in `tunneled`, and may itself have its own `tunneled`
@@ -244,7 +89,7 @@ print(pkt.tunneled.ip.src)             # "192.168.1.1"
 print(pkt.tunneled.transport.dst_port) # 53
 ```
 
-### `parse_pcap_packet` — one record from a pcap file
+## `parse_pcap_packet` — one record from a pcap file
 
 {func}`packet_parser.parser.parse_pcap_packet` parses one
 `(data, ts_sec, ts_frac)` tuple from a pcap file and stamps the resulting
@@ -266,7 +111,7 @@ for record in pcap.packets:
 `pcap.header.nanoseconds` tells you whether `ts_frac` is in microseconds or
 nanoseconds.
 
-### `parse_pcap_file` — whole file to JSON
+## `parse_pcap_file` — whole file to JSON
 
 {func}`packet_parser.parser.parse_pcap_file` reads every packet in a pcap
 file and returns the complete JSON config as a string — the same output as
@@ -305,7 +150,7 @@ json_str = parse_pcap_file(
 )
 ```
 
-### Converting a `ParsedPacket` to a config dict
+## Converting a `ParsedPacket` to a config dict
 
 Use {func}`packet_parser.to_config.update_config` and
 {func}`packet_parser.to_config.apply_tunneled` to serialise individual parsed
@@ -362,7 +207,7 @@ json_str = to_json_string(to_json_config(packet_configs))
 `ParsedPacket` context (including `tunneled`) and cannot be dispatched through
 `update_config` alone.
 
-### Per-protocol parser functions
+## Per-protocol parser functions
 
 The low-level parsers follow a uniform calling convention and can be used
 independently when you only need one layer:

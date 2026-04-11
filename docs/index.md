@@ -29,7 +29,7 @@ overview
 installation
 quickstart
 build/index
-parse
+parse/index
 sanitiser
 stream
 cli
