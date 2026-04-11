@@ -4,7 +4,7 @@
 producing a typed stream object whose `.packets` list can be written to pcap,
 pcapng, or JSON config, or inspected and modified before output.
 
-See {doc}`../stream` for usage examples, encapsulation, and CLI equivalents.
+See {doc}`../stream/index` for usage examples, encapsulation, and CLI equivalents.
 
 ---
 

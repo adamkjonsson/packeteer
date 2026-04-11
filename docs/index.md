@@ -31,9 +31,8 @@ quickstart
 build/index
 parse/index
 sanitiser/index
-stream
-cli
-json-config
+stream/index
+json-config/index
 api/index
 reference/packet-sizes
 reference/rfc-references

@@ -41,7 +41,7 @@ innermost; missing layers are simply omitted.
 The `"packet_metadata"` object carries the capture timestamp and an optional
 `"mtu"` field for per-packet fragmentation (see {doc}`fragmentation`).
 
-See {doc}`../json-config` for the complete field reference for every layer.
+See {doc}`../json-config/format` for the complete field reference for every layer.
 
 ## Supported layers
 

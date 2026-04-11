@@ -93,7 +93,7 @@ is given:
 }
 ```
 
-See {doc}`../json-config` for the complete field reference.
+See {doc}`../json-config/format` for the complete field reference.
 
 ## Examples
 

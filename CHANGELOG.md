@@ -4,7 +4,7 @@ All notable changes to packeteer are recorded in this file.
 
 ---
 
-## Unreleased — 2026-04-09
+## Unreleased — 2026-04-12
 
 ### Stream JSON output
 
@@ -39,17 +39,23 @@ All notable changes to packeteer are recorded in this file.
 
 - `packet_parser.to_config.apply_tunneled(config, pkt)` is now a public function.  It serialises the tunnel layers (IP-in-IP, GRE, EtherIP) of a `ParsedPacket` into a config dict, handling all three types through a single call.  Previously callers had to import and invoke three private helpers directly; this was the root cause of `_stream_to_json` in `packeteer_cli.py` importing private names from `to_config`.
 
-### Documentation
+### JSON key rename: `metadata` / `packet_metadata`
 
-- Added `docs/build.md`: comprehensive reference for `packeteer build` and the `PacketBuilder` Python API, covering every layer method, assembly, checksums, fragmentation, and pcap I/O.
-- Added `docs/parse.md`: comprehensive reference for `packeteer parse` and the `packet_parser` Python API, covering `parse_packet`, `ParsedPacket`, `parse_pcap_file`, `update_config`/`apply_tunneled`, and the per-protocol parser functions.
-- `docs/overview.md`: new "Packet stream generation" section describing the stream workflow.
-- `docs/stream.md`: fully rewritten to match the structure of `build.md` and `parse.md` — CLI first (all flags, encapsulation, INI config, examples), then Python API (all three generators, parameters, anomalies, inspection, encapsulation, hooks).  Moved after `sanitiser.md` in the toctree.
-- `docs/cli.md`: `--json FILE` flag added to the `stream` reference; updated mutual-exclusion note; JSON examples added.
-- `stream.ini.template`: `json` key documented alongside `pcap` and `pcapng`.
-- `docs/stream.md`: new "Encapsulation" section covering all seven types, single-layer and stacked examples, constraints, and fragmentation behaviour.  Template path corrected (`stream.ini.template` at repo root).
-- `docs/cli.md`: encapsulation flags table added to the `stream` reference; four new CLI examples; template path corrected.
-- Docstrings for `generate_tcp_stream`, `generate_udp_stream`, `generate_sctp_stream` updated with `encap` parameter documentation.
+- Per-packet `"metadata"` key renamed to `"packet_metadata"` throughout all source, test, and doc files.
+- Top-level `"file_metadata"` key renamed to `"metadata"`.
+- `to_json_config()` now always writes a top-level `"metadata"` block; `"nanoseconds"` is mandatory and defaults to `false`.
+- `packeteer stream --json` produces the same mandatory `"metadata"` block.
+
+### Documentation restructure
+
+- API Reference expanded: new pages for stream generators (`api/stream-generators.md`), stream encapsulation types (`api/stream-encap.md`), IP fragmentation (`api/fragmentation.md`), and sanitiser (`api/sanitiser.md`).
+- `docs/build.md` split into `docs/build/` subdirectory: `cli.md`, `python-api.md`, and `fragmentation.md` (moved from `docs/fragmentation.md`).
+- `docs/parse.md` split into `docs/parse/`: `cli.md` and `python-api.md`.
+- `docs/sanitiser.md` split into `docs/sanitiser/`: `index.md`, `cli.md`, and `python-api.md`.
+- `docs/stream.md` split into `docs/stream/`: `index.md`, `cli.md`, and `python-api.md`.
+- `docs/json-config.md` split into `docs/json-config/`: `index.md`, `format.md` (field-by-field spec), and `python-api.md` (programmatic JSON config usage).
+- `docs/cli.md` removed — content was fully covered by the per-subcommand subpages.
+- `docs/index.md` toctree updated to reference all new subdirectory index pages.
 
 ---
 

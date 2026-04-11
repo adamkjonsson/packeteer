@@ -64,8 +64,9 @@ packeteer parse capture.pcap --output config.json
 packeteer build config.json --pcap replayed.pcap
 ```
 
-See {doc}`cli` for the full CLI reference and {doc}`json-config` for the JSON
-format.
+See {doc}`build/index`, {doc}`parse/index`, {doc}`sanitiser/index`, and
+{doc}`stream/index` for the full CLI and Python API reference for each
+subcommand, and {doc}`json-config/index` for the JSON config format.
 
 ## Parse a packet
 

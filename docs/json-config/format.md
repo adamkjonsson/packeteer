@@ -1,4 +1,4 @@
-# JSON Config File Format
+# Format Reference
 
 The JSON config file is the input to `packeteer build` and the output of
 `packeteer parse`.  It contains a top-level `packets` array with one
@@ -346,7 +346,7 @@ Always present in configs produced by `packeteer parse` and
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `mtu` | — | Fragment the packet so each IP datagram is at most this many bytes — see {doc}`build/fragmentation` |
+| `mtu` | — | Fragment the packet so each IP datagram is at most this many bytes — see {doc}`../build/fragmentation` |
 | `timestamp_s` | `0` | Capture timestamp — whole seconds |
 | `timestamp_us` | `0` | Microsecond fraction (0–999999); used when `metadata.nanoseconds` is `false` |
 | `timestamp_ns` | `0` | Nanosecond fraction (0–999999999); used when `metadata.nanoseconds` is `true` |
