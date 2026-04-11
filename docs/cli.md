@@ -41,7 +41,7 @@ packeteer build packets.json --pcapng out.pcapng
 ```
 
 Per-packet fragmentation is controlled via the `metadata.mtu` field in the
-JSON config — see {doc}`json-config` and {doc}`fragmentation`.
+JSON config — see {doc}`json-config` and {doc}`build/fragmentation`.
 
 ### Programmatic equivalent
 

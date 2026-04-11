@@ -28,13 +28,12 @@ and the standard library only.
 overview
 installation
 quickstart
-build
+build/index
 parse
 sanitiser
 stream
 cli
 json-config
-fragmentation
 api/index
 reference/packet-sizes
 reference/rfc-references

@@ -1,196 +1,4 @@
-# Building Packets
-
-packeteer builds packets in two ways: from the CLI using a JSON config file, or
-directly from Python using the {class}`~packet_generator.builder.PacketBuilder`
-API.  Both paths produce identical byte-accurate output — the CLI is a thin
-wrapper around the same builder that the Python API exposes.
-
----
-
-## `packeteer build` — CLI
-
-```
-packeteer build <config.json> (--pcap FILE | --pcapng FILE)
-```
-
-Reads a JSON config file, assembles every packet described in it, and writes
-the results to a pcap or pcapng file.  All checksums (IPv4 header, TCP, UDP,
-ICMPv4, ICMPv6, GRE, SCTP CRC-32c) are recomputed automatically — you never
-need to calculate them by hand.
-
-### Arguments
-
-| Argument | Description |
-|----------|-------------|
-| `config.json` | JSON file with a top-level `"packets"` array |
-| `--pcap FILE` | Write to a libpcap (`.pcap`) file |
-| `--pcapng FILE` | Write to a pcapng (`.pcapng`) file |
-
-`--pcap` and `--pcapng` are mutually exclusive; exactly one is required.
-
-### JSON config structure
-
-Each element of the `"packets"` array describes one packet as a set of
-protocol-layer objects.  Layers are specified in order from outermost to
-innermost; missing layers are simply omitted.
-
-```json
-{
-  "packets": [
-    {
-      "ethernet":  { "src_mac": "00:00:00:00:00:01", "dst_mac": "00:00:00:00:00:02" },
-      "network":   { "src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "tcp", "ttl": 64 },
-      "transport": { "src_port": 54321, "dst_port": 80, "flags": 2 },
-      "packet_metadata":  { "timestamp_s": 1700000000, "timestamp_us": 0 }
-    }
-  ]
-}
-```
-
-The `"packet_metadata"` object carries the capture timestamp and an optional `"mtu"`
-field for per-packet fragmentation (see [Fragmentation](#fragmentation) below).
-
-See {doc}`json-config` for the complete field reference for every layer.
-
-### Supported layers
-
-Any combination of these layers can be stacked:
-
-| JSON key | Layer |
-|----------|-------|
-| `ethernet` | Ethernet II header (MACs, optional VLAN tag) |
-| `mpls` | MPLS label stack — array of entries, outermost first |
-| `pppoe` | PPPoE session or discovery frame |
-| `network` | IPv4 or IPv6 header — auto-detected from `src` |
-| `transport` | TCP, UDP, ICMP, ICMPv6, or SCTP |
-| `etherip` | EtherIP tunnel inner frame (set `network.protocol = "etherip"`) |
-| `ipip` | IP-in-IP tunnel inner spec (set `network.protocol = "ipip"`) |
-| `gre` | GRE tunnel inner spec (set `network.protocol = "gre"`) |
-| `payload` | Raw payload — `"size"` (random bytes) or `"data"` (hex string) |
-
-### Fragmentation
-
-Set `"mtu"` in a packet's `"packet_metadata"` object to trigger IP fragmentation.
-The packet is split so that each IP datagram (header + payload) is at most
-`mtu` bytes.  The Ethernet header, if present, is replicated on each fragment
-but does not count against the MTU.
-
-```json
-{
-  "packets": [
-    {
-      "ethernet":  { "src_mac": "aa:bb:cc:dd:ee:01", "dst_mac": "aa:bb:cc:dd:ee:02" },
-      "network":   { "src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "udp" },
-      "transport": { "dst_port": 5000 },
-      "payload":   { "size": 4000 },
-      "packet_metadata":  { "timestamp_s": 0, "timestamp_us": 0, "mtu": 1500 }
-    }
-  ]
-}
-```
-
-IPv4 uses the Flags/Fragment Offset fields (RFC 791); IPv6 uses the Fragment
-Extension Header (RFC 8200 §4.5).  See {doc}`fragmentation` for full details.
-
-### Examples
-
-**Simple TCP SYN:**
-
-```bash
-cat > syn.json << 'EOF'
-{
-  "packets": [{
-    "ethernet":  { "src_mac": "00:00:00:00:00:01", "dst_mac": "00:00:00:00:00:02" },
-    "network":   { "src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "tcp" },
-    "transport": { "dst_port": 443, "flags": 2 },
-    "packet_metadata":  { "timestamp_s": 0, "timestamp_us": 0 }
-  }]
-}
-EOF
-packeteer build syn.json --pcap syn.pcap
-```
-
-**IPv6 UDP with payload:**
-
-```json
-{
-  "packets": [{
-    "ethernet":  { "src_mac": "00:00:00:00:00:01", "dst_mac": "00:00:00:00:00:02" },
-    "network":   { "src": "2001:db8::1", "dst": "2001:db8::2", "protocol": "udp" },
-    "transport": { "dst_port": 5353 },
-    "payload":   { "data": "48656c6c6f" },
-    "packet_metadata":  { "timestamp_s": 0, "timestamp_us": 0 }
-  }]
-}
-```
-
-**MPLS label stack:**
-
-```json
-{
-  "packets": [{
-    "ethernet":  { "src_mac": "00:00:00:00:00:01", "dst_mac": "00:00:00:00:00:02" },
-    "mpls":      [{ "label": 100, "ttl": 64 }, { "label": 200, "ttl": 64 }],
-    "network":   { "src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "tcp" },
-    "transport": { "dst_port": 80, "flags": 2 },
-    "packet_metadata":  { "timestamp_s": 0, "timestamp_us": 0 }
-  }]
-}
-```
-
-**GRE tunnel:**
-
-```json
-{
-  "packets": [{
-    "ethernet": { "src_mac": "00:00:00:00:00:01", "dst_mac": "00:00:00:00:00:02" },
-    "network":  { "src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "gre", "ttl": 64 },
-    "gre": {
-      "key": 12345,
-      "network":   { "src": "192.168.1.1", "dst": "192.168.1.2", "protocol": "tcp", "ttl": 64 },
-      "transport": { "dst_port": 80, "flags": 2 }
-    },
-    "packet_metadata": { "timestamp_s": 0, "timestamp_us": 0 }
-  }]
-}
-```
-
-**Multi-packet file with timestamps:**
-
-```json
-{
-  "packets": [
-    {
-      "ethernet":  { "src_mac": "00:00:00:00:00:01", "dst_mac": "00:00:00:00:00:02" },
-      "network":   { "src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "tcp" },
-      "transport": { "dst_port": 80, "flags": 2, "seq": 1000 },
-      "packet_metadata":  { "timestamp_s": 1700000000, "timestamp_us": 0 }
-    },
-    {
-      "ethernet":  { "src_mac": "00:00:00:00:00:02", "dst_mac": "00:00:00:00:00:01" },
-      "network":   { "src": "10.0.0.2", "dst": "10.0.0.1", "protocol": "tcp" },
-      "transport": { "dst_port": 54321, "flags": 18, "seq": 5000, "ack": 1001 },
-      "packet_metadata":  { "timestamp_s": 1700000000, "timestamp_us": 500 }
-    }
-  ]
-}
-```
-
-**Parse → edit → rebuild workflow:**
-
-```bash
-# Capture live traffic and convert it to an editable config
-packeteer parse capture.pcap --output config.json
-
-# Edit config.json — change IPs, ports, payloads, add layers, etc.
-
-# Rebuild the edited config as a new pcap
-packeteer build config.json --pcap modified.pcap
-```
-
----
-
-## `PacketBuilder` — Python API
+# `PacketBuilder` — Python API
 
 {class}`~packet_generator.builder.PacketBuilder` is the fluent Python API
 behind `packeteer build`.  Each method **appends** one layer to a stack and
@@ -210,9 +18,9 @@ pkt = (PacketBuilder()
 # pkt is bytes — pass to write_pcap, send via socket, inspect, etc.
 ```
 
-### Layer methods
+## Layer methods
 
-#### `.ethernet(src_mac, dst_mac, pad=False)`
+### `.ethernet(src_mac, dst_mac, pad=False)`
 
 Appends an Ethernet II header.
 
@@ -224,7 +32,7 @@ Appends an Ethernet II header.
 
 The EtherType is set automatically from the next layer added.
 
-#### `.vlan(vid, pcp=0, dei=0)`
+### `.vlan(vid, pcp=0, dei=0)`
 
 Appends an IEEE 802.1Q VLAN tag.  Call twice (outer then inner) for QinQ
 (IEEE 802.1ad) double-tagging.
@@ -247,7 +55,7 @@ pkt = (PacketBuilder()
 )
 ```
 
-#### `.mpls(label, tc=0, ttl=64)`
+### `.mpls(label, tc=0, ttl=64)`
 
 Appends one MPLS label stack entry (RFC 3032).  Call multiple times for a
 multi-label stack; entries are written outermost first, and the bottom-of-stack
@@ -259,7 +67,7 @@ multi-label stack; entries are written outermost first, and the bottom-of-stack
 | `tc` | `0` | Traffic Class / QoS field (0–7) |
 | `ttl` | `64` | Time-to-Live (0–255) |
 
-#### `.pppoe(code=0, session_id=0, tags=None)`
+### `.pppoe(code=0, session_id=0, tags=None)`
 
 Appends a PPPoE header (RFC 2516).
 
@@ -269,7 +77,7 @@ Appends a PPPoE header (RFC 2516).
 | `session_id` | `0` | 16-bit PPPoE session ID |
 | `tags` | `None` | List of {class}`~packet_generator.pppoe.PPPoETag` objects for discovery frames |
 
-#### `.ip(src, dst, ttl=64, tos=0, identification=0, flags=0b010, fragment_offset=0, traffic_class=0, flow_label=0)`
+### `.ip(src, dst, ttl=64, tos=0, identification=0, flags=0b010, fragment_offset=0, traffic_class=0, flow_label=0)`
 
 Appends an IP header.  **IPv4 or IPv6 is selected automatically** from the
 format of `src` — no explicit version flag is needed.
@@ -299,7 +107,7 @@ pkt = (PacketBuilder()
 )
 ```
 
-#### `.gre(key=None, seq=None, checksum=False)`
+### `.gre(key=None, seq=None, checksum=False)`
 
 Appends a GRE tunnel header (RFC 2784 / RFC 2890) between the outer IP layer
 and the inner packet.  The outer IP protocol (47) and the GRE Protocol Type
@@ -334,7 +142,7 @@ pkt = (PacketBuilder()
 )
 ```
 
-#### `.etherip()`
+### `.etherip()`
 
 Appends the 2-byte EtherIP header (RFC 3378) between the outer IP and inner
 Ethernet frame.  The outer IP protocol (97) is set automatically.
@@ -351,7 +159,7 @@ pkt = (PacketBuilder()
 )
 ```
 
-#### `.tcp(src_port=12345, dst_port=80, seq=0, ack=0, flags=0x002, window=65535, urgent_ptr=0, reserved=0, options=None)`
+### `.tcp(src_port=12345, dst_port=80, seq=0, ack=0, flags=0x002, window=65535, urgent_ptr=0, reserved=0, options=None)`
 
 Appends a TCP transport header (RFC 9293).  The checksum and data-offset
 fields are computed automatically.
@@ -384,25 +192,25 @@ pkt = (PacketBuilder()
 )
 ```
 
-#### `.udp(src_port=12345, dst_port=80)`
+### `.udp(src_port=12345, dst_port=80)`
 
 Appends a UDP transport header.  The checksum and length fields are computed
 automatically.
 
-#### `.icmp(type=8, code=0, identifier=1, sequence=1)`
+### `.icmp(type=8, code=0, identifier=1, sequence=1)`
 
 Appends an ICMPv4 header (RFC 792).  Use with an IPv4 `.ip()` layer.
 The checksum is computed automatically.  Common types: `8`=Echo Request,
 `0`=Echo Reply, `3`=Destination Unreachable, `11`=Time Exceeded.
 
-#### `.icmpv6(type=128, code=0, identifier=1, sequence=1)`
+### `.icmpv6(type=128, code=0, identifier=1, sequence=1)`
 
 Appends an ICMPv6 header (RFC 4443).  Use with an IPv6 `.ip()` layer.
 The pseudo-header checksum is computed automatically.  Common types:
 `128`=Echo Request, `129`=Echo Reply, `135`=Neighbour Solicitation,
 `136`=Neighbour Advertisement.
 
-#### `.sctp(src_port=0, dst_port=0, verification_tag=0, chunks=None)`
+### `.sctp(src_port=0, dst_port=0, verification_tag=0, chunks=None)`
 
 Appends an SCTP transport header (RFC 9260).  IP protocol number 132 is set
 automatically.  The CRC-32c checksum (Castagnoli) is computed automatically.
@@ -455,9 +263,9 @@ data_pkt = (PacketBuilder()
 )
 ```
 
-See {doc}`api/header-dataclasses` for all SCTP chunk types and constants.
+See {doc}`../api/header-dataclasses` for all SCTP chunk types and constants.
 
-#### `.payload(size=0, data=None)`
+### `.payload(size=0, data=None)`
 
 Appends raw payload bytes.  `data` (bytes) takes precedence over `size`
 (which generates that many random bytes).
@@ -480,14 +288,14 @@ pkt = (PacketBuilder()
 )
 ```
 
-### Assembly
+## Assembly
 
-#### `.build() → bytes`
+### `.build() → bytes`
 
 Assembles all layers in stack order and returns the raw packet as `bytes`.
 All checksums and length fields are computed at this point.
 
-#### `.fragment(mtu=1500) → list[bytes]`
+### `.fragment(mtu=1500) → list[bytes]`
 
 Fragments the packet at the first IP layer so each IP datagram fits within
 `mtu` bytes, and returns a list of fully assembled raw-packet `bytes` objects.
@@ -517,7 +325,7 @@ fragments = (PacketBuilder()
 See {doc}`fragmentation` for IPv4/IPv6 fragmentation details and the low-level
 `fragment_ipv4` / `fragment_ipv6` functions.
 
-### Checksums
+## Checksums
 
 All of the following are computed automatically by `.build()` and
 `.fragment()`:
@@ -534,7 +342,7 @@ All of the following are computed automatically by `.build()` and
 
 You never need to compute or supply checksums manually.
 
-### Writing to pcap files
+## Writing to pcap files
 
 {func}`~packet_generator.pcap.write_pcap` and
 {func}`~packet_generator.pcap.write_pcapng` accept a list of
@@ -587,5 +395,5 @@ pkt = PacketBuilder().ip(src="10.0.0.1", dst="10.0.0.2").tcp().build()
 write_pcap([(pkt, 0, 0)], path="raw.pcap", link_type=LINKTYPE_RAW)
 ```
 
-See {doc}`api/pcap-io` for the full I/O reference including `read_pcap` and
+See {doc}`../api/pcap-io` for the full I/O reference including `read_pcap` and
 `read_pcapng`.
