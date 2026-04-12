@@ -4,7 +4,7 @@ All notable changes to packeteer are recorded in this file.
 
 ---
 
-## Unreleased — 2026-04-12
+## [0.2.0] — 2026-04-12
 
 ### Stream JSON output
 
