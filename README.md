@@ -126,6 +126,7 @@ Or read the source pages directly:
 | [docs/api/parser.md](docs/api/parser.md) | Parser API reference |
 | [docs/reference/packet-sizes.md](docs/reference/packet-sizes.md) | Header size tables |
 | [docs/reference/rfc-references.md](docs/reference/rfc-references.md) | RFC index |
+| [docs/internals/](docs/internals/) | Developer internals: architecture, `PacketBuilder`, parser pipeline, stream generators, encapsulation, sanitiser |
 
 ## Running tests
 
