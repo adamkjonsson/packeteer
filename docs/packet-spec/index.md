@@ -1,6 +1,6 @@
-# JSON Config File Format
+# Packet Spec Format
 
-The JSON config file is the shared data format between `packeteer build`,
+The packet spec is the shared JSON file format between `packeteer build`,
 `packeteer parse`, and `packeteer stream --json`.
 
 ```{toctree}

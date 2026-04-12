@@ -558,7 +558,7 @@ class TestGRERoundTrip(unittest.TestCase):
         self.assertEqual(inner2["transport"]["dst_port"], 9999)
 
     def test_packet_lab_round_trip(self):
-        """Build via JSON config → parse → verify inner addresses."""
+        """Build via packet spec → parse → verify inner addresses."""
         import subprocess, sys, json, tempfile, os
 
         config = {

@@ -239,8 +239,8 @@ def sanitise(
 
     Args:
         config: Packet config dict as returned by
-            :func:`packet_parser.to_config.to_json_config` or loaded from a
-            JSON file written by ``packeteer parse``.
+            :func:`packet_parser.to_config.to_packet_spec` or loaded from a
+            packet spec file written by ``packeteer parse``.
         options: Controls which field types are replaced.  Defaults to
             :class:`SanitiseOptions` with ``ips=True``, ``macs=True``,
             ``ports=False``, ``payload=False``, ``timestamps=False``.

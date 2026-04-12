@@ -5,7 +5,7 @@ packeteer parse <capture> [--output FILE] [--replay-pcap FILE | --replay-pcapng 
 ```
 
 Reads every packet in a pcap or pcapng file, decodes each one through all
-recognised protocol layers, and writes a JSON config to stdout or a file.  The
+recognised protocol layers, and writes a packet spec to stdout or a file.  The
 file format (pcap vs. pcapng, microsecond vs. nanosecond timestamps) is
 auto-detected from the first four bytes — no flags or file extensions required.
 
@@ -93,7 +93,7 @@ is given:
 }
 ```
 
-See {doc}`../json-config/format` for the complete field reference.
+See {doc}`../packet-spec/format` for the complete field reference.
 
 ## Examples
 

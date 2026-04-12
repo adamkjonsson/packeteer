@@ -2,7 +2,7 @@
 
 `packet_generator` provides three stream generators — TCP, UDP, and SCTP — each
 producing a typed stream object whose `.packets` list can be written to pcap,
-pcapng, or JSON config, or inspected and modified before output.
+pcapng, or packet spec, or inspected and modified before output.
 
 See {doc}`../stream/index` for usage examples, encapsulation, and CLI equivalents.
 

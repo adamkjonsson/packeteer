@@ -8,7 +8,7 @@ All notable changes to packeteer are recorded in this file.
 
 ### Stream JSON output
 
-- `packeteer stream` gains a `--json FILE` output flag, mutually exclusive with `--pcap`/`--pcapng`.  The flag serialises the generated stream as a JSON config file in exactly the same format produced by `packeteer parse`, making it replayable with `packeteer build` and sanitisable with `packeteer sanitise`.
+- `packeteer stream` gains a `--json FILE` output flag, mutually exclusive with `--pcap`/`--pcapng`.  The flag serialises the generated stream as a packet spec file in exactly the same format produced by `packeteer parse`, making it replayable with `packeteer build` and sanitisable with `packeteer sanitise`.
 - Each per-packet `metadata` block carries `timestamp_s`, `timestamp_us`, `direction` (`"c2s"` / `"s2c"`), and `label` (e.g. `"SYN"`, `"DATA[0]"`) alongside the standard layer fields.
 - All three protocols (TCP, UDP, SCTP) and all encapsulation types are supported; the raw bytes are parsed back through the existing `parse_packet` + `to_config` pipeline, so every layer is reproduced correctly.
 - `json` key accepted in INI config files (consistent with `pcap` / `pcapng`).
@@ -53,7 +53,7 @@ All notable changes to packeteer are recorded in this file.
 - `docs/parse.md` split into `docs/parse/`: `cli.md` and `python-api.md`.
 - `docs/sanitiser.md` split into `docs/sanitiser/`: `index.md`, `cli.md`, and `python-api.md`.
 - `docs/stream.md` split into `docs/stream/`: `index.md`, `cli.md`, and `python-api.md`.
-- `docs/json-config.md` split into `docs/json-config/`: `index.md`, `format.md` (field-by-field spec), and `python-api.md` (programmatic JSON config usage).
+- `docs/json-config.md` split into `docs/packet-spec/`: `index.md`, `format.md` (field-by-field spec), and `python-api.md` (programmatic packet spec usage).
 - `docs/cli.md` removed — content was fully covered by the per-subcommand subpages.
 - `docs/index.md` toctree updated to reference all new subdirectory index pages.
 

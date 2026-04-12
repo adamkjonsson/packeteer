@@ -4,7 +4,7 @@
 packeteer build <config.json> (--pcap FILE | --pcapng FILE)
 ```
 
-Reads a JSON config file, assembles every packet described in it, and writes
+Reads a packet spec file, assembles every packet described in it, and writes
 the results to a pcap or pcapng file.  All checksums are recomputed
 automatically — you never need to calculate them by hand.
 
@@ -18,7 +18,7 @@ automatically — you never need to calculate them by hand.
 
 `--pcap` and `--pcapng` are mutually exclusive; exactly one is required.
 
-## JSON config structure
+## packet spec structure
 
 Each element of the `"packets"` array describes one packet as a set of
 protocol-layer objects.  Layers are specified in order from outermost to
@@ -41,7 +41,7 @@ innermost; missing layers are simply omitted.
 The `"packet_metadata"` object carries the capture timestamp and an optional
 `"mtu"` field for per-packet fragmentation (see {doc}`fragmentation`).
 
-See {doc}`../json-config/format` for the complete field reference for every layer.
+See {doc}`../packet-spec/format` for the complete field reference for every layer.
 
 ## Supported layers
 

@@ -1,6 +1,6 @@
 # Format Reference
 
-The JSON config file is the input to `packeteer build` and the output of
+The packet spec is the input to `packeteer build` and the output of
 `packeteer parse`.  It contains a top-level `packets` array with one
 object per packet, and a mandatory top-level `metadata` block.
 
@@ -27,7 +27,7 @@ all with `ethernet` or all with `ethernet.enabled: false`.
 
 ---
 
-(json-config-ethernet)=
+(packet-spec-ethernet)=
 ## `ethernet`
 
 An optional Ethernet II header.  Omit the key entirely to produce a raw IP
@@ -48,7 +48,7 @@ Call `.vlan()` twice in the builder (or nest two `vlan` keys) for QinQ
 
 ---
 
-(json-config-mpls)=
+(packet-spec-mpls)=
 ## `mpls`
 
 An optional array of MPLS label stack entries inserted between the Ethernet
@@ -72,7 +72,7 @@ The bottom-of-stack (S) bit is set automatically: `1` on the last entry,
 
 ---
 
-(json-config-pppoe)=
+(packet-spec-pppoe)=
 ## `pppoe`
 
 An optional PPPoE header inserted between the Ethernet layer and the IP layer.
@@ -101,7 +101,7 @@ Tag type constants (decimal): `257`=Service-Name, `258`=AC-Name,
 
 ---
 
-(json-config-etherip)=
+(packet-spec-etherip)=
 ## `etherip`
 
 An optional EtherIP tunnel header (RFC 3378).  Set `network.protocol` to
@@ -123,7 +123,7 @@ The outer IP protocol number (97) and the 2-byte EtherIP header
 
 ---
 
-(json-config-ipip)=
+(packet-spec-ipip)=
 ## `ipip`
 
 An optional IP-in-IP inner packet spec (RFC 2003 / RFC 4213).  Set
@@ -144,7 +144,7 @@ IP-in-IP uses a nested `"ipip"` key.
 
 ---
 
-(json-config-gre)=
+(packet-spec-gre)=
 ## `gre`
 
 An optional GRE tunnel header (RFC 2784 / RFC 2890).  Set
@@ -208,7 +208,7 @@ nested `"gre"` key with `"protocol": "gre"` in the inner `"network"` spec.
 
 ---
 
-(json-config-network)=
+(packet-spec-network)=
 ## `network`
 
 | Field | Required | Description |
@@ -229,7 +229,7 @@ are ignored when `src` is an IPv6 address and vice versa.
 
 ---
 
-(json-config-transport)=
+(packet-spec-transport)=
 ## `transport`
 
 | Field | Default | Description |
@@ -258,7 +258,7 @@ combine (e.g. `24` for PSH+ACK).
 
 ---
 
-(json-config-sctp)=
+(packet-spec-sctp)=
 ## SCTP transport
 
 When `network.protocol` is `"sctp"` the `transport` object has a different
@@ -315,7 +315,7 @@ The CRC-32c checksum (Castagnoli, RFC 9260 §6.8) is computed automatically.
 
 ---
 
-(json-config-payload)=
+(packet-spec-payload)=
 ## `payload`
 
 `size` and `data` are mutually exclusive; `data` takes precedence.
@@ -327,7 +327,7 @@ The CRC-32c checksum (Castagnoli, RFC 9260 §6.8) is computed automatically.
 
 ---
 
-(json-config-metadata)=
+(packet-spec-metadata)=
 ## `metadata` (top-level)
 
 Always present in configs produced by `packeteer parse` and
@@ -341,7 +341,7 @@ Always present in configs produced by `packeteer parse` and
 
 ---
 
-(json-config-packet-metadata)=
+(packet-spec-packet-metadata)=
 ## `packet_metadata` (per-packet)
 
 | Field | Default | Description |

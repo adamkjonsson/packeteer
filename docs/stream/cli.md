@@ -19,7 +19,7 @@ Exactly one output flag is required; they are mutually exclusive.
 |------|--------|
 | `--pcap FILE` | libpcap (`.pcap`) file with microsecond timestamps |
 | `--pcapng FILE` | pcapng (`.pcapng`) file |
-| `--json FILE` | JSON config file — same format produced by `packeteer parse`, replayable with `packeteer build`.  Each packet's `packet_metadata` block gains two extra fields: `direction` (`"c2s"` or `"s2c"`) and `label` (e.g. `"SYN"`, `"DATA[3]"`) that identify the packet's role in the stream. |
+| `--json FILE` | packet spec file — same format produced by `packeteer parse`, replayable with `packeteer build`.  Each packet's `packet_metadata` block gains two extra fields: `direction` (`"c2s"` or `"s2c"`) and `label` (e.g. `"SYN"`, `"DATA[3]"`) that identify the packet's role in the stream. |
 
 ## General arguments
 

@@ -1,12 +1,12 @@
 # Overview
 
 packeteer is built around a two-way workflow between pcap capture files
-and a human-readable JSON config format.
+and a human-readable packet spec format.
 
 ## The core workflow
 
 ```
-pcap file  ──parse──▶  JSON config  ──build──▶  pcap file
+pcap file  ──parse──▶  packet spec  ──build──▶  pcap file
 ```
 
 **Parsing** (`packeteer parse`) reads a `.pcap` or `.pcapng` capture and
@@ -63,7 +63,7 @@ A few flags control the shape of the traffic:
 packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
     --server-port 80 --packets 50 --distribution bimodal --pcap session.pcap
 
-# UDP flow, output as a JSON config for further editing
+# UDP flow, output as a packet spec for further editing
 packeteer stream --protocol udp --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
     --server-port 53 --packets 5 --json dns.json
 ```
@@ -87,7 +87,7 @@ Parse the capture to JSON, edit or replace the sensitive fields, then rebuild
 a clean pcap that preserves the original timing, structure, and protocol
 behaviour but contains only the data you choose.
 
-Common sanitisation tasks in the JSON config:
+Common sanitisation tasks in the packet spec:
 
 - Replace IP addresses with RFC 1918 or documentation-range addresses
 - Zero out or randomise payload bytes (`"size"` instead of `"data"`)

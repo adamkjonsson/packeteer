@@ -57,7 +57,7 @@ from packet_generator.sctp import SCTPHeader
 from packet_generator.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW
 
 from packet_parser.pcap import PcapFileHeader, read_pcap
-from packet_parser.to_config import update_config, to_json_config, to_json_string, apply_tunneled
+from packet_parser.to_config import update_config, to_packet_spec, to_json_string, apply_tunneled
 
 from packet_parser.ethernet import packet_parser as _ethernet_parser
 from packet_parser.etherip import packet_parser as _etherip_parser
@@ -315,7 +315,7 @@ def parse_pcap_file(
     file_object: io.RawIOBase | io.BufferedIOBase | None = None,
     output: dict[str, Any] | None = None,
 ) -> str:
-    """Parse every packet in a pcap file and return a JSON config string.
+    """Parse every packet in a pcap file and return a packet spec string.
 
     Reads the file with :func:`packet_parser.pcap.read_pcap`, parses each
     record with :func:`parse_pcap_packet`, converts the layers to a config dict
@@ -377,4 +377,4 @@ def parse_pcap_file(
         file_type = "pcapng" if pcap.header.version_major == 1 else "pcap"
         global_output.setdefault("type", file_type)
 
-    return to_json_string(to_json_config(packet_configs, metadata=global_output))
+    return to_json_string(to_packet_spec(packet_configs, metadata=global_output))

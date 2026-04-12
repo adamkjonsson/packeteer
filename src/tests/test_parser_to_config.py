@@ -10,7 +10,7 @@ from packet_generator.icmp import ICMPHeader
 from packet_generator.icmpv6 import ICMPv6Header
 from packet_generator import PacketBuilder
 
-from packet_parser.to_config import update_config, to_json_config, to_json_string
+from packet_parser.to_config import update_config, to_packet_spec, to_json_string
 from packet_parser import (
     ethernet_packet_parser,
     ip_packet_parser,
@@ -271,29 +271,29 @@ class TestUpdateConfigChaining(unittest.TestCase):
 class TestToJsonConfig(unittest.TestCase):
     def test_packets_key(self):
         p1 = {"network": {"src": "1.2.3.4", "dst": "5.6.7.8", "protocol": "udp"}}
-        result = to_json_config([p1])
+        result = to_packet_spec([p1])
         self.assertEqual(result["packets"], [p1])
 
     def test_file_metadata_block_included(self):
-        result = to_json_config([], metadata={"from_file": "capture.pcap", "type": "pcap"})
+        result = to_packet_spec([], metadata={"from_file": "capture.pcap", "type": "pcap"})
         self.assertEqual(result["metadata"]["from_file"], "capture.pcap")
         self.assertEqual(result["metadata"]["type"], "pcap")
         self.assertFalse(result["metadata"]["nanoseconds"])  # defaulted
 
     def test_metadata_always_present_with_nanoseconds(self):
-        result = to_json_config([])
+        result = to_packet_spec([])
         self.assertIn("metadata", result)
         self.assertFalse(result["metadata"]["nanoseconds"])
 
     def test_multiple_packets(self):
         pkts = [{}, {}, {}]
-        result = to_json_config(pkts)
+        result = to_packet_spec(pkts)
         self.assertEqual(len(result["packets"]), 3)
 
 
 class TestToJsonString(unittest.TestCase):
     def test_valid_json(self):
-        cfg = to_json_config([{"network": {"src": "1.2.3.4", "dst": "5.6.7.8",
+        cfg = to_packet_spec([{"network": {"src": "1.2.3.4", "dst": "5.6.7.8",
                                            "protocol": "tcp", "ttl": 64}}])
         s = to_json_string(cfg)
         parsed = json.loads(s)
@@ -414,7 +414,7 @@ class TestRoundtrip(unittest.TestCase):
 
     def test_to_json_string_is_parseable(self):
         cfg = self._build_and_parse_tcp(src_port=1234, dst_port=80)
-        full = to_json_config([cfg], metadata={"from_file": "capture.pcap", "type": "pcap"})
+        full = to_packet_spec([cfg], metadata={"from_file": "capture.pcap", "type": "pcap"})
         parsed = json.loads(to_json_string(full))
         self.assertEqual(parsed["metadata"]["from_file"], "capture.pcap")
         self.assertEqual(parsed["packets"][0]["transport"]["dst_port"], 80)

@@ -1,6 +1,6 @@
 # Building Packets
 
-packeteer builds packets in two ways: from the CLI using a JSON config file, or
+packeteer builds packets in two ways: from the CLI using a packet spec file, or
 directly from Python using the {class}`~packet_generator.builder.PacketBuilder`
 API.  Both paths produce identical byte-accurate output — the CLI is a thin
 wrapper around the same builder that the Python API exposes.

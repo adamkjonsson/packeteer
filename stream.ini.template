@@ -60,7 +60,7 @@ server_mac = 00:00:00:00:00:02
 # pcapng = out.pcapng
 
 # json  (mutually exclusive with pcap and pcapng)
-#   Write the generated stream to a json-config (.json) file at this path.
+#   Write the generated stream to a packet spec (.json) file at this path.
 # json = out.json
 
 # ── Stream shape ───────────────────────────────────────────────────────────────

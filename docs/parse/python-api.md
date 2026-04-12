@@ -114,7 +114,7 @@ nanoseconds.
 ## `parse_pcap_file` — whole file to JSON
 
 {func}`packet_parser.parser.parse_pcap_file` reads every packet in a pcap
-file and returns the complete JSON config as a string — the same output as
+file and returns the complete packet spec as a string — the same output as
 `packeteer parse`.
 
 ```python
@@ -154,15 +154,15 @@ json_str = parse_pcap_file(
 
 Use {func}`packet_parser.to_config.update_config` and
 {func}`packet_parser.to_config.apply_tunneled` to serialise individual parsed
-packets into the JSON config dict format, then wrap them with
-{func}`packet_parser.to_config.to_json_config` and serialise with
+packets into the packet spec dict format, then wrap them with
+{func}`packet_parser.to_config.to_packet_spec` and serialise with
 {func}`packet_parser.to_config.to_json_string`.
 
 ```python
 from packet_parser.pcap import read_pcap
 from packet_parser.parser import parse_pcap_packet
 from packet_parser.to_config import (
-    update_config, apply_tunneled, to_json_config, to_json_string,
+    update_config, apply_tunneled, to_packet_spec, to_json_string,
 )
 
 pcap = read_pcap(path="capture.pcap")
@@ -189,7 +189,7 @@ for record in pcap.packets:
     cfg["packet_metadata"] = {"timestamp_s": pkt.ts_sec, ts_key: pkt.ts_frac}
     packet_configs.append(cfg)
 
-json_str = to_json_string(to_json_config(packet_configs))
+json_str = to_json_string(to_packet_spec(packet_configs))
 ```
 
 `update_config` dispatches on the type of the layer object:

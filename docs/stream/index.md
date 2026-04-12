@@ -4,7 +4,7 @@ packeteer generates complete, byte-accurate network streams in two ways: from
 the CLI using `packeteer stream`, or directly from Python using one of the three
 generator functions.  Both paths produce realistic packet sequences — including
 correct protocol state, sequence numbers, checksums, timestamps, and optional
-impairments — that can be written to pcap, pcapng, or JSON config files.
+impairments — that can be written to pcap, pcapng, or packet spec files.
 
 Three protocols are supported:
 

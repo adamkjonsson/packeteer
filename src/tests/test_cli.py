@@ -17,7 +17,7 @@ import packeteer_cli as cli
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _minimal_build_config() -> dict:
-    """Minimal JSON config that builds one valid TCP packet."""
+    """Minimal packet spec that builds one valid TCP packet."""
     return {"packets": [{
         "network": {"src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "TCP"},
         "transport": {"src_port": 1234, "dst_port": 80, "flags": 2},

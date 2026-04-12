@@ -1,17 +1,17 @@
-"""Convert parsed packet header objects to a JSON config dict.
+"""Convert parsed packet header objects to a packet spec dict.
 
-The produced dict matches the JSON format accepted by ``packeteer build``,
+The produced dict matches the packet spec format accepted by ``packeteer build``,
 so a parsed capture can be saved and replayed directly.
 
-Build up a config one protocol layer at a time using :func:`update_config`,
-then wrap multiple packets into a top-level config with :func:`to_json_config`
+Build up a spec one protocol layer at a time using :func:`update_config`,
+then wrap multiple packets into a top-level spec with :func:`to_packet_spec`
 and serialise with :func:`to_json_string`.
 
 Typical usage::
 
     from packet_parser import ethernet_packet_parser, ip_packet_parser, tcp_packet_parser
     from packet_parser.pcap import read_pcap
-    from packet_parser.to_config import update_config, to_json_config, to_json_string
+    from packet_parser.to_config import update_config, to_packet_spec, to_json_string
 
     pcap = read_pcap(path="capture.pcap")
     packet_configs = []
@@ -29,7 +29,7 @@ Typical usage::
         cfg.setdefault("packet_metadata", {}).update({"timestamp_s": ts_sec, "timestamp_us": ts_frac})
         packet_configs.append(cfg)
 
-    print(to_json_string(to_json_config(packet_configs, metadata={"from_file": "capture.pcap", "type": "pcap"})))
+    print(to_json_string(to_packet_spec(packet_configs, metadata={"from_file": "capture.pcap", "type": "pcap"})))
 """
 from __future__ import annotations
 
@@ -443,12 +443,12 @@ def apply_tunneled(config: dict[str, Any], pkt: "ParsedPacket") -> None:
         _apply_etherip(config, pkt.etherip, pkt.tunneled)
 
 
-def to_json_config(
+def to_packet_spec(
     packets: list[dict[str, Any]],
     *,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Wrap a list of packet config dicts into a top-level config dict.
+    """Wrap a list of per-packet dicts into a top-level packet spec dict.
 
     The top-level ``metadata`` block is always written.  ``nanoseconds``
     defaults to ``False`` when not supplied by the caller.
@@ -461,8 +461,7 @@ def to_json_config(
             when absent.
 
     Returns:
-        A dict matching the top-level JSON config format accepted by
-        ``packeteer build``.
+        A packet spec dict accepted by ``packeteer build``.
     """
     cfg: dict[str, Any] = {}
     top_meta: dict[str, Any] = dict(metadata) if metadata is not None else {}
@@ -473,10 +472,10 @@ def to_json_config(
 
 
 def to_json_string(config: dict[str, Any], *, indent: int = 2) -> str:
-    """Serialise a config dict to a JSON string.
+    """Serialise a packet spec dict to a JSON string.
 
     Args:
-        config: Dict produced by :func:`to_json_config` or a single packet
+        config: Dict produced by :func:`to_packet_spec` or a single packet
             dict produced by :func:`update_config`.
         indent: Indentation width for pretty-printing (default: ``2``).
 

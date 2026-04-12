@@ -333,7 +333,7 @@ class TestParsePacketEtherIPRoundTrip(unittest.TestCase):
         write_pcap([(raw, 0, 0)], file_object=buf)
         buf.seek(0)
 
-        # Parse back to JSON config
+        # Parse back to packet spec
         json_str = parse_pcap_file(file_object=buf)
         cfg = json.loads(json_str)
 

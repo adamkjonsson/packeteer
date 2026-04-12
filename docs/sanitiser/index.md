@@ -31,7 +31,7 @@ which — you just cannot tell who they really are.
 - Packet count and order
 - top-level `metadata` block
 
-Checksums are not stored in the JSON config — they are always recomputed from
+Checksums are not stored in the packet spec — they are always recomputed from
 scratch when the config is rebuilt with `packeteer build`.
 
 ```{toctree}

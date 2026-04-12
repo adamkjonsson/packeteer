@@ -28,10 +28,10 @@ by {doc}`../api/header-dataclasses`.  The high-level entry points are
 
 ---
 
-## Config serialisation
+## Packet spec serialisation
 
 These functions convert {class}`~packet_parser.parser.ParsedPacket` objects
-(or individual header dataclasses) into the JSON config dict format consumed
+(or individual header dataclasses) into the packet spec dict format consumed
 by `packeteer build`.
 
 ```{eval-rst}
@@ -43,7 +43,7 @@ by `packeteer build`.
 ```
 
 ```{eval-rst}
-.. autofunction:: packet_parser.to_config.to_json_config
+.. autofunction:: packet_parser.to_config.to_packet_spec
 ```
 
 ```{eval-rst}
