@@ -71,6 +71,15 @@ All notable changes to packeteer are recorded in this file.
 - `docs/cli.md` removed — content was fully covered by the per-subcommand subpages.
 - `docs/index.md` toctree updated to reference all new subdirectory index pages.
 
+### Developer documentation
+
+- New `docs/internals/` section aimed at contributors and library extenders.
+- Six pages covering: architecture and data flow, `PacketBuilder` assembly
+  internals, parser pipeline state machine, stream generator internals (TCP
+  connection state, anomaly injection, timestamp allocation), encapsulation
+  internals (`_apply_encap`, `_encap_ip_start`, PPPoE length patching), and
+  sanitiser internals (`_Replacer` state, IANA-reserved allocation ranges).
+
 ---
 
 ### SCTP support (RFC 9260)
