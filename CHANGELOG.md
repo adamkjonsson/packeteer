@@ -46,6 +46,20 @@ All notable changes to packeteer are recorded in this file.
 - `to_json_config()` now always writes a top-level `"metadata"` block; `"nanoseconds"` is mandatory and defaults to `false`.
 - `packeteer stream --json` produces the same mandatory `"metadata"` block.
 
+### Rename: "JSON config" → "packet spec"
+
+- The shared file format between `packeteer build`, `packeteer parse`, and
+  `packeteer stream --json` is now called a **packet spec** throughout all
+  documentation, help strings, docstrings, error messages, and comments.
+- `to_json_config()` renamed to `to_packet_spec()` in `packet_parser.to_config`.
+- `docs/json-config/` directory renamed to `docs/packet-spec/`.
+
+### README and docs/index.md
+
+- README Quick start section expanded with CLI examples (parse, build, sanitise,
+  stream) placed before the Python API examples.
+- `docs/index.md` intro replaced with a short elevator-pitch description.
+
 ### Documentation restructure
 
 - API Reference expanded: new pages for stream generators (`api/stream-generators.md`), stream encapsulation types (`api/stream-encap.md`), IP fragmentation (`api/fragmentation.md`), and sanitiser (`api/sanitiser.md`).

@@ -11,7 +11,7 @@ sharing, or generate complete synthetic network streams — TCP, UDP, or SCTP
 Everything runs from a CLI or directly from Python. No root, no libpcap, no
 compiled extensions — Python 3.10+ and the standard library only.
 
-## Features and protocol support
+## Features and supported protocols
 
 - **Ethernet II**, 802.1Q VLAN (single/QinQ), MPLS label stacks, PPPoE
 - **IPv4** (RFC 791) and **IPv6** (RFC 8200) with automatic checksums
@@ -24,10 +24,35 @@ compiled extensions — Python 3.10+ and the standard library only.
 
 ## Quick start
 
+### CLI
+
+```bash
+# Parse a capture to an editable packet spec
+packeteer parse capture.pcap --output capture.json
+
+# Rebuild it as a new pcap
+packeteer build capture.json --pcap replayed.pcap
+
+# Sanitise sensitive fields before sharing
+packeteer sanitise capture.json --ports --payload --output clean.json
+packeteer build clean.json --pcap clean.pcap
+
+# Generate a complete TCP stream (50 packets, bimodal payload sizes)
+packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
+    --server-port 80 --packets 50 --distribution bimodal --pcap session.pcap
+
+# Generate a UDP flow and export as a packet spec for further editing
+packeteer stream --protocol udp \
+    --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
+    --server-port 53 --packets 5 --json dns.json
+```
+
+### Python API
+
 ```python
 from packet_generator import PacketBuilder
 
-# TCP
+# TCP SYN packet
 pkt = (PacketBuilder()
     .ethernet(src_mac="aa:bb:cc:dd:ee:01", dst_mac="aa:bb:cc:dd:ee:02")
     .ip(src="10.0.0.1", dst="10.0.0.2")
@@ -54,7 +79,7 @@ pkt = (PacketBuilder()
 ```python
 # Generate a GRE-tunnelled TCP stream and write it to pcap
 from packet_generator.tcp_stream import generate_tcp_stream
-from packet_generator.stream_encap import GREEncap, VLANEncap, MPLSEncap, IPIPEncap
+from packet_generator.stream_encap import GREEncap, MPLSEncap, IPIPEncap
 from packet_generator import write_pcap
 
 stream = generate_tcp_stream(
