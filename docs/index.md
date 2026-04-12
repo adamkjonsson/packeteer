@@ -25,6 +25,7 @@ sanitiser/index
 stream/index
 packet-spec/index
 api/index
+internals/index
 reference/packet-sizes
 reference/rfc-references
 ```
