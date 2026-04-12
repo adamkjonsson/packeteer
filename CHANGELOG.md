@@ -4,11 +4,11 @@ All notable changes to packeteer are recorded in this file.
 
 ---
 
-## Unreleased — 2026-04-09
+## Unreleased — 2026-04-12
 
 ### Stream JSON output
 
-- `packeteer stream` gains a `--json FILE` output flag, mutually exclusive with `--pcap`/`--pcapng`.  The flag serialises the generated stream as a JSON config file in exactly the same format produced by `packeteer parse`, making it replayable with `packeteer build` and sanitisable with `packeteer sanitise`.
+- `packeteer stream` gains a `--json FILE` output flag, mutually exclusive with `--pcap`/`--pcapng`.  The flag serialises the generated stream as a packet spec file in exactly the same format produced by `packeteer parse`, making it replayable with `packeteer build` and sanitisable with `packeteer sanitise`.
 - Each per-packet `metadata` block carries `timestamp_s`, `timestamp_us`, `direction` (`"c2s"` / `"s2c"`), and `label` (e.g. `"SYN"`, `"DATA[0]"`) alongside the standard layer fields.
 - All three protocols (TCP, UDP, SCTP) and all encapsulation types are supported; the raw bytes are parsed back through the existing `parse_packet` + `to_config` pipeline, so every layer is reproduced correctly.
 - `json` key accepted in INI config files (consistent with `pcap` / `pcapng`).
@@ -31,12 +31,45 @@ All notable changes to packeteer are recorded in this file.
 - Merged the parallel `_STREAM_CONFIG_KEYS` and `_STREAM_DEFAULTS` dicts in `packeteer_cli.py` into a single `_STREAM_PARAMS: dict[str, tuple[dest, cast, default]]`, giving one canonical source of truth for all stream parameters.
 - Extracted `_validate_stream_args(args) -> str` from `_cmd_stream`, separating protocol validation from argument defaulting.
 
-### Documentation
+### API change: `middlebox_mtu` renamed to `mtu`
 
-- `docs/stream.md`: new "Encapsulation" section covering all seven types, single-layer and stacked examples, constraints, and fragmentation behaviour.  Template path corrected (`stream.ini.template` at repo root).
-- `docs/cli.md`: encapsulation flags table added to the `stream` reference; four new CLI examples; template path corrected.
-- `stream.ini.template` (at repo root): encapsulation section documenting all flags and a MPLS+IPIP stacking example.
-- Docstrings for `generate_tcp_stream`, `generate_udp_stream`, `generate_sctp_stream` updated with `encap` parameter documentation.
+- The `middlebox_mtu` parameter on all three stream generators and the `--middlebox-mtu` CLI flag have been renamed to `mtu` / `--mtu`.  The INI key, test suite, and all documentation updated accordingly.
+
+### API addition: `apply_tunneled`
+
+- `packet_parser.to_config.apply_tunneled(config, pkt)` is now a public function.  It serialises the tunnel layers (IP-in-IP, GRE, EtherIP) of a `ParsedPacket` into a config dict, handling all three types through a single call.  Previously callers had to import and invoke three private helpers directly; this was the root cause of `_stream_to_json` in `packeteer_cli.py` importing private names from `to_config`.
+
+### JSON key rename: `metadata` / `packet_metadata`
+
+- Per-packet `"metadata"` key renamed to `"packet_metadata"` throughout all source, test, and doc files.
+- Top-level `"file_metadata"` key renamed to `"metadata"`.
+- `to_json_config()` now always writes a top-level `"metadata"` block; `"nanoseconds"` is mandatory and defaults to `false`.
+- `packeteer stream --json` produces the same mandatory `"metadata"` block.
+
+### Rename: "JSON config" → "packet spec"
+
+- The shared file format between `packeteer build`, `packeteer parse`, and
+  `packeteer stream --json` is now called a **packet spec** throughout all
+  documentation, help strings, docstrings, error messages, and comments.
+- `to_json_config()` renamed to `to_packet_spec()` in `packet_parser.to_config`.
+- `docs/json-config/` directory renamed to `docs/packet-spec/`.
+
+### README and docs/index.md
+
+- README Quick start section expanded with CLI examples (parse, build, sanitise,
+  stream) placed before the Python API examples.
+- `docs/index.md` intro replaced with a short elevator-pitch description.
+
+### Documentation restructure
+
+- API Reference expanded: new pages for stream generators (`api/stream-generators.md`), stream encapsulation types (`api/stream-encap.md`), IP fragmentation (`api/fragmentation.md`), and sanitiser (`api/sanitiser.md`).
+- `docs/build.md` split into `docs/build/` subdirectory: `cli.md`, `python-api.md`, and `fragmentation.md` (moved from `docs/fragmentation.md`).
+- `docs/parse.md` split into `docs/parse/`: `cli.md` and `python-api.md`.
+- `docs/sanitiser.md` split into `docs/sanitiser/`: `index.md`, `cli.md`, and `python-api.md`.
+- `docs/stream.md` split into `docs/stream/`: `index.md`, `cli.md`, and `python-api.md`.
+- `docs/json-config.md` split into `docs/packet-spec/`: `index.md`, `format.md` (field-by-field spec), and `python-api.md` (programmatic packet spec usage).
+- `docs/cli.md` removed — content was fully covered by the per-subcommand subpages.
+- `docs/index.md` toctree updated to reference all new subdirectory index pages.
 
 ---
 
@@ -83,7 +116,7 @@ All notable changes to packeteer are recorded in this file.
 ## 2026-04-03
 
 ### TCP stream: middlebox MTU fragmentation
-- Added `middlebox_mtu` parameter to `generate_tcp_stream()` and `--middlebox-mtu` CLI flag.  Any packet whose IP-layer size exceeds the configured MTU is split into IP fragments (IPv4 Flags/Fragment Offset; IPv6 Fragment Extension Header) as if it had passed through a low-MTU router or VPN tunnel.  Fragment packets are labelled `FRAG[<orig>][<n>]`.
+- Added `mtu` parameter to `generate_tcp_stream()` and `--mtu` CLI flag.  Any packet whose IP-layer size exceeds the configured MTU is split into IP fragments (IPv4 Flags/Fragment Offset; IPv6 Fragment Extension Header) as if it had passed through a low-MTU router or VPN tunnel.  Fragment packets are labelled `FRAG[<orig>][<n>]`.
 
 ### TCP stream: continuous payload stream
 - Data segments now carry a continuous slice of the default payload across the entire transfer rather than each packet independently restarting from byte 0, matching the behaviour of a real application writing to a socket.

@@ -4,7 +4,7 @@ The `packet_generator.stream_encap` module provides descriptor dataclasses for
 wrapping generated streams in encapsulation layers.  Pass one or a list of
 these to the `encap` parameter of any stream generator.
 
-See {doc}`../stream` for usage examples and combination rules.
+See {doc}`../stream/python-api` for usage examples and combination rules.
 
 ---
 

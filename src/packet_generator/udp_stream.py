@@ -160,7 +160,7 @@ def generate_udp_stream(
     base_time: int | None = None,
     inter_packet_gap: float = 0.001,
     gap_jitter: float = 0.0,
-    middlebox_mtu: int | None = None,
+    mtu: int | None = None,
     encap: EncapSpec = None,
 ) -> UDPStream:
     """Generate a sequence of UDP datagrams from client to server.
@@ -193,7 +193,7 @@ def generate_udp_stream(
             Each gap is drawn from ``[inter_packet_gap,
             inter_packet_gap + gap_jitter]`` and packets are re-sorted by
             timestamp.  Defaults to ``0.0`` (no jitter).
-        middlebox_mtu: When set, fragment packets whose IP-layer size exceeds
+        mtu: When set, fragment packets whose IP-layer size exceeds
             this value, simulating a middlebox with a lower MTU.
         encap: One or more encapsulation layers to wrap every packet in.
             Accepts a single descriptor, a list of descriptors (applied
@@ -263,11 +263,11 @@ def generate_udp_stream(
         packets.sort(key=lambda p: (p.ts_sec, p.ts_usec))
 
     # Middlebox fragmentation
-    if middlebox_mtu is not None:
+    if mtu is not None:
         used_ts = {_pkt_usec(p) for p in packets}
         fragmented: list[UDPStreamPacket] = []
         for pkt in packets:
-            fragmented.extend(_fragment_udp_pkt(pkt, middlebox_mtu, include_ethernet, used_ts, encap))
+            fragmented.extend(_fragment_udp_pkt(pkt, mtu, include_ethernet, used_ts, encap))
         packets = fragmented
         packets.sort(key=lambda p: (p.ts_sec, p.ts_usec))
 

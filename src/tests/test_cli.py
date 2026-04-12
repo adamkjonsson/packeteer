@@ -17,7 +17,7 @@ import packeteer_cli as cli
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _minimal_build_config() -> dict:
-    """Minimal JSON config that builds one valid TCP packet."""
+    """Minimal packet spec that builds one valid TCP packet."""
     return {"packets": [{
         "network": {"src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "TCP"},
         "transport": {"src_port": 1234, "dst_port": 80, "flags": 2},
@@ -96,7 +96,7 @@ class TestCmdBuild(unittest.TestCase):
             cli._cmd_build(args)
 
     def test_build_missing_packets_key_exits(self):
-        cfg_path = _write_json({"file_metadata": {}})
+        cfg_path = _write_json({"metadata": {}})
         args = _args(config=cfg_path, pcap=_tmpfile(), pcapng=None)
         with self.assertRaises(SystemExit):
             cli._cmd_build(args)
@@ -177,7 +177,7 @@ class TestCmdParse(unittest.TestCase):
                      replay_pcap="replayed.pcap", replay_pcapng=None)
         cli._cmd_parse(args)
         data = json.loads(Path(out_path).read_text())
-        self.assertEqual(data.get("file_metadata", {}).get("type"), "pcap")
+        self.assertEqual(data.get("metadata", {}).get("type"), "pcap")
 
     def test_parse_replay_pcapng_sets_type(self):
         out_path = _tmpfile(".json")
@@ -185,7 +185,7 @@ class TestCmdParse(unittest.TestCase):
                      replay_pcap=None, replay_pcapng="replayed.pcapng")
         cli._cmd_parse(args)
         data = json.loads(Path(out_path).read_text())
-        self.assertEqual(data.get("file_metadata", {}).get("type"), "pcapng")
+        self.assertEqual(data.get("metadata", {}).get("type"), "pcapng")
 
     def test_parse_output_to_unwritable_path_exits(self):
         args = _args(pcap=self.pcap_path, output="/nonexistent/dir/out.json",
@@ -535,11 +535,11 @@ class TestRunMultiPacketEdgeCases(unittest.TestCase):
 
     def test_nanosecond_timestamps_written(self):
         cfg = {
-            "file_metadata": {"nanoseconds": True},
+            "metadata": {"nanoseconds": True},
             "packets": [{
                 "network": {"src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "TCP"},
                 "transport": {"src_port": 1, "dst_port": 80, "flags": 2},
-                "metadata": {"timestamp_s": 1, "timestamp_ns": 500},
+                "packet_metadata": {"timestamp_s": 1, "timestamp_ns": 500},
             }],
         }
         out = _tmpfile(".pcap")
@@ -749,7 +749,7 @@ class TestCmdStreamWithEncap(unittest.TestCase):
             server_rst_probability=None,
             rst_propagation_delay=None,
             no_ethernet=False,
-            middlebox_mtu=None,
+            mtu=None,
             stray_packet_count=None,
             stray_timing_window=None,
             pcap=None, pcapng=None,

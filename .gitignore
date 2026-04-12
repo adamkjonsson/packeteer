@@ -9,6 +9,7 @@ __pycache__/
 # Distribution / packaging
 .Python
 build/
+!docs/build/
 develop-eggs/
 dist/
 downloads/
@@ -20,6 +21,7 @@ parts/
 sdist/
 var/
 wheels/
+*.whl
 share/python-wheels/
 *.egg-info/
 .installed.cfg
@@ -73,6 +75,10 @@ instance/
 
 # Scrapy stuff:
 .scrapy
+
+# macOS metadata
+.DS_Store
+**/.DS_Store
 
 # Sphinx documentation
 docs/_build/

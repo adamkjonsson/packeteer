@@ -222,7 +222,7 @@ def generate_sctp_stream(
     base_time: int | None = None,
     inter_packet_gap: float = 0.001,
     gap_jitter: float = 0.0,
-    middlebox_mtu: int | None = None,
+    mtu: int | None = None,
     encap: EncapSpec = None,
 ) -> SCTPStream:
     """Generate a complete SCTP association with data transfer and shutdown.
@@ -263,7 +263,7 @@ def generate_sctp_stream(
             Defaults to ``0.001`` (1 ms).
         gap_jitter: Maximum additional random delay per gap in seconds.
             Defaults to ``0.0`` (no jitter).
-        middlebox_mtu: When set, fragment packets whose IP-layer size exceeds
+        mtu: When set, fragment packets whose IP-layer size exceeds
             this value, simulating a middlebox with a lower MTU.
         encap: One or more encapsulation layers to wrap every packet in.
             Accepts a single descriptor, a list of descriptors (applied
@@ -423,11 +423,11 @@ def generate_sctp_stream(
         packets.sort(key=lambda p: (p.ts_sec, p.ts_usec))
 
     # ── Middlebox fragmentation ───────────────────────────────────────────────
-    if middlebox_mtu is not None:
+    if mtu is not None:
         used_ts = {_pkt_usec(p) for p in packets}
         fragmented: list[SCTPStreamPacket] = []
         for pkt in packets:
-            fragmented.extend(_fragment_sctp_pkt(pkt, middlebox_mtu, include_ethernet, used_ts, encap))
+            fragmented.extend(_fragment_sctp_pkt(pkt, mtu, include_ethernet, used_ts, encap))
         packets = fragmented
         packets.sort(key=lambda p: (p.ts_sec, p.ts_usec))
 

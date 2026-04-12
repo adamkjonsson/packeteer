@@ -50,7 +50,7 @@ headers such as Ethernet — each fragment's IP layer (plus its payload) will
 fit within `mtu` bytes.
 
 Fragmentation can also be triggered per-packet from the CLI via the
-`metadata.mtu` field in the {doc}`json-config`.
+`packet_metadata.mtu` field in the {doc}`../packet-spec/format`.
 
 ---
 
@@ -90,4 +90,4 @@ Pass `eth_header=None` to produce raw IP fragments with no layer-2 framing.
 | Identification | 16-bit, shared across all fragments | 32-bit, shared across all fragments |
 | Min fragment data | 8 bytes (except last) | 8 bytes (except last) |
 
-See {doc}`reference/rfc-references` for the full RFC list.
+See {doc}`../reference/rfc-references` for the full RFC list.

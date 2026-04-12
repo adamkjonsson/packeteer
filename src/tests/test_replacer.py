@@ -18,7 +18,7 @@ def _simple(src_ip="10.0.0.1", dst_ip="10.0.0.2",
             "network":   {"src": src_ip, "dst": dst_ip, "protocol": "tcp"},
             "transport": {"src_port": src_port, "dst_port": dst_port},
             "payload":   {"data": payload_data},
-            "metadata":  {"timestamp_s": ts_s, "timestamp_us": ts_us},
+            "packet_metadata":  {"timestamp_s": ts_s, "timestamp_us": ts_us},
         }]
     }
 
@@ -123,8 +123,8 @@ class TestSanitiseDefaults(unittest.TestCase):
         self.assertEqual(self.pkt["payload"]["data"], "deadbeef")
 
     def test_timestamps_unchanged(self):
-        self.assertEqual(self.pkt["metadata"]["timestamp_s"], 1700000000)
-        self.assertEqual(self.pkt["metadata"]["timestamp_us"], 500000)
+        self.assertEqual(self.pkt["packet_metadata"]["timestamp_s"], 1700000000)
+        self.assertEqual(self.pkt["packet_metadata"]["timestamp_us"], 500000)
 
 
 class TestConsistency(unittest.TestCase):
@@ -215,14 +215,14 @@ class TestOptionalFields(unittest.TestCase):
 
     def test_timestamps_zeroed(self):
         out = sanitise(_simple(), SanitiseOptions(timestamps=True))
-        meta = out["packets"][0]["metadata"]
+        meta = out["packets"][0]["packet_metadata"]
         self.assertEqual(meta["timestamp_s"], 0)
         self.assertEqual(meta["timestamp_us"], 0)
 
     def test_timestamp_ns_zeroed(self):
-        cfg = {"packets": [{"metadata": {"timestamp_s": 1234, "timestamp_ns": 999}}]}
+        cfg = {"packets": [{"packet_metadata": {"timestamp_s": 1234, "timestamp_ns": 999}}]}
         out = sanitise(cfg, SanitiseOptions(timestamps=True))
-        self.assertEqual(out["packets"][0]["metadata"]["timestamp_ns"], 0)
+        self.assertEqual(out["packets"][0]["packet_metadata"]["timestamp_ns"], 0)
 
 
 class TestNoOp(unittest.TestCase):
@@ -336,7 +336,7 @@ def _sctp_config() -> dict:
                     },
                 ],
             },
-            "metadata": {"timestamp_s": 0, "timestamp_us": 0},
+            "packet_metadata": {"timestamp_s": 0, "timestamp_us": 0},
         }]
     }
 
@@ -429,17 +429,17 @@ class TestSCTPSanitise(unittest.TestCase):
 class TestMissingKey(unittest.TestCase):
     def test_raises_on_missing_packets_key(self):
         with self.assertRaises(ValueError):
-            sanitise({"file_metadata": {}})
+            sanitise({"metadata": {}})
 
 
 class TestFileMetadataPreserved(unittest.TestCase):
     def test_file_metadata_untouched(self):
         cfg = {
-            "file_metadata": {"from_file": "capture.pcap", "nanoseconds": False},
+            "metadata": {"from_file": "capture.pcap", "nanoseconds": False},
             "packets": [],
         }
         out = sanitise(cfg)
-        self.assertEqual(out["file_metadata"], cfg["file_metadata"])
+        self.assertEqual(out["metadata"], cfg["metadata"])
 
 
 if __name__ == "__main__":

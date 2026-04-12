@@ -1,12 +1,12 @@
 # Overview
 
 packeteer is built around a two-way workflow between pcap capture files
-and a human-readable JSON config format.
+and a human-readable packet spec format.
 
 ## The core workflow
 
 ```
-pcap file  ──parse──▶  JSON config  ──build──▶  pcap file
+pcap file  ──parse──▶  packet spec  ──build──▶  pcap file
 ```
 
 **Parsing** (`packeteer parse`) reads a `.pcap` or `.pcapng` capture and
@@ -48,6 +48,37 @@ for dst_port in [80, 443, 8080]:
 write_pcap(packets, path="syn-sweep.pcap")
 ```
 
+### Packet stream generation
+
+`packeteer stream` generates a complete, realistic network stream — a full TCP
+connection, UDP datagram flow, or SCTP association — without any live traffic
+or capture setup.  It handles all the protocol mechanics automatically:
+three-way handshakes, correct sequence and acknowledgement numbers, CRC-32c
+checksums, inter-packet timestamps, and graceful teardowns.
+
+A few flags control the shape of the traffic:
+
+```bash
+# 50-packet HTTP session with bimodal payload sizes written to pcap
+packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
+    --server-port 80 --packets 50 --distribution bimodal --pcap session.pcap
+
+# UDP flow, output as a packet spec for further editing
+packeteer stream --protocol udp --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
+    --server-port 53 --packets 5 --json dns.json
+```
+
+Optional features let you inject realistic impairments — packet loss,
+retransmissions, payload corruption, server RST — and wrap every packet in
+one or more encapsulation layers (VLAN, QinQ, MPLS, PPPoE, GRE, EtherIP,
+IP-in-IP) to match the encapsulation stack of the network under test.  The
+`--mtu` flag causes packets that exceed the limit to be fragmented as they
+would be by a real low-MTU middlebox.
+
+Streams can be written directly to pcap or pcapng, or exported as a JSON
+config so they can be edited and rebuilt with `packeteer build`, or sanitised
+with `packeteer sanitise` before sharing.
+
 ### Sanitising captured traffic
 
 Real captures often contain sensitive data — credentials, personal information,
@@ -56,7 +87,7 @@ Parse the capture to JSON, edit or replace the sensitive fields, then rebuild
 a clean pcap that preserves the original timing, structure, and protocol
 behaviour but contains only the data you choose.
 
-Common sanitisation tasks in the JSON config:
+Common sanitisation tasks in the packet spec:
 
 - Replace IP addresses with RFC 1918 or documentation-range addresses
 - Zero out or randomise payload bytes (`"size"` instead of `"data"`)

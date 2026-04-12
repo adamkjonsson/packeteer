@@ -3,9 +3,9 @@
 packeteer — build, parse, sanitise, and generate raw network packets.
 
 Subcommands:
-  build     Build packets from a JSON config file and write to a pcap or pcapng file
-  parse     Parse a pcap or pcapng file and produce a JSON config
-  sanitise  Replace sensitive fields in a JSON config with synthetic data
+  build     Build packets from a packet spec file and write to a pcap or pcapng file
+  parse     Parse a pcap or pcapng file and produce a packet spec
+  sanitise  Replace sensitive fields in a packet spec with synthetic data
   stream    Generate a synthetic network stream (TCP, UDP, or SCTP) and write to a pcap or pcapng file
 
 Examples:
@@ -46,8 +46,7 @@ from packet_generator.sctp import (
 )
 from packet_parser.parser import parse_pcap_file, parse_packet
 from packet_parser.to_config import (
-    update_config, to_json_config, to_json_string,
-    _apply_ipip, _apply_gre, _apply_etherip,
+    update_config, to_packet_spec, to_json_string, apply_tunneled,
 )
 from replacer import SanitiseOptions, sanitise
 
@@ -423,9 +422,9 @@ def _apply_spec_to_builder(
 
 
 def _run_multi_packet(cfg: dict, pcap_path: str | None = None, pcapng_path: str | None = None) -> None:
-    """Build and output all packets defined in a JSON config."""
-    file_metadata = cfg.get("file_metadata", {})
-    nanoseconds: bool = file_metadata.get("nanoseconds", False)
+    """Build and output all packets defined in a packet spec."""
+    top_metadata = cfg.get("metadata", {})
+    nanoseconds: bool = top_metadata.get("nanoseconds", False)
 
     if "packets" not in cfg:
         print("Error: config file must have a top-level 'packets' array", file=sys.stderr)
@@ -444,7 +443,7 @@ def _run_multi_packet(cfg: dict, pcap_path: str | None = None, pcapng_path: str 
     collected: list[tuple[bytes, int, int]] = []
 
     for i, spec in enumerate(specs, 1):
-        out = spec.get("metadata", {})
+        out = spec.get("packet_metadata", {})
         try:
             b, is_terminal = _apply_spec_to_builder(PacketBuilder(), spec, i)
             if is_terminal:
@@ -500,7 +499,7 @@ def _cmd_parse(args: argparse.Namespace) -> None:
         except OSError as e:
             print(f"Error writing '{args.output}': {e}", file=sys.stderr)
             sys.exit(1)
-        print(f"Wrote JSON config to {args.output}")
+        print(f"Wrote packet spec to {args.output}")
     else:
         print(json_str)
 
@@ -575,7 +574,7 @@ _STREAM_PARAMS: dict[str, tuple[str, object, object]] = {
     "payload_corruption_probability": ("payload_corruption_probability", float, 0.0),
     "server_rst_probability":         ("server_rst_probability",         float, 0.0),
     "rst_propagation_delay":          ("rst_propagation_delay",          float, 0.0),
-    "middlebox_mtu":      ("middlebox_mtu",                   int,   None),
+    "mtu":      ("mtu",                   int,   None),
     "stray_packet_count": ("stray_packet_count",              int,   0),
     "stray_timing_window":("stray_timing_window",             int,   None),
     "no_ethernet":        ("no_ethernet",                     bool,  False),
@@ -743,7 +742,7 @@ def _parse_stream_encap(args: argparse.Namespace) -> "list[StreamEncap] | None":
 
 
 def _stream_to_json(packets: list, include_ethernet: bool) -> str:
-    """Serialise *packets* (from any stream generator) as a JSON config string.
+    """Serialise *packets* (from any stream generator) as a packet spec string.
 
     Each packet's raw bytes are parsed with :func:`parse_packet` and converted
     to the same JSON format produced by ``packeteer parse``, so the output can
@@ -766,24 +765,20 @@ def _stream_to_json(packets: list, include_ethernet: bool) -> str:
             update_config(cfg, pkt.pppoe)
         if pkt.ip is not None:
             update_config(cfg, pkt.ip)
-        if pkt.ipip and pkt.tunneled is not None:
-            _apply_ipip(cfg, pkt.tunneled)
-        elif pkt.gre is not None and pkt.tunneled is not None:
-            _apply_gre(cfg, pkt.gre, pkt.tunneled)
-        elif pkt.etherip is not None and pkt.tunneled is not None:
-            _apply_etherip(cfg, pkt.etherip, pkt.tunneled)
+        if pkt.ipip or pkt.gre is not None or pkt.etherip is not None:
+            apply_tunneled(cfg, pkt)
         elif pkt.transport is not None:
             update_config(cfg, pkt.transport)
             if pkt.payload:
                 update_config(cfg, pkt.payload)
-        cfg["metadata"] = {
+        cfg["packet_metadata"] = {
             "timestamp_s":  pkt_obj.ts_sec,
             "timestamp_us": pkt_obj.ts_usec,
             "direction":    pkt_obj.direction,
             "label":        pkt_obj.label,
         }
         packet_configs.append(cfg)
-    return to_json_string(to_json_config(packet_configs))
+    return to_json_string(to_packet_spec(packet_configs))
 
 
 def _validate_stream_args(args: argparse.Namespace) -> str:
@@ -842,7 +837,7 @@ def _cmd_stream(args: argparse.Namespace) -> None:
         ip_ttl=args.ttl,
         inter_packet_gap=args.gap,
         gap_jitter=args.gap_jitter,
-        middlebox_mtu=args.middlebox_mtu,
+        mtu=args.mtu,
         encap=encap,
     )
 
@@ -881,7 +876,7 @@ def _cmd_stream(args: argparse.Namespace) -> None:
         except OSError as e:
             print(f"Error writing '{args.json}': {e}", file=sys.stderr)
             sys.exit(1)
-        print(f"Wrote {len(stream.packets)} packet(s) to {args.json} (JSON config)")
+        print(f"Wrote {len(stream.packets)} packet(s) to {args.json} (packet spec)")
     else:
         tuples = stream.to_pcap_tuples()
         try:
@@ -907,11 +902,11 @@ def main():
     # ── build subcommand ──────────────────────────────────────────────────────
     build_parser = subparsers.add_parser(
         "build",
-        help="Build packets from a JSON config file",
-        description="Build packets from a JSON config file",
+        help="Build packets from a packet spec file",
+        description="Build packets from a packet spec file",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    build_parser.add_argument("config", metavar="FILE", help="JSON config file with a 'packets' array")
+    build_parser.add_argument("config", metavar="FILE", help="Packet spec file with a 'packets' array")
     build_out = build_parser.add_mutually_exclusive_group(required=True)
     build_out.add_argument("--pcap", metavar="FILE", help="Write packets to a libpcap (.pcap) file")
     build_out.add_argument("--pcapng", metavar="FILE", help="Write packets to a pcapng (.pcapng) file")
@@ -920,8 +915,8 @@ def main():
     # ── parse subcommand ──────────────────────────────────────────────────────
     parse_parser = subparsers.add_parser(
         "parse",
-        help="Parse a pcap or pcapng file and produce a JSON config",
-        description="Parse a pcap or pcapng file and produce a JSON config that can be replayed with 'build --config'",
+        help="Parse a pcap or pcapng file and produce a packet spec",
+        description="Parse a pcap or pcapng file and produce a packet spec that can be replayed with 'packeteer build'",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parse_parser.add_argument(
@@ -932,34 +927,34 @@ def main():
     parse_parser.add_argument(
         "--output", "-o",
         metavar="FILE",
-        help="Write JSON config to FILE instead of stdout",
+        help="Write packet spec to FILE instead of stdout",
     )
     replay_group = parse_parser.add_mutually_exclusive_group()
     replay_group.add_argument(
         "--replay-pcap",
         metavar="FILE",
-        help="Set type=pcap in the generated file_metadata so the config can be replayed as a pcap",
+        help="Set type=pcap in the generated metadata so the config can be replayed as a pcap",
     )
     replay_group.add_argument(
         "--replay-pcapng",
         metavar="FILE",
-        help="Set type=pcapng in the generated file_metadata so the config can be replayed as a pcapng",
+        help="Set type=pcapng in the generated metadata so the config can be replayed as a pcapng",
     )
     parse_parser.set_defaults(func=_cmd_parse)
 
     # ── sanitise subcommand ───────────────────────────────────────────────────
     san_parser = subparsers.add_parser(
         "sanitise",
-        help="Replace sensitive fields in a JSON config with synthetic data",
+        help="Replace sensitive fields in a packet spec with synthetic data",
         description=(
             "Replace sensitive fields (IP addresses, MACs, ports, payload, timestamps) "
-            "in a JSON config with synthetic data drawn from IANA-reserved ranges. "
+            "in a packet spec with synthetic data drawn from IANA-reserved ranges. "
             "The same original value always maps to the same synthetic value, so the "
             "communication structure is preserved."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    san_parser.add_argument("input", metavar="FILE", help="Input JSON config file")
+    san_parser.add_argument("input", metavar="FILE", help="Input packet spec file")
     san_parser.add_argument(
         "--output", "-o", metavar="FILE",
         help="Write sanitised JSON to FILE instead of stdout",
@@ -1056,7 +1051,7 @@ def main():
                                help="Probability (0.0-1.0) that the server terminates mid-stream with a RST (default: 0.0)")
     stream_parser.add_argument("--rst-propagation-delay", type=float, default=None, metavar="SECONDS",
                                help="Seconds for the RST to reach the client; client sends data during this window (default: 0.0)")
-    stream_parser.add_argument("--middlebox-mtu", type=int, default=None, metavar="BYTES",
+    stream_parser.add_argument("--mtu", type=int, default=None, metavar="BYTES",
                                help="Fragment packets as if they passed through a middlebox with this IP MTU (e.g. 576, 1280, 1400). Default: no fragmentation")
     stream_parser.add_argument("--stray-packets", type=int, default=None, metavar="N",
                                dest="stray_packet_count",
@@ -1132,7 +1127,7 @@ def main():
     stream_parser.add_argument("--pcapng", default=None, metavar="FILE",
                                help="Write to a pcapng (.pcapng) file")
     stream_parser.add_argument("--json", default=None, metavar="FILE",
-                               help="Write packets as a JSON config file (same format produced by 'packeteer parse', replayable with 'packeteer build')")
+                               help="Write packets as a packet spec file (same format produced by 'packeteer parse', replayable with 'packeteer build')")
     stream_parser.set_defaults(func=_cmd_stream)
 
     args = parser.parse_args()

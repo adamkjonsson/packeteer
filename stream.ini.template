@@ -49,15 +49,19 @@ server_mac = 00:00:00:00:00:02
 
 # ── Output ─────────────────────────────────────────────────────────────────────
 
-# pcap  (mutually exclusive with pcapng)
+# pcap  (mutually exclusive with pcapng and json)
 #   Write the generated stream to a libpcap (.pcap) file at this path.
 #   Exactly one of pcap or pcapng must be set, either here or on the CLI.
-pcap = out.pcap
+# pcap = out.pcap
 
-# pcapng  (mutually exclusive with pcap)
+# pcapng  (mutually exclusive with pcap and json)
 #   Write the generated stream to a pcapng (.pcapng) file at this path.
 #   Prefer pcapng when you need nanosecond timestamps or interface metadata.
 # pcapng = out.pcapng
+
+# json  (mutually exclusive with pcap and pcapng)
+#   Write the generated stream to a packet spec (.json) file at this path.
+# json = out.json
 
 # ── Stream shape ───────────────────────────────────────────────────────────────
 
@@ -196,7 +200,7 @@ retransmission_timeout = 0.2
 #   Simulates an attacker who injects close in time to the segment they target.
 # stray_timing_window = 3
 
-# middlebox_mtu  (default: unset — no fragmentation)
+# mtu  (default: unset — no fragmentation)
 #   When set, every packet whose IP-layer size (excluding the Ethernet header)
 #   exceeds this value is split into IP fragments, simulating transit through a
 #   middlebox with a limited MTU.  All packet types are subject to
@@ -204,7 +208,7 @@ retransmission_timeout = 0.2
 #   practice.  Fragment packets appear in the capture as FRAG[<orig>][<n>].
 #   Typical values: 576 (historical IPv4 minimum), 1280 (IPv6 minimum),
 #   1400 (VPN with overhead).  Leave unset or comment out to disable.
-# middlebox_mtu = 576
+# mtu = 576
 
 # ── IP / TCP ───────────────────────────────────────────────────────────────────
 

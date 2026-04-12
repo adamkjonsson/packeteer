@@ -276,7 +276,7 @@ class TestIPIPRoundTrip(unittest.TestCase):
         self.assertEqual(inner2["transport"]["dst_port"], 9999)
 
     def test_packet_lab_round_trip(self):
-        """Build via JSON config → parse → verify inner addresses."""
+        """Build via packet spec → parse → verify inner addresses."""
         import subprocess, sys, json, tempfile, os
 
         config = {
@@ -288,7 +288,7 @@ class TestIPIPRoundTrip(unittest.TestCase):
                                 "protocol": "tcp", "ttl": 64},
                     "transport": {"src_port": 12345, "dst_port": 80},
                 },
-                "metadata": {"timestamp_s": 0, "timestamp_us": 0},
+                "packet_metadata": {"timestamp_s": 0, "timestamp_us": 0},
             }]
         }
         with tempfile.NamedTemporaryFile(suffix=".json", mode="w", delete=False) as jf:

@@ -53,19 +53,20 @@ See {doc}`api/pcap-io` for the full I/O reference.
 ## Use the CLI
 
 ```bash
-# Build packets from a JSON config and write a pcap file
+# Build packets from a packet spec and write a pcap file
 packeteer build packets.json --pcap out.pcap
 
-# Parse a capture and print its JSON config
+# Parse a capture and print its packet spec
 packeteer parse capture.pcap
 
-# Round-trip: parse → config → rebuild
+# Round-trip: parse → spec → rebuild
 packeteer parse capture.pcap --output config.json
 packeteer build config.json --pcap replayed.pcap
 ```
 
-See {doc}`cli` for the full CLI reference and {doc}`json-config` for the JSON
-format.
+See {doc}`build/index`, {doc}`parse/index`, {doc}`sanitiser/index`, and
+{doc}`stream/index` for the full CLI and Python API reference for each
+subcommand, and {doc}`packet-spec/index` for the JSON config format.
 
 ## Parse a packet
 

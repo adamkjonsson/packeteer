@@ -1,17 +1,17 @@
-"""Convert parsed packet header objects to a JSON config dict.
+"""Convert parsed packet header objects to a packet spec dict.
 
-The produced dict matches the JSON format accepted by ``packeteer build``,
+The produced dict matches the packet spec format accepted by ``packeteer build``,
 so a parsed capture can be saved and replayed directly.
 
-Build up a config one protocol layer at a time using :func:`update_config`,
-then wrap multiple packets into a top-level config with :func:`to_json_config`
+Build up a spec one protocol layer at a time using :func:`update_config`,
+then wrap multiple packets into a top-level spec with :func:`to_packet_spec`
 and serialise with :func:`to_json_string`.
 
 Typical usage::
 
     from packet_parser import ethernet_packet_parser, ip_packet_parser, tcp_packet_parser
     from packet_parser.pcap import read_pcap
-    from packet_parser.to_config import update_config, to_json_config, to_json_string
+    from packet_parser.to_config import update_config, to_packet_spec, to_json_string
 
     pcap = read_pcap(path="capture.pcap")
     packet_configs = []
@@ -26,10 +26,10 @@ Typical usage::
         payload = raw[eth_size + ip_size + tcp_size:]
         if payload:
             update_config(cfg, payload)
-        cfg.setdefault("metadata", {}).update({"timestamp_s": ts_sec, "timestamp_us": ts_frac})
+        cfg.setdefault("packet_metadata", {}).update({"timestamp_s": ts_sec, "timestamp_us": ts_frac})
         packet_configs.append(cfg)
 
-    print(to_json_string(to_json_config(packet_configs, file_metadata={"from_file": "capture.pcap", "type": "pcap"})))
+    print(to_json_string(to_packet_spec(packet_configs, metadata={"from_file": "capture.pcap", "type": "pcap"})))
 """
 from __future__ import annotations
 
@@ -377,14 +377,11 @@ def update_config(
     - :class:`~packet_generator.mpls.MPLSLabel` → appended to the ``mpls`` array
     - :class:`~packet_generator.pppoe.PPPoEHeader` → ``pppoe`` section
     - :class:`~packet_generator.ip.IPHeader` / :class:`~packet_generator.ipv6.IPv6Header` → ``network`` section
-    - :class:`~packet_generator.etherip.EtherIPHeader` → handled via
-      :func:`_apply_etherip` in :func:`~packet_parser.parser.parse_pcap_file`
-      (requires the inner :class:`~packet_parser.parser.ParsedPacket` as a
-      second argument — not dispatchable through ``update_config`` alone)
-    - :class:`~packet_generator.gre.GREHeader` → handled via
-      :func:`_apply_gre` in :func:`~packet_parser.parser.parse_pcap_file`
-      (requires the inner :class:`~packet_parser.parser.ParsedPacket` as a
-      second argument — not dispatchable through ``update_config`` alone)
+    - :class:`~packet_generator.etherip.EtherIPHeader` / GRE /
+      IP-in-IP → use :func:`apply_tunneled` instead; tunnel serialisation
+      requires the inner :class:`~packet_parser.parser.ParsedPacket` as
+      additional context and cannot be dispatched through ``update_config``
+      alone.
     - :class:`~packet_generator.tcp.TCPHeader` → ``transport`` section (TCP fields)
     - :class:`~packet_generator.udp.UDPHeader` → ``transport`` section (UDP fields)
     - :class:`~packet_generator.icmp.ICMPHeader` / :class:`~packet_generator.icmpv6.ICMPv6Header` → ``transport`` section (ICMP fields)
@@ -421,35 +418,64 @@ def update_config(
     return config
 
 
-def to_json_config(
+def apply_tunneled(config: dict[str, Any], pkt: "ParsedPacket") -> None:
+    """Serialise the tunnel layers of *pkt* into *config*.
+
+    Handles all three tunnel types — IP-in-IP, GRE, and EtherIP — by
+    dispatching to the appropriate private helper.  Call this after the
+    outer IP layer has been written via :func:`update_config` whenever
+    :attr:`~packet_parser.parser.ParsedPacket.ipip`,
+    :attr:`~packet_parser.parser.ParsedPacket.gre`, or
+    :attr:`~packet_parser.parser.ParsedPacket.etherip` is set on *pkt*.
+
+    Modifies *config* in place.  Does nothing when *pkt* carries no tunnel.
+
+    Args:
+        config: The packet config dict to update (same dict passed to
+            :func:`update_config` for the outer layers).
+        pkt: The parsed packet whose tunnel fields should be serialised.
+    """
+    if pkt.ipip and pkt.tunneled is not None:
+        _apply_ipip(config, pkt.tunneled)
+    elif pkt.gre is not None and pkt.tunneled is not None:
+        _apply_gre(config, pkt.gre, pkt.tunneled)
+    elif pkt.etherip is not None and pkt.tunneled is not None:
+        _apply_etherip(config, pkt.etherip, pkt.tunneled)
+
+
+def to_packet_spec(
     packets: list[dict[str, Any]],
     *,
-    file_metadata: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Wrap a list of packet config dicts into a top-level config dict.
+    """Wrap a list of per-packet dicts into a top-level packet spec dict.
+
+    The top-level ``metadata`` block is always written.  ``nanoseconds``
+    defaults to ``False`` when not supplied by the caller.
 
     Args:
         packets: List of per-packet dicts built with :func:`update_config`.
-        file_metadata: Top-level ``file_metadata`` block (e.g.
-            ``{"from_file": "capture.pcap", "type": "pcap"}``).
-            Omitted when ``None``.
+        metadata: Extra fields to merge into the top-level ``metadata`` block
+            (e.g. ``{"from_file": "capture.pcap", "type": "pcap",
+            "nanoseconds": False}``).  ``nanoseconds`` is added automatically
+            when absent.
 
     Returns:
-        A dict matching the top-level JSON config format accepted by
-        ``packeteer build``.
+        A packet spec dict accepted by ``packeteer build``.
     """
     cfg: dict[str, Any] = {}
-    if file_metadata is not None:
-        cfg["file_metadata"] = file_metadata
+    top_meta: dict[str, Any] = dict(metadata) if metadata is not None else {}
+    top_meta.setdefault("nanoseconds", False)
+    cfg["metadata"] = top_meta
     cfg["packets"] = packets
     return cfg
 
 
 def to_json_string(config: dict[str, Any], *, indent: int = 2) -> str:
-    """Serialise a config dict to a JSON string.
+    """Serialise a packet spec dict to a JSON string.
 
     Args:
-        config: Dict produced by :func:`to_json_config` or a single packet
+        config: Dict produced by :func:`to_packet_spec` or a single packet
             dict produced by :func:`update_config`.
         indent: Indentation width for pretty-printing (default: ``2``).
 

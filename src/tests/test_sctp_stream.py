@@ -331,16 +331,16 @@ class TestPacketContents:
 class TestMiddleboxMtu:
     def test_large_payload_gets_fragmented(self):
         s = _make_stream(num_data_packets=1, min_payload=2000, max_payload=2000,
-                         payload_distribution="fixed", middlebox_mtu=1500)
+                         payload_distribution="fixed", mtu=1500)
         assert len(s.packets) > 2 * 1 + 7  # more than unfragmented total
 
     def test_fragment_labels(self):
         s = _make_stream(num_data_packets=1, min_payload=2000, max_payload=2000,
-                         payload_distribution="fixed", middlebox_mtu=1500)
+                         payload_distribution="fixed", mtu=1500)
         frag_pkts = [p for p in s.packets if "FRAG" in p.label]
         assert len(frag_pkts) > 0
 
     def test_small_payload_not_fragmented(self):
         s = _make_stream(num_data_packets=3, min_payload=100, max_payload=100,
-                         payload_distribution="fixed", middlebox_mtu=1500)
+                         payload_distribution="fixed", mtu=1500)
         assert len(s.packets) == 2 * 3 + 7

@@ -237,7 +237,7 @@ def generate_tcp_stream(
     payload_corruption_probability: float = 0.0,
     server_rst_probability: float = 0.0,
     rst_propagation_delay: float = 0.0,
-    middlebox_mtu: int | None = None,
+    mtu: int | None = None,
     stray_packet_count: int = 0,
     stray_timing_window: int | None = None,
     packet_hooks: list[Callable[[TCPStreamPacket, int], TCPStreamPacket | None]] | None = None,
@@ -362,7 +362,7 @@ def generate_tcp_stream(
             Because the attacker cannot predict the exact timing, stray
             packets may arrive before or after the real segment they overlap
             with.  Defaults to ``0`` (no stray packets).
-        middlebox_mtu: When set, every packet whose IP-layer size (excluding
+        mtu: When set, every packet whose IP-layer size (excluding
             any Ethernet header) exceeds this value is split into IP fragments
             as if it had passed through a middlebox with a limited MTU.  All
             packet types are subject to fragmentation, though only packets with
@@ -397,7 +397,7 @@ def generate_tcp_stream(
             Layers may be combined, e.g.
             ``[MPLSEncap(labels=[100]), IPIPEncap("203.0.113.1", "203.0.113.2")]``
             produces eth → MPLS → outer-IP → inner-IP → TCP.
-            Fragmentation (``middlebox_mtu``) is applied correctly regardless
+            Fragmentation (``mtu``) is applied correctly regardless
             of which encapsulation layers are present.
 
     Returns:
@@ -709,12 +709,12 @@ def generate_tcp_stream(
             packets.extend(strays)
 
     # ── Middlebox fragmentation ───────────────────────────────────────────────
-    if middlebox_mtu is not None:
+    if mtu is not None:
         used_ts = {_pkt_usec(p) for p in packets}
         fragmented: list[TCPStreamPacket] = []
         for pkt in packets:
             fragmented.extend(
-                _fragment_packet(pkt, middlebox_mtu, include_ethernet, used_ts, encap)
+                _fragment_packet(pkt, mtu, include_ethernet, used_ts, encap)
             )
         packets = fragmented
 

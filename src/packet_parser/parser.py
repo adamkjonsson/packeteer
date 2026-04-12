@@ -57,7 +57,7 @@ from packet_generator.sctp import SCTPHeader
 from packet_generator.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW
 
 from packet_parser.pcap import PcapFileHeader, read_pcap
-from packet_parser.to_config import update_config, to_json_config, to_json_string, _apply_etherip, _apply_ipip, _apply_gre
+from packet_parser.to_config import update_config, to_packet_spec, to_json_string, apply_tunneled
 
 from packet_parser.ethernet import packet_parser as _ethernet_parser
 from packet_parser.etherip import packet_parser as _etherip_parser
@@ -315,7 +315,7 @@ def parse_pcap_file(
     file_object: io.RawIOBase | io.BufferedIOBase | None = None,
     output: dict[str, Any] | None = None,
 ) -> str:
-    """Parse every packet in a pcap file and return a JSON config string.
+    """Parse every packet in a pcap file and return a packet spec string.
 
     Reads the file with :func:`packet_parser.pcap.read_pcap`, parses each
     record with :func:`parse_pcap_packet`, converts the layers to a config dict
@@ -332,7 +332,7 @@ def parse_pcap_file(
         path: Path to the ``.pcap`` file.
         file_object: Readable binary file-like object positioned at the start
             of the pcap data.
-        output: Extra fields to merge into the top-level ``file_metadata``
+        output: Extra fields to merge into the top-level ``metadata``
             block (e.g. ``{"from_file": "capture.pcap", "type": "pcap"}``).
             ``"nanoseconds"`` is set automatically from the source file and
             must not be supplied here.
@@ -361,17 +361,13 @@ def parse_pcap_file(
             update_config(cfg, pkt.pppoe)
         if pkt.ip is not None:
             update_config(cfg, pkt.ip)
-        if pkt.ipip and pkt.tunneled is not None:
-            _apply_ipip(cfg, pkt.tunneled)
-        elif pkt.gre is not None and pkt.tunneled is not None:
-            _apply_gre(cfg, pkt.gre, pkt.tunneled)
-        elif pkt.etherip is not None and pkt.tunneled is not None:
-            _apply_etherip(cfg, pkt.etherip, pkt.tunneled)
+        if pkt.ipip or pkt.gre is not None or pkt.etherip is not None:
+            apply_tunneled(cfg, pkt)
         elif pkt.transport is not None:
             update_config(cfg, pkt.transport)
             if pkt.payload:
                 update_config(cfg, pkt.payload)
-        cfg["metadata"] = {"timestamp_s": pkt.ts_sec, ts_frac_key: pkt.ts_frac}
+        cfg["packet_metadata"] = {"timestamp_s": pkt.ts_sec, ts_frac_key: pkt.ts_frac}
         packet_configs.append(cfg)
 
     global_output: dict[str, Any] = dict(output) if output is not None else {}
@@ -381,7 +377,4 @@ def parse_pcap_file(
         file_type = "pcapng" if pcap.header.version_major == 1 else "pcap"
         global_output.setdefault("type", file_type)
 
-    # Include the output block when the caller explicitly provided one (even
-    # empty), or when it has content added automatically (e.g. nanoseconds).
-    include_output = output is not None or bool(global_output)
-    return to_json_string(to_json_config(packet_configs, file_metadata=global_output if include_output else None))
+    return to_json_string(to_packet_spec(packet_configs, metadata=global_output))

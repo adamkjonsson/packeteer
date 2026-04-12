@@ -391,7 +391,7 @@ class TestSCTPStreamWithEncap(unittest.TestCase):
 # ── Fragmentation with encap ──────────────────────────────────────────────────
 
 class TestFragmentationWithEncap(unittest.TestCase):
-    """Ensure middlebox_mtu fragmentation works correctly with encap layers."""
+    """Ensure mtu fragmentation works correctly with encap layers."""
 
     def _frag_labels(self, stream) -> list[str]:
         return [p.label for p in stream.packets if "FRAG" in p.label]
@@ -402,7 +402,7 @@ class TestFragmentationWithEncap(unittest.TestCase):
             num_data_packets=3,
             min_payload=800, max_payload=800,
             encap=VLANEncap(vid=100),
-            middlebox_mtu=500,
+            mtu=500,
         )
         frags = self._frag_labels(s)
         self.assertGreater(len(frags), 0)
@@ -413,7 +413,7 @@ class TestFragmentationWithEncap(unittest.TestCase):
             num_data_packets=3,
             min_payload=800, max_payload=800,
             encap=VLANEncap(vid=100),
-            middlebox_mtu=500,
+            mtu=500,
         )
         for pkt in s.packets:
             if "FRAG" in pkt.label:
@@ -425,7 +425,7 @@ class TestFragmentationWithEncap(unittest.TestCase):
             num_data_packets=3,
             min_payload=1400, max_payload=1400,
             encap=GREEncap(src_ip="1.2.3.4", dst_ip="5.6.7.8"),
-            middlebox_mtu=500,
+            mtu=500,
         )
         frags = self._frag_labels(s)
         self.assertGreater(len(frags), 0)
@@ -436,7 +436,7 @@ class TestFragmentationWithEncap(unittest.TestCase):
             num_data_packets=3,
             min_payload=800, max_payload=800,
             encap=PPPoEEncap(session_id=1),
-            middlebox_mtu=500,
+            mtu=500,
         )
         for pkt in s.packets:
             if "FRAG" not in pkt.label:
@@ -456,7 +456,7 @@ class TestFragmentationWithEncap(unittest.TestCase):
             num_data_packets=5,
             min_payload=1400, max_payload=1400,
             encap=IPIPEncap(src_ip="1.2.3.4", dst_ip="5.6.7.8"),
-            middlebox_mtu=400,
+            mtu=400,
         )
         frags = self._frag_labels(s)
         self.assertGreater(len(frags), 0)

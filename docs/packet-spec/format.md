@@ -1,12 +1,12 @@
-# JSON Config File Format
+# Format Reference
 
-The JSON config file is the input to `packeteer build` and the output of
+The packet spec is the input to `packeteer build` and the output of
 `packeteer parse`.  It contains a top-level `packets` array with one
-object per packet, and an optional `file_metadata` block.
+object per packet, and a mandatory top-level `metadata` block.
 
 ```json
 {
-  "file_metadata": {
+  "metadata": {
     "from_file": "capture.pcap",
     "type": "pcap",
     "nanoseconds": false
@@ -16,7 +16,7 @@ object per packet, and an optional `file_metadata` block.
       "ethernet": { "src_mac": "00:00:00:00:00:01", "dst_mac": "00:00:00:00:00:02" },
       "network":  { "src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "tcp" },
       "transport": { "dst_port": 80 },
-      "metadata": { "timestamp_s": 1000, "timestamp_us": 0 }
+      "packet_metadata": { "timestamp_s": 1000, "timestamp_us": 0 }
     }
   ]
 }
@@ -27,7 +27,7 @@ all with `ethernet` or all with `ethernet.enabled: false`.
 
 ---
 
-(json-config-ethernet)=
+(packet-spec-ethernet)=
 ## `ethernet`
 
 An optional Ethernet II header.  Omit the key entirely to produce a raw IP
@@ -48,7 +48,7 @@ Call `.vlan()` twice in the builder (or nest two `vlan` keys) for QinQ
 
 ---
 
-(json-config-mpls)=
+(packet-spec-mpls)=
 ## `mpls`
 
 An optional array of MPLS label stack entries inserted between the Ethernet
@@ -72,7 +72,7 @@ The bottom-of-stack (S) bit is set automatically: `1` on the last entry,
 
 ---
 
-(json-config-pppoe)=
+(packet-spec-pppoe)=
 ## `pppoe`
 
 An optional PPPoE header inserted between the Ethernet layer and the IP layer.
@@ -101,7 +101,7 @@ Tag type constants (decimal): `257`=Service-Name, `258`=AC-Name,
 
 ---
 
-(json-config-etherip)=
+(packet-spec-etherip)=
 ## `etherip`
 
 An optional EtherIP tunnel header (RFC 3378).  Set `network.protocol` to
@@ -123,7 +123,7 @@ The outer IP protocol number (97) and the 2-byte EtherIP header
 
 ---
 
-(json-config-ipip)=
+(packet-spec-ipip)=
 ## `ipip`
 
 An optional IP-in-IP inner packet spec (RFC 2003 / RFC 4213).  Set
@@ -144,7 +144,7 @@ IP-in-IP uses a nested `"ipip"` key.
 
 ---
 
-(json-config-gre)=
+(packet-spec-gre)=
 ## `gre`
 
 An optional GRE tunnel header (RFC 2784 / RFC 2890).  Set
@@ -208,7 +208,7 @@ nested `"gre"` key with `"protocol": "gre"` in the inner `"network"` spec.
 
 ---
 
-(json-config-network)=
+(packet-spec-network)=
 ## `network`
 
 | Field | Required | Description |
@@ -229,7 +229,7 @@ are ignored when `src` is an IPv6 address and vice versa.
 
 ---
 
-(json-config-transport)=
+(packet-spec-transport)=
 ## `transport`
 
 | Field | Default | Description |
@@ -258,7 +258,7 @@ combine (e.g. `24` for PSH+ACK).
 
 ---
 
-(json-config-sctp)=
+(packet-spec-sctp)=
 ## SCTP transport
 
 When `network.protocol` is `"sctp"` the `transport` object has a different
@@ -315,7 +315,7 @@ The CRC-32c checksum (Castagnoli, RFC 9260 §6.8) is computed automatically.
 
 ---
 
-(json-config-payload)=
+(packet-spec-payload)=
 ## `payload`
 
 `size` and `data` are mutually exclusive; `data` takes precedence.
@@ -327,26 +327,28 @@ The CRC-32c checksum (Castagnoli, RFC 9260 §6.8) is computed automatically.
 
 ---
 
-(json-config-file-metadata)=
-## `file_metadata` (top-level)
+(packet-spec-metadata)=
+## `metadata` (top-level)
 
-Written by `packeteer parse`; read by `packeteer build` for format
-settings (`type`, `nanoseconds`).  `from_file` is informational only.
+Always present in configs produced by `packeteer parse` and
+`packeteer stream --json`.  Read by `packeteer build` for format settings.
 
-| Field | Description |
-|-------|-------------|
-| `from_file` | Path of the pcap or pcapng file the config was parsed from |
-| `type` | Source file format: `"pcap"` or `"pcapng"` |
-| `nanoseconds` | `true` when timestamps are nanosecond-resolution |
+| Field | Required | Description |
+|-------|----------|-------------|
+| `nanoseconds` | **yes** | `true` when `packet_metadata` timestamps use nanosecond resolution; `false` for microsecond.  Always `false` in stream JSON output. |
+| `from_file` | no | Path of the source pcap or pcapng file (informational only) |
+| `type` | no | Source file format: `"pcap"` or `"pcapng"` |
 
 ---
 
-(json-config-metadata)=
-## `metadata` (per-packet)
+(packet-spec-packet-metadata)=
+## `packet_metadata` (per-packet)
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `mtu` | — | Fragment the packet so each IP datagram is at most this many bytes — see {doc}`fragmentation` |
+| `mtu` | — | Fragment the packet so each IP datagram is at most this many bytes — see {doc}`../build/fragmentation` |
 | `timestamp_s` | `0` | Capture timestamp — whole seconds |
-| `timestamp_us` | `0` | Microsecond fraction (0–999999); used when `file_metadata.nanoseconds` is `false` |
-| `timestamp_ns` | `0` | Nanosecond fraction (0–999999999); used when `file_metadata.nanoseconds` is `true` |
+| `timestamp_us` | `0` | Microsecond fraction (0–999999); used when `metadata.nanoseconds` is `false` |
+| `timestamp_ns` | `0` | Nanosecond fraction (0–999999999); used when `metadata.nanoseconds` is `true` |
+| `direction` | — | *(stream JSON only)* `"c2s"` (client→server) or `"s2c"` (server→client); written by `packeteer stream --json`, ignored by `packeteer build` |
+| `label` | — | *(stream JSON only)* Human-readable role label (e.g. `"SYN"`, `"DATA[3]"`, `"FRAG[DATA[0]][1]"`); written by `packeteer stream --json`, ignored by `packeteer build` |
