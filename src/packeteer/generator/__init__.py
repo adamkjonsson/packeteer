@@ -162,7 +162,10 @@ Public API:
 from __future__ import annotations
 
 from .builder import PacketBuilder
-from .ethernet import EthernetHeader, VLANTag, ETHERNET_MIN_FRAME_SIZE
+from .ethernet import (
+    EthernetHeader, VLANTag, ETHERNET_MIN_FRAME_SIZE,
+    ETHERTYPE_IPV4, ETHERTYPE_IPV6, ETHERTYPE_8021Q,
+)
 from .etherip import EtherIPHeader, IPPROTO_ETHERIP
 from .gre import GREHeader, IPPROTO_GRE, GRE_PROTO_IPV4, GRE_PROTO_IPV6, GRE_PROTO_TEB
 from .pcap import write_pcap, write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW
@@ -234,6 +237,9 @@ __all__ = [
     "EthernetHeader",
     "VLANTag",
     "ETHERNET_MIN_FRAME_SIZE",
+    "ETHERTYPE_IPV4",
+    "ETHERTYPE_IPV6",
+    "ETHERTYPE_8021Q",
     "EtherIPHeader",
     "IPPROTO_ETHERIP",
     "GREHeader",

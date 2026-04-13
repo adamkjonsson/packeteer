@@ -4,7 +4,7 @@ All notable changes to packeteer are recorded in this file.
 
 ---
 
-## [0.2.0] — 2026-04-12
+## Unreleased — 2026-04-13
 
 ### Stream JSON output
 
@@ -70,6 +70,15 @@ All notable changes to packeteer are recorded in this file.
 - `docs/json-config.md` split into `docs/packet-spec/`: `index.md`, `format.md` (field-by-field spec), and `python-api.md` (programmatic packet spec usage).
 - `docs/cli.md` removed — content was fully covered by the per-subcommand subpages.
 - `docs/index.md` toctree updated to reference all new subdirectory index pages.
+
+### Module rename
+
+- `packet_generator` → `packeteer.generator`, `packet_parser` → `packeteer.parser` (with `parser.py` renamed to `core.py`), `replacer.py` → `packeteer.sanitiser`, `packeteer_cli.py` → `packeteer.__main__`.  All internal imports, tests, and documentation updated; clean break with no backward-compatibility shims.
+
+### Public API completions
+
+- `ETHERTYPE_IPV4`, `ETHERTYPE_IPV6`, and `ETHERTYPE_8021Q` are now exported from the `packeteer.generator` top-level package (previously only accessible via `packeteer.generator.ethernet`).
+- `read_pcap`, `update_config`, `apply_tunneled`, `to_packet_spec`, and `to_json_string` are now exported from the `packeteer.parser` top-level package (previously only accessible via their sub-modules).
 
 ### Developer documentation
 
