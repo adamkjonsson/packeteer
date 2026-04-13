@@ -21,15 +21,15 @@ sanitiser
 
 | Module | Purpose |
 |--------|---------|
-| `packet_generator/builder.py` | `PacketBuilder` — fluent layer-by-layer assembly |
-| `packet_generator/*.py` | One module per protocol: header dataclass + `build_*` function |
-| `packet_generator/fragmentation.py` | IPv4 and IPv6 IP fragmentation |
-| `packet_generator/stream_encap.py` | Encap descriptor dataclasses + `_apply_encap` / `_encap_ip_start` |
-| `packet_generator/tcp_stream.py` | `generate_tcp_stream` — full TCP lifecycle |
-| `packet_generator/udp_stream.py` | `generate_udp_stream` — UDP datagram sequence |
-| `packet_generator/sctp_stream.py` | `generate_sctp_stream` — full SCTP association |
-| `packet_parser/parser.py` | `parse_packet` — layer-chaining state machine |
-| `packet_parser/to_config.py` | `update_config` / `to_packet_spec` — parsed headers → packet spec dict |
-| `packet_parser/*.py` | One module per protocol: `packet_parser(data)` function |
-| `replacer.py` | `sanitise` — consistent value replacement using IANA-reserved ranges |
+| `packeteer/generator/builder.py` | `PacketBuilder` — fluent layer-by-layer assembly |
+| `packeteer/generator/*.py` | One module per protocol: header dataclass + `build_*` function |
+| `packeteer/generator/fragmentation.py` | IPv4 and IPv6 IP fragmentation |
+| `packeteer/generator/stream_encap.py` | Encap descriptor dataclasses + `_apply_encap` / `_encap_ip_start` |
+| `packeteer/generator/tcp_stream.py` | `generate_tcp_stream` — full TCP lifecycle |
+| `packeteer/generator/udp_stream.py` | `generate_udp_stream` — UDP datagram sequence |
+| `packeteer/generator/sctp_stream.py` | `generate_sctp_stream` — full SCTP association |
+| `packeteer/parser/parser.py` | `parse_packet` — layer-chaining state machine |
+| `packeteer/parser/to_config.py` | `update_config` / `to_packet_spec` — parsed headers → packet spec dict |
+| `packeteer/parser/*.py` | One module per protocol: `packet_parser(data)` function |
+| `packeteer/sanitiser.py` | `sanitise` — consistent value replacement using IANA-reserved ranges |
 | `packeteer_cli.py` | CLI entry point — thin dispatcher to the library functions above |

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import struct
 
-from packet_generator.etherip import EtherIPHeader
+from packeteer.generator.etherip import EtherIPHeader
 
 
 def packet_parser(data: bytes) -> tuple[int, None, EtherIPHeader | None]:

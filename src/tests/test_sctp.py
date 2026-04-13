@@ -5,9 +5,9 @@ import struct
 import json
 import pytest
 
-from packet_generator import PacketBuilder
-from packet_generator.checksum import crc32c
-from packet_generator.sctp import (
+from packeteer.generator import PacketBuilder
+from packeteer.generator.checksum import crc32c
+from packeteer.generator.sctp import (
     SCTPHeader,
     SCTPDataChunk,
     SCTPInitChunk,
@@ -30,10 +30,10 @@ from packet_generator.sctp import (
     SCTP_DATA_FLAG_UNORDERED,
     _pad4,
 )
-from packet_parser.sctp import packet_parser as sctp_parser
-from packet_parser.parser import parse_packet
-from packet_parser.to_config import update_config
-from packet_generator.pcap import LINKTYPE_RAW
+from packeteer.parser.sctp import packet_parser as sctp_parser
+from packeteer.parser.core import parse_packet
+from packeteer.parser.to_config import update_config
+from packeteer.generator.pcap import LINKTYPE_RAW
 
 
 # ── Group 1: crc32c ───────────────────────────────────────────────────────────
@@ -461,7 +461,7 @@ class TestParsePacketIntegration:
                .build())
         parsed = parse_packet(pkt, link_type=LINKTYPE_RAW)
         assert parsed.transport is not None
-        from packet_generator.sctp import SCTPHeader as _SCTPHeader
+        from packeteer.generator.sctp import SCTPHeader as _SCTPHeader
         assert isinstance(parsed.transport, _SCTPHeader)
 
     def test_sctp_ports_parsed(self):

@@ -3,8 +3,8 @@ from __future__ import annotations
 import socket
 import struct
 
-from packet_generator.ip import IPHeader
-from packet_generator.ipv6 import IPv6Header
+from packeteer.generator.ip import IPHeader
+from packeteer.generator.ipv6 import IPv6Header
 
 
 def packet_parser(data: bytes) -> tuple[int, int | None, IPHeader | IPv6Header | None]:

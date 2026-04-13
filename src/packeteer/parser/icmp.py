@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import struct
 
-from packet_generator.icmp import ICMPHeader
+from packeteer.generator.icmp import ICMPHeader
 
 
 def packet_parser(data: bytes) -> tuple[int, int | None, ICMPHeader | None]:

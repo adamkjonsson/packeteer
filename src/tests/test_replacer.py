@@ -2,7 +2,7 @@
 import copy
 import unittest
 
-from replacer import SanitiseOptions, sanitise
+from packeteer.sanitiser import SanitiseOptions, sanitise
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

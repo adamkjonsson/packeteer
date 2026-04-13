@@ -3,8 +3,8 @@ import io
 import struct
 import unittest
 
-from packet_generator.pcap import write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW
-from packet_parser.pcap import read_pcap, PcapFile, PcapFileHeader
+from packeteer.generator.pcap import write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW
+from packeteer.parser.pcap import read_pcap, PcapFile, PcapFileHeader
 
 
 def _write(packets, **kwargs) -> io.BytesIO:
@@ -28,7 +28,7 @@ class TestReadPcapngAutoDetect(unittest.TestCase):
         self.assertIsInstance(result.header, PcapFileHeader)
 
     def test_pcap_files_still_work_after_auto_detect(self):
-        from packet_generator.pcap import write_pcap
+        from packeteer.generator.pcap import write_pcap
         buf = io.BytesIO()
         write_pcap([(b"\xaa" * 10, 42, 100)], file_object=buf)
         buf.seek(0)

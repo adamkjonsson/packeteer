@@ -1,6 +1,6 @@
 import unittest
 
-from packet_generator.ethernet import (
+from packeteer.generator.ethernet import (
     EthernetHeader,
     VLANTag,
     build_ethernet_header,
@@ -8,7 +8,7 @@ from packet_generator.ethernet import (
     ETHERTYPE_IPV6,
     ETHERTYPE_8021Q,
 )
-from packet_parser.ethernet import packet_parser
+from packeteer.parser.ethernet import packet_parser
 
 
 DST = "aa:bb:cc:dd:ee:ff"

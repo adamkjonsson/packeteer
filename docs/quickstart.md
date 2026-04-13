@@ -2,12 +2,12 @@
 
 ## Build a packet in Python
 
-Use {class}`packet_generator.builder.PacketBuilder` — a fluent, layer-by-layer
+Use {class}`packeteer.generator.builder.PacketBuilder` — a fluent, layer-by-layer
 API.  Call methods in the order you want the layers stacked, then call
 `.build()` to produce the raw bytes.
 
 ```python
-from packet_generator import PacketBuilder
+from packeteer.generator import PacketBuilder
 
 # Ethernet + IPv4 + TCP with a 64-byte random payload
 pkt = (PacketBuilder()
@@ -37,7 +37,7 @@ See {doc}`api/packet-builder` for the full method reference.
 
 ```python
 import time
-from packet_generator import PacketBuilder, write_pcap, LINKTYPE_ETHERNET
+from packeteer.generator import PacketBuilder, write_pcap, LINKTYPE_ETHERNET
 
 t = int(time.time())
 packets = [
@@ -70,14 +70,14 @@ subcommand, and {doc}`packet-spec/index` for the JSON config format.
 
 ## Parse a packet
 
-{func}`packet_parser.parser.parse_packet` chains all layer parsers automatically
-and returns a {class}`packet_parser.parser.ParsedPacket` with every recognised
+{func}`packeteer.parser.core.parse_packet` chains all layer parsers automatically
+and returns a {class}`packeteer.parser.core.ParsedPacket` with every recognised
 layer filled in.
 
 ```python
-from packet_generator import PacketBuilder
-from packet_generator.pcap import LINKTYPE_RAW
-from packet_parser.parser import parse_packet
+from packeteer.generator import PacketBuilder
+from packeteer.generator.pcap import LINKTYPE_RAW
+from packeteer.parser.core import parse_packet
 
 raw = (PacketBuilder()
     .ip(src="10.0.0.1", dst="10.0.0.2")
@@ -101,7 +101,7 @@ Layers are just stacked in order — call `.gre()` between two `.ip()` calls to
 produce a GRE tunnel packet:
 
 ```python
-from packet_generator import PacketBuilder
+from packeteer.generator import PacketBuilder
 
 pkt = (PacketBuilder()
     .ethernet()
@@ -124,8 +124,8 @@ SCTP (RFC 9260) uses `.sctp()` instead of `.tcp()` or `.udp()`.  Data lives
 inside typed *chunks* rather than in a separate `.payload()` layer:
 
 ```python
-from packet_generator import PacketBuilder
-from packet_generator.sctp import (
+from packeteer.generator import PacketBuilder
+from packeteer.generator.sctp import (
     SCTPDataChunk, SCTPInitChunk,
     SCTP_DATA_FLAG_BEGINNING, SCTP_DATA_FLAG_ENDING,
 )

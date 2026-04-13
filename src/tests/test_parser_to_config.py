@@ -1,17 +1,17 @@
 import json
 import unittest
 
-from packet_generator.ethernet import EthernetHeader, VLANTag, ETHERTYPE_IPV4, ETHERTYPE_IPV6
-from packet_generator.ip import IPHeader
-from packet_generator.ipv6 import IPv6Header
-from packet_generator.tcp import TCPHeader, TCPOptions, TCP_SYN, TCP_ACK, TCP_PSH
-from packet_generator.udp import UDPHeader
-from packet_generator.icmp import ICMPHeader
-from packet_generator.icmpv6 import ICMPv6Header
-from packet_generator import PacketBuilder
+from packeteer.generator.ethernet import EthernetHeader, VLANTag, ETHERTYPE_IPV4, ETHERTYPE_IPV6
+from packeteer.generator.ip import IPHeader
+from packeteer.generator.ipv6 import IPv6Header
+from packeteer.generator.tcp import TCPHeader, TCPOptions, TCP_SYN, TCP_ACK, TCP_PSH
+from packeteer.generator.udp import UDPHeader
+from packeteer.generator.icmp import ICMPHeader
+from packeteer.generator.icmpv6 import ICMPv6Header
+from packeteer.generator import PacketBuilder
 
-from packet_parser.to_config import update_config, to_packet_spec, to_json_string
-from packet_parser import (
+from packeteer.parser.to_config import update_config, to_packet_spec, to_json_string
+from packeteer.parser import (
     ethernet_packet_parser,
     ip_packet_parser,
     tcp_packet_parser,

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import struct
 
-from packet_generator.sctp import (
+from packeteer.generator.sctp import (
     IPPROTO_SCTP,
     SCTP_CHUNK_DATA,
     SCTP_CHUNK_INIT,

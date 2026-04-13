@@ -2,8 +2,8 @@
 import struct
 import unittest
 
-from packet_generator import PacketBuilder
-from packet_generator.pppoe import (
+from packeteer.generator import PacketBuilder
+from packeteer.generator.pppoe import (
     PPPoEHeader, PPPoETag,
     ETHERTYPE_PPPOE_DISCOVERY, ETHERTYPE_PPPOE_SESSION,
     PPP_IPV4, PPP_IPV6,
@@ -12,9 +12,9 @@ from packet_generator.pppoe import (
     PPPOE_TAG_SERVICE_NAME, PPPOE_TAG_HOST_UNIQ,
     build_pppoe_header,
 )
-from packet_parser.pppoe import packet_parser as pppoe_packet_parser
-from packet_parser.parser import parse_packet
-from packet_generator.pcap import LINKTYPE_ETHERNET
+from packeteer.parser.pppoe import packet_parser as pppoe_packet_parser
+from packeteer.parser.core import parse_packet
+from packeteer.generator.pcap import LINKTYPE_ETHERNET
 
 
 # ── build_pppoe_header unit tests ─────────────────────────────────────────────
@@ -241,12 +241,12 @@ class TestPPPoEParser(unittest.TestCase):
         self.assertEqual(size, 8)
 
     def test_session_next_proto_ipv4(self):
-        from packet_generator.ethernet import ETHERTYPE_IPV4
+        from packeteer.generator.ethernet import ETHERTYPE_IPV4
         _, next_proto, _ = pppoe_packet_parser(self._make_session(ppp_proto=PPP_IPV4))
         self.assertEqual(next_proto, ETHERTYPE_IPV4)
 
     def test_session_next_proto_ipv6(self):
-        from packet_generator.ethernet import ETHERTYPE_IPV6
+        from packeteer.generator.ethernet import ETHERTYPE_IPV6
         header = struct.pack("!BBHH", 0x11, 0x00, 0, 42)
         ppp = struct.pack("!H", PPP_IPV6)
         ipv6_stub = b"\x60" + b"\x00" * 19

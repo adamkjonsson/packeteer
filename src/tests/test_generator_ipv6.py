@@ -1,6 +1,6 @@
 import struct
 import unittest
-from packet_generator.ipv6 import IPv6Header, build_ipv6_header
+from packeteer.generator.ipv6 import IPv6Header, build_ipv6_header
 
 
 class TestIPv6Header(unittest.TestCase):

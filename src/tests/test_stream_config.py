@@ -9,7 +9,7 @@ from io import StringIO
 from unittest.mock import patch
 
 # Import the helpers directly
-from packeteer_cli import (
+from packeteer.__main__ import (
     _load_stream_config,
     _apply_stream_defaults,
     _STREAM_PARAMS,

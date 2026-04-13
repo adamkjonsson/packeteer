@@ -1,12 +1,12 @@
 # `PacketBuilder` — Python API
 
-{class}`~packet_generator.builder.PacketBuilder` is the fluent Python API
+{class}`~packeteer.generator.builder.PacketBuilder` is the fluent Python API
 behind `packeteer build`.  Each method **appends** one layer to a stack and
 returns `self`, so calls chain naturally.  Call `.build()` at the end to
 assemble the raw bytes.
 
 ```python
-from packet_generator import PacketBuilder
+from packeteer.generator import PacketBuilder
 
 pkt = (PacketBuilder()
     .ethernet(src_mac="00:00:00:00:00:01", dst_mac="00:00:00:00:00:02")
@@ -75,7 +75,7 @@ Appends a PPPoE header (RFC 2516).
 |-----------|---------|-------------|
 | `code` | `0` | `0` = session data frame; `9`/`7`/`25`/`101`/`167` for discovery |
 | `session_id` | `0` | 16-bit PPPoE session ID |
-| `tags` | `None` | List of {class}`~packet_generator.pppoe.PPPoETag` objects for discovery frames |
+| `tags` | `None` | List of {class}`~packeteer.generator.pppoe.PPPoETag` objects for discovery frames |
 
 ### `.ip(src, dst, ttl=64, tos=0, identification=0, flags=0b010, fragment_offset=0, traffic_class=0, flow_label=0)`
 
@@ -174,10 +174,10 @@ fields are computed automatically.
 | `window` | `65535` | Receive window size in bytes |
 | `urgent_ptr` | `0` | Urgent pointer (used when URG flag set) |
 | `reserved` | `0` | 4-bit reserved field |
-| `options` | `None` | {class}`~packet_generator.tcp.TCPOptions` with MSS, window scale, SACK, and timestamps |
+| `options` | `None` | {class}`~packeteer.generator.tcp.TCPOptions` with MSS, window scale, SACK, and timestamps |
 
 ```python
-from packet_generator.tcp import TCPOptions
+from packeteer.generator.tcp import TCPOptions
 
 # SYN with MSS and SACK permitted options
 pkt = (PacketBuilder()
@@ -219,8 +219,8 @@ SCTP data lives inside typed *chunk* objects rather than in a separate
 `.payload()` call.
 
 ```python
-from packet_generator import PacketBuilder
-from packet_generator.sctp import (
+from packeteer.generator import PacketBuilder
+from packeteer.generator.sctp import (
     SCTPInitChunk, SCTPDataChunk,
     SCTP_DATA_FLAG_BEGINNING, SCTP_DATA_FLAG_ENDING,
 )
@@ -344,13 +344,13 @@ You never need to compute or supply checksums manually.
 
 ## Writing to pcap files
 
-{func}`~packet_generator.pcap.write_pcap` and
-{func}`~packet_generator.pcap.write_pcapng` accept a list of
+{func}`~packeteer.generator.pcap.write_pcap` and
+{func}`~packeteer.generator.pcap.write_pcapng` accept a list of
 `(bytes, ts_sec, ts_frac)` tuples.
 
 ```python
 import time
-from packet_generator import PacketBuilder, write_pcap, write_pcapng, LINKTYPE_ETHERNET
+from packeteer.generator import PacketBuilder, write_pcap, write_pcapng, LINKTYPE_ETHERNET
 
 t = int(time.time())
 
@@ -389,7 +389,7 @@ write_pcap(pcap_tuples, path="fragmented.pcap", link_type=LINKTYPE_ETHERNET)
 Use `link_type=LINKTYPE_RAW` when the packets have no Ethernet header:
 
 ```python
-from packet_generator.pcap import LINKTYPE_RAW
+from packeteer.generator.pcap import LINKTYPE_RAW
 
 pkt = PacketBuilder().ip(src="10.0.0.1", dst="10.0.0.2").tcp().build()
 write_pcap([(pkt, 0, 0)], path="raw.pcap", link_type=LINKTYPE_RAW)

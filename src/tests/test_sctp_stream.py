@@ -4,7 +4,7 @@ from __future__ import annotations
 import struct
 import pytest
 
-from packet_generator.sctp_stream import generate_sctp_stream, SCTPStream, SCTPStreamPacket
+from packeteer.generator.sctp_stream import generate_sctp_stream, SCTPStream, SCTPStreamPacket
 
 _HANDSHAKE_LABELS = ["INIT", "INIT-ACK", "COOKIE-ECHO", "COOKIE-ACK"]
 _SHUTDOWN_LABELS  = ["SHUTDOWN", "SHUTDOWN-ACK", "SHUTDOWN-COMPLETE"]

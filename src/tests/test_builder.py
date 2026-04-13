@@ -1,6 +1,6 @@
 import struct
 import unittest
-from packet_generator import PacketBuilder
+from packeteer.generator import PacketBuilder
 
 
 class TestPacketBuilderSizes(unittest.TestCase):

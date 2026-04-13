@@ -1,6 +1,6 @@
 # Sanitiser internals
 
-`replacer.py` implements `sanitise()`, which replaces sensitive field values
+`packeteer/sanitiser.py` implements `sanitise()`, which replaces sensitive field values
 in a packet spec dict with synthetic but structurally valid equivalents.
 
 ## Design goals

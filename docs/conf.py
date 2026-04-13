@@ -3,7 +3,7 @@ import os
 import sys
 from importlib.metadata import version as _pkg_version, PackageNotFoundError
 
-# Make packet_generator and packet_parser importable without pip install
+# Make packeteer importable without pip install
 sys.path.insert(0, os.path.abspath("../src"))
 
 # ── Project metadata ──────────────────────────────────────────────────────────

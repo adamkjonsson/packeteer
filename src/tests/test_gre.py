@@ -4,9 +4,9 @@ import json
 import struct
 import unittest
 
-from packet_generator import PacketBuilder, GREHeader, IPPROTO_GRE, GRE_PROTO_IPV4, GRE_PROTO_IPV6, GRE_PROTO_TEB
-from packet_generator.pcap import LINKTYPE_RAW, write_pcap
-from packet_parser.parser import parse_packet, parse_pcap_file, ParsedPacket
+from packeteer.generator import PacketBuilder, GREHeader, IPPROTO_GRE, GRE_PROTO_IPV4, GRE_PROTO_IPV6, GRE_PROTO_TEB
+from packeteer.generator.pcap import LINKTYPE_RAW, write_pcap
+from packeteer.parser.core import parse_packet, parse_pcap_file, ParsedPacket
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +139,7 @@ class TestPacketBuilderGRE(unittest.TestCase):
 
     def test_gre_checksum_correctness(self):
         """RFC 1071 checksum over GRE header + payload should verify to 0."""
-        from packet_generator.checksum import ones_complement_checksum
+        from packeteer.generator.checksum import ones_complement_checksum
         raw = (PacketBuilder()
             .ethernet()
             .ip(src="10.0.0.1", dst="10.0.0.2")
@@ -580,7 +580,7 @@ class TestGRERoundTrip(unittest.TestCase):
         with tempfile.NamedTemporaryFile(suffix=".pcap", delete=False) as pf:
             pf_path = pf.name
         try:
-            packet_lab = os.path.join(os.path.dirname(__file__), "..", "packeteer_cli.py")
+            packet_lab = os.path.join(os.path.dirname(__file__), "..", "packeteer/__main__.py")
             result = subprocess.run(
                 [sys.executable, packet_lab, "build", jf_path, "--pcap", pf_path],
                 capture_output=True, text=True
@@ -588,7 +588,7 @@ class TestGRERoundTrip(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
 
             with open(pf_path, "rb") as f:
-                from packet_parser.pcap import read_pcap
+                from packeteer.parser.pcap import read_pcap
                 pcap = read_pcap(file_object=f)
             raw, _, _ = pcap.packets[0]
             pkt = parse_packet(raw)

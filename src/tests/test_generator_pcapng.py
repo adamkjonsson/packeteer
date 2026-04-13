@@ -2,7 +2,7 @@ import io
 import struct
 import unittest
 
-from packet_generator.pcap import write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW
+from packeteer.generator.pcap import write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW
 
 _SHB_TYPE = 0x0A0D0D0A
 _IDB_TYPE = 0x00000001

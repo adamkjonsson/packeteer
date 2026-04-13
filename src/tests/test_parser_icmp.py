@@ -1,10 +1,10 @@
 import struct
 import unittest
 
-from packet_generator.icmp import ICMPHeader, build_icmp_header
-from packet_generator.icmpv6 import ICMPv6Header, build_icmpv6_header
-from packet_parser.icmp import packet_parser as parse_icmp
-from packet_parser.icmpv6 import packet_parser as parse_icmpv6
+from packeteer.generator.icmp import ICMPHeader, build_icmp_header
+from packeteer.generator.icmpv6 import ICMPv6Header, build_icmpv6_header
+from packeteer.parser.icmp import packet_parser as parse_icmp
+from packeteer.parser.icmpv6 import packet_parser as parse_icmpv6
 
 TYPE_ECHO_REQUEST = 8
 TYPE_ECHO_REPLY = 0

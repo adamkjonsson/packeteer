@@ -10,8 +10,8 @@ and serialise with :func:`to_json_string`.
 Typical usage::
 
     from packet_parser import ethernet_packet_parser, ip_packet_parser, tcp_packet_parser
-    from packet_parser.pcap import read_pcap
-    from packet_parser.to_config import update_config, to_packet_spec, to_json_string
+    from .pcap import read_pcap
+    from .to_config import update_config, to_packet_spec, to_json_string
 
     pcap = read_pcap(path="capture.pcap")
     packet_configs = []
@@ -38,20 +38,20 @@ import socket
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from packet_parser.parser import ParsedPacket
+    from .core import ParsedPacket
 
-from packet_generator.ethernet import EthernetHeader
-from packet_generator.etherip import EtherIPHeader, IPPROTO_ETHERIP
-from packet_generator.gre import GREHeader
-from packet_generator.ip import IPHeader
-from packet_generator.ipv6 import IPv6Header
-from packet_generator.mpls import MPLSLabel
-from packet_generator.pppoe import PPPoEHeader, PPPOE_CODE_SESSION
-from packet_generator.tcp import TCPHeader, TCPOptions
-from packet_generator.udp import UDPHeader
-from packet_generator.icmp import ICMPHeader
-from packet_generator.icmpv6 import ICMPv6Header
-from packet_generator.sctp import (
+from packeteer.generator.ethernet import EthernetHeader
+from packeteer.generator.etherip import EtherIPHeader, IPPROTO_ETHERIP
+from packeteer.generator.gre import GREHeader
+from packeteer.generator.ip import IPHeader
+from packeteer.generator.ipv6 import IPv6Header
+from packeteer.generator.mpls import MPLSLabel
+from packeteer.generator.pppoe import PPPoEHeader, PPPOE_CODE_SESSION
+from packeteer.generator.tcp import TCPHeader, TCPOptions
+from packeteer.generator.udp import UDPHeader
+from packeteer.generator.icmp import ICMPHeader
+from packeteer.generator.icmpv6 import ICMPv6Header
+from packeteer.generator.sctp import (
     SCTPHeader,
     SCTPDataChunk,
     SCTPInitChunk,
@@ -379,7 +379,7 @@ def update_config(
     - :class:`~packet_generator.ip.IPHeader` / :class:`~packet_generator.ipv6.IPv6Header` → ``network`` section
     - :class:`~packet_generator.etherip.EtherIPHeader` / GRE /
       IP-in-IP → use :func:`apply_tunneled` instead; tunnel serialisation
-      requires the inner :class:`~packet_parser.parser.ParsedPacket` as
+      requires the inner :class:`~packeteer.parser.core.ParsedPacket` as
       additional context and cannot be dispatched through ``update_config``
       alone.
     - :class:`~packet_generator.tcp.TCPHeader` → ``transport`` section (TCP fields)
@@ -424,9 +424,9 @@ def apply_tunneled(config: dict[str, Any], pkt: "ParsedPacket") -> None:
     Handles all three tunnel types — IP-in-IP, GRE, and EtherIP — by
     dispatching to the appropriate private helper.  Call this after the
     outer IP layer has been written via :func:`update_config` whenever
-    :attr:`~packet_parser.parser.ParsedPacket.ipip`,
-    :attr:`~packet_parser.parser.ParsedPacket.gre`, or
-    :attr:`~packet_parser.parser.ParsedPacket.etherip` is set on *pkt*.
+    :attr:`~packeteer.parser.core.ParsedPacket.ipip`,
+    :attr:`~packeteer.parser.core.ParsedPacket.gre`, or
+    :attr:`~packeteer.parser.core.ParsedPacket.etherip` is set on *pkt*.
 
     Modifies *config* in place.  Does nothing when *pkt* carries no tunnel.
 

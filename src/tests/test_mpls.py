@@ -2,11 +2,11 @@
 import struct
 import unittest
 
-from packet_generator import PacketBuilder
-from packet_generator.mpls import MPLSLabel, build_mpls_label, ETHERTYPE_MPLS_UNICAST
-from packet_parser.mpls import packet_parser as mpls_packet_parser
-from packet_parser.parser import parse_packet
-from packet_generator.pcap import LINKTYPE_ETHERNET
+from packeteer.generator import PacketBuilder
+from packeteer.generator.mpls import MPLSLabel, build_mpls_label, ETHERTYPE_MPLS_UNICAST
+from packeteer.parser.mpls import packet_parser as mpls_packet_parser
+from packeteer.parser.core import parse_packet
+from packeteer.generator.pcap import LINKTYPE_ETHERNET
 
 
 class TestMPLSLabelBuild(unittest.TestCase):
@@ -159,13 +159,13 @@ class TestMPLSParser(unittest.TestCase):
         self.assertEqual(next_proto, ETHERTYPE_MPLS_UNICAST)
 
     def test_parser_bos1_ipv4_next_proto(self):
-        from packet_generator.ethernet import ETHERTYPE_IPV4
+        from packeteer.generator.ethernet import ETHERTYPE_IPV4
         data = self._make_label_bytes(100, bos=True) + b"\x45" + b"\x00" * 19
         _, next_proto, _ = mpls_packet_parser(data)
         self.assertEqual(next_proto, ETHERTYPE_IPV4)
 
     def test_parser_bos1_ipv6_next_proto(self):
-        from packet_generator.ethernet import ETHERTYPE_IPV6
+        from packeteer.generator.ethernet import ETHERTYPE_IPV6
         data = self._make_label_bytes(100, bos=True) + b"\x60" + b"\x00" * 19
         _, next_proto, _ = mpls_packet_parser(data)
         self.assertEqual(next_proto, ETHERTYPE_IPV6)

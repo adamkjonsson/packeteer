@@ -6,9 +6,9 @@ select the next parser automatically.
 
 Example — single raw packet::
 
-    from packet_parser.parser import parse_packet
-    from packet_generator import PacketBuilder
-    from packet_generator.pcap import LINKTYPE_RAW
+    from .parser import parse_packet
+    from packeteer.generator import PacketBuilder
+    from packeteer.generator.pcap import LINKTYPE_RAW
 
     raw = PacketBuilder().ip(src="10.0.0.1", dst="10.0.0.2").tcp(dst_port=443).build()
     pkt = parse_packet(raw, link_type=LINKTYPE_RAW)
@@ -19,8 +19,8 @@ Example — single raw packet::
 
 Example — reading from a pcap file::
 
-    from packet_parser.pcap import read_pcap
-    from packet_parser.parser import parse_pcap_packet
+    from .pcap import read_pcap
+    from .parser import parse_pcap_packet
 
     pcap = read_pcap(path="capture.pcap")
     for record in pcap.packets:
@@ -37,39 +37,39 @@ import socket
 from dataclasses import dataclass, field
 from typing import Any
 
-from packet_generator.ethernet import (
+from packeteer.generator.ethernet import (
     ETHERTYPE_IPV4,
     ETHERTYPE_IPV6,
     EthernetHeader,
     VLANTag,
 )
-from packet_generator.ip import IPHeader
-from packet_generator.ipv6 import IPv6Header
-from packet_generator.etherip import EtherIPHeader, IPPROTO_ETHERIP
-from packet_generator.gre import GREHeader, IPPROTO_GRE, GRE_PROTO_TEB
-from packet_generator.mpls import MPLSLabel, ETHERTYPE_MPLS_UNICAST, ETHERTYPE_MPLS_MULTICAST
-from packet_generator.pppoe import PPPoEHeader, ETHERTYPE_PPPOE_DISCOVERY, ETHERTYPE_PPPOE_SESSION
-from packet_generator.tcp import TCPHeader
-from packet_generator.udp import UDPHeader
-from packet_generator.icmp import ICMPHeader
-from packet_generator.icmpv6 import ICMPv6Header
-from packet_generator.sctp import SCTPHeader
-from packet_generator.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW
+from packeteer.generator.ip import IPHeader
+from packeteer.generator.ipv6 import IPv6Header
+from packeteer.generator.etherip import EtherIPHeader, IPPROTO_ETHERIP
+from packeteer.generator.gre import GREHeader, IPPROTO_GRE, GRE_PROTO_TEB
+from packeteer.generator.mpls import MPLSLabel, ETHERTYPE_MPLS_UNICAST, ETHERTYPE_MPLS_MULTICAST
+from packeteer.generator.pppoe import PPPoEHeader, ETHERTYPE_PPPOE_DISCOVERY, ETHERTYPE_PPPOE_SESSION
+from packeteer.generator.tcp import TCPHeader
+from packeteer.generator.udp import UDPHeader
+from packeteer.generator.icmp import ICMPHeader
+from packeteer.generator.icmpv6 import ICMPv6Header
+from packeteer.generator.sctp import SCTPHeader
+from packeteer.generator.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW
 
-from packet_parser.pcap import PcapFileHeader, read_pcap
-from packet_parser.to_config import update_config, to_packet_spec, to_json_string, apply_tunneled
+from .pcap import PcapFileHeader, read_pcap
+from .to_config import update_config, to_packet_spec, to_json_string, apply_tunneled
 
-from packet_parser.ethernet import packet_parser as _ethernet_parser
-from packet_parser.etherip import packet_parser as _etherip_parser
-from packet_parser.gre import packet_parser as _gre_parser
-from packet_parser.mpls import packet_parser as _mpls_parser
-from packet_parser.pppoe import packet_parser as _pppoe_parser
-from packet_parser.ip import packet_parser as _ip_parser
-from packet_parser.tcp import packet_parser as _tcp_parser
-from packet_parser.udp import packet_parser as _udp_parser
-from packet_parser.icmp import packet_parser as _icmp_parser
-from packet_parser.icmpv6 import packet_parser as _icmpv6_parser
-from packet_parser.sctp import packet_parser as _sctp_parser
+from .ethernet import packet_parser as _ethernet_parser
+from .etherip import packet_parser as _etherip_parser
+from .gre import packet_parser as _gre_parser
+from .mpls import packet_parser as _mpls_parser
+from .pppoe import packet_parser as _pppoe_parser
+from .ip import packet_parser as _ip_parser
+from .tcp import packet_parser as _tcp_parser
+from .udp import packet_parser as _udp_parser
+from .icmp import packet_parser as _icmp_parser
+from .icmpv6 import packet_parser as _icmpv6_parser
+from .sctp import packet_parser as _sctp_parser
 
 _TRANSPORT_PARSERS = {
     socket.IPPROTO_TCP:    _tcp_parser,
@@ -291,7 +291,7 @@ def parse_pcap_packet(
 
     Args:
         record: A ``(data, ts_sec, ts_frac)`` tuple as produced by
-            :func:`packet_parser.pcap.read_pcap` — one element of
+            :func:`packeteer.parser.pcap.read_pcap` — one element of
             :attr:`PcapFile.packets`.
         file_header: The global pcap header from the same file.  Provides the
             link-layer type and the timestamp resolution flag.
@@ -317,10 +317,10 @@ def parse_pcap_file(
 ) -> str:
     """Parse every packet in a pcap file and return a packet spec string.
 
-    Reads the file with :func:`packet_parser.pcap.read_pcap`, parses each
+    Reads the file with :func:`packeteer.parser.pcap.read_pcap`, parses each
     record with :func:`parse_pcap_packet`, converts the layers to a config dict
-    with :func:`packet_parser.to_config.update_config`, and serialises the
-    result with :func:`packet_parser.to_config.to_json_string`.
+    with :func:`packeteer.parser.to_config.update_config`, and serialises the
+    result with :func:`packeteer.parser.to_config.to_json_string`.
 
     The per-packet ``metadata`` block is populated with ``timestamp_s`` and
     either ``timestamp_us`` or ``timestamp_ns`` (depending on the file's

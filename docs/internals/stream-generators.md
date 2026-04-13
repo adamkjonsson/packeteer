@@ -4,7 +4,7 @@ The three stream generator modules (`tcp_stream.py`, `udp_stream.py`,
 `sctp_stream.py`) produce sequences of fully assembled, timestamped packets
 that represent realistic network exchanges.
 
-Shared utilities live in `packet_generator/_stream_common.py`.
+Shared utilities live in `packeteer/generator/_stream_common.py`.
 
 ## TCP stream
 
@@ -85,7 +85,7 @@ When `mtu` is set, every packet whose IP-layer size exceeds the MTU is split
 into fragments after it is built.  `_fragment_packet()` calls
 `_fragment_ip_raw(raw, ip_start, mtu, encap)` from `_stream_common.py`, which
 delegates to `fragment_ipv4` or `fragment_ipv6` from
-`packet_generator/fragmentation.py`.
+`packeteer/generator/fragmentation.py`.
 
 `_encap_ip_start(encap, include_ethernet)` computes the byte offset of the
 outermost IP header so that the fragmentation point is always the outer

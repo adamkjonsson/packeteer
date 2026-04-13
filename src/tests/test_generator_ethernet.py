@@ -1,6 +1,6 @@
 import struct
 import unittest
-from packet_generator.ethernet import (
+from packeteer.generator.ethernet import (
     EthernetHeader, VLANTag, build_ethernet_header,
     ETHERTYPE_IPV4, ETHERTYPE_IPV6, ETHERTYPE_8021Q,
     ETHERNET_MIN_FRAME_SIZE,
@@ -126,7 +126,7 @@ class TestEthernetMinFrameSize(unittest.TestCase):
         self.assertEqual(ETHERNET_MIN_FRAME_SIZE, 60)
 
     def test_padding_by_default(self):
-        from packet_generator import PacketBuilder
+        from packeteer.generator import PacketBuilder
         pkt = (PacketBuilder()
                .ethernet(pad=True)
                .ip(src="10.0.0.1", dst="10.0.0.2")
@@ -136,7 +136,7 @@ class TestEthernetMinFrameSize(unittest.TestCase):
         self.assertEqual(len(pkt), 60)
 
     def test_short_frame_padded_to_60(self):
-        from packet_generator import PacketBuilder
+        from packeteer.generator import PacketBuilder
         pkt = (PacketBuilder()
                .ethernet(pad=True)
                .ip(src="10.0.0.1", dst="10.0.0.2")
@@ -145,7 +145,7 @@ class TestEthernetMinFrameSize(unittest.TestCase):
         self.assertEqual(len(pkt), 60)
 
     def test_padding_bytes_are_zero(self):
-        from packet_generator import PacketBuilder
+        from packeteer.generator import PacketBuilder
         pkt = (PacketBuilder()
                .ethernet(pad=True)
                .ip(src="10.0.0.1", dst="10.0.0.2")
@@ -155,7 +155,7 @@ class TestEthernetMinFrameSize(unittest.TestCase):
         self.assertEqual(pkt[42:], b'\x00' * 18)
 
     def test_frame_at_exact_minimum_not_padded(self):
-        from packet_generator import PacketBuilder
+        from packeteer.generator import PacketBuilder
         # 14 (eth) + 20 (ip) + 8 (udp) + 18 (payload) = 60 — exactly at minimum
         pkt = (PacketBuilder()
                .ethernet(pad=True)
@@ -166,7 +166,7 @@ class TestEthernetMinFrameSize(unittest.TestCase):
         self.assertEqual(len(pkt), 60)
 
     def test_frame_above_minimum_not_padded(self):
-        from packet_generator import PacketBuilder
+        from packeteer.generator import PacketBuilder
         pkt = (PacketBuilder()
                .ethernet(pad=True)
                .ip(src="10.0.0.1", dst="10.0.0.2")
@@ -177,7 +177,7 @@ class TestEthernetMinFrameSize(unittest.TestCase):
         self.assertEqual(len(pkt), 142)
 
     def test_padding_with_vlan_tag(self):
-        from packet_generator import PacketBuilder
+        from packeteer.generator import PacketBuilder
         # 18 (eth+vlan) + 20 (ip) + 8 (icmp) = 46 — needs 14 bytes of padding
         pkt = (PacketBuilder()
                .ethernet(pad=True)
@@ -188,7 +188,7 @@ class TestEthernetMinFrameSize(unittest.TestCase):
         self.assertEqual(len(pkt), 60)
 
     def test_no_padding_without_ethernet(self):
-        from packet_generator import PacketBuilder
+        from packeteer.generator import PacketBuilder
         pkt = (PacketBuilder()
                .ip(src="10.0.0.1", dst="10.0.0.2")
                .icmp()

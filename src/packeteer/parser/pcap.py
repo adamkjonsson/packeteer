@@ -315,7 +315,7 @@ def read_pcap(
 
     Example::
 
-        from packet_parser.pcap import read_pcap
+        from .pcap import read_pcap
 
         result = read_pcap(path="capture.pcap")
         print(result.header.link_type)

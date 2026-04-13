@@ -3,10 +3,10 @@ import io
 import json
 import unittest
 
-from packet_generator import PacketBuilder
-from packet_generator.pcap import LINKTYPE_RAW
-from packet_parser.parser import parse_packet, parse_pcap_file, ParsedPacket
-from packet_generator.pcap import write_pcap
+from packeteer.generator import PacketBuilder
+from packeteer.generator.pcap import LINKTYPE_RAW
+from packeteer.parser.core import parse_packet, parse_pcap_file, ParsedPacket
+from packeteer.generator.pcap import write_pcap
 
 
 # ---------------------------------------------------------------------------
@@ -297,7 +297,7 @@ class TestIPIPRoundTrip(unittest.TestCase):
         with tempfile.NamedTemporaryFile(suffix=".pcap", delete=False) as pf:
             pf_path = pf.name
         try:
-            packet_lab = os.path.join(os.path.dirname(__file__), "..", "packeteer_cli.py")
+            packet_lab = os.path.join(os.path.dirname(__file__), "..", "packeteer/__main__.py")
             result = subprocess.run(
                 [sys.executable, packet_lab, "build", jf_path, "--pcap", pf_path],
                 capture_output=True, text=True
@@ -305,7 +305,7 @@ class TestIPIPRoundTrip(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
 
             with open(pf_path, "rb") as f:
-                from packet_parser.pcap import read_pcap
+                from packeteer.parser.pcap import read_pcap
                 pcap = read_pcap(file_object=f)
             raw, _, _ = pcap.packets[0]
             pkt = parse_packet(raw)

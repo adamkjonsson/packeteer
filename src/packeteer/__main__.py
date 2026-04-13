@@ -27,29 +27,29 @@ import configparser
 import json
 import sys
 from importlib.metadata import version as _pkg_version, PackageNotFoundError as _PkgNotFoundError
-from packet_generator import PacketBuilder
-from packet_generator.tcp import TCPOptions
-from packet_generator.pcap import write_pcap, write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW
-from packet_generator.tcp_stream import generate_tcp_stream
-from packet_generator.udp_stream import generate_udp_stream
-from packet_generator.sctp_stream import generate_sctp_stream
-from packet_generator.stream_encap import (
+from packeteer.generator import PacketBuilder
+from packeteer.generator.tcp import TCPOptions
+from packeteer.generator.pcap import write_pcap, write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW
+from packeteer.generator.tcp_stream import generate_tcp_stream
+from packeteer.generator.udp_stream import generate_udp_stream
+from packeteer.generator.sctp_stream import generate_sctp_stream
+from packeteer.generator.stream_encap import (
     StreamEncap, VLANEncap, QinQEncap, MPLSEncap, PPPoEEncap,
     GREEncap, EtherIPEncap, IPIPEncap,
 )
-from packet_generator.pppoe import PPPoETag, PPPOE_CODE_SESSION
-from packet_generator.sctp import (
+from packeteer.generator.pppoe import PPPoETag, PPPOE_CODE_SESSION
+from packeteer.generator.sctp import (
     SCTPDataChunk, SCTPInitChunk, SCTPInitAckChunk, SCTPSackChunk,
     SCTPHeartbeatChunk, SCTPHeartbeatAckChunk, SCTPAbortChunk,
     SCTPShutdownChunk, SCTPShutdownAckChunk, SCTPErrorChunk,
     SCTPCookieEchoChunk, SCTPCookieAckChunk, SCTPShutdownCompleteChunk,
     SCTPGenericChunk, SCTPChunk,
 )
-from packet_parser.parser import parse_pcap_file, parse_packet
-from packet_parser.to_config import (
+from packeteer.parser.core import parse_pcap_file, parse_packet
+from packeteer.parser.to_config import (
     update_config, to_packet_spec, to_json_string, apply_tunneled,
 )
-from replacer import SanitiseOptions, sanitise
+from packeteer.sanitiser import SanitiseOptions, sanitise
 
 
 def _parse_sctp_chunk(spec: dict, packet_num: int) -> SCTPChunk:

@@ -1,6 +1,6 @@
 # `PacketBuilder`
 
-{class}`~packet_generator.builder.PacketBuilder` is the primary entry point
+{class}`~packeteer.generator.builder.PacketBuilder` is the primary entry point
 for constructing raw network packets.  Each fluent method **appends** one
 layer to an ordered stack; call `.build()` or `.fragment()` to assemble the
 final bytes with all checksums computed automatically.
@@ -42,7 +42,7 @@ first IP layer in the stack is the fragmentation point.  See
 ## Full API
 
 ```{eval-rst}
-.. autoclass:: packet_generator.builder.PacketBuilder
+.. autoclass:: packeteer.generator.builder.PacketBuilder
    :members:
    :undoc-members:
 ```
