@@ -26,6 +26,7 @@ import argparse
 import configparser
 import json
 import sys
+from importlib.metadata import version as _pkg_version, PackageNotFoundError as _PkgNotFoundError
 from packet_generator import PacketBuilder
 from packet_generator.tcp import TCPOptions
 from packet_generator.pcap import write_pcap, write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW
@@ -897,6 +898,12 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
+    try:
+        _version = _pkg_version("packeteer")
+    except _PkgNotFoundError:
+        _version = "unknown"
+    parser.add_argument("--version", action="version", version=f"packeteer {_version}")
+
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # ── build subcommand ──────────────────────────────────────────────────────
