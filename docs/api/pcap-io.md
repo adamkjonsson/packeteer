@@ -8,11 +8,11 @@ pcapng (`.pcapng`) files.  Both formats are detected automatically on read.
 ## Writing
 
 ```{eval-rst}
-.. autofunction:: packeteer.generator.pcap.write_pcap
+.. autofunction:: packeteer.pcap.write_pcap
 ```
 
 ```{eval-rst}
-.. autofunction:: packeteer.generator.pcap.write_pcapng
+.. autofunction:: packeteer.pcap.write_pcapng
 ```
 
 ---
@@ -20,16 +20,16 @@ pcapng (`.pcapng`) files.  Both formats are detected automatically on read.
 ## Reading
 
 ```{eval-rst}
-.. autofunction:: packeteer.parser.pcap.read_pcap
+.. autofunction:: packeteer.pcap.read_pcap
 ```
 
 ```{eval-rst}
-.. autoclass:: packeteer.parser.pcap.PcapFile
+.. autoclass:: packeteer.pcap.PcapFile
    :members:
 ```
 
 ```{eval-rst}
-.. autoclass:: packeteer.parser.pcap.PcapFileHeader
+.. autoclass:: packeteer.pcap.PcapFileHeader
    :members:
 ```
 
@@ -42,5 +42,4 @@ pcapng (`.pcapng`) files.  Both formats are detected automatically on read.
 | `LINKTYPE_ETHERNET` | `1` | Ethernet II — use when packets include an Ethernet header |
 | `LINKTYPE_RAW` | `101` | Raw IP — use for packets with no Ethernet header |
 
-Both constants are exported from `packeteer.generator.pcap` and re-exported
-from `packeteer.generator`.
+Both constants live in `packeteer.pcap`.

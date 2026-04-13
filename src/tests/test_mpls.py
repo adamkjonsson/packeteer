@@ -6,7 +6,7 @@ from packeteer.generator import PacketBuilder
 from packeteer.generator.mpls import MPLSLabel, build_mpls_label, ETHERTYPE_MPLS_UNICAST
 from packeteer.parser.mpls import packet_parser as mpls_packet_parser
 from packeteer.parser.core import parse_packet
-from packeteer.generator.pcap import LINKTYPE_ETHERNET
+from packeteer.pcap import LINKTYPE_ETHERNET
 
 
 class TestMPLSLabelBuild(unittest.TestCase):

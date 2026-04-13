@@ -62,7 +62,7 @@ pkt = (PacketBuilder()
 )
 
 # SCTP (RFC 9260) — data lives inside chunks, not a separate payload layer
-from packeteer.generator.sctp import SCTPDataChunk
+from packeteer.generator import SCTPDataChunk
 
 pkt = (PacketBuilder()
     .ip(src="10.0.0.1", dst="10.0.0.2")
@@ -78,9 +78,9 @@ pkt = (PacketBuilder()
 
 ```python
 # Generate a GRE-tunnelled TCP stream and write it to pcap
-from packeteer.generator.tcp_stream import generate_tcp_stream
-from packeteer.generator.stream_encap import GREEncap, MPLSEncap, IPIPEncap
-from packeteer.generator import write_pcap
+from packeteer.generator import generate_tcp_stream
+from packeteer.generator import GREEncap, MPLSEncap, IPIPEncap
+from packeteer.pcap import write_pcap
 
 stream = generate_tcp_stream(
     client_ip="10.0.0.1",

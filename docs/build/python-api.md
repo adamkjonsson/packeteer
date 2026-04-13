@@ -177,7 +177,7 @@ fields are computed automatically.
 | `options` | `None` | {class}`~packeteer.generator.tcp.TCPOptions` with MSS, window scale, SACK, and timestamps |
 
 ```python
-from packeteer.generator.tcp import TCPOptions
+from packeteer.generator import TCPOptions
 
 # SYN with MSS and SACK permitted options
 pkt = (PacketBuilder()
@@ -220,7 +220,7 @@ SCTP data lives inside typed *chunk* objects rather than in a separate
 
 ```python
 from packeteer.generator import PacketBuilder
-from packeteer.generator.sctp import (
+from packeteer.generator import (
     SCTPInitChunk, SCTPDataChunk,
     SCTP_DATA_FLAG_BEGINNING, SCTP_DATA_FLAG_ENDING,
 )
@@ -344,13 +344,13 @@ You never need to compute or supply checksums manually.
 
 ## Writing to pcap files
 
-{func}`~packeteer.generator.pcap.write_pcap` and
-{func}`~packeteer.generator.pcap.write_pcapng` accept a list of
-`(bytes, ts_sec, ts_frac)` tuples.
+{func}`~packeteer.pcap.write_pcap` and {func}`~packeteer.pcap.write_pcapng`
+accept a list of `(bytes, ts_sec, ts_frac)` tuples.
 
 ```python
 import time
-from packeteer.generator import PacketBuilder, write_pcap, write_pcapng, LINKTYPE_ETHERNET
+from packeteer.generator import PacketBuilder
+from packeteer.pcap import write_pcap, write_pcapng, LINKTYPE_ETHERNET
 
 t = int(time.time())
 
@@ -389,7 +389,7 @@ write_pcap(pcap_tuples, path="fragmented.pcap", link_type=LINKTYPE_ETHERNET)
 Use `link_type=LINKTYPE_RAW` when the packets have no Ethernet header:
 
 ```python
-from packeteer.generator.pcap import LINKTYPE_RAW
+from packeteer.pcap import LINKTYPE_RAW
 
 pkt = PacketBuilder().ip(src="10.0.0.1", dst="10.0.0.2").tcp().build()
 write_pcap([(pkt, 0, 0)], path="raw.pcap", link_type=LINKTYPE_RAW)

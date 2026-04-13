@@ -33,7 +33,7 @@ from packeteer.generator.sctp import (
 from packeteer.parser.sctp import packet_parser as sctp_parser
 from packeteer.parser.core import parse_packet
 from packeteer.parser.to_config import update_config
-from packeteer.generator.pcap import LINKTYPE_RAW
+from packeteer.pcap import LINKTYPE_RAW
 
 
 # ── Group 1: crc32c ───────────────────────────────────────────────────────────

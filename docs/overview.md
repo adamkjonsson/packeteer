@@ -33,7 +33,7 @@ The Python API gives full control when scripting is more convenient than JSON:
 
 ```python
 from packeteer.generator import PacketBuilder
-from packeteer.generator.pcap import write_pcap
+from packeteer.pcap import write_pcap
 
 packets = []
 for dst_port in [80, 443, 8080]:

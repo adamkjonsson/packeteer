@@ -5,7 +5,7 @@ import struct
 import unittest
 
 from packeteer.generator import PacketBuilder, GREHeader, IPPROTO_GRE, GRE_PROTO_IPV4, GRE_PROTO_IPV6, GRE_PROTO_TEB
-from packeteer.generator.pcap import LINKTYPE_RAW, write_pcap
+from packeteer.pcap import LINKTYPE_RAW, write_pcap
 from packeteer.parser.core import parse_packet, parse_pcap_file, ParsedPacket
 
 
@@ -588,7 +588,7 @@ class TestGRERoundTrip(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
 
             with open(pf_path, "rb") as f:
-                from packeteer.parser.pcap import read_pcap
+                from packeteer.pcap import read_pcap
                 pcap = read_pcap(file_object=f)
             raw, _, _ = pcap.packets[0]
             pkt = parse_packet(raw)

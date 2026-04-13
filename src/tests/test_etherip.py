@@ -4,7 +4,7 @@ import unittest
 
 from packeteer.generator import PacketBuilder
 from packeteer.generator.etherip import EtherIPHeader, IPPROTO_ETHERIP, build_etherip_header
-from packeteer.generator.pcap import LINKTYPE_ETHERNET
+from packeteer.pcap import LINKTYPE_ETHERNET
 from packeteer.parser import etherip_packet_parser
 from packeteer.parser.core import parse_packet, ParsedPacket
 
@@ -315,7 +315,7 @@ class TestParsePacketEtherIPRoundTrip(unittest.TestCase):
     def test_round_trip_via_json(self):
         import json
         from packeteer.parser.core import parse_pcap_file
-        from packeteer.generator.pcap import write_pcap
+        from packeteer.pcap import write_pcap
         import io
 
         raw = (PacketBuilder()
@@ -351,7 +351,7 @@ class TestParsePacketEtherIPRoundTrip(unittest.TestCase):
     def test_double_nested_round_trip_json(self):
         import json
         from packeteer.parser.core import parse_pcap_file
-        from packeteer.generator.pcap import write_pcap
+        from packeteer.pcap import write_pcap
         import io
 
         raw = (PacketBuilder()

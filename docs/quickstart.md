@@ -37,7 +37,8 @@ See {doc}`api/packet-builder` for the full method reference.
 
 ```python
 import time
-from packeteer.generator import PacketBuilder, write_pcap, LINKTYPE_ETHERNET
+from packeteer.generator import PacketBuilder
+from packeteer.pcap import write_pcap, LINKTYPE_ETHERNET
 
 t = int(time.time())
 packets = [
@@ -76,8 +77,8 @@ layer filled in.
 
 ```python
 from packeteer.generator import PacketBuilder
-from packeteer.generator.pcap import LINKTYPE_RAW
-from packeteer.parser.core import parse_packet
+from packeteer.pcap import LINKTYPE_RAW
+from packeteer.parser import parse_packet
 
 raw = (PacketBuilder()
     .ip(src="10.0.0.1", dst="10.0.0.2")
@@ -125,7 +126,7 @@ inside typed *chunks* rather than in a separate `.payload()` layer:
 
 ```python
 from packeteer.generator import PacketBuilder
-from packeteer.generator.sctp import (
+from packeteer.generator import (
     SCTPDataChunk, SCTPInitChunk,
     SCTP_DATA_FLAG_BEGINNING, SCTP_DATA_FLAG_ENDING,
 )

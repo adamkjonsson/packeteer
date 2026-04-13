@@ -54,8 +54,7 @@ and a round-trip `parse → build` reconstruction works without any conversion.
 
 ## pcap I/O
 
-Both the `read_pcap` function (in `packeteer/parser/pcap.py`) and the `write_pcap`
-/ `write_pcapng` functions (in `packeteer/generator/pcap.py`) work with
-`(raw_bytes, ts_sec, ts_frac)` tuples.  The pcap layer is deliberately thin —
-it does nothing more than read or write the file container and delegate all
-packet interpretation to the parser or builder.
+`read_pcap`, `write_pcap`, and `write_pcapng` all live in `packeteer/pcap.py`
+and work with `(raw_bytes, ts_sec, ts_frac)` tuples.  The pcap layer is
+deliberately thin — it does nothing more than read or write the file container
+and delegates all packet interpretation to the parser or builder.

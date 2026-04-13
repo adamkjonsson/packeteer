@@ -61,9 +61,9 @@ For fine-grained control, call the underlying functions directly:
 ```python
 import socket
 from packeteer.generator import fragment_ipv4, fragment_ipv6
-from packeteer.generator.ip import IPHeader
-from packeteer.generator.ipv6 import IPv6Header
-from packeteer.generator.ethernet import EthernetHeader, ETHERTYPE_IPV4, ETHERTYPE_IPV6
+from packeteer.generator import IPHeader
+from packeteer.generator import IPv6Header
+from packeteer.generator import EthernetHeader, ETHERTYPE_IPV4, ETHERTYPE_IPV6
 
 # IPv4 — with an Ethernet prefix
 ip_hdr  = IPHeader("10.0.0.1", "10.0.0.2", socket.IPPROTO_UDP, ttl=64)

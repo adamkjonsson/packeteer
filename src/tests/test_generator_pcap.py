@@ -1,7 +1,7 @@
 import io
 import struct
 import unittest
-from packeteer.generator.pcap import write_pcap, LINKTYPE_ETHERNET, LINKTYPE_RAW
+from packeteer.pcap import write_pcap, LINKTYPE_ETHERNET, LINKTYPE_RAW
 
 _PCAP_MAGIC_NSEC = 0xA1B23C4D
 

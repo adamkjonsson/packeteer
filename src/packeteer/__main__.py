@@ -29,7 +29,7 @@ import sys
 from importlib.metadata import version as _pkg_version, PackageNotFoundError as _PkgNotFoundError
 from packeteer.generator import PacketBuilder
 from packeteer.generator.tcp import TCPOptions
-from packeteer.generator.pcap import write_pcap, write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW
+from packeteer.pcap import write_pcap, write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW
 from packeteer.generator.tcp_stream import generate_tcp_stream
 from packeteer.generator.udp_stream import generate_udp_stream
 from packeteer.generator.sctp_stream import generate_sctp_stream

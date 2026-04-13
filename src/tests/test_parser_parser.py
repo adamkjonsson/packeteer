@@ -9,10 +9,10 @@ from packeteer.generator.tcp import TCPHeader, TCP_SYN, TCP_ACK
 from packeteer.generator.udp import UDPHeader
 from packeteer.generator.icmp import ICMPHeader
 from packeteer.generator.icmpv6 import ICMPv6Header
-from packeteer.generator.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW, write_pcap
+from packeteer.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW, write_pcap
 
 from packeteer.parser.core import parse_packet, parse_pcap_packet, parse_pcap_file, ParsedPacket
-from packeteer.parser.pcap import read_pcap
+from packeteer.pcap import read_pcap
 
 
 def _tcp(src_port=12345, dst_port=80, seq=0, flags=TCP_ACK, window=65535):
@@ -298,7 +298,7 @@ class TestParsePcapPacket(unittest.TestCase):
         raw_ip = raw_full[14:]  # strip Ethernet header
         pcap = self._make_pcap([(raw_ip, 0, 0)], nanoseconds=False)
         # Patch the header to LINKTYPE_RAW since write_pcap defaults to Ethernet
-        from packeteer.parser.pcap import PcapFileHeader
+        from packeteer.pcap import PcapFileHeader
         raw_header = PcapFileHeader(
             link_type=LINKTYPE_RAW,
             version_major=pcap.header.version_major,

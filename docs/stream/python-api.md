@@ -6,8 +6,8 @@
 and acknowledgement numbers, 32-bit wrap-around, and per-packet timestamps.
 
 ```python
-from packeteer.generator.tcp_stream import generate_tcp_stream
-from packeteer.generator import write_pcap
+from packeteer.generator import generate_tcp_stream
+from packeteer.pcap import write_pcap
 
 stream = generate_tcp_stream(
     client_ip="10.0.0.1",
@@ -125,7 +125,7 @@ Pass {class}`~packeteer.generator.tcp.TCPOptions` instances to include options o
 the SYN and SYN-ACK:
 
 ```python
-from packeteer.generator.tcp import TCPOptions
+from packeteer.generator import TCPOptions
 
 stream = generate_tcp_stream(
     client_ip="10.0.0.1", server_ip="10.0.0.2",
@@ -148,8 +148,8 @@ There is no handshake or teardown; all `num_data_packets` packets carry
 direction `"c2s"` and are labelled `DATA[0]`, `DATA[1]`, …
 
 ```python
-from packeteer.generator.udp_stream import generate_udp_stream
-from packeteer.generator import write_pcap
+from packeteer.generator import generate_udp_stream
+from packeteer.pcap import write_pcap
 
 stream = generate_udp_stream(
     client_ip="10.0.0.1",
@@ -176,8 +176,8 @@ TSNs, CRC-32c checksums, and State Cookie TLVs all computed correctly per
 RFC 9260.
 
 ```python
-from packeteer.generator.sctp_stream import generate_sctp_stream
-from packeteer.generator import write_pcap
+from packeteer.generator import generate_sctp_stream
+from packeteer.pcap import write_pcap
 
 stream = generate_sctp_stream(
     client_ip="10.0.0.1",
@@ -222,7 +222,7 @@ Each generator returns a typed stream object — `TCPStream`, `UDPStream`, or
 ### Writing to a file
 
 ```python
-from packeteer.generator import write_pcap, write_pcapng, LINKTYPE_ETHERNET
+from packeteer.pcap import write_pcap, write_pcapng, LINKTYPE_ETHERNET
 
 write_pcap(stream.to_pcap_tuples(), path="out.pcap", link_type=LINKTYPE_ETHERNET)
 write_pcapng(stream.to_pcap_tuples(), path="out.pcapng")
@@ -341,7 +341,7 @@ or more encapsulation layers.  Pass a single descriptor, a list of descriptors
 (outermost first), or `None` (default — no encapsulation).
 
 ```python
-from packeteer.generator.stream_encap import (
+from packeteer.generator import (
     VLANEncap, QinQEncap, MPLSEncap, PPPoEEncap,
     GREEncap, EtherIPEncap, IPIPEncap,
 )
@@ -369,7 +369,7 @@ stream = generate_tcp_stream(
 )
 
 # GRE-tunnelled UDP stream — stream IPs become inner; outer IPs wrap them
-from packeteer.generator.udp_stream import generate_udp_stream
+from packeteer.generator import generate_udp_stream
 
 stream = generate_udp_stream(
     client_ip="10.0.0.1", server_ip="10.0.0.2",

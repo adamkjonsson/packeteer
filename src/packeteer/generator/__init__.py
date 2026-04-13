@@ -168,7 +168,6 @@ from .ethernet import (
 )
 from .etherip import EtherIPHeader, IPPROTO_ETHERIP
 from .gre import GREHeader, IPPROTO_GRE, GRE_PROTO_IPV4, GRE_PROTO_IPV6, GRE_PROTO_TEB
-from .pcap import write_pcap, write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW
 from .fragmentation import fragment_ipv4, fragment_ipv6
 from .ip import IPHeader
 from .ipv6 import IPv6Header
@@ -335,8 +334,4 @@ __all__ = [
     "IPIPEncap",
     "fragment_ipv4",
     "fragment_ipv6",
-    "write_pcap",
-    "write_pcapng",
-    "LINKTYPE_ETHERNET",
-    "LINKTYPE_RAW",
 ]

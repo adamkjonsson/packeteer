@@ -14,7 +14,7 @@ from packeteer.generator.pppoe import (
 )
 from packeteer.parser.pppoe import packet_parser as pppoe_packet_parser
 from packeteer.parser.core import parse_packet
-from packeteer.generator.pcap import LINKTYPE_ETHERNET
+from packeteer.pcap import LINKTYPE_ETHERNET
 
 
 # ── build_pppoe_header unit tests ─────────────────────────────────────────────

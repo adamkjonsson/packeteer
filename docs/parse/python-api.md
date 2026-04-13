@@ -8,8 +8,8 @@ dataclass with each layer in its own typed field.
 
 ```python
 from packeteer.generator import PacketBuilder
-from packeteer.generator.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW
-from packeteer.parser.core import parse_packet
+from packeteer.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW
+from packeteer.parser import parse_packet
 
 # Build a test packet, then parse it back
 raw = (PacketBuilder()
@@ -96,8 +96,8 @@ print(pkt.tunneled.transport.dst_port) # 53
 `ParsedPacket` with the capture timestamp.
 
 ```python
-from packeteer.parser.pcap import read_pcap
-from packeteer.parser.core import parse_pcap_packet
+from packeteer.parser import read_pcap
+from packeteer.parser import parse_pcap_packet
 
 pcap = read_pcap(path="capture.pcap")
 for record in pcap.packets:
@@ -118,7 +118,7 @@ file and returns the complete packet spec as a string — the same output as
 `packeteer parse`.
 
 ```python
-from packeteer.parser.core import parse_pcap_file
+from packeteer.parser import parse_pcap_file
 
 # Print JSON to stdout
 json_str = parse_pcap_file(path="capture.pcap")
@@ -159,9 +159,9 @@ packets into the packet spec dict format, then wrap them with
 {func}`packeteer.parser.to_config.to_json_string`.
 
 ```python
-from packeteer.parser.pcap import read_pcap
-from packeteer.parser.core import parse_pcap_packet
-from packeteer.parser.to_config import (
+from packeteer.parser import read_pcap
+from packeteer.parser import parse_pcap_packet
+from packeteer.parser import (
     update_config, apply_tunneled, to_packet_spec, to_json_string,
 )
 

@@ -6,9 +6,9 @@ select the next parser automatically.
 
 Example — single raw packet::
 
-    from .parser import parse_packet
+    from .core import parse_packet
     from packeteer.generator import PacketBuilder
-    from packeteer.generator.pcap import LINKTYPE_RAW
+    from packeteer.pcap import LINKTYPE_RAW
 
     raw = PacketBuilder().ip(src="10.0.0.1", dst="10.0.0.2").tcp(dst_port=443).build()
     pkt = parse_packet(raw, link_type=LINKTYPE_RAW)
@@ -19,8 +19,8 @@ Example — single raw packet::
 
 Example — reading from a pcap file::
 
-    from .pcap import read_pcap
-    from .parser import parse_pcap_packet
+    from packeteer.pcap import read_pcap
+    from .core import parse_pcap_packet
 
     pcap = read_pcap(path="capture.pcap")
     for record in pcap.packets:
@@ -54,9 +54,7 @@ from packeteer.generator.udp import UDPHeader
 from packeteer.generator.icmp import ICMPHeader
 from packeteer.generator.icmpv6 import ICMPv6Header
 from packeteer.generator.sctp import SCTPHeader
-from packeteer.generator.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW
-
-from .pcap import PcapFileHeader, read_pcap
+from packeteer.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW, PcapFileHeader, read_pcap
 from .to_config import update_config, to_packet_spec, to_json_string, apply_tunneled
 
 from .ethernet import packet_parser as _ethernet_parser
@@ -291,7 +289,7 @@ def parse_pcap_packet(
 
     Args:
         record: A ``(data, ts_sec, ts_frac)`` tuple as produced by
-            :func:`packeteer.parser.pcap.read_pcap` — one element of
+            :func:`packeteer.pcap.read_pcap` — one element of
             :attr:`PcapFile.packets`.
         file_header: The global pcap header from the same file.  Provides the
             link-layer type and the timestamp resolution flag.
@@ -317,7 +315,7 @@ def parse_pcap_file(
 ) -> str:
     """Parse every packet in a pcap file and return a packet spec string.
 
-    Reads the file with :func:`packeteer.parser.pcap.read_pcap`, parses each
+    Reads the file with :func:`packeteer.pcap.read_pcap`, parses each
     record with :func:`parse_pcap_packet`, converts the layers to a config dict
     with :func:`packeteer.parser.to_config.update_config`, and serialises the
     result with :func:`packeteer.parser.to_config.to_json_string`.

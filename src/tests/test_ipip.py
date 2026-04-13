@@ -4,9 +4,9 @@ import json
 import unittest
 
 from packeteer.generator import PacketBuilder
-from packeteer.generator.pcap import LINKTYPE_RAW
+from packeteer.pcap import LINKTYPE_RAW
 from packeteer.parser.core import parse_packet, parse_pcap_file, ParsedPacket
-from packeteer.generator.pcap import write_pcap
+from packeteer.pcap import write_pcap
 
 
 # ---------------------------------------------------------------------------
@@ -305,7 +305,7 @@ class TestIPIPRoundTrip(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
 
             with open(pf_path, "rb") as f:
-                from packeteer.parser.pcap import read_pcap
+                from packeteer.pcap import read_pcap
                 pcap = read_pcap(file_object=f)
             raw, _, _ = pcap.packets[0]
             pkt = parse_packet(raw)

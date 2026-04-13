@@ -6,7 +6,7 @@ import unittest
 
 from packeteer.generator.tcp_stream import generate_tcp_stream, TCPStream, TCPStreamPacket, _pkt_usec
 from packeteer.generator.tcp import TCP_SYN, TCP_ACK, TCP_PSH, TCP_FIN, TCPOptions
-from packeteer.generator.pcap import write_pcap, LINKTYPE_ETHERNET, LINKTYPE_RAW
+from packeteer.pcap import write_pcap, LINKTYPE_ETHERNET, LINKTYPE_RAW
 
 _WRAP = 2 ** 32
 

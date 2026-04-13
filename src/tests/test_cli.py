@@ -34,7 +34,7 @@ def _write_json(data: dict) -> str:
 def _write_pcap_with_one_packet() -> str:
     """Write a minimal valid pcap file containing one SYN packet; return path."""
     from packeteer.generator import PacketBuilder
-    from packeteer.generator.pcap import write_pcap, LINKTYPE_ETHERNET
+    from packeteer.pcap import write_pcap, LINKTYPE_ETHERNET
     raw = (PacketBuilder()
            .ethernet()
            .ip(src="10.0.0.1", dst="10.0.0.2")

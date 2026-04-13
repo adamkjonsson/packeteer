@@ -6,13 +6,13 @@ four-way teardown.
 
 Sequence and acknowledgement numbers are tracked correctly across both sides,
 including 32-bit wrap-around.  Each packet is assembled via
-:class:`~packet_generator.builder.PacketBuilder`, so all IP and TCP checksums
+:class:`~packeteer.generator.builder.PacketBuilder`, so all IP and TCP checksums
 are computed automatically.
 
 Typical usage::
 
-    from packet_generator.tcp_stream import generate_tcp_stream
-    from packet_generator import write_pcap
+    from packeteer.generator.tcp_stream import generate_tcp_stream
+    from packeteer.pcap import write_pcap
 
     stream = generate_tcp_stream(
         client_ip="10.0.0.1",
@@ -97,8 +97,8 @@ class TCPStream:
         """Return packets as ``(raw, ts_sec, ts_usec)`` tuples.
 
         The returned list is directly compatible with
-        :func:`~packet_generator.write_pcap` and
-        :func:`~packet_generator.write_pcapng`.
+        :func:`~packeteer.pcap.write_pcap` and
+        :func:`~packeteer.pcap.write_pcapng`.
         """
         return [(p.raw, p.ts_sec, p.ts_usec) for p in self.packets]
 
@@ -384,15 +384,15 @@ def generate_tcp_stream(
         encap: One or more encapsulation layers to wrap every packet in.
             Accepts a single descriptor, a list of descriptors (applied
             outermost first), or ``None`` (default, no encapsulation).
-            Available types (all from :mod:`packet_generator.stream_encap`):
+            Available types (all from :mod:`packeteer.generator.stream_encap`):
 
-            * :class:`~packet_generator.stream_encap.VLANEncap` — 802.1Q tag
-            * :class:`~packet_generator.stream_encap.QinQEncap` — double 802.1Q tags
-            * :class:`~packet_generator.stream_encap.MPLSEncap` — MPLS label stack
-            * :class:`~packet_generator.stream_encap.PPPoEEncap` — PPPoE session frame
-            * :class:`~packet_generator.stream_encap.GREEncap` — GRE tunnel
-            * :class:`~packet_generator.stream_encap.EtherIPEncap` — EtherIP tunnel
-            * :class:`~packet_generator.stream_encap.IPIPEncap` — IP-in-IP tunnel
+            * :class:`~packeteer.generator.stream_encap.VLANEncap` — 802.1Q tag
+            * :class:`~packeteer.generator.stream_encap.QinQEncap` — double 802.1Q tags
+            * :class:`~packeteer.generator.stream_encap.MPLSEncap` — MPLS label stack
+            * :class:`~packeteer.generator.stream_encap.PPPoEEncap` — PPPoE session frame
+            * :class:`~packeteer.generator.stream_encap.GREEncap` — GRE tunnel
+            * :class:`~packeteer.generator.stream_encap.EtherIPEncap` — EtherIP tunnel
+            * :class:`~packeteer.generator.stream_encap.IPIPEncap` — IP-in-IP tunnel
 
             Layers may be combined, e.g.
             ``[MPLSEncap(labels=[100]), IPIPEncap("203.0.113.1", "203.0.113.2")]``
@@ -410,8 +410,9 @@ def generate_tcp_stream(
 
     Example::
 
-        from packet_generator.tcp_stream import generate_tcp_stream
-        from packet_generator import write_pcap, TCPOptions
+        from packeteer.generator.tcp_stream import generate_tcp_stream
+        from packeteer.generator import TCPOptions
+        from packeteer.pcap import write_pcap
 
         stream = generate_tcp_stream(
             client_ip="10.0.0.1",
