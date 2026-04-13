@@ -14,6 +14,7 @@ try:
     release = _pkg_version("packeteer")
 except PackageNotFoundError:
     release = "unknown"
+version = release
 copyright = f"2026, {author}"
 
 # ── Extensions ────────────────────────────────────────────────────────────────
@@ -66,7 +67,7 @@ intersphinx_mapping = {
 # ── Theme ─────────────────────────────────────────────────────────────────────
 
 html_theme = "furo"
-html_title = "packeteer"
+html_title = f"packeteer {release}"
 
 html_theme_options = {
     "source_repository": "https://github.com/adamkjonsson/packeteer",
