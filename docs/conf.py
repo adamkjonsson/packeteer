@@ -1,6 +1,7 @@
 """Sphinx configuration for packeteer documentation."""
 import os
 import sys
+from importlib.metadata import version as _pkg_version, PackageNotFoundError
 
 # Make packet_generator and packet_parser importable without pip install
 sys.path.insert(0, os.path.abspath("../src"))
@@ -9,7 +10,10 @@ sys.path.insert(0, os.path.abspath("../src"))
 
 project = "packeteer"
 author = "Adam Jonsson"
-release = "0.2.0"
+try:
+    release = _pkg_version("packeteer")
+except PackageNotFoundError:
+    release = "unknown"
 copyright = f"2026, {author}"
 
 # ── Extensions ────────────────────────────────────────────────────────────────
