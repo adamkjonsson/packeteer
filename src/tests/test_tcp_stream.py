@@ -4,7 +4,11 @@ from __future__ import annotations
 import io
 import unittest
 
-from packeteer.generator.tcp_stream import generate_tcp_stream, TCPStream, TCPStreamPacket, _pkt_usec
+import dataclasses
+
+from packeteer.generator.tcp_stream import (
+    generate_tcp_stream, TCPStream, TCPStreamConfig, TCPStreamPacket, _pkt_usec,
+)
 from packeteer.generator.tcp import TCP_SYN, TCP_ACK, TCP_PSH, TCP_FIN, TCPOptions
 from packeteer.pcap import write_pcap, LINKTYPE_ETHERNET, LINKTYPE_RAW
 
@@ -14,17 +18,23 @@ _WRAP = 2 ** 32
 _CLIENT_ISN = 1000
 _SERVER_ISN = 5000
 
+_CONFIG_FIELDS: frozenset[str] = frozenset(
+    f.name for f in dataclasses.fields(TCPStreamConfig)
+)
+
 
 def _stream(**kwargs) -> TCPStream:
     """Helper: generate a stream with fixed ISNs and sensible defaults."""
-    defaults = dict(
+    defaults: dict = dict(
         client_ip="10.0.0.1",
         server_ip="10.0.0.2",
         client_isn=_CLIENT_ISN,
         server_isn=_SERVER_ISN,
     )
     defaults.update(kwargs)
-    return generate_tcp_stream(**defaults)
+    config_kw = {k: defaults.pop(k) for k in list(defaults) if k in _CONFIG_FIELDS}
+    cfg = TCPStreamConfig(**config_kw) if config_kw else None
+    return generate_tcp_stream(**defaults, config=cfg)
 
 
 # ── Group 1: Handshake structure ──────────────────────────────────────────────
@@ -164,7 +174,7 @@ class TestSeqWrapAround(unittest.TestCase):
             client_isn=isn,
             server_isn=0,
             num_data_packets=1,
-            payload_sizes=[4],
+            config=TCPStreamConfig(payload_sizes=[4]),
         )
         pkts = stream.packets
         # SYN: seq = WRAP - 2
@@ -415,7 +425,7 @@ class TestIPv6Support(unittest.TestCase):
             client_isn=0,
             server_isn=0,
             num_data_packets=2,
-            payload_sizes=[20, 20],
+            config=TCPStreamConfig(payload_sizes=[20, 20]),
         )
         self.assertEqual(len(stream.packets), 11)
 
@@ -426,8 +436,8 @@ class TestIPv6Support(unittest.TestCase):
             client_isn=0,
             server_isn=0,
             num_data_packets=1,
-            payload_sizes=[10],
             include_ethernet=False,
+            config=TCPStreamConfig(payload_sizes=[10]),
         ).packets
         first_byte = pkts[0].raw[0]
         self.assertEqual(first_byte >> 4, 6)
@@ -871,7 +881,7 @@ class TestMiddleboxFragmentation(unittest.TestCase):
     _MTU = 576  # conservative router MTU
 
     def _make_stream(self, **kw):
-        defaults = dict(
+        defaults: dict = dict(
             client_ip="10.0.0.1",
             server_ip="10.0.0.2",
             num_data_packets=5,
@@ -884,7 +894,9 @@ class TestMiddleboxFragmentation(unittest.TestCase):
             inter_packet_gap=0.001,
         )
         defaults.update(kw)
-        return generate_tcp_stream(**defaults)
+        config_kw = {k: defaults.pop(k) for k in list(defaults) if k in _CONFIG_FIELDS}
+        cfg = TCPStreamConfig(**config_kw) if config_kw else None
+        return generate_tcp_stream(**defaults, config=cfg)
 
     def test_no_fragmentation_when_mtu_none(self):
         """No FRAG packets appear when mtu is None (default)."""
@@ -1014,8 +1026,8 @@ class TestMiddleboxFragmentation(unittest.TestCase):
             payload_distribution="fixed",
             client_isn=1000,
             server_isn=2000,
-            base_time=1_000_000.0,
             mtu=self._MTU,
+            config=TCPStreamConfig(base_time=1_000_000.0),
         )
         frag_pkts = [p for p in stream.packets if p.label.startswith("FRAG[DATA[")]
         self.assertGreater(len(frag_pkts), 0)
@@ -1041,9 +1053,9 @@ class TestMiddleboxFragmentation(unittest.TestCase):
             payload_distribution="fixed",
             client_isn=1000,
             server_isn=2000,
-            base_time=1_000_000.0,
             include_ethernet=False,
             mtu=self._MTU,
+            config=TCPStreamConfig(base_time=1_000_000.0),
         )
         frag_pkts = [p for p in stream.packets if p.label.startswith("FRAG[DATA[")]
         self.assertGreater(len(frag_pkts), 0)
@@ -1075,7 +1087,7 @@ class TestStrayPackets(unittest.TestCase):
     """Group 17: stray_packet_count injects forged TCP hijack packets."""
 
     def _make_stream(self, **kw):
-        defaults = dict(
+        defaults: dict = dict(
             client_ip="10.0.0.1",
             server_ip="10.0.0.2",
             num_data_packets=10,
@@ -1087,7 +1099,9 @@ class TestStrayPackets(unittest.TestCase):
             inter_packet_gap=0.001,
         )
         defaults.update(kw)
-        return generate_tcp_stream(**defaults)
+        config_kw = {k: defaults.pop(k) for k in list(defaults) if k in _CONFIG_FIELDS}
+        cfg = TCPStreamConfig(**config_kw) if config_kw else None
+        return generate_tcp_stream(**defaults, config=cfg)
 
     def test_no_strays_by_default(self):
         """No STRAY packets when stray_packet_count=0 (default)."""
@@ -1257,8 +1271,7 @@ class TestStrayPackets(unittest.TestCase):
             client_ip="10.0.0.1",
             server_ip="10.0.0.2",
             num_data_packets=0,
-            stray_packet_count=5,
-            base_time=1_000_000.0,
+            config=TCPStreamConfig(stray_packet_count=5, base_time=1_000_000.0),
         )
         strays = [p for p in stream.packets if p.label.startswith("STRAY[")]
         self.assertEqual(strays, [])

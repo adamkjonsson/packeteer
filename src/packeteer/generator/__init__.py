@@ -223,7 +223,7 @@ from .sctp import (
     SCTP_DATA_FLAG_UNORDERED,
     SCTP_DATA_FLAG_IMMEDIATE,
 )
-from .tcp_stream import generate_tcp_stream, TCPStream, TCPStreamPacket
+from .tcp_stream import generate_tcp_stream, TCPStream, TCPStreamConfig, TCPStreamPacket
 from .udp_stream import generate_udp_stream, UDPStream, UDPStreamPacket
 from .sctp_stream import generate_sctp_stream, SCTPStream, SCTPStreamPacket
 from .stream_encap import (
@@ -316,6 +316,7 @@ __all__ = [
     "SCTP_DATA_FLAG_IMMEDIATE",
     "generate_tcp_stream",
     "TCPStream",
+    "TCPStreamConfig",
     "TCPStreamPacket",
     "generate_udp_stream",
     "UDPStream",

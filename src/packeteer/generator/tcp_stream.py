@@ -46,6 +46,7 @@ _WRAP = 2 ** 32
 @dataclass
 class _TCPEndpoint:
     """Mutable per-side connection state (internal only)."""
+
     ip: str
     port: int
     mac: str
@@ -70,7 +71,9 @@ class TCPStreamPacket:
         payload_len: Application payload length in bytes.
         label: Human-readable label (e.g. ``"SYN"``, ``"DATA[3]"``,
             ``"FIN-ACK"``).  Useful for targeting specific packets in hooks.
+
     """
+
     raw: bytes
     ts_sec: int
     ts_usec: int
@@ -90,7 +93,9 @@ class TCPStream:
         packets: Ordered list of all packets in the stream.  The list is a
             plain :class:`list`, so entries can be freely inserted, removed,
             or reordered for error/anomaly injection before writing to pcap.
+
     """
+
     packets: list[TCPStreamPacket]
 
     def to_pcap_tuples(self) -> list[tuple[bytes, int, int]]:
@@ -109,6 +114,79 @@ class TCPStream:
     def server_packets(self) -> list[TCPStreamPacket]:
         """Return only server→client packets."""
         return [p for p in self.packets if p.direction == "s2c"]
+
+
+@dataclass
+class TCPStreamConfig:
+    """Optional TCP-stream parameters and anomaly-injection controls.
+
+    Pass an instance as the *config* argument to :func:`generate_tcp_stream`
+    to customise timing, anomaly injection, and per-packet hooks without
+    widening the function signature.
+
+    Attributes:
+        payload_sizes: Explicit list of payload sizes, one per data packet.
+            When provided, overrides *min_payload*, *max_payload*, and
+            *payload_distribution*.  Must have exactly *num_data_packets*
+            entries.
+        psh_probability: Probability (0.0–1.0) that the PSH flag is set on
+            each data segment.  Defaults to ``0.5``.
+        window: TCP receive-window size advertised by both endpoints.
+            Defaults to ``65535``.
+        client_options: TCP options encoded on the client SYN only (e.g. MSS,
+            window scale, SACK permitted).  ``None`` means no options.
+        server_options: TCP options encoded on the server SYN-ACK only.
+        base_time: Unix timestamp for the first packet in seconds.  Defaults
+            to the current time when ``None``.
+        gap_jitter: Maximum capture-delay jitter in seconds.  Packet *n* is
+            sent at ``base_time + n * inter_packet_gap`` and assigned a
+            capture timestamp of ``sent_time + uniform(0, gap_jitter)``.
+            Defaults to ``0.0`` (no jitter).
+        packet_loss_probability: Probability (0.0–1.0) that any individual
+            packet is silently dropped, simulating packet loss on the wire.
+            Defaults to ``0.0`` (no loss).
+        retransmission_probability: Probability (0.0–1.0) that each data
+            segment triggers a spurious retransmission.  Defaults to ``0.0``.
+        retransmission_timeout: Seconds after the original send time at which
+            the retransmission timer fires.  Defaults to ``0.2`` (200 ms).
+        payload_corruption_probability: Probability (0.0–1.0) that each data
+            segment's payload is corrupted in transit (last byte XOR-flipped).
+            Defaults to ``0.0`` (no corruption).
+        server_rst_probability: Probability (0.0–1.0) that the server
+            terminates mid-stream with a TCP RST.  Defaults to ``0.0``.
+        rst_propagation_delay: Seconds between the server sending the RST
+            and the client receiving it.  Defaults to ``0.0``.
+        stray_packet_count: Number of forged TCP-hijacking packets to inject.
+            Defaults to ``0``.
+        stray_timing_window: When set, constrains stray packet timestamps to
+            within *N* positions of the stolen reference packet in the
+            timestamp-sorted stream.  ``None`` uses the full data-transfer
+            window.
+        packet_hooks: Optional list of callables applied to each packet after
+            it is built.  Signature::
+
+                def hook(pkt: TCPStreamPacket, index: int) -> TCPStreamPacket | None
+
+            Returning ``None`` drops the packet.
+
+    """
+
+    payload_sizes: list[int] | None = None
+    psh_probability: float = 0.5
+    window: int = 65535
+    client_options: TCPOptions | None = None
+    server_options: TCPOptions | None = None
+    base_time: float | None = None
+    gap_jitter: float = 0.0
+    packet_loss_probability: float = 0.0
+    retransmission_probability: float = 0.0
+    retransmission_timeout: float = 0.2
+    payload_corruption_probability: float = 0.0
+    server_rst_probability: float = 0.0
+    rst_propagation_delay: float = 0.0
+    stray_packet_count: int = 0
+    stray_timing_window: int | None = None
+    packet_hooks: list[Callable[[TCPStreamPacket, int], TCPStreamPacket | None]] | None = None
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -216,32 +294,17 @@ def generate_tcp_stream(
     client_mac: str = "00:00:00:00:00:01",
     server_mac: str = "00:00:00:00:00:02",
     num_data_packets: int = 10,
-    payload_sizes: list[int] | None = None,
     min_payload: int = 40,
     max_payload: int = 1460,
     payload_distribution: str = "uniform",
     client_isn: int | None = None,
     server_isn: int | None = None,
-    client_options: TCPOptions | None = None,
-    server_options: TCPOptions | None = None,
     include_ethernet: bool = True,
     ip_ttl: int = 64,
-    window: int = 65535,
-    base_time: float | None = None,
     inter_packet_gap: float = 0.001,
-    gap_jitter: float = 0.0,
-    psh_probability: float = 0.5,
-    packet_loss_probability: float = 0.0,
-    retransmission_probability: float = 0.0,
-    retransmission_timeout: float = 0.2,
-    payload_corruption_probability: float = 0.0,
-    server_rst_probability: float = 0.0,
-    rst_propagation_delay: float = 0.0,
     mtu: int | None = None,
-    stray_packet_count: int = 0,
-    stray_timing_window: int | None = None,
-    packet_hooks: list[Callable[[TCPStreamPacket, int], TCPStreamPacket | None]] | None = None,
     encap: EncapSpec = None,
+    config: TCPStreamConfig | None = None,
 ) -> TCPStream:
     """Generate a complete TCP stream as a sequence of :class:`TCPStreamPacket` objects.
 
@@ -267,10 +330,6 @@ def generate_tcp_stream(
         server_mac: Server MAC address.  Ignored when *include_ethernet* is
             ``False``.
         num_data_packets: Number of PSH+ACK data segments sent by the client.
-        payload_sizes: Explicit list of payload sizes, one per data packet.
-            When provided, overrides *min_payload*, *max_payload*, and
-            *payload_distribution*.  Must have exactly *num_data_packets*
-            entries.
         min_payload: Minimum data payload in bytes.  Defaults to ``40``.
         max_payload: Maximum data payload in bytes.  Defaults to ``1460``
             (typical Ethernet MSS for IPv4).
@@ -285,102 +344,16 @@ def generate_tcp_stream(
             ``None`` (default), matching real TCP behaviour.
         server_isn: Server initial sequence number.  Randomly chosen if
             ``None``.
-        client_options: TCP options encoded on the client SYN only (e.g. MSS,
-            window scale, SACK permitted).  ``None`` means no options.
-        server_options: TCP options encoded on the server SYN-ACK only.
         include_ethernet: When ``True`` (default) each packet starts with an
             Ethernet II header.  Set to ``False`` for raw-IP captures.
         ip_ttl: IP TTL / hop limit for all packets.  Defaults to ``64``.
-        window: TCP receive-window size advertised by both endpoints.
-        base_time: Unix timestamp for the first packet in seconds.  Defaults
-            to the current time.
         inter_packet_gap: Seconds between consecutive packets.  Defaults to
             ``0.001`` (1 ms).
-        gap_jitter: Maximum interception delay in seconds.  Packet *n* is
-            sent at ``base_time + n * inter_packet_gap`` and assigned a
-            capture timestamp of ``sent_time + uniform(0, gap_jitter)``.
-            Because delays are independent, a later packet can overtake an
-            earlier one; the final list is sorted by timestamp before being
-            returned, matching what a real capture would show.
-            Defaults to ``0.0`` (no jitter).
-        psh_probability: Probability (0.0–1.0) that the PSH flag is set on
-            each data segment.  Real TCP stacks set PSH to signal the receiver
-            to flush its buffer, but not on every segment.  Defaults to
-            ``0.5``.
-        packet_loss_probability: Probability (0.0–1.0) that any individual
-            packet is silently dropped from the capture, simulating packet
-            loss on the wire.  Sequence and acknowledgement numbers are
-            computed as if the packet was sent; only the capture record is
-            omitted.  Defaults to ``0.0`` (no loss).
-        retransmission_probability: Probability (0.0–1.0) that each data
-            segment triggers a spurious retransmission.  A retransmission
-            carries the same sequence number, flags, and payload as the
-            original but is timestamped at the original send time plus
-            *retransmission_timeout*.  Handshake and teardown packets are
-            not affected.  Defaults to ``0.0`` (no retransmissions).
-        retransmission_timeout: Seconds after the original send time at which
-            the retransmission timer fires.  200 ms (the TCP minimum RTO) is
-            a realistic starting point.  Defaults to ``0.2``.
-        server_rst_probability: Probability (0.0–1.0) that the server
-            application terminates mid-stream, causing the OS to send a TCP
-            RST.  When triggered, a random split point *k* is chosen among
-            the data packets; packets 0…k are exchanged normally with ACKs.
-            The server sends ``RST`` at the same moment ``DATA[k+1]`` is
-            sent.  The client learns about the RST after
-            *rst_propagation_delay* seconds; during that window it keeps
-            sending data.  Once the RST arrives all further client and server
-            packets are suppressed and the normal four-way teardown is
-            omitted.  Defaults to ``0.0`` (no RST).
-        rst_propagation_delay: Seconds between the server sending the RST
-            and the client receiving it.  During this window the client
-            continues to send data.  Defaults to ``0.0`` (RST arrives
-            immediately — client sends no extra packets).
-        payload_corruption_probability: Probability (0.0–1.0) that each data
-            segment's payload is corrupted in transit.  One byte at the end
-            of the payload is XOR-flipped, invalidating the TCP checksum so
-            the receiver drops the packet without sending an ACK.  The
-            corrupted packet appears in the capture as ``CORRUPT[i]``; the
-            client retransmits after *retransmission_timeout* as
-            ``RETRANS[i]``; the existing ``ACK[i]`` timestamp is shifted to
-            follow the retransmit.  Defaults to ``0.0`` (no corruption).
-        stray_timing_window: Constrains when stray packets can appear.
-            When ``None`` (default) each stray timestamp is drawn uniformly
-            from the full data-transfer window.  When set to a positive
-            integer *N*, the timestamp is instead drawn from the range
-            ``[sorted_packets[ref_idx − N].ts, sorted_packets[ref_idx + N].ts]``
-            where *ref_idx* is the position of the stolen reference DATA
-            packet in the timestamp-sorted stream.  This simulates an
-            attacker who injects packets close in time to the segment they
-            are trying to hijack.
-        stray_packet_count: Number of forged packets to inject into the
-            stream, simulating a TCP hijacking attempt by a passive attacker
-            who has been sniffing the connection.  Each stray packet is
-            sent client→server using the same endpoints as the real stream
-            but with a seq/ack pair stolen from a randomly chosen surviving
-            data packet, an all-``b'x'`` payload of random size, and a
-            timestamp scattered uniformly across the data-transfer window.
-            Because the attacker cannot predict the exact timing, stray
-            packets may arrive before or after the real segment they overlap
-            with.  Defaults to ``0`` (no stray packets).
         mtu: When set, every packet whose IP-layer size (excluding
             any Ethernet header) exceeds this value is split into IP fragments
-            as if it had passed through a middlebox with a limited MTU.  All
-            packet types are subject to fragmentation, though only packets with
-            large payloads will actually be split in practice.  Fragment
-            packets are labelled ``FRAG[<orig>][<n>]`` where *n* starts at
-            zero; fragment 0 carries the TCP header and the first data chunk.
-            Typical low-MTU values: 576 (historical minimum for IPv4 routers),
-            1280 (IPv6 minimum), 1400 (VPN with overhead).  ``None`` (default)
-            disables fragmentation.
-        packet_hooks: Optional list of callables applied to each packet after
-            it is built.  Each hook has the signature::
-
-                def hook(packet: TCPStreamPacket, index: int) -> TCPStreamPacket | None
-
-            Hooks are called in order.  Returning ``None`` drops the packet
-            from the stream.  This is the primary extensibility seam for
-            future error and anomaly injection (e.g. packet drops, duplicates,
-            checksum corruption, reordering).
+            as if it had passed through a middlebox with a limited MTU.
+            Fragment packets are labelled ``FRAG[<orig>][<n>]`` where *n*
+            starts at zero.  ``None`` (default) disables fragmentation.
         encap: One or more encapsulation layers to wrap every packet in.
             Accepts a single descriptor, a list of descriptors (applied
             outermost first), or ``None`` (default, no encapsulation).
@@ -394,23 +367,21 @@ def generate_tcp_stream(
             * :class:`~packeteer.generator.stream_encap.EtherIPEncap` — EtherIP tunnel
             * :class:`~packeteer.generator.stream_encap.IPIPEncap` — IP-in-IP tunnel
 
-            Layers may be combined, e.g.
-            ``[MPLSEncap(labels=[100]), IPIPEncap("203.0.113.1", "203.0.113.2")]``
-            produces eth → MPLS → outer-IP → inner-IP → TCP.
-            Fragmentation (``mtu``) is applied correctly regardless
-            of which encapsulation layers are present.
+        config: Optional :class:`TCPStreamConfig` supplying timing, anomaly
+            injection, and per-packet hook settings.  All fields default to
+            their *TCPStreamConfig* defaults when ``None``.
 
     Returns:
         A :class:`TCPStream` containing all assembled packets in wire order.
 
     Raises:
-        ValueError: If *payload_sizes* length does not match
+        ValueError: If *payload_sizes* (from *config*) length does not match
             *num_data_packets*, or *payload_distribution* is unknown.
         OSError: If an IP address string is invalid.
 
     Example::
 
-        from packeteer.generator.tcp_stream import generate_tcp_stream
+        from packeteer.generator.tcp_stream import generate_tcp_stream, TCPStreamConfig
         from packeteer.generator import TCPOptions
         from packeteer.pcap import write_pcap
 
@@ -420,12 +391,30 @@ def generate_tcp_stream(
             server_port=443,
             num_data_packets=50,
             payload_distribution="bimodal",
-            client_options=TCPOptions(mss=1460, sack_permitted=True),
+            config=TCPStreamConfig(
+                client_options=TCPOptions(mss=1460, sack_permitted=True),
+            ),
         )
         write_pcap(stream.to_pcap_tuples(), path="tls_session.pcap")
+
     """
-    if base_time is None:
-        base_time = time.time()
+    config = config or TCPStreamConfig()
+    payload_sizes = config.payload_sizes
+    psh_probability = config.psh_probability
+    window = config.window
+    client_options = config.client_options
+    server_options = config.server_options
+    gap_jitter = config.gap_jitter
+    packet_loss_probability = config.packet_loss_probability
+    retransmission_probability = config.retransmission_probability
+    retransmission_timeout = config.retransmission_timeout
+    payload_corruption_probability = config.payload_corruption_probability
+    server_rst_probability = config.server_rst_probability
+    rst_propagation_delay = config.rst_propagation_delay
+    stray_packet_count = config.stray_packet_count
+    stray_timing_window = config.stray_timing_window
+    packet_hooks = config.packet_hooks
+    base_time = config.base_time if config.base_time is not None else time.time()
 
     gap_usec = int(inter_packet_gap * 1_000_000)
     jitter_usec = int(gap_jitter * 1_000_000)
@@ -510,7 +499,8 @@ def generate_tcp_stream(
     payload_offset = 0
     for i, size in enumerate(sizes):
         flags = TCP_ACK | (TCP_PSH if random.random() < psh_probability else 0)
-        emit(client, server, flags, payload_data[payload_offset:payload_offset + size], "c2s", f"DATA[{i}]")
+        chunk = payload_data[payload_offset:payload_offset + size]
+        emit(client, server, flags, chunk, "c2s", f"DATA[{i}]")
         emit(server, client, TCP_ACK, b"", "s2c", f"ACK[{i}]")
         payload_offset += size
 
@@ -543,9 +533,7 @@ def generate_tcp_stream(
                     return int(p.label[4:-1]) <= k
                 if p.label == "FIN-ACK":
                     return False
-                if p.label == "ACK" and _pkt_usec(p) > first_data_usec:
-                    return False   # teardown ACKs, not the handshake ACK
-                return True
+                return not (p.label == "ACK" and _pkt_usec(p) > first_data_usec)
 
             packets = [p for p in packets if _keep(p)]
 
