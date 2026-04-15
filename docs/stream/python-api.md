@@ -27,7 +27,7 @@ The baseline stream contains `2 * num_data_packets + 7` packets:
 | 0 | client | SYN | `"SYN"` |
 | 1 | server | SYN+ACK | `"SYN-ACK"` |
 | 2 | client | ACK | `"ACK"` |
-| 3, 5, … 2N+1 | client | ACK (PSH with probability `psh_probability`) | `"DATA[0]"` … `"DATA[N-1]"` |
+| 3, 5, … 2N+1 | client | ACK (PSH with probability `config.psh_probability`) | `"DATA[0]"` … `"DATA[N-1]"` |
 | 4, 6, … 2N+2 | server | ACK | `"ACK[0]"` … `"ACK[N-1]"` |
 | 2N+3 | client | FIN+ACK | `"FIN-ACK"` |
 | 2N+4 | server | ACK | `"ACK"` |
@@ -40,6 +40,8 @@ TCP behaviour.
 
 ### Parameters
 
+#### Core parameters (passed directly to `generate_tcp_stream`)
+
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `client_ip` | *(required)* | Client IP address (IPv4 or IPv6) |
@@ -49,16 +51,46 @@ TCP behaviour.
 | `client_mac` | `"00:00:00:00:00:01"` | Client MAC address |
 | `server_mac` | `"00:00:00:00:00:02"` | Server MAC address |
 | `num_data_packets` | `10` | Number of client DATA segments |
-| `include_ethernet` | `True` | Include Ethernet headers |
-| `ip_ttl` | `64` | IP TTL / hop limit |
-| `window` | `65535` | TCP receive window size |
-| `inter_packet_gap` | `0.001` | Base time between packets in seconds |
-| `gap_jitter` | `0.0` | Max extra delay per packet; output re-sorted by timestamp |
 | `min_payload` | `40` | Minimum payload size in bytes |
 | `max_payload` | `1460` | Maximum payload size in bytes |
 | `payload_distribution` | `"uniform"` | `"uniform"`, `"bimodal"`, or `"fixed"` |
+| `client_isn` | `None` | Client initial sequence number (random if `None`) |
+| `server_isn` | `None` | Server initial sequence number (random if `None`) |
+| `include_ethernet` | `True` | Include Ethernet headers |
+| `ip_ttl` | `64` | IP TTL / hop limit |
+| `inter_packet_gap` | `0.001` | Base time between packets in seconds |
+| `mtu` | `None` | Fragment packets whose IP-layer size exceeds this value |
+| `encap` | `None` | Encapsulation layer(s) — see [Encapsulation](#encapsulation) |
+| `config` | `None` | `TCPStreamConfig` for timing and anomaly settings — see below |
+
+#### `TCPStreamConfig` — timing, anomaly injection, and hooks
+
+Optional parameters are grouped into a `TCPStreamConfig` dataclass.  Pass an
+instance as the `config` keyword argument; any field left unset uses its default.
+
+```python
+from packeteer.generator.tcp_stream import TCPStreamConfig
+
+stream = generate_tcp_stream(
+    client_ip="10.0.0.1",
+    server_ip="10.0.0.2",
+    num_data_packets=20,
+    config=TCPStreamConfig(
+        window=32768,
+        retransmission_probability=0.05,
+    ),
+)
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
 | `payload_sizes` | `None` | Explicit list of per-packet sizes, overrides distribution |
 | `psh_probability` | `0.5` | Probability PSH is set on each data segment |
+| `window` | `65535` | TCP receive window size |
+| `client_options` | `None` | `TCPOptions` to include on SYN |
+| `server_options` | `None` | `TCPOptions` to include on SYN-ACK |
+| `base_time` | `None` | Unix timestamp for the first packet (current time if `None`) |
+| `gap_jitter` | `0.0` | Max extra capture delay per packet; output re-sorted by timestamp |
 | `packet_loss_probability` | `0.0` | Probability any packet is dropped from the capture |
 | `retransmission_probability` | `0.0` | Probability each data segment is spuriously retransmitted |
 | `retransmission_timeout` | `0.2` | Seconds after original send that the retransmit fires |
@@ -67,24 +99,23 @@ TCP behaviour.
 | `rst_propagation_delay` | `0.0` | Seconds for the RST to reach the client |
 | `stray_packet_count` | `0` | Number of forged TCP hijack packets to inject |
 | `stray_timing_window` | `None` | If set, constrain each stray timestamp to within N packets of its target |
-| `mtu` | `None` | Fragment packets whose IP-layer size exceeds this value |
-| `client_options` | `None` | `TCPOptions` to include on SYN |
-| `server_options` | `None` | `TCPOptions` to include on SYN-ACK |
-| `encap` | `None` | Encapsulation layer(s) — see [Encapsulation](#encapsulation) |
-| `packet_hooks` | `[]` | List of callables applied to each packet — see [Hooks](#hooks) |
+| `packet_hooks` | `None` | List of callables applied to each packet — see [Hooks](#hooks) |
 
 ### Timestamp jitter
 
-Set `gap_jitter` to model capture delay: each packet gets an extra delay drawn
-from `uniform(0, gap_jitter)`.  Because delays are independent, packets can
-overtake each other, producing genuine out-of-order timestamps in the sorted
-stream.
+Set `gap_jitter` in `TCPStreamConfig` to model capture delay: each packet gets
+an extra delay drawn from `uniform(0, gap_jitter)`.  Because delays are
+independent, packets can overtake each other, producing genuine out-of-order
+timestamps in the sorted stream.
 
 ```python
+from packeteer.generator.tcp_stream import TCPStreamConfig
+
 # 1 ms base gap with up to 0.8 ms extra jitter
 stream = generate_tcp_stream(
     client_ip="10.0.0.1", server_ip="10.0.0.2",
-    num_data_packets=20, inter_packet_gap=0.001, gap_jitter=0.0008,
+    num_data_packets=20, inter_packet_gap=0.001,
+    config=TCPStreamConfig(gap_jitter=0.0008),
 )
 ```
 
@@ -126,12 +157,15 @@ the SYN and SYN-ACK:
 
 ```python
 from packeteer.generator import TCPOptions
+from packeteer.generator.tcp_stream import TCPStreamConfig
 
 stream = generate_tcp_stream(
     client_ip="10.0.0.1", server_ip="10.0.0.2",
-    client_options=TCPOptions(mss=1460, window_scale=7, sack_permitted=True),
-    server_options=TCPOptions(mss=1460, window_scale=6, sack_permitted=True),
     num_data_packets=10,
+    config=TCPStreamConfig(
+        client_options=TCPOptions(mss=1460, window_scale=7, sack_permitted=True),
+        server_options=TCPOptions(mss=1460, window_scale=6, sack_permitted=True),
+    ),
 )
 ```
 
@@ -296,9 +330,12 @@ are chosen from the `[min_payload, max_payload]` range:
 Pass an explicit `payload_sizes` list to override the distribution entirely:
 
 ```python
+from packeteer.generator.tcp_stream import TCPStreamConfig
+
 stream = generate_tcp_stream(
     client_ip="10.0.0.1", server_ip="10.0.0.2",
-    num_data_packets=3, payload_sizes=[200, 1460, 80],
+    num_data_packets=3,
+    config=TCPStreamConfig(payload_sizes=[200, 1460, 80]),
 )
 ```
 
@@ -416,12 +453,14 @@ See {doc}`../api/stream-encap` for the full class reference.
 
 ## Hooks
 
-The `packet_hooks` parameter (TCP only) accepts a list of callables applied to
-each packet as it is generated.  A hook receives `(packet, index)` and returns
-either a modified `TCPStreamPacket` or `None` to drop the packet.
+The `packet_hooks` field in `TCPStreamConfig` (TCP only) accepts a list of
+callables applied to each packet as it is generated.  A hook receives
+`(packet, index)` and returns either a modified `TCPStreamPacket` or `None`
+to drop the packet.
 
 ```python
 from dataclasses import replace
+from packeteer.generator.tcp_stream import TCPStreamConfig
 
 def corrupt_checksum(pkt, idx):
     """Flip the last two bytes of packet 5 to corrupt the TCP checksum."""
@@ -439,7 +478,7 @@ def drop_synack(pkt, idx):
 stream = generate_tcp_stream(
     client_ip="10.0.0.1", server_ip="10.0.0.2",
     num_data_packets=10,
-    packet_hooks=[corrupt_checksum, drop_synack],
+    config=TCPStreamConfig(packet_hooks=[corrupt_checksum, drop_synack]),
 )
 ```
 

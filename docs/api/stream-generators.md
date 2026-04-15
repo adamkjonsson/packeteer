@@ -27,6 +27,12 @@ See {doc}`../stream/index` for usage examples, encapsulation, and CLI equivalent
    :no-index:
 ```
 
+```{eval-rst}
+.. autoclass:: packeteer.generator.tcp_stream.TCPStreamConfig
+   :members:
+   :no-index:
+```
+
 ---
 
 ## UDP
