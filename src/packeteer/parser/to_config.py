@@ -78,7 +78,7 @@ _PROTO_TO_STR: dict[int, str] = {
     IPPROTO_ETHERIP:         "etherip",   # 97
     socket.IPPROTO_GRE:      "gre",       # 47
     socket.IPPROTO_SCTP:     "sctp",      # 132
-    socket.IPPROTO_IPV4:     "ipip",      # 4  — IPv4-in-IP (RFC 2003)
+    socket.IPPROTO_IPIP:     "ipip",      # 4  — IPv4-in-IP (RFC 2003)
     socket.IPPROTO_IPV6:     "ipip",      # 41 — IPv6-in-IP (RFC 4213)
 }
 

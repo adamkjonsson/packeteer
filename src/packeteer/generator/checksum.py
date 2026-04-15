@@ -29,7 +29,7 @@ _CRC32C_TABLE: list[int] = _make_crc32c_table()
 
 
 def crc32c(data: bytes) -> int:
-    """Compute the CRC-32c (Castagnoli) checksum over *data*.
+    r"""Compute the CRC-32c (Castagnoli) checksum over *data*.
 
     Uses the Castagnoli polynomial (0x1EDC6F41, reflected form 0x82F63B78).
     This is the checksum algorithm mandated by SCTP (RFC 9260 §6.8).
@@ -41,9 +41,10 @@ def crc32c(data: bytes) -> int:
         A 32-bit unsigned integer in the range ``[0, 2**32 - 1]``.
 
     Example:
-        >>> from packet_generator.checksum import crc32c
-        >>> crc32c(b'\\x00' * 12) != 0
+        >>> from packeteer.generator.checksum import crc32c
+        >>> crc32c(b'\x00' * 12) != 0
         True
+
     """
     crc = 0xFFFFFFFF
     for b in data:
@@ -52,7 +53,7 @@ def crc32c(data: bytes) -> int:
 
 
 def ones_complement_checksum(data: bytes) -> int:
-    """Compute the RFC 1071 internet checksum over *data*.
+    r"""Compute the RFC 1071 internet checksum over *data*.
 
     The algorithm sums all 16-bit big-endian words, folds any carry bits back
     into the low 16 bits, and returns the one's complement of the result.
@@ -70,11 +71,12 @@ def ones_complement_checksum(data: bytes) -> int:
         indicates that all bits were zero after complementing (all-ones input).
 
     Example:
-        >>> from packet_generator.checksum import ones_complement_checksum
-        >>> raw = b'\\x45\\x00\\x00\\x28'  # partial IPv4 header
+        >>> from packeteer.generator.checksum import ones_complement_checksum
+        >>> raw = b'\x45\x00\x00\x28'  # partial IPv4 header
         >>> cksum = ones_complement_checksum(raw)
         >>> isinstance(cksum, int) and 0 <= cksum <= 0xFFFF
         True
+
     """
     if len(data) % 2:
         data += b'\x00'

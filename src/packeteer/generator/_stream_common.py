@@ -6,10 +6,13 @@ import socket
 import struct
 from pathlib import Path
 
-from .fragmentation import fragment_ipv4, fragment_ipv6
+from .fragmentation import fragment_ipv4
+from .fragmentation import fragment_ipv6
 from .ip import IPHeader
 from .ipv6 import IPv6Header
-from .stream_encap import EncapSpec, _encap_ip_start, _fix_encap_prefix
+#from .stream_encap import EncapSpec, _encap_ip_start, _fix_encap_prefix
+from .stream_encap import EncapSpec
+from .stream_encap import _fix_encap_prefix
 
 _DEFAULT_PAYLOAD = Path(__file__).with_name("default_payload.txt").read_bytes()
 

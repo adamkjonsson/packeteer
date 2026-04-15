@@ -118,7 +118,8 @@ from .udp import UDPHeader, build_udp_header
 from .icmp import ICMPHeader, build_icmp_header
 from .icmpv6 import ICMPv6Header, build_icmpv6_header
 from .etherip import EtherIPHeader, IPPROTO_ETHERIP, build_etherip_header
-from .gre import GREHeader, IPPROTO_GRE, GRE_PROTO_IPV4, GRE_PROTO_IPV6, GRE_PROTO_TEB, build_gre_header
+from .gre import GREHeader, IPPROTO_GRE, GRE_PROTO_IPV4
+from .gre import GRE_PROTO_IPV6, GRE_PROTO_TEB, build_gre_header
 from .mpls import MPLSLabel, ETHERTYPE_MPLS_UNICAST, build_mpls_label
 from .pppoe import (
     PPPoEHeader, PPPoETag,
@@ -166,16 +167,22 @@ _PPP_PROTO_MAP: dict[type, int] = {
 
 
 def _ethertype_for(layer: object) -> int:
-    """Return the EtherType value that an enclosing Ethernet/VLAN layer should
-    use when *layer* is its direct payload."""
+    """Return EtherType value.
+
+    Return the EtherType value that an enclosing Ethernet/VLAN layer should
+    use when *layer* is its direct payload.
+    """
     if isinstance(layer, PPPoEHeader):
         return ETHERTYPE_PPPOE_SESSION if layer.code == PPPOE_CODE_SESSION else ETHERTYPE_PPPOE_DISCOVERY
     return _ETHERTYPE_MAP.get(type(layer), 0)
 
 
 def _ip_proto_for(layer: object) -> int:
-    """Return the IP protocol number that an enclosing IP layer should use when
-    *layer* is its direct payload."""
+    """Return IP protocol number.
+
+    Return the IP protocol number that an enclosing IP layer should use when
+    *layer* is its direct payload.
+    """
     return _IP_PROTO_MAP.get(type(layer), 0)
 
 
@@ -191,6 +198,7 @@ def _detect_ip_version(addr: str) -> int:
 
     Raises:
         OSError: If *addr* is neither a valid IPv4 nor a valid IPv6 address.
+
     """
     try:
         socket.inet_pton(socket.AF_INET6, addr)
@@ -272,6 +280,7 @@ class PacketBuilder:
             dst_mac: Destination MAC address.
             pad: When ``True``, zero-pad the assembled frame to the IEEE 802.3
                 minimum of 60 bytes when the frame would otherwise be shorter.
+
         """
         # ethertype=0 is a placeholder; the correct value is filled in at
         # build time based on whatever layer follows this one.
@@ -285,9 +294,10 @@ class PacketBuilder:
         the next layer.  Call twice for QinQ (double-tagged) frames.
 
         Args:
-            vid: VLAN ID (1–4094).
-            pcp: Priority Code Point (0–7).
+            vid: VLAN ID (1-4094).
+            pcp: Priority Code Point (0-7).
             dei: Drop Eligible Indicator (0 or 1).
+
         """
         self._layers.append(VLANTag(vid, pcp, dei))
         return self
@@ -301,9 +311,10 @@ class PacketBuilder:
         label stack.
 
         Args:
-            label: 20-bit MPLS label value (0–1048575).
-            tc: Traffic Class (0–7).  Defaults to ``0``.
-            ttl: Time-to-Live (0–255).  Defaults to ``64``.
+            label: 20-bit MPLS label value (0-1048575).
+            tc: Traffic Class (0-7).  Defaults to ``0``.
+            ttl: Time-to-Live (0-255).  Defaults to ``64``.
+
         """
         self._layers.append(MPLSLabel(label=label, tc=tc, ttl=ttl))
         return self
@@ -333,6 +344,7 @@ class PacketBuilder:
                 for discovery messages.  Defaults to ``PPPOE_CODE_SESSION``.
             session_id: 16-bit session identifier.  Defaults to ``0``.
             tags: TLV tags for discovery frames.  Ignored for session frames.
+
         """
         self._layers.append(PPPoEHeader(code=code, session_id=session_id, tags=tags or []))
         return self
@@ -398,6 +410,7 @@ class PacketBuilder:
                 .tcp(dst_port=80)
                 .build()
             )
+
         """
         self._layers.append(GREHeader(key=key, seq=seq, checksum=checksum))
         return self
@@ -438,6 +451,7 @@ class PacketBuilder:
 
         Raises:
             OSError: If *src* is not a valid IPv4 or IPv6 address.
+
         """
         # protocol / next_header = 0 is a placeholder filled in at build time.
         if _detect_ip_version(src) == 6:
@@ -554,6 +568,7 @@ class PacketBuilder:
                 )
                 .build()
             )
+
         """
         self._layers.append(SCTPHeader(
             src_port=src_port,
@@ -570,6 +585,7 @@ class PacketBuilder:
             size: Generate this many random bytes as the payload.  Ignored
                 when *data* is provided.
             data: Explicit payload bytes.  Takes precedence over *size*.
+
         """
         self._payload_size = size
         self._payload_data = data
@@ -594,6 +610,7 @@ class PacketBuilder:
 
         Raises:
             ValueError: If no IP layer exists at any index less than *i*.
+
         """
         for layer in reversed(self._layers[:i]):
             if isinstance(layer, (IPHeader, IPv6Header)):
@@ -708,8 +725,11 @@ class PacketBuilder:
         return data
 
     def _apply_eth_padding(self, data: bytes) -> bytes:
-        """Pad *data* to the Ethernet minimum frame size if the outermost layer
-        is an :class:`EthernetHeader` with ``pad=True``."""
+        """Add padding after short ethernet frame.
+
+        Pad *data* to the Ethernet minimum frame size if the outermost layer
+        is an :class:`EthernetHeader` with ``pad=True``.
+        """
         if (self._layers
                 and isinstance(self._layers[0], EthernetHeader)
                 and self._layers[0].pad
@@ -720,21 +740,21 @@ class PacketBuilder:
     def _validate(self) -> None:
         # PPPoE discovery frames carry only tags — no IP or transport required.
         has_pppoe_discovery = any(
-            isinstance(l, PPPoEHeader) and l.code != PPPOE_CODE_SESSION
-            for l in self._layers
+            isinstance(layer, PPPoEHeader) and layer.code != PPPOE_CODE_SESSION
+            for layer in self._layers
         )
         if has_pppoe_discovery:
-            if not any(isinstance(l, EthernetHeader) for l in self._layers):
+            if not any(isinstance(layer, EthernetHeader) for layer in self._layers):
                 raise ValueError(
                     "PPPoE discovery frames require an Ethernet header; "
                     "call .ethernet() before .pppoe()"
                 )
             return
 
-        has_ip = any(isinstance(l, (IPHeader, IPv6Header)) for l in self._layers)
+        has_ip = any(isinstance(layer, (IPHeader, IPv6Header)) for layer in self._layers)
         has_transport = any(
-            isinstance(l, (TCPHeader, UDPHeader, ICMPHeader, ICMPv6Header, SCTPHeader))
-            for l in self._layers
+            isinstance(layer, (TCPHeader, UDPHeader, ICMPHeader, ICMPv6Header, SCTPHeader))
+            for layer in self._layers
         )
         if not has_ip:
             raise ValueError("No IP layer configured; call .ip() before .build()/.fragment()")
@@ -764,6 +784,7 @@ class PacketBuilder:
             >>> pkt = PacketBuilder().ip(src="1.2.3.4", dst="5.6.7.8").udp().build()
             >>> len(pkt)  # 20 (ip) + 8 (udp)
             28
+
         """
         self._validate()
         data = self._assemble_range(0, len(self._layers), self._payload_bytes)
@@ -803,6 +824,7 @@ class PacketBuilder:
                 .fragment(mtu=1500)
             )
             print(f"{len(fragments)} fragments")
+
         """
         from .fragmentation import fragment_ipv4, fragment_ipv6
 
@@ -810,8 +832,8 @@ class PacketBuilder:
 
         # Find the first (outermost) IP layer.
         k = next(
-            i for i, l in enumerate(self._layers)
-            if isinstance(l, (IPHeader, IPv6Header))
+            i for i, layer in enumerate(self._layers)
+            if isinstance(layer, (IPHeader, IPv6Header))
         )
         ip_layer = self._layers[k]
 
@@ -824,9 +846,11 @@ class PacketBuilder:
         proto = _ip_proto_for(next_layer) if next_layer else 0
 
         if isinstance(ip_layer, IPv6Header):
-            frags = fragment_ipv6(self._clone_ipv6(ip_layer, proto), transport_data, mtu, eth_header=None)
+            frags = fragment_ipv6(self._clone_ipv6(ip_layer, proto),
+                                  transport_data, mtu, eth_header=None)
         else:
-            frags = fragment_ipv4(self._clone_ip(ip_layer, proto), transport_data, mtu, eth_header=None)
+            frags = fragment_ipv4(self._clone_ip(ip_layer, proto),
+                                  transport_data, mtu, eth_header=None)
 
         # Build the prefix (everything to the left of the IP layer).
         # _assemble_range uses self._layers[k] as the 'next_layer' context for

@@ -78,7 +78,7 @@ from ._stream_common import (
 from .stream_encap import (EncapSpec, StreamEncap,  # noqa: F401  (StreamEncap needed for Sphinx type resolution)
                            _apply_encap, _encap_ip_start)
 from .sctp import (
-    SCTPHeader, SCTPDataChunk, SCTPInitChunk, SCTPInitAckChunk,
+    SCTPDataChunk, SCTPInitChunk, SCTPInitAckChunk,
     SCTPSackChunk, SCTPShutdownChunk, SCTPShutdownAckChunk,
     SCTPCookieEchoChunk, SCTPCookieAckChunk, SCTPShutdownCompleteChunk,
     SCTP_DATA_FLAG_BEGINNING, SCTP_DATA_FLAG_ENDING,
@@ -101,7 +101,9 @@ class SCTPStreamPacket:
         tsn: TSN of the DATA chunk, or ``0`` for control packets.
         payload_len: User payload length in bytes (``0`` for control packets).
         label: Human-readable label (e.g. ``"DATA[0]"``, ``"INIT"``).
+
     """
+
     raw:         bytes
     ts_sec:      int
     ts_usec:     int
@@ -117,7 +119,9 @@ class SCTPStream:
 
     Attributes:
         packets: Ordered list of all packets in the stream.
+
     """
+
     packets: list[SCTPStreamPacket]
 
     def to_pcap_tuples(self) -> list[tuple[bytes, int, int]]:
@@ -286,6 +290,7 @@ def generate_sctp_stream(
             payload_distribution="bimodal",
         )
         write_pcap(stream.to_pcap_tuples(), path="sctp_stream.pcap")
+
     """
     if base_time is None:
         base_time = int(time.time())

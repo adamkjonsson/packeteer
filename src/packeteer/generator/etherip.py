@@ -39,14 +39,17 @@ class EtherIPHeader:
     No user-configurable fields.  The version is always 3 and the reserved
     bits are always 0, so the wire representation is always the two bytes
     ``0x30 0x00``.
+
     """
+
     pass
 
 
 def build_etherip_header() -> bytes:
-    """Return the 2-byte EtherIP header (version=3, reserved=0).
+    r"""Return the 2-byte EtherIP header (version=3, reserved=0).
 
     Returns:
-        Two bytes: ``b"\\x30\\x00"``.
+        Two bytes: ``b"\x30\x00"``.
+
     """
     return struct.pack("!H", 0x3000)
