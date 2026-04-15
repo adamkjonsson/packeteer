@@ -1,11 +1,11 @@
 import struct
 import unittest
 
-from packeteer.generator.tcp import (
+from packeteer.generate.tcp import (
     TCPHeader, TCPOptions, build_tcp_header,
     TCP_SYN, TCP_ACK, TCP_FIN, TCP_RST, TCP_PSH,
 )
-from packeteer.parser.tcp import packet_parser
+from packeteer.parse.tcp import packet_parser
 
 
 def _tcp(
@@ -216,7 +216,7 @@ class TestParserTCPRoundtrip(unittest.TestCase):
         self.assertEqual(dst_port, 80)
 
     def test_roundtrip_header_equals_original(self):
-        from packeteer.generator.tcp import TCPHeader
+        from packeteer.generate.tcp import TCPHeader
         orig = TCPHeader(src_port=54321, dst_port=8080, seq=0x11223344, ack=0x55667788,
                          flags=TCP_SYN | TCP_ACK, window=4096)
         raw = build_tcp_header(orig, b"", "10.0.0.1", "10.0.0.2", 4)

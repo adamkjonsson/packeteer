@@ -1,11 +1,11 @@
 import struct
 import socket
 import unittest
-from packeteer.generator.tcp import (
+from packeteer.generate.tcp import (
     TCPHeader, TCPOptions, build_tcp_header,
     TCP_FIN, TCP_SYN, TCP_RST, TCP_PSH, TCP_ACK, TCP_URG, TCP_ECE, TCP_CWR,
 )
-from packeteer.generator.checksum import ones_complement_checksum
+from packeteer.generate.checksum import ones_complement_checksum
 
 
 def _verify_tcp_checksum_v4(src_ip, dst_ip, tcp_bytes, payload):
@@ -71,7 +71,7 @@ class TestTCPHeader(unittest.TestCase):
         self.assertEqual(seq, 0xDEADBEEF)
 
     def test_seq_via_packet_builder(self):
-        from packeteer.generator import PacketBuilder
+        from packeteer.generate import PacketBuilder
         pkt = (PacketBuilder()
                .ip(src="10.0.0.1", dst="10.0.0.2")
                .tcp(seq=0x12345678)
@@ -259,7 +259,7 @@ class TestTCPOptions(unittest.TestCase):
     # ── PacketBuilder integration ─────────────────────────────────────────────
 
     def test_options_via_packet_builder(self):
-        from packeteer.generator import PacketBuilder
+        from packeteer.generate import PacketBuilder
         opts = TCPOptions(mss=1460, window_scale=7)
         pkt = (PacketBuilder()
                .ip(src="10.0.0.1", dst="10.0.0.2")
@@ -271,7 +271,7 @@ class TestTCPOptions(unittest.TestCase):
         self.assertGreater(data_offset, 5)
 
     def test_reserved_via_packet_builder(self):
-        from packeteer.generator import PacketBuilder
+        from packeteer.generate import PacketBuilder
         pkt = (PacketBuilder()
                .ip(src="10.0.0.1", dst="10.0.0.2")
                .tcp(reserved=0b0011)

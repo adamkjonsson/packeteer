@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import struct
 
-from packeteer.generator.gre import GREHeader
+from packeteer.generate.gre import GREHeader
 
 
 def packet_parser(data: bytes) -> tuple[int, int | None, GREHeader | None]:

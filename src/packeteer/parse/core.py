@@ -7,7 +7,7 @@ select the next parser automatically.
 Example — single raw packet::
 
     from .core import parse_packet
-    from packeteer.generator import PacketBuilder
+    from packeteer.generate import PacketBuilder
     from packeteer.pcap import LINKTYPE_RAW
 
     raw = PacketBuilder().ip(src="10.0.0.1", dst="10.0.0.2").tcp(dst_port=443).build()
@@ -37,23 +37,23 @@ import socket
 from dataclasses import dataclass, field
 from typing import Any
 
-from packeteer.generator.ethernet import (
+from packeteer.generate.ethernet import (
     ETHERTYPE_IPV4,
     ETHERTYPE_IPV6,
     EthernetHeader,
     VLANTag,
 )
-from packeteer.generator.ip import IPHeader
-from packeteer.generator.ipv6 import IPv6Header
-from packeteer.generator.etherip import EtherIPHeader, IPPROTO_ETHERIP
-from packeteer.generator.gre import GREHeader, IPPROTO_GRE, GRE_PROTO_TEB
-from packeteer.generator.mpls import MPLSLabel, ETHERTYPE_MPLS_UNICAST, ETHERTYPE_MPLS_MULTICAST
-from packeteer.generator.pppoe import PPPoEHeader, ETHERTYPE_PPPOE_DISCOVERY, ETHERTYPE_PPPOE_SESSION
-from packeteer.generator.tcp import TCPHeader
-from packeteer.generator.udp import UDPHeader
-from packeteer.generator.icmp import ICMPHeader
-from packeteer.generator.icmpv6 import ICMPv6Header
-from packeteer.generator.sctp import SCTPHeader
+from packeteer.generate.ip import IPHeader
+from packeteer.generate.ipv6 import IPv6Header
+from packeteer.generate.etherip import EtherIPHeader, IPPROTO_ETHERIP
+from packeteer.generate.gre import GREHeader, IPPROTO_GRE, GRE_PROTO_TEB
+from packeteer.generate.mpls import MPLSLabel, ETHERTYPE_MPLS_UNICAST, ETHERTYPE_MPLS_MULTICAST
+from packeteer.generate.pppoe import PPPoEHeader, ETHERTYPE_PPPOE_DISCOVERY, ETHERTYPE_PPPOE_SESSION
+from packeteer.generate.tcp import TCPHeader
+from packeteer.generate.udp import UDPHeader
+from packeteer.generate.icmp import ICMPHeader
+from packeteer.generate.icmpv6 import ICMPv6Header
+from packeteer.generate.sctp import SCTPHeader
 from packeteer.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW, PcapFileHeader, read_pcap
 from .to_config import update_config, to_packet_spec, to_json_string, apply_tunneled
 
@@ -317,8 +317,8 @@ def parse_pcap_file(
 
     Reads the file with :func:`packeteer.pcap.read_pcap`, parses each
     record with :func:`parse_pcap_packet`, converts the layers to a config dict
-    with :func:`packeteer.parser.to_config.update_config`, and serialises the
-    result with :func:`packeteer.parser.to_config.to_json_string`.
+    with :func:`packeteer.parse.to_config.update_config`, and serialises the
+    result with :func:`packeteer.parse.to_config.to_json_string`.
 
     The per-packet ``metadata`` block is populated with ``timestamp_s`` and
     either ``timestamp_us`` or ``timestamp_ns`` (depending on the file's

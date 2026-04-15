@@ -27,29 +27,29 @@ import configparser
 import json
 import sys
 from importlib.metadata import version as _pkg_version, PackageNotFoundError as _PkgNotFoundError
-from packeteer.generator import PacketBuilder
-from packeteer.generator.tcp import TCPOptions
+from packeteer.generate import PacketBuilder
+from packeteer.generate.tcp import TCPOptions
 from packeteer.pcap import write_pcap, write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW
-from packeteer.generator.tcp_stream import generate_tcp_stream
-from packeteer.generator.udp_stream import generate_udp_stream
-from packeteer.generator.sctp_stream import generate_sctp_stream
-from packeteer.generator.stream_encap import (
+from packeteer.generate.tcp_stream import generate_tcp_stream, TCPStreamConfig
+from packeteer.generate.udp_stream import generate_udp_stream
+from packeteer.generate.sctp_stream import generate_sctp_stream
+from packeteer.generate.stream_encap import (
     StreamEncap, VLANEncap, QinQEncap, MPLSEncap, PPPoEEncap,
     GREEncap, EtherIPEncap, IPIPEncap,
 )
-from packeteer.generator.pppoe import PPPoETag, PPPOE_CODE_SESSION
-from packeteer.generator.sctp import (
+from packeteer.generate.pppoe import PPPoETag, PPPOE_CODE_SESSION
+from packeteer.generate.sctp import (
     SCTPDataChunk, SCTPInitChunk, SCTPInitAckChunk, SCTPSackChunk,
     SCTPHeartbeatChunk, SCTPHeartbeatAckChunk, SCTPAbortChunk,
     SCTPShutdownChunk, SCTPShutdownAckChunk, SCTPErrorChunk,
     SCTPCookieEchoChunk, SCTPCookieAckChunk, SCTPShutdownCompleteChunk,
     SCTPGenericChunk, SCTPChunk,
 )
-from packeteer.parser.core import parse_pcap_file, parse_packet
-from packeteer.parser.to_config import (
+from packeteer.parse.core import parse_pcap_file, parse_packet
+from packeteer.parse.to_config import (
     update_config, to_packet_spec, to_json_string, apply_tunneled,
 )
-from packeteer.sanitiser import SanitiseOptions, sanitise
+from packeteer.sanitise import SanitiseOptions, sanitise
 
 
 def _parse_sctp_chunk(spec: dict, packet_num: int) -> SCTPChunk:
@@ -837,7 +837,6 @@ def _cmd_stream(args: argparse.Namespace) -> None:
         include_ethernet=not args.no_ethernet,
         ip_ttl=args.ttl,
         inter_packet_gap=args.gap,
-        gap_jitter=args.gap_jitter,
         mtu=args.mtu,
         encap=encap,
     )
@@ -846,21 +845,24 @@ def _cmd_stream(args: argparse.Namespace) -> None:
         if protocol == "tcp":
             stream = generate_tcp_stream(
                 **common,
-                window=args.window,
-                psh_probability=args.psh_probability,
-                packet_loss_probability=args.packet_loss_probability,
-                retransmission_probability=args.retransmission_probability,
-                retransmission_timeout=args.retransmission_timeout,
-                payload_corruption_probability=args.payload_corruption_probability,
-                server_rst_probability=args.server_rst_probability,
-                rst_propagation_delay=args.rst_propagation_delay,
-                stray_packet_count=args.stray_packet_count,
-                stray_timing_window=args.stray_timing_window,
+                config=TCPStreamConfig(
+                    gap_jitter=args.gap_jitter,
+                    window=args.window,
+                    psh_probability=args.psh_probability,
+                    packet_loss_probability=args.packet_loss_probability,
+                    retransmission_probability=args.retransmission_probability,
+                    retransmission_timeout=args.retransmission_timeout,
+                    payload_corruption_probability=args.payload_corruption_probability,
+                    server_rst_probability=args.server_rst_probability,
+                    rst_propagation_delay=args.rst_propagation_delay,
+                    stray_packet_count=args.stray_packet_count,
+                    stray_timing_window=args.stray_timing_window,
+                ),
             )
         elif protocol == "udp":
-            stream = generate_udp_stream(**common)
+            stream = generate_udp_stream(**common, gap_jitter=args.gap_jitter)
         else:  # sctp
-            stream = generate_sctp_stream(**common)
+            stream = generate_sctp_stream(**common, gap_jitter=args.gap_jitter)
     except (ValueError, OSError) as e:
         print(f"Error generating stream: {e}", file=sys.stderr)
         sys.exit(1)

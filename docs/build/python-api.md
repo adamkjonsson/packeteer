@@ -1,12 +1,12 @@
 # `PacketBuilder` — Python API
 
-{class}`~packeteer.generator.builder.PacketBuilder` is the fluent Python API
+{class}`~packeteer.generate.builder.PacketBuilder` is the fluent Python API
 behind `packeteer build`.  Each method **appends** one layer to a stack and
 returns `self`, so calls chain naturally.  Call `.build()` at the end to
 assemble the raw bytes.
 
 ```python
-from packeteer.generator import PacketBuilder
+from packeteer.generate import PacketBuilder
 
 pkt = (PacketBuilder()
     .ethernet(src_mac="00:00:00:00:00:01", dst_mac="00:00:00:00:00:02")
@@ -75,7 +75,7 @@ Appends a PPPoE header (RFC 2516).
 |-----------|---------|-------------|
 | `code` | `0` | `0` = session data frame; `9`/`7`/`25`/`101`/`167` for discovery |
 | `session_id` | `0` | 16-bit PPPoE session ID |
-| `tags` | `None` | List of {class}`~packeteer.generator.pppoe.PPPoETag` objects for discovery frames |
+| `tags` | `None` | List of {class}`~packeteer.generate.pppoe.PPPoETag` objects for discovery frames |
 
 ### `.ip(src, dst, ttl=64, tos=0, identification=0, flags=0b010, fragment_offset=0, traffic_class=0, flow_label=0)`
 
@@ -174,10 +174,10 @@ fields are computed automatically.
 | `window` | `65535` | Receive window size in bytes |
 | `urgent_ptr` | `0` | Urgent pointer (used when URG flag set) |
 | `reserved` | `0` | 4-bit reserved field |
-| `options` | `None` | {class}`~packeteer.generator.tcp.TCPOptions` with MSS, window scale, SACK, and timestamps |
+| `options` | `None` | {class}`~packeteer.generate.tcp.TCPOptions` with MSS, window scale, SACK, and timestamps |
 
 ```python
-from packeteer.generator import TCPOptions
+from packeteer.generate import TCPOptions
 
 # SYN with MSS and SACK permitted options
 pkt = (PacketBuilder()
@@ -219,8 +219,8 @@ SCTP data lives inside typed *chunk* objects rather than in a separate
 `.payload()` call.
 
 ```python
-from packeteer.generator import PacketBuilder
-from packeteer.generator import (
+from packeteer.generate import PacketBuilder
+from packeteer.generate import (
     SCTPInitChunk, SCTPDataChunk,
     SCTP_DATA_FLAG_BEGINNING, SCTP_DATA_FLAG_ENDING,
 )
@@ -349,7 +349,7 @@ accept a list of `(bytes, ts_sec, ts_frac)` tuples.
 
 ```python
 import time
-from packeteer.generator import PacketBuilder
+from packeteer.generate import PacketBuilder
 from packeteer.pcap import write_pcap, write_pcapng, LINKTYPE_ETHERNET
 
 t = int(time.time())

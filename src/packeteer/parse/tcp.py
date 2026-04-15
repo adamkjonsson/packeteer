@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import struct
 
-from packeteer.generator.tcp import TCPHeader
+from packeteer.generate.tcp import TCPHeader
 
 
 def packet_parser(data: bytes) -> tuple[int, int | None, TCPHeader | None]:

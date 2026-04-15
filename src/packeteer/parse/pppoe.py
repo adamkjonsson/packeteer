@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import struct
 
-from packeteer.generator.ethernet import ETHERTYPE_IPV4, ETHERTYPE_IPV6
-from packeteer.generator.pppoe import (
+from packeteer.generate.ethernet import ETHERTYPE_IPV4, ETHERTYPE_IPV6
+from packeteer.generate.pppoe import (
     PPPoEHeader, PPPoETag,
     PPP_IPV4, PPP_IPV6,
     PPPOE_CODE_SESSION,

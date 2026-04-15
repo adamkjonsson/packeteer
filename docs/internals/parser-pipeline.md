@@ -1,6 +1,6 @@
 # Parser pipeline
 
-`parse_packet()` (in `packeteer/parser/parser.py`) is a linear state machine that
+`parse_packet()` (in `packeteer/parse/parser.py`) is a linear state machine that
 walks a raw byte string from left to right, dispatching to one sub-parser per
 layer.
 

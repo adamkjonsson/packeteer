@@ -6,12 +6,12 @@ four-way teardown.
 
 Sequence and acknowledgement numbers are tracked correctly across both sides,
 including 32-bit wrap-around.  Each packet is assembled via
-:class:`~packeteer.generator.builder.PacketBuilder`, so all IP and TCP checksums
+:class:`~packeteer.generate.builder.PacketBuilder`, so all IP and TCP checksums
 are computed automatically.
 
 Typical usage::
 
-    from packeteer.generator.tcp_stream import generate_tcp_stream
+    from packeteer.generate.tcp_stream import generate_tcp_stream
     from packeteer.pcap import write_pcap
 
     stream = generate_tcp_stream(
@@ -357,15 +357,15 @@ def generate_tcp_stream(
         encap: One or more encapsulation layers to wrap every packet in.
             Accepts a single descriptor, a list of descriptors (applied
             outermost first), or ``None`` (default, no encapsulation).
-            Available types (all from :mod:`packeteer.generator.stream_encap`):
+            Available types (all from :mod:`packeteer.generate.stream_encap`):
 
-            * :class:`~packeteer.generator.stream_encap.VLANEncap` — 802.1Q tag
-            * :class:`~packeteer.generator.stream_encap.QinQEncap` — double 802.1Q tags
-            * :class:`~packeteer.generator.stream_encap.MPLSEncap` — MPLS label stack
-            * :class:`~packeteer.generator.stream_encap.PPPoEEncap` — PPPoE session frame
-            * :class:`~packeteer.generator.stream_encap.GREEncap` — GRE tunnel
-            * :class:`~packeteer.generator.stream_encap.EtherIPEncap` — EtherIP tunnel
-            * :class:`~packeteer.generator.stream_encap.IPIPEncap` — IP-in-IP tunnel
+            * :class:`~packeteer.generate.stream_encap.VLANEncap` — 802.1Q tag
+            * :class:`~packeteer.generate.stream_encap.QinQEncap` — double 802.1Q tags
+            * :class:`~packeteer.generate.stream_encap.MPLSEncap` — MPLS label stack
+            * :class:`~packeteer.generate.stream_encap.PPPoEEncap` — PPPoE session frame
+            * :class:`~packeteer.generate.stream_encap.GREEncap` — GRE tunnel
+            * :class:`~packeteer.generate.stream_encap.EtherIPEncap` — EtherIP tunnel
+            * :class:`~packeteer.generate.stream_encap.IPIPEncap` — IP-in-IP tunnel
 
         config: Optional :class:`TCPStreamConfig` supplying timing, anomaly
             injection, and per-packet hook settings.  All fields default to
@@ -381,8 +381,8 @@ def generate_tcp_stream(
 
     Example::
 
-        from packeteer.generator.tcp_stream import generate_tcp_stream, TCPStreamConfig
-        from packeteer.generator import TCPOptions
+        from packeteer.generate.tcp_stream import generate_tcp_stream, TCPStreamConfig
+        from packeteer.generate import TCPOptions
         from packeteer.pcap import write_pcap
 
         stream = generate_tcp_stream(

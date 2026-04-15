@@ -1,7 +1,7 @@
 import struct
 import unittest
-from packeteer.generator.ip import IPHeader, build_ip_header
-from packeteer.generator.checksum import ones_complement_checksum
+from packeteer.generate.ip import IPHeader, build_ip_header
+from packeteer.generate.checksum import ones_complement_checksum
 
 
 class TestIPHeader(unittest.TestCase):

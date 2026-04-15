@@ -1,17 +1,17 @@
 import io
 import unittest
 
-from packeteer.generator import PacketBuilder
-from packeteer.generator.ethernet import EthernetHeader
-from packeteer.generator.ip import IPHeader
-from packeteer.generator.ipv6 import IPv6Header
-from packeteer.generator.tcp import TCPHeader, TCP_SYN, TCP_ACK
-from packeteer.generator.udp import UDPHeader
-from packeteer.generator.icmp import ICMPHeader
-from packeteer.generator.icmpv6 import ICMPv6Header
+from packeteer.generate import PacketBuilder
+from packeteer.generate.ethernet import EthernetHeader
+from packeteer.generate.ip import IPHeader
+from packeteer.generate.ipv6 import IPv6Header
+from packeteer.generate.tcp import TCPHeader, TCP_SYN, TCP_ACK
+from packeteer.generate.udp import UDPHeader
+from packeteer.generate.icmp import ICMPHeader
+from packeteer.generate.icmpv6 import ICMPv6Header
 from packeteer.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW, write_pcap
 
-from packeteer.parser.core import parse_packet, parse_pcap_packet, parse_pcap_file, ParsedPacket
+from packeteer.parse.core import parse_packet, parse_pcap_packet, parse_pcap_file, ParsedPacket
 from packeteer.pcap import read_pcap
 
 

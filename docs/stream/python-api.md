@@ -6,7 +6,7 @@
 and acknowledgement numbers, 32-bit wrap-around, and per-packet timestamps.
 
 ```python
-from packeteer.generator import generate_tcp_stream
+from packeteer.generate import generate_tcp_stream
 from packeteer.pcap import write_pcap
 
 stream = generate_tcp_stream(
@@ -69,7 +69,7 @@ Optional parameters are grouped into a `TCPStreamConfig` dataclass.  Pass an
 instance as the `config` keyword argument; any field left unset uses its default.
 
 ```python
-from packeteer.generator.tcp_stream import TCPStreamConfig
+from packeteer.generate.tcp_stream import TCPStreamConfig
 
 stream = generate_tcp_stream(
     client_ip="10.0.0.1",
@@ -109,7 +109,7 @@ independent, packets can overtake each other, producing genuine out-of-order
 timestamps in the sorted stream.
 
 ```python
-from packeteer.generator.tcp_stream import TCPStreamConfig
+from packeteer.generate.tcp_stream import TCPStreamConfig
 
 # 1 ms base gap with up to 0.8 ms extra jitter
 stream = generate_tcp_stream(
@@ -152,12 +152,12 @@ Labelled `STRAY[n]`.  Use `stray_timing_window` to constrain their timestamps.
 
 ### TCP options
 
-Pass {class}`~packeteer.generator.tcp.TCPOptions` instances to include options on
+Pass {class}`~packeteer.generate.tcp.TCPOptions` instances to include options on
 the SYN and SYN-ACK:
 
 ```python
-from packeteer.generator import TCPOptions
-from packeteer.generator.tcp_stream import TCPStreamConfig
+from packeteer.generate import TCPOptions
+from packeteer.generate.tcp_stream import TCPStreamConfig
 
 stream = generate_tcp_stream(
     client_ip="10.0.0.1", server_ip="10.0.0.2",
@@ -182,7 +182,7 @@ There is no handshake or teardown; all `num_data_packets` packets carry
 direction `"c2s"` and are labelled `DATA[0]`, `DATA[1]`, …
 
 ```python
-from packeteer.generator import generate_udp_stream
+from packeteer.generate import generate_udp_stream
 from packeteer.pcap import write_pcap
 
 stream = generate_udp_stream(
@@ -210,7 +210,7 @@ TSNs, CRC-32c checksums, and State Cookie TLVs all computed correctly per
 RFC 9260.
 
 ```python
-from packeteer.generator import generate_sctp_stream
+from packeteer.generate import generate_sctp_stream
 from packeteer.pcap import write_pcap
 
 stream = generate_sctp_stream(
@@ -330,7 +330,7 @@ are chosen from the `[min_payload, max_payload]` range:
 Pass an explicit `payload_sizes` list to override the distribution entirely:
 
 ```python
-from packeteer.generator.tcp_stream import TCPStreamConfig
+from packeteer.generate.tcp_stream import TCPStreamConfig
 
 stream = generate_tcp_stream(
     client_ip="10.0.0.1", server_ip="10.0.0.2",
@@ -378,7 +378,7 @@ or more encapsulation layers.  Pass a single descriptor, a list of descriptors
 (outermost first), or `None` (default — no encapsulation).
 
 ```python
-from packeteer.generator import (
+from packeteer.generate import (
     VLANEncap, QinQEncap, MPLSEncap, PPPoEEncap,
     GREEncap, EtherIPEncap, IPIPEncap,
 )
@@ -406,7 +406,7 @@ stream = generate_tcp_stream(
 )
 
 # GRE-tunnelled UDP stream — stream IPs become inner; outer IPs wrap them
-from packeteer.generator import generate_udp_stream
+from packeteer.generate import generate_udp_stream
 
 stream = generate_udp_stream(
     client_ip="10.0.0.1", server_ip="10.0.0.2",
@@ -460,7 +460,7 @@ to drop the packet.
 
 ```python
 from dataclasses import replace
-from packeteer.generator.tcp_stream import TCPStreamConfig
+from packeteer.generate.tcp_stream import TCPStreamConfig
 
 def corrupt_checksum(pkt, idx):
     """Flip the last two bytes of packet 5 to corrupt the TCP checksum."""

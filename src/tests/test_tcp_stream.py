@@ -6,10 +6,10 @@ import unittest
 
 import dataclasses
 
-from packeteer.generator.tcp_stream import (
+from packeteer.generate.tcp_stream import (
     generate_tcp_stream, TCPStream, TCPStreamConfig, TCPStreamPacket, _pkt_usec,
 )
-from packeteer.generator.tcp import TCP_SYN, TCP_ACK, TCP_PSH, TCP_FIN, TCPOptions
+from packeteer.generate.tcp import TCP_SYN, TCP_ACK, TCP_PSH, TCP_FIN, TCPOptions
 from packeteer.pcap import write_pcap, LINKTYPE_ETHERNET, LINKTYPE_RAW
 
 _WRAP = 2 ** 32
@@ -648,7 +648,7 @@ class TestServerRst(unittest.TestCase):
         self.assertEqual(rst.direction, "s2c")
 
     def test_rst_flags(self):
-        from packeteer.generator.tcp import TCP_RST, TCP_ACK
+        from packeteer.generate.tcp import TCP_RST, TCP_ACK
         stream = self._rst_stream()
         rst = next(p for p in stream.packets if p.label == "RST")
         self.assertEqual(rst.flags, TCP_RST | TCP_ACK)
@@ -1132,7 +1132,7 @@ class TestStrayPackets(unittest.TestCase):
 
     def test_flags_psh_ack(self):
         """Stray packets carry PSH|ACK flags."""
-        from packeteer.generator.tcp import TCP_ACK, TCP_PSH
+        from packeteer.generate.tcp import TCP_ACK, TCP_PSH
         stream = self._make_stream(stray_packet_count=5)
         for p in stream.packets:
             if p.label.startswith("STRAY["):

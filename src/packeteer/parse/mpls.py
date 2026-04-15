@@ -6,8 +6,8 @@ from __future__ import annotations
 
 import struct
 
-from packeteer.generator.ethernet import ETHERTYPE_IPV4, ETHERTYPE_IPV6
-from packeteer.generator.mpls import MPLSLabel, ETHERTYPE_MPLS_UNICAST
+from packeteer.generate.ethernet import ETHERTYPE_IPV4, ETHERTYPE_IPV6
+from packeteer.generate.mpls import MPLSLabel, ETHERTYPE_MPLS_UNICAST
 
 
 def packet_parser(data: bytes) -> tuple[int, int | None, MPLSLabel | None]:

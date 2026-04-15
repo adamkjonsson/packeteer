@@ -15,7 +15,7 @@ of the same byte sequence rather than each restarting at offset 0.
 
 Typical usage::
 
-    from packeteer.generator.udp_stream import generate_udp_stream
+    from packeteer.generate.udp_stream import generate_udp_stream
     from packeteer.pcap import write_pcap
 
     stream = generate_udp_stream(
@@ -198,7 +198,7 @@ def generate_udp_stream(
         encap: One or more encapsulation layers to wrap every packet in.
             Accepts a single descriptor, a list of descriptors (applied
             outermost first), or ``None`` (default, no encapsulation).
-            See :mod:`packeteer.generator.stream_encap` for available types
+            See :mod:`packeteer.generate.stream_encap` for available types
             (VLANEncap, QinQEncap, MPLSEncap, PPPoEEncap, GREEncap,
             EtherIPEncap, IPIPEncap) and combination rules.
 

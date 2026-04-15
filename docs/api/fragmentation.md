@@ -9,7 +9,7 @@ Low-level IPv4 and IPv6 fragmentation functions.  For the high-level
 ## IPv4
 
 ```{eval-rst}
-.. autofunction:: packeteer.generator.fragmentation.fragment_ipv4
+.. autofunction:: packeteer.generate.fragmentation.fragment_ipv4
 ```
 
 ---
@@ -17,5 +17,5 @@ Low-level IPv4 and IPv6 fragmentation functions.  For the high-level
 ## IPv6
 
 ```{eval-rst}
-.. autofunction:: packeteer.generator.fragmentation.fragment_ipv6
+.. autofunction:: packeteer.generate.fragmentation.fragment_ipv6
 ```

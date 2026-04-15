@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import struct
 
-from packeteer.generator.ethernet import VLANTag
+from packeteer.generate.ethernet import VLANTag
 
 
 def packet_parser(data: bytes) -> tuple[int, int | None, VLANTag | None]:

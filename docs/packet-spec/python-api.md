@@ -1,6 +1,6 @@
 # Python API
 
-The `packeteer.parser.to_config` module provides the functions used internally by
+The `packeteer.parse.to_config` module provides the functions used internally by
 `packeteer parse` and `packeteer stream --json` to produce packet specs from
 parsed or generated packets.  See {doc}`../api/parser` for the full API reference.
 
@@ -12,10 +12,10 @@ assemble the final output:
 
 ```python
 import json
-from packeteer.generator import generate_tcp_stream
+from packeteer.generate import generate_tcp_stream
 from packeteer.pcap import LINKTYPE_ETHERNET
-from packeteer.parser import parse_packet
-from packeteer.parser import update_config, to_packet_spec, to_json_string
+from packeteer.parse import parse_packet
+from packeteer.parse import update_config, to_packet_spec, to_json_string
 
 stream = generate_tcp_stream(client_ip="10.0.0.1", server_ip="10.0.0.2",
                               num_data_packets=5)

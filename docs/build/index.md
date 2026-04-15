@@ -1,7 +1,7 @@
 # Building Packets
 
 packeteer builds packets in two ways: from the CLI using a packet spec file, or
-directly from Python using the {class}`~packeteer.generator.builder.PacketBuilder`
+directly from Python using the {class}`~packeteer.generate.builder.PacketBuilder`
 API.  Both paths produce identical byte-accurate output — the CLI is a thin
 wrapper around the same builder that the Python API exposes.
 

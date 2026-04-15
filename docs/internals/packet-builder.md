@@ -1,6 +1,6 @@
 # PacketBuilder internals
 
-`PacketBuilder` (in `packeteer/generator/builder.py`) assembles complete raw
+`PacketBuilder` (in `packeteer/generate/builder.py`) assembles complete raw
 packet bytes from a sequence of protocol layers.  Callers append layers via
 fluent methods (`.ethernet()`, `.ip()`, `.tcp()`, …), then call `.build()` or
 `.fragment()` to produce bytes.
@@ -92,7 +92,7 @@ Checksums are computed by the individual `build_*` functions, not by
    everything to the right of the IP header: transport header, any inner IP
    headers, and application payload.
 3. Pass the result to `fragment_ipv4()` or `fragment_ipv6()` in
-   `packeteer/generator/fragmentation.py`.
+   `packeteer/generate/fragmentation.py`.
 4. Build the prefix (everything to the left of the IP header) with
    `_assemble_range(0, k, b"")`.
 5. Prepend the prefix to every fragment.

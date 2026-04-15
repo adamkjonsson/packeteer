@@ -23,7 +23,7 @@ where = ["src"]
 include = ["packeteer*"]
 
 [tool.setuptools.package-data]
-"packeteer.generator" = ["default_payload.txt", "stream.ini.template"]
+"packeteer.generate" = ["default_payload.txt", "stream.ini.template"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

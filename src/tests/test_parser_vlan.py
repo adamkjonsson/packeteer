@@ -1,7 +1,7 @@
 import struct
 import unittest
 
-from packeteer.generator.ethernet import (
+from packeteer.generate.ethernet import (
     EthernetHeader,
     VLANTag,
     build_ethernet_header,
@@ -9,7 +9,7 @@ from packeteer.generator.ethernet import (
     ETHERTYPE_IPV6,
     ETHERTYPE_8021Q,
 )
-from packeteer.parser.vlan import packet_parser
+from packeteer.parse.vlan import packet_parser
 
 
 DST = "aa:bb:cc:dd:ee:ff"

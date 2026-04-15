@@ -472,7 +472,7 @@ def write_pcap(
     Example::
 
         import time
-        from packeteer.generator import PacketBuilder
+        from packeteer.generate import PacketBuilder
         from packeteer.pcap import write_pcap
 
         now_ns = time.time_ns()
@@ -521,7 +521,7 @@ def write_pcapng(
 
     Example::
 
-        from packeteer.generator import PacketBuilder
+        from packeteer.generate import PacketBuilder
         from packeteer.pcap import write_pcapng
 
         pkt = PacketBuilder().ip(src="10.0.0.1", dst="10.0.0.2").tcp().build()

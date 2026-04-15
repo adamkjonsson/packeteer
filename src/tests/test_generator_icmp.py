@@ -1,8 +1,8 @@
 import struct
 import socket
 import unittest
-from packeteer.generator.icmpv6 import ICMPv6Header, build_icmpv6_header
-from packeteer.generator.checksum import ones_complement_checksum
+from packeteer.generate.icmpv6 import ICMPv6Header, build_icmpv6_header
+from packeteer.generate.checksum import ones_complement_checksum
 
 
 def _verify_icmpv6_checksum(src_ip, dst_ip, icmpv6_bytes, payload):

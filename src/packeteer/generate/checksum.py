@@ -41,7 +41,7 @@ def crc32c(data: bytes) -> int:
         A 32-bit unsigned integer in the range ``[0, 2**32 - 1]``.
 
     Example:
-        >>> from packeteer.generator.checksum import crc32c
+        >>> from packeteer.generate.checksum import crc32c
         >>> crc32c(b'\x00' * 12) != 0
         True
 
@@ -71,7 +71,7 @@ def ones_complement_checksum(data: bytes) -> int:
         indicates that all bits were zero after complementing (all-ones input).
 
     Example:
-        >>> from packeteer.generator.checksum import ones_complement_checksum
+        >>> from packeteer.generate.checksum import ones_complement_checksum
         >>> raw = b'\x45\x00\x00\x28'  # partial IPv4 header
         >>> cksum = ones_complement_checksum(raw)
         >>> isinstance(cksum, int) and 0 <= cksum <= 0xFFFF

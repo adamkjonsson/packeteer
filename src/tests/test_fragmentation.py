@@ -3,10 +3,10 @@ import socket
 import struct
 import unittest
 
-from packeteer.generator import PacketBuilder, fragment_ipv4, fragment_ipv6
-from packeteer.generator.ip import IPHeader
-from packeteer.generator.ipv6 import IPv6Header
-from packeteer.generator.ethernet import EthernetHeader, ETHERTYPE_IPV4, ETHERTYPE_IPV6
+from packeteer.generate import PacketBuilder, fragment_ipv4, fragment_ipv6
+from packeteer.generate.ip import IPHeader
+from packeteer.generate.ipv6 import IPv6Header
+from packeteer.generate.ethernet import EthernetHeader, ETHERTYPE_IPV4, ETHERTYPE_IPV6
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +94,7 @@ class TestFragmentIPv4(unittest.TestCase):
 
     def test_ip_checksum_valid_on_each_fragment(self):
         """Re-compute the checksum and verify it equals zero (RFC 1071)."""
-        from packeteer.generator.checksum import ones_complement_checksum
+        from packeteer.generate.checksum import ones_complement_checksum
         data = b"\x00" * 500
         frags = fragment_ipv4(self._make_hdr(), data, mtu=200)
         for frag in frags:

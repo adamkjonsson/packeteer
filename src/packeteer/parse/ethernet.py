@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import struct
 
-from packeteer.generator.ethernet import (
+from packeteer.generate.ethernet import (
     ETHERTYPE_8021Q,
     EthernetHeader,
     VLANTag,

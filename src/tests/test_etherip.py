@@ -2,11 +2,11 @@
 import struct
 import unittest
 
-from packeteer.generator import PacketBuilder
-from packeteer.generator.etherip import EtherIPHeader, IPPROTO_ETHERIP, build_etherip_header
+from packeteer.generate import PacketBuilder
+from packeteer.generate.etherip import EtherIPHeader, IPPROTO_ETHERIP, build_etherip_header
 from packeteer.pcap import LINKTYPE_ETHERNET
-from packeteer.parser import etherip_packet_parser
-from packeteer.parser.core import parse_packet, ParsedPacket
+from packeteer.parse import etherip_packet_parser
+from packeteer.parse.core import parse_packet, ParsedPacket
 
 
 class TestBuildEtherIPHeader(unittest.TestCase):
@@ -295,8 +295,8 @@ class TestParsePacketEtherIP(unittest.TestCase):
 
     def test_corrupt_etherip_header_goes_to_payload(self):
         # Build valid outer headers then inject bad EtherIP (version != 3)
-        from packeteer.generator.ethernet import build_ethernet_header, EthernetHeader, ETHERTYPE_IPV4
-        from packeteer.generator.ip import build_ip_header, IPHeader
+        from packeteer.generate.ethernet import build_ethernet_header, EthernetHeader, ETHERTYPE_IPV4
+        from packeteer.generate.ip import build_ip_header, IPHeader
         import socket
         eth = build_ethernet_header(EthernetHeader("00:00:00:00:00:02", "00:00:00:00:00:01", ETHERTYPE_IPV4))
         inner = b"\x20\x00" + b"\xff" * 10   # bad EtherIP version=2
@@ -314,7 +314,7 @@ class TestParsePacketEtherIPRoundTrip(unittest.TestCase):
 
     def test_round_trip_via_json(self):
         import json
-        from packeteer.parser.core import parse_pcap_file
+        from packeteer.parse.core import parse_pcap_file
         from packeteer.pcap import write_pcap
         import io
 
@@ -350,7 +350,7 @@ class TestParsePacketEtherIPRoundTrip(unittest.TestCase):
 
     def test_double_nested_round_trip_json(self):
         import json
-        from packeteer.parser.core import parse_pcap_file
+        from packeteer.parse.core import parse_pcap_file
         from packeteer.pcap import write_pcap
         import io
 

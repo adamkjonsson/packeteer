@@ -40,18 +40,18 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .core import ParsedPacket
 
-from packeteer.generator.ethernet import EthernetHeader
-from packeteer.generator.etherip import EtherIPHeader, IPPROTO_ETHERIP
-from packeteer.generator.gre import GREHeader
-from packeteer.generator.ip import IPHeader
-from packeteer.generator.ipv6 import IPv6Header
-from packeteer.generator.mpls import MPLSLabel
-from packeteer.generator.pppoe import PPPoEHeader, PPPOE_CODE_SESSION
-from packeteer.generator.tcp import TCPHeader, TCPOptions
-from packeteer.generator.udp import UDPHeader
-from packeteer.generator.icmp import ICMPHeader
-from packeteer.generator.icmpv6 import ICMPv6Header
-from packeteer.generator.sctp import (
+from packeteer.generate.ethernet import EthernetHeader
+from packeteer.generate.etherip import EtherIPHeader, IPPROTO_ETHERIP
+from packeteer.generate.gre import GREHeader
+from packeteer.generate.ip import IPHeader
+from packeteer.generate.ipv6 import IPv6Header
+from packeteer.generate.mpls import MPLSLabel
+from packeteer.generate.pppoe import PPPoEHeader, PPPOE_CODE_SESSION
+from packeteer.generate.tcp import TCPHeader, TCPOptions
+from packeteer.generate.udp import UDPHeader
+from packeteer.generate.icmp import ICMPHeader
+from packeteer.generate.icmpv6 import ICMPv6Header
+from packeteer.generate.sctp import (
     SCTPHeader,
     SCTPDataChunk,
     SCTPInitChunk,
@@ -379,7 +379,7 @@ def update_config(
     - :class:`~packet_generator.ip.IPHeader` / :class:`~packet_generator.ipv6.IPv6Header` → ``network`` section
     - :class:`~packet_generator.etherip.EtherIPHeader` / GRE /
       IP-in-IP → use :func:`apply_tunneled` instead; tunnel serialisation
-      requires the inner :class:`~packeteer.parser.core.ParsedPacket` as
+      requires the inner :class:`~packeteer.parse.core.ParsedPacket` as
       additional context and cannot be dispatched through ``update_config``
       alone.
     - :class:`~packet_generator.tcp.TCPHeader` → ``transport`` section (TCP fields)
@@ -424,9 +424,9 @@ def apply_tunneled(config: dict[str, Any], pkt: "ParsedPacket") -> None:
     Handles all three tunnel types — IP-in-IP, GRE, and EtherIP — by
     dispatching to the appropriate private helper.  Call this after the
     outer IP layer has been written via :func:`update_config` whenever
-    :attr:`~packeteer.parser.core.ParsedPacket.ipip`,
-    :attr:`~packeteer.parser.core.ParsedPacket.gre`, or
-    :attr:`~packeteer.parser.core.ParsedPacket.etherip` is set on *pkt*.
+    :attr:`~packeteer.parse.core.ParsedPacket.ipip`,
+    :attr:`~packeteer.parse.core.ParsedPacket.gre`, or
+    :attr:`~packeteer.parse.core.ParsedPacket.etherip` is set on *pkt*.
 
     Modifies *config* in place.  Does nothing when *pkt* carries no tunnel.
 

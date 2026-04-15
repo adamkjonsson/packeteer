@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import struct
 
-from packeteer.generator.udp import UDPHeader
+from packeteer.generate.udp import UDPHeader
 
 
 def packet_parser(data: bytes) -> tuple[int, int | None, UDPHeader | None]:

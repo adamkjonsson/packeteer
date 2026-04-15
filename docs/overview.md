@@ -32,7 +32,7 @@ fragments, rare protocol combinations) without having to capture live traffic.
 The Python API gives full control when scripting is more convenient than JSON:
 
 ```python
-from packeteer.generator import PacketBuilder
+from packeteer.generate import PacketBuilder
 from packeteer.pcap import write_pcap
 
 packets = []

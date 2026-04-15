@@ -1,9 +1,9 @@
 # IP Fragmentation
 
 Both IPv4 (RFC 791) and IPv6 (RFC 8200 §4.5) fragmentation are supported
-at two levels: a high-level {meth}`packeteer.generator.builder.PacketBuilder.fragment`
-method and the low-level {func}`packeteer.generator.fragmentation.fragment_ipv4` /
-{func}`packeteer.generator.fragmentation.fragment_ipv6` functions.
+at two levels: a high-level {meth}`packeteer.generate.builder.PacketBuilder.fragment`
+method and the low-level {func}`packeteer.generate.fragmentation.fragment_ipv4` /
+{func}`packeteer.generate.fragmentation.fragment_ipv6` functions.
 
 ---
 
@@ -14,7 +14,7 @@ assembled packet bytes, one per fragment.  When the payload fits in a single
 datagram the list has exactly one element.
 
 ```python
-from packeteer.generator import PacketBuilder
+from packeteer.generate import PacketBuilder
 
 # Split a 4000-byte UDP payload across ~3 IPv4 fragments (MTU 1500)
 fragments = (PacketBuilder()
@@ -60,10 +60,10 @@ For fine-grained control, call the underlying functions directly:
 
 ```python
 import socket
-from packeteer.generator import fragment_ipv4, fragment_ipv6
-from packeteer.generator import IPHeader
-from packeteer.generator import IPv6Header
-from packeteer.generator import EthernetHeader, ETHERTYPE_IPV4, ETHERTYPE_IPV6
+from packeteer.generate import fragment_ipv4, fragment_ipv6
+from packeteer.generate import IPHeader
+from packeteer.generate import IPv6Header
+from packeteer.generate import EthernetHeader, ETHERTYPE_IPV4, ETHERTYPE_IPV6
 
 # IPv4 — with an Ethernet prefix
 ip_hdr  = IPHeader("10.0.0.1", "10.0.0.2", socket.IPPROTO_UDP, ttl=64)

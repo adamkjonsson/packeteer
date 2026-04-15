@@ -1,6 +1,6 @@
 # Sanitiser
 
-`packeteer.sanitiser.sanitise` replaces sensitive fields in a packet config dict with
+`packeteer.sanitise.sanitise` replaces sensitive fields in a packet config dict with
 deterministic synthetic values drawn from IANA-reserved address ranges.  The
 original dict is never modified.
 
@@ -9,12 +9,12 @@ See {doc}`../sanitiser/index` for the full feature description and CLI equivalen
 ---
 
 ```{eval-rst}
-.. autoclass:: packeteer.sanitiser.SanitiseOptions
+.. autoclass:: packeteer.sanitise.SanitiseOptions
    :members:
    :no-index:
 ```
 
 ```{eval-rst}
-.. autofunction:: packeteer.sanitiser.sanitise
+.. autofunction:: packeteer.sanitise.sanitise
    :no-index:
 ```

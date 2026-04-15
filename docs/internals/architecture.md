@@ -22,7 +22,7 @@ dict; the CLI simply drives them from the command line.
 └──────────────┬────────────────────────────────┬────────────────────┘
                │                                │
     ┌──────────▼──────────┐        ┌────────────▼────────────┐
-    │  packeteer/parser/     │        │  packeteer/generator/      │
+    │  packeteer/parse/     │        │  packeteer/generate/      │
     │  parser.py          │        │  builder.py             │
     │  to_config.py       │        │  tcp_stream.py  …       │
     └──────────┬──────────┘        └────────────┬────────────┘
@@ -33,21 +33,21 @@ dict; the CLI simply drives them from the command line.
     └─────────────────────┘        └─────────────────────────┘
 ```
 
-**`packeteer.parser`** reads raw bytes and produces `ParsedPacket` objects, which
+**`packeteer.parse`** reads raw bytes and produces `ParsedPacket` objects, which
 are then serialised to packet spec dicts by `to_config.py`.
 
-**`packeteer.generator`** reads packet spec dicts and produces raw bytes, one
+**`packeteer.generate`** reads packet spec dicts and produces raw bytes, one
 packet at a time via `PacketBuilder`, or complete synthetic streams via the
 stream generator modules.
 
-**`packeteer/sanitiser.py`** operates on packet spec dicts: it deep-copies the dict and
+**`packeteer/sanitise.py`** operates on packet spec dicts: it deep-copies the dict and
 replaces sensitive field values in place.
 
 ## Shared header dataclasses
 
 The two packages share the protocol header dataclasses defined in
-`packeteer/generator/`.  The parser imports `EthernetHeader`, `IPHeader`,
-`TCPHeader`, etc. from `packeteer.generator` and populates them when it decodes
+`packeteer/generate/`.  The parser imports `EthernetHeader`, `IPHeader`,
+`TCPHeader`, etc. from `packeteer.generate` and populates them when it decodes
 bytes.  The builder consumes those same dataclasses when it encodes bytes.
 This means there is a single canonical representation of each protocol header,
 and a round-trip `parse → build` reconstruction works without any conversion.

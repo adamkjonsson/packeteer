@@ -4,9 +4,9 @@ import json
 import struct
 import unittest
 
-from packeteer.generator import PacketBuilder, GREHeader, IPPROTO_GRE, GRE_PROTO_IPV4, GRE_PROTO_IPV6, GRE_PROTO_TEB
+from packeteer.generate import PacketBuilder, GREHeader, IPPROTO_GRE, GRE_PROTO_IPV4, GRE_PROTO_IPV6, GRE_PROTO_TEB
 from packeteer.pcap import LINKTYPE_RAW, write_pcap
-from packeteer.parser.core import parse_packet, parse_pcap_file, ParsedPacket
+from packeteer.parse.core import parse_packet, parse_pcap_file, ParsedPacket
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +139,7 @@ class TestPacketBuilderGRE(unittest.TestCase):
 
     def test_gre_checksum_correctness(self):
         """RFC 1071 checksum over GRE header + payload should verify to 0."""
-        from packeteer.generator.checksum import ones_complement_checksum
+        from packeteer.generate.checksum import ones_complement_checksum
         raw = (PacketBuilder()
             .ethernet()
             .ip(src="10.0.0.1", dst="10.0.0.2")

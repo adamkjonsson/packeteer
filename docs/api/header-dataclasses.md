@@ -1,7 +1,7 @@
 # Header Dataclasses
 
 Every protocol layer is represented by a plain dataclass.
-{class}`~packeteer.generator.builder.PacketBuilder` stores instances of these
+{class}`~packeteer.generate.builder.PacketBuilder` stores instances of these
 classes internally and they are also returned by the parser functions in
 {doc}`parser`.
 
@@ -10,12 +10,12 @@ classes internally and they are also returned by the parser functions in
 ## Layer 2 — Ethernet
 
 ```{eval-rst}
-.. autoclass:: packeteer.generator.ethernet.EthernetHeader
+.. autoclass:: packeteer.generate.ethernet.EthernetHeader
    :members:
 ```
 
 ```{eval-rst}
-.. autoclass:: packeteer.generator.ethernet.VLANTag
+.. autoclass:: packeteer.generate.ethernet.VLANTag
    :members:
 ```
 
@@ -24,7 +24,7 @@ classes internally and they are also returned by the parser functions in
 ## Layer 2.5 — MPLS
 
 ```{eval-rst}
-.. autoclass:: packeteer.generator.mpls.MPLSLabel
+.. autoclass:: packeteer.generate.mpls.MPLSLabel
    :members:
 ```
 
@@ -40,12 +40,12 @@ EtherType constants:
 ## Layer 2 — PPPoE
 
 ```{eval-rst}
-.. autoclass:: packeteer.generator.pppoe.PPPoEHeader
+.. autoclass:: packeteer.generate.pppoe.PPPoEHeader
    :members:
 ```
 
 ```{eval-rst}
-.. autoclass:: packeteer.generator.pppoe.PPPoETag
+.. autoclass:: packeteer.generate.pppoe.PPPoETag
    :members:
 ```
 
@@ -84,7 +84,7 @@ EtherType and PPP protocol constants:
 ## Tunnels — EtherIP
 
 ```{eval-rst}
-.. autoclass:: packeteer.generator.etherip.EtherIPHeader
+.. autoclass:: packeteer.generate.etherip.EtherIPHeader
    :members:
 ```
 
@@ -97,7 +97,7 @@ EtherType and PPP protocol constants:
 ## Tunnels — GRE
 
 ```{eval-rst}
-.. autoclass:: packeteer.generator.gre.GREHeader
+.. autoclass:: packeteer.generate.gre.GREHeader
    :members:
 ```
 
@@ -113,7 +113,7 @@ EtherType and PPP protocol constants:
 ## Layer 3 — IPv4
 
 ```{eval-rst}
-.. autoclass:: packeteer.generator.ip.IPHeader
+.. autoclass:: packeteer.generate.ip.IPHeader
    :members:
 ```
 
@@ -122,7 +122,7 @@ EtherType and PPP protocol constants:
 ## Layer 3 — IPv6
 
 ```{eval-rst}
-.. autoclass:: packeteer.generator.ipv6.IPv6Header
+.. autoclass:: packeteer.generate.ipv6.IPv6Header
    :members:
 ```
 
@@ -131,12 +131,12 @@ EtherType and PPP protocol constants:
 ## Layer 4 — TCP
 
 ```{eval-rst}
-.. autoclass:: packeteer.generator.tcp.TCPHeader
+.. autoclass:: packeteer.generate.tcp.TCPHeader
    :members:
 ```
 
 ```{eval-rst}
-.. autoclass:: packeteer.generator.tcp.TCPOptions
+.. autoclass:: packeteer.generate.tcp.TCPOptions
    :members:
 ```
 
@@ -161,7 +161,7 @@ Combine flags with `|`: `TCP_PSH | TCP_ACK` = `0x18` (data segment),
 ## Layer 4 — UDP
 
 ```{eval-rst}
-.. autoclass:: packeteer.generator.udp.UDPHeader
+.. autoclass:: packeteer.generate.udp.UDPHeader
    :members:
 ```
 
@@ -170,7 +170,7 @@ Combine flags with `|`: `TCP_PSH | TCP_ACK` = `0x18` (data segment),
 ## Layer 4 — ICMPv4
 
 ```{eval-rst}
-.. autoclass:: packeteer.generator.icmp.ICMPHeader
+.. autoclass:: packeteer.generate.icmp.ICMPHeader
    :members:
 ```
 
@@ -179,7 +179,7 @@ Combine flags with `|`: `TCP_PSH | TCP_ACK` = `0x18` (data segment),
 ## Layer 4 — ICMPv6
 
 ```{eval-rst}
-.. autoclass:: packeteer.generator.icmpv6.ICMPv6Header
+.. autoclass:: packeteer.generate.icmpv6.ICMPv6Header
    :members:
 ```
 
@@ -188,77 +188,77 @@ Combine flags with `|`: `TCP_PSH | TCP_ACK` = `0x18` (data segment),
 ## Layer 4 — SCTP
 
 ```{eval-rst}
-.. autoclass:: packeteer.generator.sctp.SCTPHeader
+.. autoclass:: packeteer.generate.sctp.SCTPHeader
    :members:
 ```
 
 ```{eval-rst}
-.. autoclass:: packeteer.generator.sctp.SCTPDataChunk
+.. autoclass:: packeteer.generate.sctp.SCTPDataChunk
    :members:
 ```
 
 ```{eval-rst}
-.. autoclass:: packeteer.generator.sctp.SCTPInitChunk
+.. autoclass:: packeteer.generate.sctp.SCTPInitChunk
    :members:
 ```
 
 ```{eval-rst}
-.. autoclass:: packeteer.generator.sctp.SCTPInitAckChunk
+.. autoclass:: packeteer.generate.sctp.SCTPInitAckChunk
    :members:
 ```
 
 ```{eval-rst}
-.. autoclass:: packeteer.generator.sctp.SCTPSackChunk
+.. autoclass:: packeteer.generate.sctp.SCTPSackChunk
    :members:
 ```
 
 ```{eval-rst}
-.. autoclass:: packeteer.generator.sctp.SCTPHeartbeatChunk
+.. autoclass:: packeteer.generate.sctp.SCTPHeartbeatChunk
    :members:
 ```
 
 ```{eval-rst}
-.. autoclass:: packeteer.generator.sctp.SCTPHeartbeatAckChunk
+.. autoclass:: packeteer.generate.sctp.SCTPHeartbeatAckChunk
    :members:
 ```
 
 ```{eval-rst}
-.. autoclass:: packeteer.generator.sctp.SCTPAbortChunk
+.. autoclass:: packeteer.generate.sctp.SCTPAbortChunk
    :members:
 ```
 
 ```{eval-rst}
-.. autoclass:: packeteer.generator.sctp.SCTPShutdownChunk
+.. autoclass:: packeteer.generate.sctp.SCTPShutdownChunk
    :members:
 ```
 
 ```{eval-rst}
-.. autoclass:: packeteer.generator.sctp.SCTPShutdownAckChunk
+.. autoclass:: packeteer.generate.sctp.SCTPShutdownAckChunk
    :members:
 ```
 
 ```{eval-rst}
-.. autoclass:: packeteer.generator.sctp.SCTPErrorChunk
+.. autoclass:: packeteer.generate.sctp.SCTPErrorChunk
    :members:
 ```
 
 ```{eval-rst}
-.. autoclass:: packeteer.generator.sctp.SCTPCookieEchoChunk
+.. autoclass:: packeteer.generate.sctp.SCTPCookieEchoChunk
    :members:
 ```
 
 ```{eval-rst}
-.. autoclass:: packeteer.generator.sctp.SCTPCookieAckChunk
+.. autoclass:: packeteer.generate.sctp.SCTPCookieAckChunk
    :members:
 ```
 
 ```{eval-rst}
-.. autoclass:: packeteer.generator.sctp.SCTPShutdownCompleteChunk
+.. autoclass:: packeteer.generate.sctp.SCTPShutdownCompleteChunk
    :members:
 ```
 
 ```{eval-rst}
-.. autoclass:: packeteer.generator.sctp.SCTPGenericChunk
+.. autoclass:: packeteer.generate.sctp.SCTPGenericChunk
    :members:
 ```
 

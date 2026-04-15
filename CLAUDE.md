@@ -11,9 +11,9 @@
 
 ## Project layout
 
-- `src/packeteer/generator/` — packet building and stream generation
-- `src/packeteer/parser/` — pcap parsing and config extraction
-- `src/packeteer/sanitiser/` — packet sanitisation
+- `src/packeteer/generate/` — packet building and stream generation
+- `src/packeteer/parse/` — pcap parsing and config extraction
+- `src/packeteer/sanitise.py` — packet sanitisation
 - `src/packeteer/pcap.py` — all pcap I/O (read + write); the only place pcap logic lives
 - `src/tests/` — unittest test suite; run with `./docvenv/bin/pytest`
 
@@ -21,4 +21,4 @@
 
 - The test virtual environment is `./docvenv/`. Use `./docvenv/bin/pytest` to run tests and `ruff` (on PATH) to lint.
 - Docstrings follow Google style with ruff-enforced formatting (see `ruff.toml`). Sections (Args, Returns, Raises, Attributes, Example) need a blank line before the closing `"""`.
-- `packeteer.pcap` is not re-exported from `packeteer.generator` or `packeteer.parser` — users import it directly.
+- `packeteer.pcap` is not re-exported from `packeteer.generate` or `packeteer.parse` — users import it directly.

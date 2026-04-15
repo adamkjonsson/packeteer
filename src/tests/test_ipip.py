@@ -3,9 +3,9 @@ import io
 import json
 import unittest
 
-from packeteer.generator import PacketBuilder
+from packeteer.generate import PacketBuilder
 from packeteer.pcap import LINKTYPE_RAW
-from packeteer.parser.core import parse_packet, parse_pcap_file, ParsedPacket
+from packeteer.parse.core import parse_packet, parse_pcap_file, ParsedPacket
 from packeteer.pcap import write_pcap
 
 

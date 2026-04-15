@@ -1,8 +1,8 @@
 import struct
 import socket
 import unittest
-from packeteer.generator.udp import UDPHeader, build_udp_header
-from packeteer.generator.checksum import ones_complement_checksum
+from packeteer.generate.udp import UDPHeader, build_udp_header
+from packeteer.generate.checksum import ones_complement_checksum
 
 
 def _verify_udp_checksum_v4(src_ip, dst_ip, udp_bytes, payload):

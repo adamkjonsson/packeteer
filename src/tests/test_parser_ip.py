@@ -2,9 +2,9 @@ import socket
 import struct
 import unittest
 
-from packeteer.generator.ip import IPHeader, build_ip_header
-from packeteer.generator.ipv6 import IPv6Header, build_ipv6_header
-from packeteer.parser.ip import packet_parser
+from packeteer.generate.ip import IPHeader, build_ip_header
+from packeteer.generate.ipv6 import IPv6Header, build_ipv6_header
+from packeteer.parse.ip import packet_parser
 
 PROTO_TCP = socket.IPPROTO_TCP    # 6
 PROTO_UDP = socket.IPPROTO_UDP    # 17

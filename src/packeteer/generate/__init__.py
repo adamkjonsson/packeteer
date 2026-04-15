@@ -1,4 +1,4 @@
-"""packeteer.generator — build complete raw network packets in pure Python.
+"""packeteer.generate — build complete raw network packets in pure Python.
 
 This package constructs byte-accurate network packets at all layers:
 
@@ -27,7 +27,7 @@ multiple times to produce advanced encapsulations.
 
 .. code-block:: python
 
-    from packeteer.generator import PacketBuilder
+    from packeteer.generate import PacketBuilder
 
     # IPv4 TCP packet (Ethernet + IP + TCP + 64 random payload bytes)
     pkt = (PacketBuilder()
@@ -115,7 +115,7 @@ multiple times to produce advanced encapsulations.
     )
 
     # PPPoE PADI discovery frame
-    from packeteer.generator import PPPOE_CODE_PADI, PPPoETag, PPPOE_TAG_SERVICE_NAME
+    from packeteer.generate import PPPOE_CODE_PADI, PPPoETag, PPPOE_TAG_SERVICE_NAME
     pkt = (PacketBuilder()
         .ethernet(dst_mac="ff:ff:ff:ff:ff:ff")
         .pppoe(code=PPPOE_CODE_PADI, tags=[PPPoETag(PPPOE_TAG_SERVICE_NAME, b"")])

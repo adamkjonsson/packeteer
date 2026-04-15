@@ -1,8 +1,8 @@
 import struct
 import unittest
 
-from packeteer.generator.udp import UDPHeader, build_udp_header
-from packeteer.parser.udp import packet_parser
+from packeteer.generate.udp import UDPHeader, build_udp_header
+from packeteer.parse.udp import packet_parser
 
 
 def _udp(src_port=5000, dst_port=53, payload=b"", ip_version=4) -> bytes:

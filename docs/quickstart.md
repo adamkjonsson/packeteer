@@ -2,12 +2,12 @@
 
 ## Build a packet in Python
 
-Use {class}`packeteer.generator.builder.PacketBuilder` — a fluent, layer-by-layer
+Use {class}`packeteer.generate.builder.PacketBuilder` — a fluent, layer-by-layer
 API.  Call methods in the order you want the layers stacked, then call
 `.build()` to produce the raw bytes.
 
 ```python
-from packeteer.generator import PacketBuilder
+from packeteer.generate import PacketBuilder
 
 # Ethernet + IPv4 + TCP with a 64-byte random payload
 pkt = (PacketBuilder()
@@ -37,7 +37,7 @@ See {doc}`api/packet-builder` for the full method reference.
 
 ```python
 import time
-from packeteer.generator import PacketBuilder
+from packeteer.generate import PacketBuilder
 from packeteer.pcap import write_pcap, LINKTYPE_ETHERNET
 
 t = int(time.time())
@@ -71,14 +71,14 @@ subcommand, and {doc}`packet-spec/index` for the JSON config format.
 
 ## Parse a packet
 
-{func}`packeteer.parser.core.parse_packet` chains all layer parsers automatically
-and returns a {class}`packeteer.parser.core.ParsedPacket` with every recognised
+{func}`packeteer.parse.core.parse_packet` chains all layer parsers automatically
+and returns a {class}`packeteer.parse.core.ParsedPacket` with every recognised
 layer filled in.
 
 ```python
-from packeteer.generator import PacketBuilder
+from packeteer.generate import PacketBuilder
 from packeteer.pcap import LINKTYPE_RAW
-from packeteer.parser import parse_packet
+from packeteer.parse import parse_packet
 
 raw = (PacketBuilder()
     .ip(src="10.0.0.1", dst="10.0.0.2")
@@ -102,7 +102,7 @@ Layers are just stacked in order — call `.gre()` between two `.ip()` calls to
 produce a GRE tunnel packet:
 
 ```python
-from packeteer.generator import PacketBuilder
+from packeteer.generate import PacketBuilder
 
 pkt = (PacketBuilder()
     .ethernet()
@@ -125,8 +125,8 @@ SCTP (RFC 9260) uses `.sctp()` instead of `.tcp()` or `.udp()`.  Data lives
 inside typed *chunks* rather than in a separate `.payload()` layer:
 
 ```python
-from packeteer.generator import PacketBuilder
-from packeteer.generator import (
+from packeteer.generate import PacketBuilder
+from packeteer.generate import (
     SCTPDataChunk, SCTPInitChunk,
     SCTP_DATA_FLAG_BEGINNING, SCTP_DATA_FLAG_ENDING,
 )
