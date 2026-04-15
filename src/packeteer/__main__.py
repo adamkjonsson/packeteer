@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""
-packeteer — build, parse, sanitise, and generate raw network packets.
+r"""packeteer — build, parse, sanitise, and generate raw network packets.
 
 Subcommands:
   build     Build packets from a packet spec file and write to a pcap or pcapng file
   parse     Parse a pcap or pcapng file and produce a packet spec
   sanitise  Replace sensitive fields in a packet spec with synthetic data
-  stream    Generate a synthetic network stream (TCP, UDP, or SCTP) and write to a pcap or pcapng file
+  stream    Generate a synthetic TCP/UDP/SCTP stream and write to a pcap or pcapng file
 
 Examples:
   packeteer build packets.json --pcap out.pcap
@@ -16,9 +15,12 @@ Examples:
   packeteer sanitise capture.json --output clean.json
   packeteer sanitise capture.json --ports --payload --output clean.json
   packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 --packets 50 --pcap out.pcap
-  packeteer stream --protocol udp --client-ip 10.0.0.1 --server-ip 10.0.0.2 --server-port 53 --packets 5 --pcap dns.pcap
-  packeteer stream --protocol sctp --client-ip 10.0.0.1 --server-ip 10.0.0.2 --server-port 9999 --packets 20 --pcap sctp.pcap
+  packeteer stream --protocol udp --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
+      --server-port 53 --packets 5 --pcap dns.pcap
+  packeteer stream --protocol sctp --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
+      --server-port 9999 --packets 20 --pcap sctp.pcap
   packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 --packets 10 --json stream.json
+
 """
 # This module is the entry point for the `packeteer` CLI command.
 # The mapping is declared in pyproject.toml: [project.scripts] packeteer = "packeteer_cli:main"
@@ -110,7 +112,10 @@ def _parse_sctp_chunk(spec: dict, packet_num: int) -> SCTPChunk:
             value=bytes.fromhex(spec.get("value", "")),
         )
     except (ValueError, TypeError) as e:
-        print(f"Error: packet {packet_num} SCTP chunk ({chunk_type!r}) decode error: {e}", file=sys.stderr)
+        print(
+            f"Error: packet {packet_num} SCTP chunk ({chunk_type!r}) decode error: {e}",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
 
@@ -422,7 +427,9 @@ def _apply_spec_to_builder(
     return b, False
 
 
-def _run_multi_packet(cfg: dict, pcap_path: str | None = None, pcapng_path: str | None = None) -> None:
+def _run_multi_packet(
+    cfg: dict, pcap_path: str | None = None, pcapng_path: str | None = None
+) -> None:
     """Build and output all packets defined in a packet spec."""
     top_metadata = cfg.get("metadata", {})
     nanoseconds: bool = top_metadata.get("nanoseconds", False)
@@ -790,7 +797,8 @@ def _validate_stream_args(args: argparse.Namespace) -> str:
     missing = [f for f in ("client_ip", "server_ip") if not getattr(args, f, None)]
     if missing:
         print(
-            f"Error: missing required option(s): {', '.join('--' + f.replace('_', '-') for f in missing)}. "
+            "Error: missing required option(s): "
+            f"{', '.join('--' + f.replace('_', '-') for f in missing)}. "
             "Provide them on the command line or in the config file.",
             file=sys.stderr,
         )
@@ -798,7 +806,8 @@ def _validate_stream_args(args: argparse.Namespace) -> str:
     json_out = getattr(args, "json", None)
     if not json_out and not args.pcap and not args.pcapng:
         print(
-            "Error: one of --pcap, --pcapng, or --json is required (on the command line or in the config file).",
+            "Error: one of --pcap, --pcapng, or --json is required"
+            " (on the command line or in the config file).",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -823,23 +832,23 @@ def _cmd_stream(args: argparse.Namespace) -> None:
     encap = _parse_stream_encap(args)
 
     # Common keyword arguments shared by all protocol generators
-    common = dict(
-        client_ip=args.client_ip,
-        server_ip=args.server_ip,
-        client_port=args.client_port,
-        server_port=args.server_port,
-        client_mac=args.client_mac,
-        server_mac=args.server_mac,
-        num_data_packets=args.packets,
-        min_payload=args.min_payload,
-        max_payload=args.max_payload,
-        payload_distribution=args.distribution,
-        include_ethernet=not args.no_ethernet,
-        ip_ttl=args.ttl,
-        inter_packet_gap=args.gap,
-        mtu=args.mtu,
-        encap=encap,
-    )
+    common = {
+        "client_ip": args.client_ip,
+        "server_ip": args.server_ip,
+        "client_port": args.client_port,
+        "server_port": args.server_port,
+        "client_mac": args.client_mac,
+        "server_mac": args.server_mac,
+        "num_data_packets": args.packets,
+        "min_payload": args.min_payload,
+        "max_payload": args.max_payload,
+        "payload_distribution": args.distribution,
+        "include_ethernet": not args.no_ethernet,
+        "ip_ttl": args.ttl,
+        "inter_packet_gap": args.gap,
+        "mtu": args.mtu,
+        "encap": encap,
+    }
 
     try:
         if protocol == "tcp":
@@ -894,7 +903,8 @@ def _cmd_stream(args: argparse.Namespace) -> None:
             sys.exit(1)
 
 
-def main():
+def main() -> None:
+    """Entry point for the ``packeteer`` CLI command."""
     parser = argparse.ArgumentParser(
         description="Build and parse raw network packets",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -915,17 +925,24 @@ def main():
         description="Build packets from a packet spec file",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    build_parser.add_argument("config", metavar="FILE", help="Packet spec file with a 'packets' array")
+    build_parser.add_argument(
+        "config", metavar="FILE",
+        help="Packet spec file with a 'packets' array",
+    )
     build_out = build_parser.add_mutually_exclusive_group(required=True)
     build_out.add_argument("--pcap", metavar="FILE", help="Write packets to a libpcap (.pcap) file")
-    build_out.add_argument("--pcapng", metavar="FILE", help="Write packets to a pcapng (.pcapng) file")
+    build_out.add_argument("--pcapng", metavar="FILE",
+                           help="Write packets to a pcapng (.pcapng) file")
     build_parser.set_defaults(func=_cmd_build)
 
     # ── parse subcommand ──────────────────────────────────────────────────────
     parse_parser = subparsers.add_parser(
         "parse",
         help="Parse a pcap or pcapng file and produce a packet spec",
-        description="Parse a pcap or pcapng file and produce a packet spec that can be replayed with 'packeteer build'",
+        description=(
+            "Parse a pcap or pcapng file and produce a packet spec"
+            " that can be replayed with 'packeteer build'"
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parse_parser.add_argument(
@@ -1005,138 +1022,260 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     # Config file (optional — CLI flags take precedence over config values)
-    stream_parser.add_argument("--config", metavar="FILE",
-                               help="INI config file with a [stream] section; CLI flags override file values")
-    stream_parser.add_argument("--protocol", default=None,
-                               choices=["tcp", "udp", "sctp"],
-                               help="Transport protocol to simulate (default: tcp)")
+    stream_parser.add_argument(
+        "--config", metavar="FILE",
+        help="INI config file with a [stream] section; CLI flags override file values",
+    )
+    stream_parser.add_argument(
+        "--protocol", default=None, choices=["tcp", "udp", "sctp"],
+        help="Transport protocol to simulate (default: tcp)",
+    )
     # Required endpoints (may also be provided via --config)
-    stream_parser.add_argument("--client-ip", default=None, metavar="IP",
-                               help="Client IP address (IPv4 or IPv6)")
-    stream_parser.add_argument("--server-ip", default=None, metavar="IP",
-                               help="Server IP address (same family as --client-ip)")
+    stream_parser.add_argument(
+        "--client-ip", default=None, metavar="IP",
+        help="Client IP address (IPv4 or IPv6)",
+    )
+    stream_parser.add_argument(
+        "--server-ip", default=None, metavar="IP",
+        help="Server IP address (same family as --client-ip)",
+    )
     # Optional endpoint fields
-    stream_parser.add_argument("--client-port", type=int, default=None, metavar="PORT",
-                               help="Client source port (default: 54321)")
-    stream_parser.add_argument("--server-port", type=int, default=None, metavar="PORT",
-                               help="Server destination port (default: 80)")
-    stream_parser.add_argument("--client-mac", default=None, metavar="MAC",
-                               help="Client MAC address (default: 00:00:00:00:00:01)")
-    stream_parser.add_argument("--server-mac", default=None, metavar="MAC",
-                               help="Server MAC address (default: 00:00:00:00:00:02)")
+    stream_parser.add_argument(
+        "--client-port", type=int, default=None, metavar="PORT",
+        help="Client source port (default: 54321)",
+    )
+    stream_parser.add_argument(
+        "--server-port", type=int, default=None, metavar="PORT",
+        help="Server destination port (default: 80)",
+    )
+    stream_parser.add_argument(
+        "--client-mac", default=None, metavar="MAC",
+        help="Client MAC address (default: 00:00:00:00:00:01)",
+    )
+    stream_parser.add_argument(
+        "--server-mac", default=None, metavar="MAC",
+        help="Server MAC address (default: 00:00:00:00:00:02)",
+    )
     # Stream shape
-    stream_parser.add_argument("--packets", type=int, default=None, metavar="N",
-                               help="Number of data packets sent by the client (default: 10)")
-    stream_parser.add_argument("--min-payload", type=int, default=None, metavar="BYTES",
-                               help="Minimum payload size in bytes (default: 40)")
-    stream_parser.add_argument("--max-payload", type=int, default=None, metavar="BYTES",
-                               help="Maximum payload size in bytes (default: 1460)")
-    stream_parser.add_argument("--distribution", default=None,
-                               choices=["uniform", "bimodal", "fixed"],
-                               help="Payload size distribution (default: uniform)")
+    stream_parser.add_argument(
+        "--packets", type=int, default=None, metavar="N",
+        help="Number of data packets sent by the client (default: 10)",
+    )
+    stream_parser.add_argument(
+        "--min-payload", type=int, default=None, metavar="BYTES",
+        help="Minimum payload size in bytes (default: 40)",
+    )
+    stream_parser.add_argument(
+        "--max-payload", type=int, default=None, metavar="BYTES",
+        help="Maximum payload size in bytes (default: 1460)",
+    )
+    stream_parser.add_argument(
+        "--distribution", default=None, choices=["uniform", "bimodal", "fixed"],
+        help="Payload size distribution (default: uniform)",
+    )
     # IP / TCP tuning
-    stream_parser.add_argument("--ttl", type=int, default=None, metavar="N",
-                               help="IP TTL / hop limit (default: 64)")
-    stream_parser.add_argument("--window", type=int, default=None, metavar="BYTES",
-                               help="TCP receive window size — TCP only (default: 65535)")
-    stream_parser.add_argument("--gap", type=float, default=None, metavar="SECONDS",
-                               help="Inter-packet gap in seconds (default: 0.001)")
-    stream_parser.add_argument("--gap-jitter", type=float, default=None, metavar="SECONDS",
-                               help="Max additional delay per gap; each gap is drawn from [gap, gap+jitter] and packets are re-sorted by timestamp (default: 0.0)")
-    stream_parser.add_argument("--psh-probability", type=float, default=None, metavar="PROB",
-                               help="Probability (0.0-1.0) that PSH is set on each data segment (default: 0.5)")
-    stream_parser.add_argument("--packet-loss", type=float, default=None, metavar="PROB",
-                               dest="packet_loss_probability",
-                               help="Probability (0.0-1.0) that any packet is dropped from the capture (default: 0.0)")
-    stream_parser.add_argument("--retransmission-probability", type=float, default=None, metavar="PROB",
-                               help="Probability (0.0-1.0) that each data segment gets a spurious retransmission (default: 0.0)")
-    stream_parser.add_argument("--retransmission-timeout", type=float, default=None, metavar="SECONDS",
-                               help="Seconds after original send that the retransmission timer fires (default: 0.2)")
-    stream_parser.add_argument("--payload-corruption", type=float, default=None, metavar="PROB",
-                               dest="payload_corruption_probability",
-                               help="Probability (0.0-1.0) that each data segment's payload is corrupted in transit (default: 0.0)")
-    stream_parser.add_argument("--server-rst", type=float, default=None, metavar="PROB",
-                               dest="server_rst_probability",
-                               help="Probability (0.0-1.0) that the server terminates mid-stream with a RST (default: 0.0)")
-    stream_parser.add_argument("--rst-propagation-delay", type=float, default=None, metavar="SECONDS",
-                               help="Seconds for the RST to reach the client; client sends data during this window (default: 0.0)")
-    stream_parser.add_argument("--mtu", type=int, default=None, metavar="BYTES",
-                               help="Fragment packets as if they passed through a middlebox with this IP MTU (e.g. 576, 1280, 1400). Default: no fragmentation")
-    stream_parser.add_argument("--stray-packets", type=int, default=None, metavar="N",
-                               dest="stray_packet_count",
-                               help="Number of forged TCP hijack packets to inject (default: 0)")
-    stream_parser.add_argument("--stray-timing-window", type=int, default=None, metavar="N",
-                               dest="stray_timing_window",
-                               help="Constrain each stray packet timestamp to within N packets of its reference DATA packet (default: full data-transfer window)")
-    stream_parser.add_argument("--no-ethernet", action="store_true", default=False,
-                               help="Omit Ethernet headers (write raw IP packets)")
+    stream_parser.add_argument(
+        "--ttl", type=int, default=None, metavar="N",
+        help="IP TTL / hop limit (default: 64)",
+    )
+    stream_parser.add_argument(
+        "--window", type=int, default=None, metavar="BYTES",
+        help="TCP receive window size — TCP only (default: 65535)",
+    )
+    stream_parser.add_argument(
+        "--gap", type=float, default=None, metavar="SECONDS",
+        help="Inter-packet gap in seconds (default: 0.001)",
+    )
+    stream_parser.add_argument(
+        "--gap-jitter", type=float, default=None, metavar="SECONDS",
+        help=(
+            "Max additional delay per gap; each gap is drawn from [gap, gap+jitter]"
+            " and packets are re-sorted by timestamp (default: 0.0)"
+        ),
+    )
+    stream_parser.add_argument(
+        "--psh-probability", type=float, default=None, metavar="PROB",
+        help="Probability (0.0-1.0) that PSH is set on each data segment (default: 0.5)",
+    )
+    stream_parser.add_argument(
+        "--packet-loss", type=float, default=None, metavar="PROB",
+        dest="packet_loss_probability",
+        help=(
+            "Probability (0.0-1.0) that any packet is dropped from the capture"
+            " (default: 0.0)"
+        ),
+    )
+    stream_parser.add_argument(
+        "--retransmission-probability", type=float, default=None, metavar="PROB",
+        help=(
+            "Probability (0.0-1.0) that each data segment gets a spurious"
+            " retransmission (default: 0.0)"
+        ),
+    )
+    stream_parser.add_argument(
+        "--retransmission-timeout", type=float, default=None, metavar="SECONDS",
+        help=(
+            "Seconds after original send that the retransmission timer fires"
+            " (default: 0.2)"
+        ),
+    )
+    stream_parser.add_argument(
+        "--payload-corruption", type=float, default=None, metavar="PROB",
+        dest="payload_corruption_probability",
+        help=(
+            "Probability (0.0-1.0) that each data segment's payload is corrupted"
+            " in transit (default: 0.0)"
+        ),
+    )
+    stream_parser.add_argument(
+        "--server-rst", type=float, default=None, metavar="PROB",
+        dest="server_rst_probability",
+        help=(
+            "Probability (0.0-1.0) that the server terminates mid-stream with"
+            " a RST (default: 0.0)"
+        ),
+    )
+    stream_parser.add_argument(
+        "--rst-propagation-delay", type=float, default=None, metavar="SECONDS",
+        help=(
+            "Seconds for the RST to reach the client; client sends data"
+            " during this window (default: 0.0)"
+        ),
+    )
+    stream_parser.add_argument(
+        "--mtu", type=int, default=None, metavar="BYTES",
+        help=(
+            "Fragment packets as if they passed through a middlebox with this"
+            " IP MTU (e.g. 576, 1280, 1400). Default: no fragmentation"
+        ),
+    )
+    stream_parser.add_argument(
+        "--stray-packets", type=int, default=None, metavar="N",
+        dest="stray_packet_count",
+        help="Number of forged TCP hijack packets to inject (default: 0)",
+    )
+    stream_parser.add_argument(
+        "--stray-timing-window", type=int, default=None, metavar="N",
+        dest="stray_timing_window",
+        help=(
+            "Constrain each stray packet timestamp to within N packets of its"
+            " reference DATA packet (default: full data-transfer window)"
+        ),
+    )
+    stream_parser.add_argument(
+        "--no-ethernet", action="store_true", default=False,
+        help="Omit Ethernet headers (write raw IP packets)",
+    )
     # ── Encapsulation (mutually exclusive primary flags + optional detail flags) ─
     encap_group = stream_parser.add_argument_group(
         "encapsulation",
         "Wrap each packet in an additional protocol layer.  Exactly one primary "
         "encap flag may be used per stream.  Detail flags refine the selected encap.",
     )
-    encap_group.add_argument("--vlan", type=int, default=None, metavar="VID",
-                             help="Single 802.1Q VLAN tag with the given VLAN ID (1–4094)")
-    encap_group.add_argument("--vlan-pcp", type=int, default=None, metavar="N",
-                             dest="vlan_pcp",
-                             help="VLAN Priority Code Point (0–7, default 0); used with --vlan")
-    encap_group.add_argument("--vlan-dei", type=int, default=None, metavar="N",
-                             dest="vlan_dei",
-                             help="VLAN Drop Eligible Indicator (0 or 1, default 0); used with --vlan")
-    encap_group.add_argument("--qinq", nargs=2, type=int, default=None,
-                             metavar=("OUTER_VID", "INNER_VID"),
-                             help="QinQ double VLAN tag (outer VID then inner VID)")
-    encap_group.add_argument("--qinq-outer-pcp", type=int, default=None, metavar="N",
-                             dest="qinq_outer_pcp",
-                             help="Outer VLAN PCP (0–7, default 0); used with --qinq")
-    encap_group.add_argument("--qinq-outer-dei", type=int, default=None, metavar="N",
-                             dest="qinq_outer_dei",
-                             help="Outer VLAN DEI (0 or 1, default 0); used with --qinq")
-    encap_group.add_argument("--qinq-inner-pcp", type=int, default=None, metavar="N",
-                             dest="qinq_inner_pcp",
-                             help="Inner VLAN PCP (0–7, default 0); used with --qinq")
-    encap_group.add_argument("--qinq-inner-dei", type=int, default=None, metavar="N",
-                             dest="qinq_inner_dei",
-                             help="Inner VLAN DEI (0 or 1, default 0); used with --qinq")
-    encap_group.add_argument("--mpls", nargs="+", type=int, default=None, metavar="LABEL",
-                             help="MPLS label stack (one or more 20-bit labels, outermost first)")
-    encap_group.add_argument("--mpls-tc", type=int, default=None, metavar="N",
-                             dest="mpls_tc",
-                             help="MPLS Traffic Class for all labels (0–7, default 0)")
-    encap_group.add_argument("--mpls-ttl", type=int, default=None, metavar="N",
-                             dest="mpls_ttl",
-                             help="MPLS TTL for all labels (0–255, default 64)")
-    encap_group.add_argument("--pppoe", type=int, default=None, metavar="SESSION_ID",
-                             help="PPPoE session frame with the given 16-bit session ID")
-    encap_group.add_argument("--gre", nargs=2, default=None,
-                             metavar=("OUTER_SRC", "OUTER_DST"),
-                             help="GRE tunnel; specify outer IP source and destination")
-    encap_group.add_argument("--gre-key", type=int, default=None, metavar="KEY",
-                             dest="gre_key",
-                             help="RFC 2890 32-bit GRE Key field; used with --gre")
-    encap_group.add_argument("--gre-ttl", type=int, default=None, metavar="N",
-                             dest="gre_ttl",
-                             help="Outer IP TTL for GRE tunnel (default 64)")
-    encap_group.add_argument("--etherip", nargs=2, default=None,
-                             metavar=("OUTER_SRC", "OUTER_DST"),
-                             help="EtherIP tunnel (RFC 3378); specify outer IP source and destination")
-    encap_group.add_argument("--etherip-ttl", type=int, default=None, metavar="N",
-                             dest="etherip_ttl",
-                             help="Outer IP TTL for EtherIP tunnel (default 64)")
-    encap_group.add_argument("--ipip", nargs=2, default=None,
-                             metavar=("OUTER_SRC", "OUTER_DST"),
-                             help="IP-in-IP tunnel (RFC 2003/4213); specify outer IP source and destination")
-    encap_group.add_argument("--ipip-ttl", type=int, default=None, metavar="N",
-                             dest="ipip_ttl",
-                             help="Outer IP TTL for IP-in-IP tunnel (default 64)")
+    encap_group.add_argument(
+        "--vlan", type=int, default=None, metavar="VID",
+        help="Single 802.1Q VLAN tag with the given VLAN ID (1–4094)",
+    )
+    encap_group.add_argument(
+        "--vlan-pcp", type=int, default=None, metavar="N",
+        dest="vlan_pcp",
+        help="VLAN Priority Code Point (0–7, default 0); used with --vlan",
+    )
+    encap_group.add_argument(
+        "--vlan-dei", type=int, default=None, metavar="N",
+        dest="vlan_dei",
+        help="VLAN Drop Eligible Indicator (0 or 1, default 0); used with --vlan",
+    )
+    encap_group.add_argument(
+        "--qinq", nargs=2, type=int, default=None,
+        metavar=("OUTER_VID", "INNER_VID"),
+        help="QinQ double VLAN tag (outer VID then inner VID)",
+    )
+    encap_group.add_argument(
+        "--qinq-outer-pcp", type=int, default=None, metavar="N",
+        dest="qinq_outer_pcp",
+        help="Outer VLAN PCP (0–7, default 0); used with --qinq",
+    )
+    encap_group.add_argument(
+        "--qinq-outer-dei", type=int, default=None, metavar="N",
+        dest="qinq_outer_dei",
+        help="Outer VLAN DEI (0 or 1, default 0); used with --qinq",
+    )
+    encap_group.add_argument(
+        "--qinq-inner-pcp", type=int, default=None, metavar="N",
+        dest="qinq_inner_pcp",
+        help="Inner VLAN PCP (0–7, default 0); used with --qinq",
+    )
+    encap_group.add_argument(
+        "--qinq-inner-dei", type=int, default=None, metavar="N",
+        dest="qinq_inner_dei",
+        help="Inner VLAN DEI (0 or 1, default 0); used with --qinq",
+    )
+    encap_group.add_argument(
+        "--mpls", nargs="+", type=int, default=None, metavar="LABEL",
+        help="MPLS label stack (one or more 20-bit labels, outermost first)",
+    )
+    encap_group.add_argument(
+        "--mpls-tc", type=int, default=None, metavar="N",
+        dest="mpls_tc",
+        help="MPLS Traffic Class for all labels (0–7, default 0)",
+    )
+    encap_group.add_argument(
+        "--mpls-ttl", type=int, default=None, metavar="N",
+        dest="mpls_ttl",
+        help="MPLS TTL for all labels (0–255, default 64)",
+    )
+    encap_group.add_argument(
+        "--pppoe", type=int, default=None, metavar="SESSION_ID",
+        help="PPPoE session frame with the given 16-bit session ID",
+    )
+    encap_group.add_argument(
+        "--gre", nargs=2, default=None,
+        metavar=("OUTER_SRC", "OUTER_DST"),
+        help="GRE tunnel; specify outer IP source and destination",
+    )
+    encap_group.add_argument(
+        "--gre-key", type=int, default=None, metavar="KEY",
+        dest="gre_key",
+        help="RFC 2890 32-bit GRE Key field; used with --gre",
+    )
+    encap_group.add_argument(
+        "--gre-ttl", type=int, default=None, metavar="N",
+        dest="gre_ttl",
+        help="Outer IP TTL for GRE tunnel (default 64)",
+    )
+    encap_group.add_argument(
+        "--etherip", nargs=2, default=None,
+        metavar=("OUTER_SRC", "OUTER_DST"),
+        help="EtherIP tunnel (RFC 3378); specify outer IP source and destination",
+    )
+    encap_group.add_argument(
+        "--etherip-ttl", type=int, default=None, metavar="N",
+        dest="etherip_ttl",
+        help="Outer IP TTL for EtherIP tunnel (default 64)",
+    )
+    encap_group.add_argument(
+        "--ipip", nargs=2, default=None,
+        metavar=("OUTER_SRC", "OUTER_DST"),
+        help="IP-in-IP tunnel (RFC 2003/4213); specify outer IP source and destination",
+    )
+    encap_group.add_argument(
+        "--ipip-ttl", type=int, default=None, metavar="N",
+        dest="ipip_ttl",
+        help="Outer IP TTL for IP-in-IP tunnel (default 64)",
+    )
     # Output (may also be provided via --config; mutual exclusivity enforced in _cmd_stream)
     stream_parser.add_argument("--pcap", default=None, metavar="FILE",
                                help="Write to a libpcap (.pcap) file")
     stream_parser.add_argument("--pcapng", default=None, metavar="FILE",
                                help="Write to a pcapng (.pcapng) file")
-    stream_parser.add_argument("--json", default=None, metavar="FILE",
-                               help="Write packets as a packet spec file (same format produced by 'packeteer parse', replayable with 'packeteer build')")
+    stream_parser.add_argument(
+        "--json", default=None, metavar="FILE",
+        help=(
+            "Write packets as a packet spec file (same format produced by"
+            " 'packeteer parse', replayable with 'packeteer build')"
+        ),
+    )
     stream_parser.set_defaults(func=_cmd_stream)
 
     args = parser.parse_args()

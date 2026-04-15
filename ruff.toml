@@ -51,4 +51,5 @@ max-args = 18
 max-branches = 20
 max-nested-blocks = 7
 max-public-methods = 30
+max-returns = 12
 max-statements = 200
