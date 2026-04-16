@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import struct
 import json
-import pytest
 
 from packeteer.generate import PacketBuilder
 from packeteer.generate.checksum import crc32c
@@ -63,7 +62,13 @@ class TestCrc32c:
 # ── Group 2: build_sctp_packet common header ──────────────────────────────────
 
 class TestBuildSctpPacketHeader:
-    def _make(self, src=1234, dst=9999, tag=0xDEADBEEF, chunks=None):
+    def _make(
+        self,
+        src: int = 1234,
+        dst: int = 9999,
+        tag: int = 0xDEADBEEF,
+        chunks: list[object] | None = None,
+    ) -> bytes:
         hdr = SCTPHeader(src_port=src, dst_port=dst, verification_tag=tag,
                          chunks=chunks or [])
         return build_sctp_packet(hdr)
@@ -104,8 +109,15 @@ class TestBuildSctpPacketHeader:
 # ── Group 3: DATA chunk encoding ─────────────────────────────────────────────
 
 class TestDataChunk:
-    def _build(self, tsn=0, stream_id=0, stream_seq=0, ppid=0,
-               data=b"", flags=SCTP_DATA_FLAG_BEGINNING | SCTP_DATA_FLAG_ENDING):
+    def _build(
+        self,
+        tsn: int = 0,
+        stream_id: int = 0,
+        stream_seq: int = 0,
+        ppid: int = 0,
+        data: bytes = b"",
+        flags: int = SCTP_DATA_FLAG_BEGINNING | SCTP_DATA_FLAG_ENDING,
+    ) -> bytes:
         hdr = SCTPHeader(chunks=[SCTPDataChunk(
             tsn=tsn, stream_id=stream_id, stream_seq=stream_seq,
             ppid=ppid, data=data, flags=flags,
@@ -154,7 +166,7 @@ class TestDataChunk:
 # ── Group 4: INIT / INIT ACK encoding ────────────────────────────────────────
 
 class TestInitChunks:
-    def _build_init(self, chunk):
+    def _build_init(self, chunk: object) -> bytes:
         return build_sctp_packet(SCTPHeader(chunks=[chunk]))
 
     def test_init_chunk_type(self):
@@ -187,7 +199,13 @@ class TestInitChunks:
 # ── Group 5: SACK encoding ────────────────────────────────────────────────────
 
 class TestSackChunk:
-    def _build(self, cum=0, rwnd=0, gaps=None, dups=None):
+    def _build(
+        self,
+        cum: int = 0,
+        rwnd: int = 0,
+        gaps: list[object] | None = None,
+        dups: list[object] | None = None,
+    ) -> bytes:
         return build_sctp_packet(SCTPHeader(chunks=[SCTPSackChunk(
             cum_tsn_ack=cum, a_rwnd=rwnd,
             gap_ack_blocks=gaps or [], dup_tsns=dups or [],
@@ -223,7 +241,7 @@ class TestSackChunk:
 # ── Group 6: small/empty chunks ──────────────────────────────────────────────
 
 class TestSmallChunks:
-    def _type(self, chunk):
+    def _type(self, chunk: object) -> int:
         raw = build_sctp_packet(SCTPHeader(chunks=[chunk]))
         return raw[12]
 
@@ -354,7 +372,7 @@ class TestBuilderIntegration:
 # ── Group 9: parser round-trip ────────────────────────────────────────────────
 
 class TestParser:
-    def _roundtrip(self, chunks):
+    def _roundtrip(self, chunks: list[object]) -> object:
         raw = build_sctp_packet(SCTPHeader(
             src_port=1111, dst_port=2222, verification_tag=0x42,
             chunks=chunks,
@@ -478,13 +496,13 @@ class TestParsePacketIntegration:
 # ── Group 11: to_config serialization ────────────────────────────────────────
 
 class TestToConfig:
-    def _config(self, chunks):
+    def _config(self, chunks: list[object]) -> dict:
         raw = build_sctp_packet(SCTPHeader(
             src_port=100, dst_port=200, verification_tag=0x99,
             chunks=chunks,
         ))
         _, _, hdr = sctp_parser(raw)
-        cfg = {}
+        cfg: dict = {}
         update_config(cfg, hdr)
         return cfg["transport"]
 

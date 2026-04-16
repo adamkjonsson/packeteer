@@ -40,7 +40,7 @@ def fragment_ipv4(
     *,
     eth_header: EthernetHeader | None = None,
 ) -> list[bytes]:
-    """Fragment an IPv4 datagram into packets no larger than *mtu* bytes.
+    r"""Fragment an IPv4 datagram into packets no larger than *mtu* bytes.
 
     Each fragment (except the last) carries a payload that is a multiple of
     8 bytes, as required by RFC 791.  The MF (More Fragments) flag is set on
@@ -74,6 +74,7 @@ def fragment_ipv4(
         ip_hdr = IPHeader("10.0.0.1", "10.0.0.2", socket.IPPROTO_UDP, ttl=64)
         fragments = fragment_ipv4(ip_hdr, transport_data=b"\\x00" * 3000, mtu=1500)
         assert len(fragments) == 3
+
     """
     # Max data bytes per fragment — must be a multiple of 8 (RFC 791 §3.1)
     max_data = (mtu - _IPV4_HEADER_LEN) & ~7
@@ -119,7 +120,7 @@ def fragment_ipv6(
     *,
     eth_header: EthernetHeader | None = None,
 ) -> list[bytes]:
-    """Fragment an IPv6 datagram using the Fragment Extension Header (RFC 8200 §4.5).
+    r"""Fragment an IPv6 datagram using the Fragment Extension Header (RFC 8200 §4.5).
 
     A Fragment Extension Header is inserted between the IPv6 base header and
     each chunk of *transport_data*.  The base header's ``next_header`` is set
@@ -153,6 +154,7 @@ def fragment_ipv6(
         ip_hdr = IPv6Header("::1", "::2", next_header=17, hop_limit=64)
         fragments = fragment_ipv6(ip_hdr, transport_data=b"\\x00" * 3000, mtu=1500)
         assert len(fragments) == 3
+
     """
     max_data = (mtu - _IPV6_HEADER_LEN - _IPV6_FRAG_EXT_LEN) & ~7
     if max_data < 8:

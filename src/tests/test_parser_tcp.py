@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import struct
 import unittest
 
@@ -9,8 +11,9 @@ from packeteer.parse.tcp import packet_parser
 
 
 def _tcp(
-    src_port=12345, dst_port=80, seq=0, ack=0,
-    flags=TCP_ACK, payload=b"", ip_version=4, options=None,
+    src_port: int = 12345, dst_port: int = 80, seq: int = 0, ack: int = 0,
+    flags: int = TCP_ACK, payload: bytes = b"", ip_version: int = 4,
+    options: TCPOptions | None = None,
 ) -> bytes:
     src_ip = "10.0.0.1" if ip_version == 4 else "::1"
     dst_ip = "10.0.0.2" if ip_version == 4 else "::2"
@@ -124,7 +127,8 @@ class TestParserTCPOptions(unittest.TestCase):
     def test_full_syn_options_header_size(self):
         # MSS(4) + WindowScale(3) + SACK Permitted(2) + Timestamps(10) = 19 → padded to 20
         # data_offset = 5 + 20//4 = 10 → header = 40
-        raw = _tcp(options=TCPOptions(mss=1460, window_scale=7, sack_permitted=True, timestamps=(0, 0)))
+        raw = _tcp(options=TCPOptions(mss=1460, window_scale=7, sack_permitted=True,
+                                    timestamps=(0, 0)))
         size, _, hdr = packet_parser(raw)
         self.assertEqual(size, 40)
 

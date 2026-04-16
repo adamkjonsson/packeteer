@@ -28,6 +28,7 @@ def packet_parser(data: bytes) -> tuple[int, int | None, TCPHeader | None]:
         ``data_offset * 4``, *dst_port* is the destination port number, and
         *header* is the parsed :class:`TCPHeader` object.  Returns
         ``(0, None, None)`` if parsing fails.
+
     """
     if len(data) < 20:
         return (0, None, None)
@@ -53,7 +54,7 @@ def packet_parser(data: bytes) -> tuple[int, int | None, TCPHeader | None]:
             window=window, urgent_ptr=urgent_ptr,
         )
 
-    except Exception:
+    except struct.error:
         return (0, None, None)
 
     return (header_size, dst_port, hdr)

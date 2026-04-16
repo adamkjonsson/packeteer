@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import struct
 import socket
 import unittest
@@ -5,7 +7,7 @@ from packeteer.generate.icmpv6 import ICMPv6Header, build_icmpv6_header
 from packeteer.generate.checksum import ones_complement_checksum
 
 
-def _verify_icmpv6_checksum(src_ip, dst_ip, icmpv6_bytes, payload):
+def _verify_icmpv6_checksum(src_ip: str, dst_ip: str, icmpv6_bytes: bytes, payload: bytes) -> int:
     icmpv6_length = len(icmpv6_bytes) + len(payload)
     pseudo = (
         socket.inet_pton(socket.AF_INET6, src_ip)

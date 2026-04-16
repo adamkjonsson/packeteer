@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import unittest
 
 from packeteer.generate.ethernet import (
@@ -6,7 +8,6 @@ from packeteer.generate.ethernet import (
     build_ethernet_header,
     ETHERTYPE_IPV4,
     ETHERTYPE_IPV6,
-    ETHERTYPE_8021Q,
 )
 from packeteer.parse.ethernet import packet_parser
 
@@ -15,11 +16,11 @@ DST = "aa:bb:cc:dd:ee:ff"
 SRC = "11:22:33:44:55:66"
 
 
-def _plain(ethertype=ETHERTYPE_IPV4) -> bytes:
+def _plain(ethertype: int = ETHERTYPE_IPV4) -> bytes:
     return build_ethernet_header(EthernetHeader(DST, SRC, ethertype))
 
 
-def _tagged(vid=10, pcp=0, dei=0, ethertype=ETHERTYPE_IPV4) -> bytes:
+def _tagged(vid: int = 10, pcp: int = 0, dei: int = 0, ethertype: int = ETHERTYPE_IPV4) -> bytes:
     return build_ethernet_header(
         EthernetHeader(DST, SRC, ethertype, VLANTag(vid=vid, pcp=pcp, dei=dei))
     )

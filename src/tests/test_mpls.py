@@ -1,4 +1,6 @@
 """Tests for MPLS label stack support (RFC 3032)."""
+from __future__ import annotations
+
 import struct
 import unittest
 
@@ -137,7 +139,7 @@ class TestPacketBuilderMPLS(unittest.TestCase):
 class TestMPLSParser(unittest.TestCase):
     """Unit tests for packet_parser.mpls.packet_parser."""
 
-    def _make_label_bytes(self, label, tc=0, ttl=64, bos=True):
+    def _make_label_bytes(self, label: int, tc: int = 0, ttl: int = 64, bos: bool = True) -> bytes:
         s = 1 if bos else 0
         word = (label << 12) | (tc << 9) | (s << 8) | ttl
         return struct.pack("!I", word)

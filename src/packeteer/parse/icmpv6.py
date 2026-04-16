@@ -21,6 +21,7 @@ def packet_parser(data: bytes) -> tuple[int, int | None, ICMPv6Header | None]:
         Request, 129 = Echo Reply), and *header* is the parsed
         :class:`ICMPv6Header` object.  Returns ``(0, None, None)`` if parsing
         fails.
+
     """
     if len(data) < 8:
         return (0, None, None)
@@ -31,7 +32,7 @@ def packet_parser(data: bytes) -> tuple[int, int | None, ICMPv6Header | None]:
         )
         hdr = ICMPv6Header(type=icmp_type, code=code, identifier=identifier, sequence=sequence)
 
-    except Exception:
+    except struct.error:
         return (0, None, None)
 
     return (8, icmp_type, hdr)

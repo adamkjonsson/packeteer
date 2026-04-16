@@ -80,7 +80,6 @@ from __future__ import annotations
 import io
 import os
 import struct
-import time
 from dataclasses import dataclass, field
 
 LINKTYPE_ETHERNET: int = 1    # Ethernet II
@@ -120,7 +119,9 @@ class PcapFileHeader:
         snaplen: Maximum number of bytes captured per packet.
         nanoseconds: ``True`` if sub-second timestamps are in nanoseconds
             rather than microseconds.
+
     """
+
     link_type: int
     version_major: int
     version_minor: int
@@ -137,7 +138,9 @@ class PcapFile:
         packets: Ordered list of ``(data, ts_sec, ts_frac)`` tuples.
             *ts_frac* holds microseconds or nanoseconds depending on
             :attr:`PcapFileHeader.nanoseconds`.
+
     """
+
     header: PcapFileHeader
     packets: list[tuple[bytes, int, int]] = field(default_factory=list)
 
@@ -158,8 +161,8 @@ def _parse_idb_tsresol(body: bytes, offset: int, endian: str) -> int:
             exp = tsresol_byte & 0x7F
             if tsresol_byte & 0x80:   # binary: 2^exp ticks per second
                 return 1 << exp
-            else:                     # decimal: 10^exp ticks per second
-                return 10 ** exp
+            # decimal: 10^exp ticks per second
+            return 10 ** exp
     return 1_000_000  # default: microseconds
 
 
@@ -256,7 +259,8 @@ def _read_pcap(file_obj: io.RawIOBase | io.BufferedIOBase) -> PcapFile:
     global_hdr = file_obj.read(_GLOBAL_HDR_SIZE)
     if len(global_hdr) < _GLOBAL_HDR_SIZE:
         raise ValueError(
-            f"File too short for pcap global header: got {len(global_hdr)} bytes, need {_GLOBAL_HDR_SIZE}"
+            f"File too short for pcap global header: "
+            f"got {len(global_hdr)} bytes, need {_GLOBAL_HDR_SIZE}"
         )
 
     (magic_le,) = struct.unpack_from("<I", global_hdr, 0)
@@ -432,6 +436,7 @@ def read_pcap(
         print(result.header.link_type)
         for data, ts_sec, ts_frac in result.packets:
             print(ts_sec, ts_frac, data.hex())
+
     """
     if (path is None) == (file_object is None):
         raise ValueError("Provide exactly one of 'path' or 'file_object'.")
@@ -482,6 +487,7 @@ def write_pcap(
              now_sec, now_nsec),
         ]
         write_pcap(pkts, path="out.pcap", nanoseconds=True)
+
     """
     if path is not None:
         with open(path, "wb") as f:
@@ -526,6 +532,7 @@ def write_pcapng(
 
         pkt = PacketBuilder().ip(src="10.0.0.1", dst="10.0.0.2").tcp().build()
         write_pcapng([(pkt, 1700000000, 500000)], path="out.pcapng")
+
     """
     if path is not None:
         with open(path, "wb") as f:

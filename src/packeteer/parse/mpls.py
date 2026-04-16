@@ -33,6 +33,7 @@ def packet_parser(data: bytes) -> tuple[int, int | None, MPLSLabel | None]:
         is always ``4``, *next_protocol* is the EtherType of the following
         layer, and *label* is the parsed :class:`MPLSLabel`.
         Returns ``(0, None, None)`` if parsing fails.
+
     """
     if len(data) < 4:
         return (0, None, None)

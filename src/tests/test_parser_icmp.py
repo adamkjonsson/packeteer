@@ -1,4 +1,5 @@
-import struct
+from __future__ import annotations
+
 import unittest
 
 from packeteer.generate.icmp import ICMPHeader, build_icmp_header
@@ -17,11 +18,17 @@ TYPE_V6_DEST_UNREACHABLE = 1
 TYPE_V6_TIME_EXCEEDED = 3
 
 
-def _icmp(type=TYPE_ECHO_REQUEST, code=0, identifier=1, sequence=1, payload=b"") -> bytes:
+def _icmp(
+    type: int = TYPE_ECHO_REQUEST, code: int = 0, identifier: int = 1,
+    sequence: int = 1, payload: bytes = b"",
+) -> bytes:
     return build_icmp_header(ICMPHeader(type, code, identifier, sequence), payload)
 
 
-def _icmpv6(type=TYPE_V6_ECHO_REQUEST, code=0, identifier=1, sequence=1, payload=b"") -> bytes:
+def _icmpv6(
+    type: int = TYPE_V6_ECHO_REQUEST, code: int = 0, identifier: int = 1,
+    sequence: int = 1, payload: bytes = b"",
+) -> bytes:
     return build_icmpv6_header(
         ICMPv6Header(type, code, identifier, sequence), payload, "::1", "::2"
     )
@@ -182,7 +189,10 @@ class TestParserICMPRoundtrip(unittest.TestCase):
                 self.assertEqual(parsed_type, t)
 
     def test_icmpv6_type_preserved(self):
-        for t in (TYPE_V6_ECHO_REQUEST, TYPE_V6_ECHO_REPLY, TYPE_V6_DEST_UNREACHABLE, TYPE_V6_TIME_EXCEEDED):
+        for t in (
+            TYPE_V6_ECHO_REQUEST, TYPE_V6_ECHO_REPLY,
+            TYPE_V6_DEST_UNREACHABLE, TYPE_V6_TIME_EXCEEDED,
+        ):
             with self.subTest(type=t):
                 raw = _icmpv6(type=t)
                 _, parsed_type, hdr = parse_icmpv6(raw)

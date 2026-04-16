@@ -28,6 +28,7 @@ def packet_parser(data: bytes) -> tuple[int, int | None, GREHeader | None]:
         *header_size* is the total number of bytes consumed (4–16 depending
         on which optional fields are present).  *protocol_type* is the
         EtherType value from the GRE header identifying the inner payload.
+
     """
     if len(data) < 4:
         return (0, None, None)
@@ -42,15 +43,13 @@ def packet_parser(data: bytes) -> tuple[int, int | None, GREHeader | None]:
     s_flag = bool(flags_ver & 0x1000)
 
     offset = 4
-    checksum_val: int | None = None
     key: int | None = None
     seq: int | None = None
 
     if c_flag:
         if len(data) < offset + 4:
             return (0, None, None)
-        checksum_val = struct.unpack_from("!H", data, offset)[0]
-        offset += 4  # checksum (2) + reserved1 (2)
+        offset += 4  # checksum (2) + reserved1 (2) — checksum field not verified
 
     if k_flag:
         if len(data) < offset + 4:

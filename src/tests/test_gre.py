@@ -1,10 +1,14 @@
 """Tests for GRE tunneling (RFC 2784 / RFC 2890) building and parsing."""
+from __future__ import annotations
+
 import io
 import json
 import struct
 import unittest
 
-from packeteer.generate import PacketBuilder, GREHeader, IPPROTO_GRE, GRE_PROTO_IPV4, GRE_PROTO_IPV6, GRE_PROTO_TEB
+from packeteer.generate import (
+    PacketBuilder, GREHeader, GRE_PROTO_IPV4, GRE_PROTO_IPV6, GRE_PROTO_TEB,
+)
 from packeteer.pcap import LINKTYPE_RAW, write_pcap
 from packeteer.parse.core import parse_packet, parse_pcap_file, ParsedPacket
 
@@ -235,7 +239,9 @@ class TestPacketBuilderGRE(unittest.TestCase):
 
 class TestParsePacketGRE(unittest.TestCase):
 
-    def _build_ip_in_gre(self, key=None, seq=None, checksum=False):
+    def _build_ip_in_gre(
+        self, key: int | None = None, seq: int | None = None, checksum: bool = False,
+    ) -> bytes:
         return (PacketBuilder()
             .ethernet(src_mac="00:00:00:00:00:01", dst_mac="00:00:00:00:00:02")
             .ip(src="10.0.0.1", dst="10.0.0.2")
@@ -559,7 +565,11 @@ class TestGRERoundTrip(unittest.TestCase):
 
     def test_packet_lab_round_trip(self):
         """Build via packet spec → parse → verify inner addresses."""
-        import subprocess, sys, json, tempfile, os
+        import subprocess
+        import sys
+        import json
+        import tempfile
+        import os
 
         config = {
             "packets": [{
@@ -583,7 +593,7 @@ class TestGRERoundTrip(unittest.TestCase):
             packet_lab = os.path.join(os.path.dirname(__file__), "..", "packeteer/__main__.py")
             result = subprocess.run(
                 [sys.executable, packet_lab, "build", jf_path, "--pcap", pf_path],
-                capture_output=True, text=True
+                capture_output=True, text=True, check=False,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
 

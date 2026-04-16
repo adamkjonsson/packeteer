@@ -24,6 +24,7 @@ def packet_parser(data: bytes) -> tuple[int, int | None, VLANTag | None]:
         is always 4, *next_protocol* is the inner EtherType, and *tag* is the
         parsed :class:`VLANTag` object.  Returns ``(0, None, None)`` if
         parsing fails.
+
     """
     if len(data) < 4:
         return (0, None, None)
@@ -38,7 +39,7 @@ def packet_parser(data: bytes) -> tuple[int, int | None, VLANTag | None]:
 
         tag = VLANTag(vid=vid, pcp=pcp, dei=dei)
 
-    except Exception:
+    except struct.error:
         return (0, None, None)
 
     return (4, inner_ethertype, tag)

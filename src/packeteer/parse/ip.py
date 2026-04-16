@@ -34,6 +34,7 @@ def packet_parser(data: bytes) -> tuple[int, int | None, IPHeader | IPv6Header |
         protocol number of the encapsulated transport layer, and *header* is
         the parsed :class:`IPHeader` or :class:`IPv6Header` object.  Returns
         ``(0, None, None)`` if parsing fails.
+
     """
     if len(data) < 1:
         return (0, None, None)
@@ -76,7 +77,7 @@ def _parse_ipv4(data: bytes) -> tuple[int, int | None, IPHeader | None]:
             flags=flags, fragment_offset=fragment_offset,
         )
 
-    except Exception:
+    except struct.error:
         return (0, None, None)
 
     return (header_size, protocol, hdr)
@@ -102,7 +103,7 @@ def _parse_ipv6(data: bytes) -> tuple[int, int | None, IPv6Header | None]:
             flow_label=flow_label,
         )
 
-    except Exception:
+    except struct.error:
         return (0, None, None)
 
     return (40, next_header, hdr)

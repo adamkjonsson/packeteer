@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import io
 import struct
 import unittest
@@ -13,8 +15,8 @@ _GLOBAL_HDR_SIZE = 24
 _PKT_HDR_SIZE = 16
 
 
-def _write(packets, link_type=LINKTYPE_ETHERNET) -> io.BytesIO:
-    """Helper: write packets to a BytesIO and rewind."""
+def _write(packets: list, link_type: int = LINKTYPE_ETHERNET) -> io.BytesIO:
+    """Write packets to a BytesIO and rewind."""
     buf = io.BytesIO()
     write_pcap(packets, file_object=buf, link_type=link_type)
     buf.seek(0)
@@ -43,7 +45,7 @@ def _make_raw_pcap(
 # ---------------------------------------------------------------------------
 
 class TestReadPcapGlobalHeader(unittest.TestCase):
-    def _header(self, **kw) -> PcapFileHeader:
+    def _header(self, **kw: object) -> PcapFileHeader:
         return read_pcap(file_object=_write([(b"\x00" * 10, 0, 0)], **kw)).header
 
     def test_link_type_ethernet(self):
@@ -117,7 +119,7 @@ class TestReadPcapPackets(unittest.TestCase):
     def test_variable_length_packets(self):
         pkts = [(bytes(n), 0, n) for n in (1, 20, 300)]
         result = read_pcap(file_object=_write(pkts))
-        for (orig, _, _), (parsed, _, _) in zip(pkts, result.packets):
+        for (orig, _, _), (parsed, _, _) in zip(pkts, result.packets, strict=False):
             self.assertEqual(parsed, orig)
 
     def test_all_byte_values_preserved(self):
@@ -152,7 +154,9 @@ class TestReadPcapEndianness(unittest.TestCase):
         self.assertEqual(result.packets[0][2], 999999999)
 
     def test_big_endian_link_type_preserved(self):
-        buf = _make_raw_pcap([(b"\x00" * 4, 0, 0)], endian=">", magic=_MAGIC_USEC, link_type=LINKTYPE_RAW)
+        buf = _make_raw_pcap(
+            [(b"\x00" * 4, 0, 0)], endian=">", magic=_MAGIC_USEC, link_type=LINKTYPE_RAW,
+        )
         result = read_pcap(file_object=buf)
         self.assertEqual(result.header.link_type, LINKTYPE_RAW)
 
@@ -202,7 +206,7 @@ class TestReadPcapFailure(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestReadPcapRoundtrip(unittest.TestCase):
-    def _roundtrip(self, packets, link_type=LINKTYPE_ETHERNET):
+    def _roundtrip(self, packets: list, link_type: int = LINKTYPE_ETHERNET) -> PcapFile:
         return read_pcap(file_object=_write(packets, link_type=link_type))
 
     def test_single_packet_roundtrip(self):

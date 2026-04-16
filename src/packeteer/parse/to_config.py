@@ -26,10 +26,15 @@ Typical usage::
         payload = raw[eth_size + ip_size + tcp_size:]
         if payload:
             update_config(cfg, payload)
-        cfg.setdefault("packet_metadata", {}).update({"timestamp_s": ts_sec, "timestamp_us": ts_frac})
+        cfg.setdefault("packet_metadata", {}).update(
+            {"timestamp_s": ts_sec, "timestamp_us": ts_frac}
+        )
         packet_configs.append(cfg)
 
-    print(to_json_string(to_packet_spec(packet_configs, metadata={"from_file": "capture.pcap", "type": "pcap"})))
+    print(to_json_string(to_packet_spec(
+        packet_configs,
+        metadata={"from_file": "capture.pcap", "type": "pcap"},
+    )))
 """
 from __future__ import annotations
 
@@ -66,7 +71,6 @@ from packeteer.generate.sctp import (
     SCTPCookieEchoChunk,
     SCTPCookieAckChunk,
     SCTPShutdownCompleteChunk,
-    SCTPGenericChunk,
     SCTPChunk,
 )
 
@@ -227,7 +231,10 @@ def _tcp_options_section(opts: TCPOptions) -> dict[str, Any]:
     return section
 
 
-def _apply_transport(config: dict[str, Any], hdr: TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | SCTPHeader) -> None:
+def _apply_transport(
+    config: dict[str, Any],
+    hdr: TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | SCTPHeader,
+) -> None:
     if isinstance(hdr, TCPHeader):
         section: dict[str, Any] = {
             "src_port": hdr.src_port,
@@ -300,8 +307,10 @@ def _apply_inner_tail(inner: dict[str, Any], tunneled: ParsedPacket) -> None:
 
 
 def _apply_etherip(config: dict[str, Any], hdr: EtherIPHeader, tunneled: ParsedPacket) -> None:
-    """Serialise *hdr* and the recursively-parsed inner frame *tunneled* into
-    ``config["etherip"]``.  Called recursively for double-nested EtherIP."""
+    """Serialise *hdr* and the recursively-parsed inner frame *tunneled* into ``config["etherip"]``.
+
+    Called recursively for double-nested EtherIP.
+    """
     inner: dict[str, Any] = {}
     if tunneled.ethernet is not None:
         _apply_ethernet(inner, tunneled.ethernet)
@@ -331,8 +340,10 @@ def _apply_ipip(config: dict[str, Any], tunneled: "ParsedPacket") -> None:
 
 
 def _apply_gre(config: dict[str, Any], hdr: GREHeader, tunneled: "ParsedPacket") -> None:
-    """Serialise *hdr* and the recursively-parsed inner payload *tunneled* into
-    ``config["gre"]``.  Called recursively for nested GRE."""
+    """Serialise *hdr* and the recursively-parsed inner payload *tunneled* into ``config["gre"]``.
+
+    Called recursively for nested GRE.
+    """
     inner: dict[str, Any] = {}
     # RFC 2890 / RFC 2784 optional fields
     if hdr.key is not None:
@@ -367,7 +378,10 @@ def _apply_payload(config: dict[str, Any], payload: bytes) -> None:
 
 def update_config(
     config: dict[str, Any],
-    layer: EthernetHeader | PPPoEHeader | MPLSLabel | IPHeader | IPv6Header | TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | SCTPHeader | bytes,
+    layer: (
+        EthernetHeader | PPPoEHeader | MPLSLabel | IPHeader | IPv6Header
+        | TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | SCTPHeader | bytes
+    ),
 ) -> dict[str, Any]:
     """Add a parsed protocol layer to *config* and return it.
 
@@ -376,7 +390,8 @@ def update_config(
     - :class:`~packet_generator.ethernet.EthernetHeader` → ``ethernet`` section
     - :class:`~packet_generator.mpls.MPLSLabel` → appended to the ``mpls`` array
     - :class:`~packet_generator.pppoe.PPPoEHeader` → ``pppoe`` section
-    - :class:`~packet_generator.ip.IPHeader` / :class:`~packet_generator.ipv6.IPv6Header` → ``network`` section
+    - :class:`~packet_generator.ip.IPHeader` /
+      :class:`~packet_generator.ipv6.IPv6Header` → ``network`` section
     - :class:`~packet_generator.etherip.EtherIPHeader` / GRE /
       IP-in-IP → use :func:`apply_tunneled` instead; tunnel serialisation
       requires the inner :class:`~packeteer.parse.core.ParsedPacket` as
@@ -384,7 +399,8 @@ def update_config(
       alone.
     - :class:`~packet_generator.tcp.TCPHeader` → ``transport`` section (TCP fields)
     - :class:`~packet_generator.udp.UDPHeader` → ``transport`` section (UDP fields)
-    - :class:`~packet_generator.icmp.ICMPHeader` / :class:`~packet_generator.icmpv6.ICMPv6Header` → ``transport`` section (ICMP fields)
+    - :class:`~packet_generator.icmp.ICMPHeader` /
+      :class:`~packet_generator.icmpv6.ICMPv6Header` → ``transport`` section (ICMP fields)
     - :class:`bytes` → ``payload`` section (encoded as a hex string)
 
     Modifies *config* in-place and returns it so calls can be chained::
@@ -400,6 +416,7 @@ def update_config(
 
     Raises:
         TypeError: If *layer* is not a recognised header type or bytes.
+
     """
     if isinstance(layer, EthernetHeader):
         _apply_ethernet(config, layer)
@@ -434,6 +451,7 @@ def apply_tunneled(config: dict[str, Any], pkt: "ParsedPacket") -> None:
         config: The packet config dict to update (same dict passed to
             :func:`update_config` for the outer layers).
         pkt: The parsed packet whose tunnel fields should be serialised.
+
     """
     if pkt.ipip and pkt.tunneled is not None:
         _apply_ipip(config, pkt.tunneled)
@@ -462,6 +480,7 @@ def to_packet_spec(
 
     Returns:
         A packet spec dict accepted by ``packeteer build``.
+
     """
     cfg: dict[str, Any] = {}
     top_meta: dict[str, Any] = dict(metadata) if metadata is not None else {}
@@ -481,5 +500,6 @@ def to_json_string(config: dict[str, Any], *, indent: int = 2) -> str:
 
     Returns:
         A UTF-8 JSON string.
+
     """
     return json.dumps(config, indent=indent)

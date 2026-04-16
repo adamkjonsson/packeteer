@@ -53,7 +53,9 @@ class UDPStreamPacket:
         direction: ``"c2s"`` (client→server) or ``"s2c"`` (server→client).
         payload_len: UDP payload length in bytes.
         label: Human-readable label (e.g. ``"DATA[0]"``).
+
     """
+
     raw:         bytes
     ts_sec:      int
     ts_usec:     int
@@ -68,7 +70,9 @@ class UDPStream:
 
     Attributes:
         packets: Ordered list of all datagrams in the stream.
+
     """
+
     packets: list[UDPStreamPacket]
 
     def to_pcap_tuples(self) -> list[tuple[bytes, int, int]]:
@@ -215,6 +219,7 @@ def generate_udp_stream(
             num_data_packets=5,
         )
         write_pcap(stream.to_pcap_tuples(), path="dns_flow.pcap")
+
     """
     if base_time is None:
         base_time = int(time.time())

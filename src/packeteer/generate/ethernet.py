@@ -43,6 +43,7 @@ class VLANTag:
             class-of-service information.  Defaults to ``0``.
         dei: Drop Eligible Indicator — 1-bit flag (0 or 1) indicating the
             frame may be dropped under congestion.  Defaults to ``0``.
+
     """
 
     vid: int
@@ -79,6 +80,7 @@ class EthernetHeader:
             grows from 14 to 18 bytes: the outer EtherType becomes ``0x8100``
             (TPID), followed by the 2-byte TCI, followed by the original
             *ethertype* as the inner EtherType.
+
     """
 
     dst_mac: str
@@ -97,6 +99,7 @@ def _parse_mac(mac: str) -> bytes:
 
     Returns:
         Six bytes representing the MAC address in network byte order.
+
     """
     return bytes.fromhex(mac.replace(':', '').replace('-', ''))
 
@@ -124,13 +127,16 @@ def build_ethernet_header(hdr: EthernetHeader) -> bytes:
         (big-endian) byte order.
 
     Example:
-        >>> from packet_generator.ethernet import EthernetHeader, build_ethernet_header, ETHERTYPE_IPV4
+        >>> from packet_generator.ethernet import (  # noqa: E501
+        ...     EthernetHeader, build_ethernet_header, ETHERTYPE_IPV4,
+        ... )
         >>> hdr = EthernetHeader("aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66", ETHERTYPE_IPV4)
         >>> raw = build_ethernet_header(hdr)
         >>> len(raw)
         14
         >>> raw[:6].hex()
         'aabbccddeeff'
+
     """
     dst = _parse_mac(hdr.dst_mac)
     src = _parse_mac(hdr.src_mac)

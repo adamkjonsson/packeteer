@@ -103,7 +103,9 @@ class SanitiseOptions:
             preserved so the rebuilt packet has the same size.
         timestamps: Zero ``timestamp_s`` and ``timestamp_us`` / ``timestamp_ns``
             in every ``metadata`` section.
+
     """
+
     ips:        bool = True
     macs:       bool = True
     ports:      bool = False
@@ -138,11 +140,10 @@ class _Replacer:
                 self._ipv4_map[addr] = _ipv4_from_index(self._ipv4_counter)
                 self._ipv4_counter += 1
             return self._ipv4_map[addr]
-        else:
-            if addr not in self._ipv6_map:
-                self._ipv6_map[addr] = _ipv6_from_index(self._ipv6_counter)
-                self._ipv6_counter += 1
-            return self._ipv6_map[addr]
+        if addr not in self._ipv6_map:
+            self._ipv6_map[addr] = _ipv6_from_index(self._ipv6_counter)
+            self._ipv6_counter += 1
+        return self._ipv6_map[addr]
 
     def mac(self, addr: str) -> str:
         """Return the consistent synthetic replacement for *addr*."""
@@ -174,7 +175,6 @@ def _sanitise_ethernet(eth: dict, r: _Replacer, opts: SanitiseOptions) -> None:
 
 def _sanitise_packet(pkt: dict, r: _Replacer, opts: SanitiseOptions) -> None:
     """In-place sanitisation of one packet dict (already deep-copied)."""
-
     if "ethernet" in pkt:
         _sanitise_ethernet(pkt["ethernet"], r, opts)
 
@@ -257,6 +257,7 @@ def sanitise(
         clean = sanitise(config)
         clean_ips_only = sanitise(config, SanitiseOptions(macs=False))
         clean_all = sanitise(config, SanitiseOptions(ports=True, payload=True, timestamps=True))
+
     """
     if "packets" not in config:
         raise ValueError("config must contain a 'packets' key")

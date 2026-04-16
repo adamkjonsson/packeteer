@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import io
 import unittest
 
@@ -9,41 +11,44 @@ from packeteer.generate.tcp import TCPHeader, TCP_SYN, TCP_ACK
 from packeteer.generate.udp import UDPHeader
 from packeteer.generate.icmp import ICMPHeader
 from packeteer.generate.icmpv6 import ICMPv6Header
-from packeteer.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW, write_pcap
+from packeteer.pcap import LINKTYPE_RAW, write_pcap
 
 from packeteer.parse.core import parse_packet, parse_pcap_packet, parse_pcap_file, ParsedPacket
 from packeteer.pcap import read_pcap
 
 
-def _tcp(src_port=12345, dst_port=80, seq=0, flags=TCP_ACK, window=65535):
+def _tcp(
+    src_port: int = 12345, dst_port: int = 80, seq: int = 0,
+    flags: int = TCP_ACK, window: int = 65535,
+) -> bytes:
     return (PacketBuilder()
             .ethernet()
             .ip(src="10.0.0.1", dst="10.0.0.2")
             .tcp(src_port=src_port, dst_port=dst_port, seq=seq, flags=flags, window=window)
             .build())
 
-def _udp(src_port=12345, dst_port=80):
+def _udp(src_port: int = 12345, dst_port: int = 80) -> bytes:
     return (PacketBuilder()
             .ethernet()
             .ip(src="10.0.0.1", dst="10.0.0.2")
             .udp(src_port=src_port, dst_port=dst_port)
             .build())
 
-def _icmp(identifier=1, sequence=1):
+def _icmp(identifier: int = 1, sequence: int = 1) -> bytes:
     return (PacketBuilder()
             .ethernet()
             .ip(src="10.0.0.1", dst="10.0.0.2")
             .icmp(identifier=identifier, sequence=sequence)
             .build())
 
-def _tcp6(src_port=12345, dst_port=80):
+def _tcp6(src_port: int = 12345, dst_port: int = 80) -> bytes:
     return (PacketBuilder()
             .ethernet()
             .ip(src="::1", dst="::2")
             .tcp(src_port=src_port, dst_port=dst_port)
             .build())
 
-def _icmpv6(identifier=1, sequence=1):
+def _icmpv6(identifier: int = 1, sequence: int = 1) -> bytes:
     return (PacketBuilder()
             .ethernet()
             .ip(src="::1", dst="::2")
@@ -264,7 +269,7 @@ class TestParsedPacketTimestamps(unittest.TestCase):
 
 
 class TestParsePcapPacket(unittest.TestCase):
-    def _make_pcap(self, packets, nanoseconds=False):
+    def _make_pcap(self, packets: list, nanoseconds: bool = False) -> object:
         buf = io.BytesIO()
         write_pcap(packets, file_object=buf, nanoseconds=nanoseconds)
         buf.seek(0)
@@ -327,7 +332,7 @@ class TestParsePcapPacket(unittest.TestCase):
 
 
 class TestParsePcapFile(unittest.TestCase):
-    def _make_buf(self, packets, nanoseconds=False):
+    def _make_buf(self, packets: list, nanoseconds: bool = False) -> io.BytesIO:
         buf = io.BytesIO()
         write_pcap(packets, file_object=buf, nanoseconds=nanoseconds)
         buf.seek(0)

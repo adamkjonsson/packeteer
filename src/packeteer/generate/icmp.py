@@ -32,6 +32,7 @@ class ICMPHeader:
             Defaults to ``1``.
         sequence: 16-bit sequence number, incremented for each successive
             request in a ping session.  Defaults to ``1``.
+
     """
 
     type: int = 8       # Echo Request
@@ -65,6 +66,7 @@ def build_icmp_header(hdr: ICMPHeader, payload: bytes) -> bytes:
         8
         >>> raw[1]  # code
         0
+
     """
     raw = struct.pack('!BBHHH', hdr.type, hdr.code, 0, hdr.identifier, hdr.sequence)
     checksum = ones_complement_checksum(raw + payload)

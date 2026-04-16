@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import struct
 import unittest
 
@@ -5,7 +7,9 @@ from packeteer.generate.udp import UDPHeader, build_udp_header
 from packeteer.parse.udp import packet_parser
 
 
-def _udp(src_port=5000, dst_port=53, payload=b"", ip_version=4) -> bytes:
+def _udp(
+    src_port: int = 5000, dst_port: int = 53, payload: bytes = b"", ip_version: int = 4,
+) -> bytes:
     src_ip = "10.0.0.1" if ip_version == 4 else "::1"
     dst_ip = "10.0.0.2" if ip_version == 4 else "::2"
     return build_udp_header(UDPHeader(src_port, dst_port), payload, src_ip, dst_ip, ip_version)

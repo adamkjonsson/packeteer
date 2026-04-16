@@ -77,6 +77,7 @@ class PPPoETag:
     Attributes:
         type: 16-bit tag type identifier (see ``PPPOE_TAG_*`` constants).
         data: Tag value bytes.  May be empty (e.g. Service-Name in PADI).
+
     """
 
     type: int
@@ -104,6 +105,7 @@ class PPPoEHeader:
         session_id: 16-bit session identifier.  ``0`` for PADI/PADR; assigned
             by the AC in PADS.
         tags: TLV tags carried in discovery frames.  Ignored for session frames.
+
     """
 
     code: int = PPPOE_CODE_SESSION
@@ -112,7 +114,7 @@ class PPPoEHeader:
 
 
 def build_pppoe_header(hdr: PPPoEHeader, payload: bytes) -> bytes:
-    """Build a 6-byte PPPoE header with the correct Length field.
+    r"""Build a 6-byte PPPoE header with the correct Length field.
 
     The returned bytes contain only the PPPoE header (6 bytes).  The caller
     is responsible for prepending the PPP protocol field (for session frames)
@@ -141,6 +143,7 @@ def build_pppoe_header(hdr: PPPoEHeader, payload: bytes) -> bytes:
         6
         >>> raw[0]  # Ver=1, Type=1 packed as 0x11
         17
+
     """
     ver_type = 0x11  # Ver=1, Type=1
     return struct.pack("!BBHH", ver_type, hdr.code, hdr.session_id, len(payload))

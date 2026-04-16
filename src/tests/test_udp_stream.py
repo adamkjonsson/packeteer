@@ -2,23 +2,22 @@
 from __future__ import annotations
 
 import struct
-import pytest
 
 from packeteer.generate.udp_stream import generate_udp_stream, UDPStream, UDPStreamPacket
 
 
-def _make_stream(**kw) -> UDPStream:
-    defaults = dict(
-        client_ip="10.0.0.1",
-        server_ip="10.0.0.2",
-        client_port=54321,
-        server_port=53,
-        num_data_packets=5,
-        min_payload=20,
-        max_payload=100,
-        payload_distribution="fixed",
-        inter_packet_gap=0.001,
-    )
+def _make_stream(**kw: object) -> UDPStream:
+    defaults: dict[str, object] = {
+        "client_ip": "10.0.0.1",
+        "server_ip": "10.0.0.2",
+        "client_port": 54321,
+        "server_port": 53,
+        "num_data_packets": 5,
+        "min_payload": 20,
+        "max_payload": 100,
+        "payload_distribution": "fixed",
+        "inter_packet_gap": 0.001,
+    }
     defaults.update(kw)
     return generate_udp_stream(**defaults)
 

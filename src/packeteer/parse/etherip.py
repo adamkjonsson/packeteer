@@ -24,6 +24,7 @@ def packet_parser(data: bytes) -> tuple[int, None, EtherIPHeader | None]:
         ``(2, None, EtherIPHeader())`` on success.
         ``(0, None, None)`` when *data* is too short or the version field
         is not 3.
+
     """
     if len(data) < 2:
         return (0, None, None)

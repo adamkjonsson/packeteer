@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import struct
 import socket
 import unittest
@@ -8,7 +10,7 @@ from packeteer.generate.tcp import (
 from packeteer.generate.checksum import ones_complement_checksum
 
 
-def _verify_tcp_checksum_v4(src_ip, dst_ip, tcp_bytes, payload):
+def _verify_tcp_checksum_v4(src_ip: str, dst_ip: str, tcp_bytes: bytes, payload: bytes) -> int:
     tcp_length = len(tcp_bytes) + len(payload)
     pseudo = (
         socket.inet_aton(src_ip)
@@ -18,7 +20,7 @@ def _verify_tcp_checksum_v4(src_ip, dst_ip, tcp_bytes, payload):
     return ones_complement_checksum(pseudo + tcp_bytes + payload)
 
 
-def _verify_tcp_checksum_v6(src_ip, dst_ip, tcp_bytes, payload):
+def _verify_tcp_checksum_v6(src_ip: str, dst_ip: str, tcp_bytes: bytes, payload: bytes) -> int:
     tcp_length = len(tcp_bytes) + len(payload)
     pseudo = (
         socket.inet_pton(socket.AF_INET6, src_ip)
@@ -130,16 +132,16 @@ class TestTCPOptions(unittest.TestCase):
     # ── helpers ──────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _build(opts):
+    def _build(opts: TCPOptions) -> bytes:
         hdr = TCPHeader(1234, 80, flags=TCP_SYN, options=opts)
         return build_tcp_header(hdr, b'', "10.0.0.1", "10.0.0.2")
 
     @staticmethod
-    def _data_offset(raw):
+    def _data_offset(raw: bytes) -> int:
         return (raw[12] >> 4) & 0xF
 
     @staticmethod
-    def _options_bytes(raw):
+    def _options_bytes(raw: bytes) -> bytes:
         """Return the options area (everything after the fixed 20-byte header)."""
         data_offset = (raw[12] >> 4) & 0xF
         return raw[20: data_offset * 4]

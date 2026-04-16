@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 import json
 import unittest
 
-from packeteer.generate.ethernet import EthernetHeader, VLANTag, ETHERTYPE_IPV4, ETHERTYPE_IPV6
+from packeteer.generate.ethernet import EthernetHeader, VLANTag, ETHERTYPE_IPV4
 from packeteer.generate.ip import IPHeader
 from packeteer.generate.ipv6 import IPv6Header
 from packeteer.generate.tcp import TCPHeader, TCPOptions, TCP_SYN, TCP_ACK, TCP_PSH
@@ -310,7 +312,9 @@ class TestToJsonString(unittest.TestCase):
 class TestRoundtrip(unittest.TestCase):
     """Parse a packet built by packet_generator and verify the config fields."""
 
-    def _build_and_parse_tcp(self, src_port=12345, dst_port=80, flags=TCP_ACK):
+    def _build_and_parse_tcp(
+        self, src_port: int = 12345, dst_port: int = 80, flags: int = TCP_ACK,
+    ) -> dict:
         raw = (PacketBuilder().ethernet()
                .ip(src="10.0.0.1", dst="10.0.0.2")
                .tcp(src_port=src_port, dst_port=dst_port, flags=flags)

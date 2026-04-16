@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import struct
 import unittest
 from packeteer.generate.ethernet import (
@@ -72,7 +74,9 @@ class TestVLANTag(unittest.TestCase):
 
 
 class TestEthernetHeaderVLAN(unittest.TestCase):
-    def _tagged(self, vid=10, pcp=0, dei=0, ethertype=ETHERTYPE_IPV4):
+    def _tagged(
+        self, vid: int = 10, pcp: int = 0, dei: int = 0, ethertype: int = ETHERTYPE_IPV4,
+    ) -> bytes:
         hdr = EthernetHeader(
             "aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66",
             ethertype, VLANTag(vid=vid, pcp=pcp, dei=dei),

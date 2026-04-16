@@ -47,6 +47,7 @@ class IPv6Header:
             byte.  Defaults to ``0``.
         flow_label: 20-bit flow label for QoS handling by routers.
             Defaults to ``0``.
+
     """
 
     src: str
@@ -58,7 +59,7 @@ class IPv6Header:
 
 
 def build_ipv6_header(hdr: IPv6Header, payload: bytes) -> bytes:
-    """Build a 40-byte IPv6 fixed header.
+    r"""Build a 40-byte IPv6 fixed header.
 
     The *payload_length* field is set to ``len(payload)`` and reflects only
     the bytes **after** this 40-byte header (transport header + data).
@@ -85,6 +86,7 @@ def build_ipv6_header(hdr: IPv6Header, payload: bytes) -> bytes:
         40
         >>> (raw[0] >> 4)  # version nibble
         6
+
     """
     version_tc_fl = (6 << 28) | (hdr.traffic_class << 20) | (hdr.flow_label & 0xFFFFF)
     src = socket.inet_pton(socket.AF_INET6, hdr.src)

@@ -1,10 +1,11 @@
 """Tests for EtherIP (RFC 3378) building and parsing."""
+from __future__ import annotations
+
 import struct
 import unittest
 
 from packeteer.generate import PacketBuilder
 from packeteer.generate.etherip import EtherIPHeader, IPPROTO_ETHERIP, build_etherip_header
-from packeteer.pcap import LINKTYPE_ETHERNET
 from packeteer.parse import etherip_packet_parser
 from packeteer.parse.core import parse_packet, ParsedPacket
 
@@ -74,7 +75,7 @@ class TestEtherIPParser(unittest.TestCase):
 
 
 class TestPacketBuilderEtherIP(unittest.TestCase):
-    def _build_tunnel(self, **kwargs):
+    def _build_tunnel(self, **kwargs: object) -> bytes:
         """Build a standard EtherIP tunnel packet."""
         return (PacketBuilder()
             .ethernet(src_mac="00:00:00:00:00:01", dst_mac="00:00:00:00:00:02")
@@ -172,7 +173,7 @@ class TestPacketBuilderEtherIP(unittest.TestCase):
 
 
 class TestParsePacketEtherIP(unittest.TestCase):
-    def _build_tunnel(self):
+    def _build_tunnel(self) -> bytes:
         return (PacketBuilder()
             .ethernet(src_mac="00:00:00:00:00:01", dst_mac="00:00:00:00:00:02")
             .ip(src="10.0.0.1", dst="10.0.0.2")
@@ -295,10 +296,13 @@ class TestParsePacketEtherIP(unittest.TestCase):
 
     def test_corrupt_etherip_header_goes_to_payload(self):
         # Build valid outer headers then inject bad EtherIP (version != 3)
-        from packeteer.generate.ethernet import build_ethernet_header, EthernetHeader, ETHERTYPE_IPV4
+        from packeteer.generate.ethernet import (
+            build_ethernet_header, EthernetHeader, ETHERTYPE_IPV4,
+        )
         from packeteer.generate.ip import build_ip_header, IPHeader
-        import socket
-        eth = build_ethernet_header(EthernetHeader("00:00:00:00:00:02", "00:00:00:00:00:01", ETHERTYPE_IPV4))
+        eth = build_ethernet_header(
+            EthernetHeader("00:00:00:00:00:02", "00:00:00:00:00:01", ETHERTYPE_IPV4)
+        )
         inner = b"\x20\x00" + b"\xff" * 10   # bad EtherIP version=2
         ip_hdr = IPHeader("10.0.0.1", "10.0.0.2", IPPROTO_ETHERIP)
         ip_bytes = build_ip_header(ip_hdr, inner)

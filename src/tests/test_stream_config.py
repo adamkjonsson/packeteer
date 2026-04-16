@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import sys
 import textwrap
 import unittest
 from io import StringIO
@@ -16,7 +15,7 @@ from packeteer.__main__ import (
 )
 
 
-def _args(**kwargs) -> argparse.Namespace:
+def _args(**kwargs: object) -> argparse.Namespace:
     """Return a Namespace with all stream attrs set to None, then override with kwargs."""
     base = {dest: None for dest, _, _ in _STREAM_PARAMS.values()}
     base["config"] = None
@@ -25,9 +24,10 @@ def _args(**kwargs) -> argparse.Namespace:
     return argparse.Namespace(**base)
 
 
-def _write_ini(tmp_path, content: str) -> str:
+def _write_ini(tmp_path: object, content: str) -> str:
     """Write *content* to a temp file and return its path."""
-    import tempfile, os
+    import tempfile
+    import os
     fd, path = tempfile.mkstemp(suffix=".ini")
     with os.fdopen(fd, "w") as f:
         f.write(textwrap.dedent(content))

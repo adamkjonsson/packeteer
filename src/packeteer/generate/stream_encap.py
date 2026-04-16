@@ -57,7 +57,9 @@ class VLANEncap:
         vid: VLAN ID (1–4094).
         pcp: Priority Code Point (0–7).  Defaults to ``0``.
         dei: Drop Eligible Indicator (0 or 1).  Defaults to ``0``.
+
     """
+
     vid: int
     pcp: int = 0
     dei: int = 0
@@ -74,7 +76,9 @@ class QinQEncap:
         outer_dei: Outer tag Drop Eligible Indicator.  Defaults to ``0``.
         inner_pcp: Inner tag Priority Code Point.  Defaults to ``0``.
         inner_dei: Inner tag Drop Eligible Indicator.  Defaults to ``0``.
+
     """
+
     outer_vid: int
     inner_vid: int
     outer_pcp: int = 0
@@ -91,7 +95,9 @@ class MPLSEncap:
         labels: List of 20-bit MPLS label values, outermost first.
         tc: Traffic Class for all labels (0–7).  Defaults to ``0``.
         ttl: TTL for all labels (0–255).  Defaults to ``64``.
+
     """
+
     labels: list[int] = field(default_factory=list)
     tc: int = 0
     ttl: int = 64
@@ -105,7 +111,9 @@ class PPPoEEncap:
 
     Attributes:
         session_id: 16-bit PPPoE session identifier.  Defaults to ``1``.
+
     """
+
     session_id: int = 1
 
 
@@ -122,7 +130,9 @@ class GREEncap:
         key: Optional RFC 2890 32-bit GRE Key.  ``None`` (default) omits
             the Key field.
         ttl: Outer IP TTL.  Defaults to ``64``.
+
     """
+
     src_ip: str
     dst_ip: str
     key: int | None = None
@@ -141,7 +151,9 @@ class EtherIPEncap:
         src_ip: Outer IP source address (tunnel ingress).
         dst_ip: Outer IP destination address (tunnel egress).
         ttl: Outer IP TTL.  Defaults to ``64``.
+
     """
+
     src_ip: str
     dst_ip: str
     ttl: int = 64
@@ -158,7 +170,9 @@ class IPIPEncap:
         src_ip: Outer IP source address (tunnel ingress).
         dst_ip: Outer IP destination address (tunnel egress).
         ttl: Outer IP TTL.  Defaults to ``64``.
+
     """
+
     src_ip: str
     dst_ip: str
     ttl: int = 64
@@ -208,11 +222,7 @@ def _apply_single(
         return b.pppoe(session_id=encap.session_id)
     if isinstance(encap, GREEncap):
         b = b.ip(src=encap.src_ip, dst=encap.dst_ip, ttl=encap.ttl)
-        if encap.key is not None:
-            b = b.gre(key=encap.key)
-        else:
-            b = b.gre()
-        return b
+        return b.gre(key=encap.key) if encap.key is not None else b.gre()
     if isinstance(encap, EtherIPEncap):
         return (b
             .ip(src=encap.src_ip, dst=encap.dst_ip, ttl=encap.ttl)
@@ -262,6 +272,7 @@ def _apply_encap(
 
     Returns:
         The (possibly extended) :class:`~packet_generator.builder.PacketBuilder`.
+
     """
     for layer in _as_list(encap):
         b = _apply_single(b, layer, src_mac, dst_mac)
@@ -278,7 +289,6 @@ def _encap_ip_start(encap: EncapSpec, include_ethernet: bool) -> int:
     the tunnel headers intact.
 
     Examples:
-
     * No encap, with Ethernet → 14
     * ``VLANEncap(100)`` with Ethernet → 18  (14 + 4)
     * ``[VLANEncap(100), GREEncap(...)]`` with Ethernet → 18  (outer IP at 18)
@@ -291,6 +301,7 @@ def _encap_ip_start(encap: EncapSpec, include_ethernet: bool) -> int:
 
     Returns:
         Byte offset (integer ≥ 0).
+
     """
     offset = 14 if include_ethernet else 0
     for layer in _as_list(encap):
@@ -330,6 +341,7 @@ def _fix_encap_prefix(
     Returns:
         *prefix* unchanged unless a :class:`PPPoEEncap` is present, in which
         case a copy with an updated PPPoE payload length field is returned.
+
     """
     has_pppoe = any(isinstance(layer, PPPoEEncap) for layer in _as_list(encap))
     if not has_pppoe:

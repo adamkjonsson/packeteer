@@ -1,4 +1,6 @@
 """Tests for pcapng reading via read_pcap (auto-detect) and roundtrip with write_pcapng."""
+from __future__ import annotations
+
 import io
 import struct
 import unittest
@@ -7,7 +9,7 @@ from packeteer.pcap import write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW
 from packeteer.pcap import read_pcap, PcapFile, PcapFileHeader
 
 
-def _write(packets, **kwargs) -> io.BytesIO:
+def _write(packets: list, **kwargs: object) -> io.BytesIO:
     buf = io.BytesIO()
     write_pcapng(packets, file_object=buf, **kwargs)
     buf.seek(0)
@@ -41,7 +43,7 @@ class TestReadPcapngAutoDetect(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestReadPcapngHeader(unittest.TestCase):
-    def _header(self, **kwargs) -> PcapFileHeader:
+    def _header(self, **kwargs: object) -> PcapFileHeader:
         return read_pcap(file_object=_write([(b"\x00" * 10, 0, 0)], **kwargs)).header
 
     def test_link_type_ethernet(self):
@@ -122,7 +124,7 @@ class TestReadPcapngPackets(unittest.TestCase):
     def test_variable_length_packets(self):
         pkts = [(bytes(n), 0, n) for n in (1, 20, 300)]
         result = read_pcap(file_object=_write(pkts))
-        for (orig, _, _), (parsed, _, _) in zip(pkts, result.packets):
+        for (orig, _, _), (parsed, _, _) in zip(pkts, result.packets, strict=False):
             self.assertEqual(parsed, orig)
 
 
@@ -131,7 +133,7 @@ class TestReadPcapngPackets(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestReadPcapngRoundtrip(unittest.TestCase):
-    def _roundtrip(self, packets, **kwargs):
+    def _roundtrip(self, packets: list, **kwargs: object) -> PcapFile:
         return read_pcap(file_object=_write(packets, **kwargs))
 
     def test_single_packet_roundtrip(self):

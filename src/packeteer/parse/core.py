@@ -41,7 +41,6 @@ from packeteer.generate.ethernet import (
     ETHERTYPE_IPV4,
     ETHERTYPE_IPV6,
     EthernetHeader,
-    VLANTag,
 )
 from packeteer.generate.ip import IPHeader
 from packeteer.generate.ipv6 import IPv6Header
@@ -116,6 +115,7 @@ class ParsedPacket:
         ts_sec: Capture timestamp — whole seconds (from pcap record).
         ts_frac: Capture timestamp — sub-second fraction (microseconds or
             nanoseconds depending on the pcap file's magic number).
+
     """
 
     ethernet:  EthernetHeader | None = None
@@ -130,6 +130,129 @@ class ParsedPacket:
     payload:   bytes = field(default=b"")
     ts_sec:    int = 0
     ts_frac:   int = 0
+
+
+def _parse_link_layer(
+    pkt: ParsedPacket, data: bytes, link_type: int,
+) -> tuple[bytes, int | None] | None:
+    """Parse the link layer and return ``(remaining, ethertype)`` or ``None`` on stop.
+
+    Returns ``None`` when parsing should stop (payload already set on *pkt*).
+
+    Args:
+        pkt: Packet object to fill in.
+        data: Raw bytes from the start of the frame.
+        link_type: Link-layer type constant.
+
+    Returns:
+        ``(remaining_bytes, ethertype)`` or ``None`` when parsing is complete.
+
+    """
+    _KNOWN_ETHERTYPES = (
+        ETHERTYPE_IPV4, ETHERTYPE_IPV6,
+        ETHERTYPE_MPLS_UNICAST, ETHERTYPE_MPLS_MULTICAST,
+        ETHERTYPE_PPPOE_DISCOVERY, ETHERTYPE_PPPOE_SESSION,
+    )
+    if link_type == LINKTYPE_ETHERNET:
+        eth_size, ethertype, eth_hdr = _ethernet_parser(data)
+        if eth_size == 0:
+            pkt.payload = data
+            return None
+        pkt.ethernet = eth_hdr
+        remaining = data[eth_size:]
+        if ethertype not in _KNOWN_ETHERTYPES:
+            pkt.payload = remaining
+            return None
+        return remaining, ethertype
+    if link_type == LINKTYPE_RAW:
+        return data, None   # raw IP — skip MPLS loop below
+    pkt.payload = data
+    return None
+
+
+def _parse_pppoe_and_mpls(
+    pkt: ParsedPacket, data: bytes, ethertype: int | None,
+) -> tuple[bytes, int | None] | None:
+    """Parse MPLS labels and PPPoE header.
+
+    Returns ``(remaining, ip_ethertype)`` or ``None`` when parsing is complete.
+
+    Args:
+        pkt: Packet object to fill in.
+        data: Remaining bytes after the Ethernet header.
+        ethertype: EtherType from the Ethernet layer, or ``None`` for raw IP.
+
+    Returns:
+        ``(remaining_bytes, ethertype)`` or ``None`` when parsing is complete.
+
+    """
+    remaining = data
+    while ethertype in (ETHERTYPE_MPLS_UNICAST, ETHERTYPE_MPLS_MULTICAST):
+        m_size, ethertype, m_hdr = _mpls_parser(remaining)
+        if m_size == 0 or m_hdr is None:
+            pkt.payload = remaining
+            return None
+        pkt.mpls.append(m_hdr)
+        remaining = remaining[m_size:]
+
+    if ethertype in (ETHERTYPE_PPPOE_DISCOVERY, ETHERTYPE_PPPOE_SESSION):
+        p_size, ethertype, pppoe_hdr = _pppoe_parser(remaining)
+        if p_size == 0 or pppoe_hdr is None:
+            pkt.payload = remaining
+            return None
+        pkt.pppoe = pppoe_hdr
+        remaining = remaining[p_size:]
+        if ethertype is None:  # discovery frame — no IP follows
+            pkt.payload = remaining
+            return None
+
+    if ethertype is not None and ethertype not in (ETHERTYPE_IPV4, ETHERTYPE_IPV6):
+        pkt.payload = remaining
+        return None
+    return remaining, ethertype
+
+
+def _parse_ip_protocol(
+    pkt: ParsedPacket, remaining: bytes, ip_proto: int | None,
+) -> bytes:
+    """Parse the IP protocol layer (transport or tunnel).
+
+    Fills in transport/tunnel fields on *pkt* and returns the remaining
+    (payload) bytes.
+
+    Args:
+        pkt: Packet object to fill in.
+        remaining: Bytes after the IP header.
+        ip_proto: IP protocol number, or ``None`` when unknown.
+
+    Returns:
+        Remaining bytes after consuming transport/tunnel headers.
+
+    """
+    transport_parser = _TRANSPORT_PARSERS.get(ip_proto) if ip_proto is not None else None
+    if transport_parser is not None:
+        t_size, _, t_hdr = transport_parser(remaining)
+        if t_size > 0:
+            pkt.transport = t_hdr
+            remaining = remaining[t_size:]
+    elif ip_proto in (4, 41):
+        pkt.ipip = True
+        pkt.tunneled = parse_packet(remaining, link_type=LINKTYPE_RAW)
+        return b""
+    elif ip_proto == IPPROTO_GRE:
+        g_size, proto_type, g_hdr = _gre_parser(remaining)
+        if g_size > 0 and g_hdr is not None:
+            pkt.gre = g_hdr
+            inner_lt = LINKTYPE_ETHERNET if proto_type == GRE_PROTO_TEB else LINKTYPE_RAW
+            pkt.tunneled = parse_packet(remaining[g_size:], link_type=inner_lt)
+            return b""
+    elif ip_proto == IPPROTO_ETHERIP:
+        ei_size, _, ei_hdr = _etherip_parser(remaining)
+        if ei_size > 0 and ei_hdr is not None:
+            pkt.etherip = ei_hdr
+            pkt.tunneled = parse_packet(remaining[ei_size:], link_type=LINKTYPE_ETHERNET)
+            return b""
+    return remaining
 
 
 def parse_packet(data: bytes, *, link_type: int = LINKTYPE_ETHERNET) -> ParsedPacket:
@@ -181,54 +304,19 @@ def parse_packet(data: bytes, *, link_type: int = LINKTYPE_ETHERNET) -> ParsedPa
     Returns:
         A :class:`ParsedPacket` with each successfully parsed layer filled in.
         Layers that are absent or fail to parse are ``None``.
+
     """
     pkt = ParsedPacket()
-    remaining = data
 
-    # ── Ethernet ──────────────────────────────────────────────────────────────
-    if link_type == LINKTYPE_ETHERNET:
-        eth_size, ethertype, eth_hdr = _ethernet_parser(remaining)
-        if eth_size == 0:
-            pkt.payload = remaining
-            return pkt
-        pkt.ethernet = eth_hdr
-        remaining = remaining[eth_size:]
-        # ethertype is the inner EtherType (VLAN already unwrapped by the parser)
-        if ethertype not in (ETHERTYPE_IPV4, ETHERTYPE_IPV6,
-                             ETHERTYPE_MPLS_UNICAST, ETHERTYPE_MPLS_MULTICAST,
-                             ETHERTYPE_PPPOE_DISCOVERY, ETHERTYPE_PPPOE_SESSION):
-            pkt.payload = remaining
-            return pkt
-    elif link_type != LINKTYPE_RAW:
-        pkt.payload = remaining
+    link_result = _parse_link_layer(pkt, data, link_type)
+    if link_result is None:
         return pkt
-    else:
-        ethertype = None   # raw IP — skip MPLS loop below
+    remaining, ethertype = link_result
 
-    # ── MPLS ──────────────────────────────────────────────────────────────────
-    while ethertype in (ETHERTYPE_MPLS_UNICAST, ETHERTYPE_MPLS_MULTICAST):
-        m_size, ethertype, m_hdr = _mpls_parser(remaining)
-        if m_size == 0 or m_hdr is None:
-            pkt.payload = remaining
-            return pkt
-        pkt.mpls.append(m_hdr)
-        remaining = remaining[m_size:]
-
-    # ── PPPoE ─────────────────────────────────────────────────────────────────
-    if ethertype in (ETHERTYPE_PPPOE_DISCOVERY, ETHERTYPE_PPPOE_SESSION):
-        p_size, ethertype, pppoe_hdr = _pppoe_parser(remaining)
-        if p_size == 0 or pppoe_hdr is None:
-            pkt.payload = remaining
-            return pkt
-        pkt.pppoe = pppoe_hdr
-        remaining = remaining[p_size:]
-        if ethertype is None:  # discovery frame — no IP follows
-            pkt.payload = remaining
-            return pkt
-
-    if ethertype is not None and ethertype not in (ETHERTYPE_IPV4, ETHERTYPE_IPV6):
-        pkt.payload = remaining
+    layer_result = _parse_pppoe_and_mpls(pkt, remaining, ethertype)
+    if layer_result is None:
         return pkt
+    remaining, _ = layer_result
 
     # ── IP ────────────────────────────────────────────────────────────────────
     ip_size, ip_proto, ip_hdr = _ip_parser(remaining)
@@ -238,43 +326,7 @@ def parse_packet(data: bytes, *, link_type: int = LINKTYPE_ETHERNET) -> ParsedPa
     pkt.ip = ip_hdr
     remaining = remaining[ip_size:]
 
-    # ── Transport ─────────────────────────────────────────────────────────────
-    transport_parser = _TRANSPORT_PARSERS.get(ip_proto) if ip_proto is not None else None
-    if transport_parser is not None:
-        t_size, _, t_hdr = transport_parser(remaining)
-        if t_size > 0:
-            pkt.transport = t_hdr
-            remaining = remaining[t_size:]
-
-    # ── IP-in-IP (RFC 2003 / RFC 4213) ───────────────────────────────────────
-    elif ip_proto in (4, 41):
-        pkt.ipip    = True
-        pkt.tunneled = parse_packet(remaining, link_type=LINKTYPE_RAW)
-        pkt.payload  = b""
-        return pkt
-
-    # ── GRE (RFC 2784 / RFC 2890) ─────────────────────────────────────────────
-    elif ip_proto == IPPROTO_GRE:
-        g_size, proto_type, g_hdr = _gre_parser(remaining)
-        if g_size > 0 and g_hdr is not None:
-            pkt.gre = g_hdr
-            if proto_type == GRE_PROTO_TEB:
-                pkt.tunneled = parse_packet(remaining[g_size:], link_type=LINKTYPE_ETHERNET)
-            else:
-                pkt.tunneled = parse_packet(remaining[g_size:], link_type=LINKTYPE_RAW)
-            pkt.payload = b""
-            return pkt
-
-    # ── EtherIP ───────────────────────────────────────────────────────────────
-    elif ip_proto == IPPROTO_ETHERIP:
-        ei_size, _, ei_hdr = _etherip_parser(remaining)
-        if ei_size > 0 and ei_hdr is not None:
-            pkt.etherip = ei_hdr
-            pkt.tunneled = parse_packet(remaining[ei_size:], link_type=LINKTYPE_ETHERNET)
-            pkt.payload = b""
-            return pkt
-
-    pkt.payload = remaining
+    pkt.payload = _parse_ip_protocol(pkt, remaining, ip_proto)
     return pkt
 
 
@@ -299,6 +351,7 @@ def parse_pcap_packet(
         ``ts_sec`` / ``ts_frac`` set from the record.  ``ts_frac`` is in
         microseconds when ``file_header.nanoseconds`` is ``False``, or
         nanoseconds when it is ``True``.
+
     """
     data, ts_sec, ts_frac = record
     pkt = parse_packet(data, link_type=file_header.link_type)
@@ -343,6 +396,7 @@ def parse_pcap_file(
         ValueError: If neither or both of *path* / *file_object* are given, or
             if the pcap data is malformed.
         OSError: If *path* cannot be opened for reading.
+
     """
     pcap = read_pcap(path=path, file_object=file_object)
     ts_frac_key = "timestamp_ns" if pcap.header.nanoseconds else "timestamp_us"

@@ -30,6 +30,7 @@ class MPLSLabel:
         tc: Traffic Class — 3-bit value (0–7), formerly called EXP.
             Defaults to ``0``.
         ttl: Time-to-Live (0–255).  Defaults to ``64``.
+
     """
 
     label: int
@@ -69,6 +70,7 @@ def build_mpls_label(entry: MPLSLabel, bottom_of_stack: bool) -> bytes:
         4
         >>> (int.from_bytes(raw, "big") >> 8) & 1  # S bit
         1
+
     """
     s = 1 if bottom_of_stack else 0
     word = (entry.label << 12) | (entry.tc << 9) | (s << 8) | entry.ttl

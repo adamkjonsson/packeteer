@@ -23,6 +23,7 @@ def packet_parser(data: bytes) -> tuple[int, int | None, UDPHeader | None]:
         always 8, *dst_port* is the destination port number, and *header* is
         the parsed :class:`UDPHeader` object.  Returns ``(0, None, None)`` if
         parsing fails.
+
     """
     if len(data) < 8:
         return (0, None, None)
@@ -34,7 +35,7 @@ def packet_parser(data: bytes) -> tuple[int, int | None, UDPHeader | None]:
 
         hdr = UDPHeader(src_port=src_port, dst_port=dst_port)
 
-    except Exception:
+    except struct.error:
         return (0, None, None)
 
     return (8, dst_port, hdr)

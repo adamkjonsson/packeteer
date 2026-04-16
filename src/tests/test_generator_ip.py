@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import struct
 import unittest
 from packeteer.generate.ip import IPHeader, build_ip_header
@@ -5,7 +7,7 @@ from packeteer.generate.checksum import ones_complement_checksum
 
 
 class TestIPHeader(unittest.TestCase):
-    def _make(self, payload=b''):
+    def _make(self, payload: bytes = b'') -> bytes:
         return build_ip_header(IPHeader("192.168.1.1", "10.0.0.1", 6), payload)
 
     def test_length(self):

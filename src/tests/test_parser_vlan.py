@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import struct
 import unittest
 
@@ -20,7 +22,9 @@ SRC = "11:22:33:44:55:66"
 _VLAN_OFFSET = 14
 
 
-def _vlan_bytes(vid=10, pcp=0, dei=0, ethertype=ETHERTYPE_IPV4) -> bytes:
+def _vlan_bytes(
+    vid: int = 10, pcp: int = 0, dei: int = 0, ethertype: int = ETHERTYPE_IPV4,
+) -> bytes:
     """Return just the 4-byte VLAN tag portion (TCI + inner EtherType)."""
     raw = build_ethernet_header(
         EthernetHeader(DST, SRC, ethertype, VLANTag(vid=vid, pcp=pcp, dei=dei))
@@ -95,7 +99,7 @@ class TestPacketParserVLANFailure(unittest.TestCase):
 class TestParserVLANGeneratorRoundtrip(unittest.TestCase):
     """Verify that packet_parser.vlan and packet_generator.ethernet are compatible."""
 
-    def _roundtrip(self, vid, pcp, dei, ethertype):
+    def _roundtrip(self, vid: int, pcp: int, dei: int, ethertype: int) -> tuple:
         raw_frame = build_ethernet_header(
             EthernetHeader(DST, SRC, ethertype, VLANTag(vid=vid, pcp=pcp, dei=dei))
         )

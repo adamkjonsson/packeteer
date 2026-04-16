@@ -10,7 +10,7 @@ from packeteer.generate.tcp_stream import (
     generate_tcp_stream, TCPStream, TCPStreamConfig, TCPStreamPacket, _pkt_usec,
 )
 from packeteer.generate.tcp import TCP_SYN, TCP_ACK, TCP_PSH, TCP_FIN, TCPOptions
-from packeteer.pcap import write_pcap, LINKTYPE_ETHERNET, LINKTYPE_RAW
+from packeteer.pcap import write_pcap, LINKTYPE_ETHERNET
 
 _WRAP = 2 ** 32
 
@@ -23,14 +23,14 @@ _CONFIG_FIELDS: frozenset[str] = frozenset(
 )
 
 
-def _stream(**kwargs) -> TCPStream:
-    """Helper: generate a stream with fixed ISNs and sensible defaults."""
-    defaults: dict = dict(
-        client_ip="10.0.0.1",
-        server_ip="10.0.0.2",
-        client_isn=_CLIENT_ISN,
-        server_isn=_SERVER_ISN,
-    )
+def _stream(**kwargs: object) -> TCPStream:
+    """Generate a stream with fixed ISNs and sensible defaults."""
+    defaults: dict[str, object] = {
+        "client_ip": "10.0.0.1",
+        "server_ip": "10.0.0.2",
+        "client_isn": _CLIENT_ISN,
+        "server_isn": _SERVER_ISN,
+    }
     defaults.update(kwargs)
     config_kw = {k: defaults.pop(k) for k in list(defaults) if k in _CONFIG_FIELDS}
     cfg = TCPStreamConfig(**config_kw) if config_kw else None
@@ -377,8 +377,8 @@ class TestTimestamps(unittest.TestCase):
         n = len(pkts) - 1
         gap_usec = int(gap * 1_000_000)
         jitter_usec = int(jitter * 1_000_000)
-        for i, t in enumerate(times):
-            # Packet i was sent at index i*gap (before sorting, so we bound by n)
+        for _i, t in enumerate(times):
+            # Each packet's time is bounded by n * gap + jitter
             self.assertLessEqual(t, n * gap_usec + jitter_usec)
 
 
@@ -449,7 +449,7 @@ class TestPacketHooks(unittest.TestCase):
 
     def test_drop_hook_removes_packet(self):
         # Drop the handshake ACK (index 2)
-        def drop_index_2(pkt, idx):
+        def drop_index_2(pkt: TCPStreamPacket, idx: int) -> TCPStreamPacket | None:
             return None if idx == 2 else pkt
 
         stream = _stream(num_data_packets=3, packet_hooks=[drop_index_2])
@@ -463,7 +463,7 @@ class TestPacketHooks(unittest.TestCase):
     def test_mutate_hook_changes_raw(self):
         sentinel = bytearray()
 
-        def record_and_flip(pkt, idx):
+        def record_and_flip(pkt: TCPStreamPacket, idx: int) -> TCPStreamPacket:
             if idx == 0:
                 raw = bytearray(pkt.raw)
                 raw[-1] ^= 0xFF
@@ -472,7 +472,7 @@ class TestPacketHooks(unittest.TestCase):
                 return replace(pkt, raw=bytes(raw))
             return pkt
 
-        stream = _stream(num_data_packets=1, packet_hooks=[record_and_flip])
+        _stream(num_data_packets=1, packet_hooks=[record_and_flip])
         # Verify the last byte was flipped
         self.assertEqual(len(sentinel), 1)
         original_last = _stream(num_data_packets=1).packets[0].raw[-1]
@@ -481,11 +481,11 @@ class TestPacketHooks(unittest.TestCase):
     def test_multiple_hooks_applied_in_order(self):
         log = []
 
-        def hook_a(pkt, idx):
+        def hook_a(pkt: TCPStreamPacket, idx: int) -> TCPStreamPacket:
             log.append(("a", idx))
             return pkt
 
-        def hook_b(pkt, idx):
+        def hook_b(pkt: TCPStreamPacket, idx: int) -> TCPStreamPacket:
             log.append(("b", idx))
             return pkt
 
@@ -622,7 +622,7 @@ class TestRetransmissions(unittest.TestCase):
 
 class TestServerRst(unittest.TestCase):
 
-    def _rst_stream(self, n=10, **kwargs):
+    def _rst_stream(self, n: int = 10, **kwargs: object) -> TCPStream:
         return _stream(num_data_packets=n, server_rst_probability=1.0, **kwargs)
 
     def test_zero_probability_no_rst(self):
@@ -762,7 +762,7 @@ class TestPayloadCorruption(unittest.TestCase):
     def test_zero_probability_no_corruption(self):
         stream = _stream(num_data_packets=5, payload_corruption_probability=0.0)
         labels = [p.label for p in stream.packets]
-        self.assertFalse(any(l.startswith("CORRUPT") for l in labels))
+        self.assertFalse(any(lbl.startswith("CORRUPT") for lbl in labels))
 
     def test_full_probability_one_corrupt_per_data_packet(self):
         n = 4
@@ -808,7 +808,7 @@ class TestPayloadCorruption(unittest.TestCase):
         )
         corrupt = next(p for p in stream.packets if p.label == "CORRUPT[0]")
         retrans = next(p for p in stream.packets if p.label == "RETRANS[0]")
-        diffs = sum(a != b for a, b in zip(corrupt.raw, retrans.raw))
+        diffs = sum(a != b for a, b in zip(corrupt.raw, retrans.raw, strict=False))
         self.assertEqual(diffs, 1)
 
     def test_retransmit_timestamp_after_corrupt(self):
@@ -880,19 +880,19 @@ class TestMiddleboxFragmentation(unittest.TestCase):
     # if the payload pushes it over 100.  With min_payload=200, all are split.
     _MTU = 576  # conservative router MTU
 
-    def _make_stream(self, **kw):
-        defaults: dict = dict(
-            client_ip="10.0.0.1",
-            server_ip="10.0.0.2",
-            num_data_packets=5,
-            min_payload=600,   # guarantees all data packets exceed any sub-640 MTU
-            max_payload=600,
-            payload_distribution="fixed",
-            client_isn=1000,
-            server_isn=2000,
-            base_time=1_000_000.0,
-            inter_packet_gap=0.001,
-        )
+    def _make_stream(self, **kw: object) -> TCPStream:
+        defaults: dict[str, object] = {
+            "client_ip": "10.0.0.1",
+            "server_ip": "10.0.0.2",
+            "num_data_packets": 5,
+            "min_payload": 600,   # guarantees all data packets exceed any sub-640 MTU
+            "max_payload": 600,
+            "payload_distribution": "fixed",
+            "client_isn": 1000,
+            "server_isn": 2000,
+            "base_time": 1_000_000.0,
+            "inter_packet_gap": 0.001,
+        }
         defaults.update(kw)
         config_kw = {k: defaults.pop(k) for k in list(defaults) if k in _CONFIG_FIELDS}
         cfg = TCPStreamConfig(**config_kw) if config_kw else None
@@ -1016,7 +1016,6 @@ class TestMiddleboxFragmentation(unittest.TestCase):
 
     def test_ipv6_fragmentation(self):
         """IPv6 data packets are fragmented using Fragment Extension Headers."""
-        import struct
         stream = generate_tcp_stream(
             client_ip="2001:db8::1",
             server_ip="2001:db8::2",
@@ -1032,8 +1031,6 @@ class TestMiddleboxFragmentation(unittest.TestCase):
         frag_pkts = [p for p in stream.packets if p.label.startswith("FRAG[DATA[")]
         self.assertGreater(len(frag_pkts), 0)
         eth_offset = 14
-        ipv6_hdr_len = 40
-        frag_ext_len = 8
         for pkt in frag_pkts:
             # Check next_header in IPv6 base header = 44 (Fragment ext)
             next_header = pkt.raw[eth_offset + 6]
@@ -1086,18 +1083,18 @@ class TestMiddleboxFragmentation(unittest.TestCase):
 class TestStrayPackets(unittest.TestCase):
     """Group 17: stray_packet_count injects forged TCP hijack packets."""
 
-    def _make_stream(self, **kw):
-        defaults: dict = dict(
-            client_ip="10.0.0.1",
-            server_ip="10.0.0.2",
-            num_data_packets=10,
-            min_payload=40,
-            max_payload=200,
-            client_isn=1000,
-            server_isn=2000,
-            base_time=1_000_000.0,
-            inter_packet_gap=0.001,
-        )
+    def _make_stream(self, **kw: object) -> TCPStream:
+        defaults: dict[str, object] = {
+            "client_ip": "10.0.0.1",
+            "server_ip": "10.0.0.2",
+            "num_data_packets": 10,
+            "min_payload": 40,
+            "max_payload": 200,
+            "client_isn": 1000,
+            "server_isn": 2000,
+            "base_time": 1_000_000.0,
+            "inter_packet_gap": 0.001,
+        }
         defaults.update(kw)
         config_kw = {k: defaults.pop(k) for k in list(defaults) if k in _CONFIG_FIELDS}
         cfg = TCPStreamConfig(**config_kw) if config_kw else None
@@ -1117,7 +1114,7 @@ class TestStrayPackets(unittest.TestCase):
                 self.assertEqual(len(strays), n)
 
     def test_labels_sequential(self):
-        """Stray packets are labelled STRAY[0], STRAY[1], …"""
+        """Stray packets are labelled STRAY[0], STRAY[1], etc."""
         n = 5
         stream = self._make_stream(stray_packet_count=n)
         labels = {p.label for p in stream.packets if p.label.startswith("STRAY[")}
@@ -1132,7 +1129,7 @@ class TestStrayPackets(unittest.TestCase):
 
     def test_flags_psh_ack(self):
         """Stray packets carry PSH|ACK flags."""
-        from packeteer.generate.tcp import TCP_ACK, TCP_PSH
+        from packeteer.generate.tcp import TCP_ACK
         stream = self._make_stream(stray_packet_count=5)
         for p in stream.packets:
             if p.label.startswith("STRAY["):
@@ -1171,7 +1168,7 @@ class TestStrayPackets(unittest.TestCase):
 
     def test_same_endpoints(self):
         """Stray packets use the same IP/port as the real client."""
-        import struct, socket
+        import struct
         stream = self._make_stream(stray_packet_count=5)
         # Get src IP from a real DATA packet for comparison
         ref_data = next(p for p in stream.packets if p.label.startswith("DATA["))
@@ -1209,9 +1206,11 @@ class TestStrayPackets(unittest.TestCase):
 
     def test_stream_seq_ack_unaffected(self):
         """Stray injection does not alter the real stream's seq/ack numbers."""
-        kw = dict(client_isn=500, server_isn=900,
-                  min_payload=100, max_payload=100,
-                  payload_distribution="fixed")
+        kw: dict[str, object] = {
+            "client_isn": 500, "server_isn": 900,
+            "min_payload": 100, "max_payload": 100,
+            "payload_distribution": "fixed",
+        }
         ref = self._make_stream(**kw)
         stream = self._make_stream(stray_packet_count=10, **kw)
         ref_data = [(p.seq, p.ack) for p in ref.packets if p.label.startswith("DATA[")]

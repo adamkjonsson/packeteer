@@ -72,6 +72,7 @@ class GREHeader:
             plus the payload (RFC 1071 ones-complement).
         protocol_type: EtherType of the encapsulated payload.  Set automatically
             at build time from the layer that follows the GRE header.
+
     """
 
     key:           int | None = None
@@ -95,6 +96,7 @@ def build_gre_header(hdr: GREHeader, payload: bytes) -> bytes:
 
     Returns:
         The encoded GRE header bytes (4 to 16 bytes depending on flags).
+
     """
     c_flag = int(hdr.checksum)
     k_flag = int(hdr.key is not None)

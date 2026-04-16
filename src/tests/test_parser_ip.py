@@ -1,5 +1,6 @@
+from __future__ import annotations
+
 import socket
-import struct
 import unittest
 
 from packeteer.generate.ip import IPHeader, build_ip_header
@@ -12,11 +13,17 @@ PROTO_ICMP = socket.IPPROTO_ICMP  # 1
 PROTO_ICMPv6 = 58
 
 
-def _ipv4(src="10.0.0.1", dst="10.0.0.2", protocol=PROTO_TCP, payload=b"") -> bytes:
+def _ipv4(
+    src: str = "10.0.0.1", dst: str = "10.0.0.2",
+    protocol: int = PROTO_TCP, payload: bytes = b"",
+) -> bytes:
     return build_ip_header(IPHeader(src, dst, protocol), payload)
 
 
-def _ipv6(src="::1", dst="::2", next_header=PROTO_TCP, payload=b"") -> bytes:
+def _ipv6(
+    src: str = "::1", dst: str = "::2",
+    next_header: int = PROTO_TCP, payload: bytes = b"",
+) -> bytes:
     return build_ipv6_header(IPv6Header(src, dst, next_header), payload)
 
 
@@ -88,7 +95,9 @@ class TestParserIPv4(unittest.TestCase):
         self.assertEqual(hdr.flags, 0b010)
 
     def test_header_fragment_offset(self):
-        raw = build_ip_header(IPHeader("1.2.3.4", "5.6.7.8", PROTO_TCP, flags=0, fragment_offset=100), b"")
+        raw = build_ip_header(
+            IPHeader("1.2.3.4", "5.6.7.8", PROTO_TCP, flags=0, fragment_offset=100), b""
+        )
         _, _, hdr = packet_parser(raw)
         self.assertEqual(hdr.fragment_offset, 100)
 

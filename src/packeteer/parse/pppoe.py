@@ -75,6 +75,7 @@ def packet_parser(data: bytes) -> tuple[int, int | None, PPPoEHeader | None]:
         ``next_protocol`` is ``None``.
 
         On failure: ``(0, None, None)``.
+
     """
     if len(data) < 6:
         return (0, None, None)
@@ -94,9 +95,8 @@ def packet_parser(data: bytes) -> tuple[int, int | None, PPPoEHeader | None]:
             return (0, None, None)
         ethertype = _PPP_TO_ETHERTYPE.get(ppp_proto)
         return (8, ethertype, PPPoEHeader(code=code, session_id=session_id))
-    else:
-        # Discovery frame: decode TLV tags from the PPPoE payload
-        tag_data = data[6:6 + length]
-        tags = _parse_tags(tag_data)
-        consumed = min(length, len(tag_data))
-        return (6 + consumed, None, PPPoEHeader(code=code, session_id=session_id, tags=tags))
+    # Discovery frame: decode TLV tags from the PPPoE payload
+    tag_data = data[6:6 + length]
+    tags = _parse_tags(tag_data)
+    consumed = min(length, len(tag_data))
+    return (6 + consumed, None, PPPoEHeader(code=code, session_id=session_id, tags=tags))

@@ -34,6 +34,7 @@ class UDPHeader:
     Attributes:
         src_port: Source port number (0–65535).
         dst_port: Destination port number (0–65535).
+
     """
 
     src_port: int
@@ -50,6 +51,7 @@ def _pseudo_header_v4(src_ip: str, dst_ip: str, udp_length: int) -> bytes:
 
     Returns:
         12 bytes: src(4) + dst(4) + zero(1) + protocol=17(1) + udp_length(2).
+
     """
     return (
         socket.inet_aton(src_ip)
@@ -69,6 +71,7 @@ def _pseudo_header_v6(src_ip: str, dst_ip: str, udp_length: int) -> bytes:
 
     Returns:
         40 bytes: src(16) + dst(16) + udp_length(4) + zeros(3) + next_header=17(1).
+
     """
     return (
         socket.inet_pton(socket.AF_INET6, src_ip)
@@ -115,6 +118,7 @@ def build_udp_header(
         8
         >>> import struct; struct.unpack('!H', raw[4:6])[0]  # length field
         13
+
     """
     udp_length = 8 + len(payload)
     raw = struct.pack('!HHHH', hdr.src_port, hdr.dst_port, udp_length, 0)

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import io
 import struct
 import unittest
@@ -15,12 +17,12 @@ _PKT_HDR_SZ    = 16
 class TestWritePcap(unittest.TestCase):
     def _parse_global(self, data: bytes) -> dict:
         magic, major, minor, zone, sigfigs, snaplen, network = struct.unpack_from('<IHHiIII', data)
-        return dict(magic=magic, major=major, minor=minor, zone=zone,
-                    sigfigs=sigfigs, snaplen=snaplen, network=network)
+        return {"magic": magic, "major": major, "minor": minor, "zone": zone,
+                "sigfigs": sigfigs, "snaplen": snaplen, "network": network}
 
     def _parse_pkt_hdr(self, data: bytes, offset: int) -> dict:
         ts_sec, ts_usec, incl_len, orig_len = struct.unpack_from('<IIII', data, offset)
-        return dict(ts_sec=ts_sec, ts_usec=ts_usec, incl_len=incl_len, orig_len=orig_len)
+        return {"ts_sec": ts_sec, "ts_usec": ts_usec, "incl_len": incl_len, "orig_len": orig_len}
 
     def test_global_header_magic(self):
         buf = io.BytesIO()
@@ -105,12 +107,12 @@ class TestWritePcap(unittest.TestCase):
 class TestWritePcapNanoseconds(unittest.TestCase):
     def _parse_global(self, data: bytes) -> dict:
         magic, major, minor, zone, sigfigs, snaplen, network = struct.unpack_from('<IHHiIII', data)
-        return dict(magic=magic, major=major, minor=minor, zone=zone,
-                    sigfigs=sigfigs, snaplen=snaplen, network=network)
+        return {"magic": magic, "major": major, "minor": minor, "zone": zone,
+                "sigfigs": sigfigs, "snaplen": snaplen, "network": network}
 
     def _parse_pkt_hdr(self, data: bytes, offset: int) -> dict:
         ts_sec, ts_frac, incl_len, orig_len = struct.unpack_from('<IIII', data, offset)
-        return dict(ts_sec=ts_sec, ts_frac=ts_frac, incl_len=incl_len, orig_len=orig_len)
+        return {"ts_sec": ts_sec, "ts_frac": ts_frac, "incl_len": incl_len, "orig_len": orig_len}
 
     def test_nsec_magic(self):
         buf = io.BytesIO()

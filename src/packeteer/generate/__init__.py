@@ -124,10 +124,12 @@ multiple times to produce advanced encapsulations.
 
 Public API:
     PacketBuilder: High-level packet assembly class.
-    EthernetHeader: Dataclass for Ethernet II header fields (dst_mac, src_mac, ethertype, vlan_tag, pad).
+    EthernetHeader: Dataclass for Ethernet II header fields
+        (dst_mac, src_mac, ethertype, vlan_tag, pad).
     EtherIPHeader: Dataclass for the EtherIP tunnel header (RFC 3378). No user-configurable fields.
     IPPROTO_ETHERIP: IP protocol number 97 — EtherIP (RFC 3378).
-    GREHeader: Dataclass for the GRE tunnel header (RFC 2784 / RFC 2890). Fields: key, seq, checksum, protocol_type.
+    GREHeader: Dataclass for the GRE tunnel header (RFC 2784 / RFC 2890).
+        Fields: key, seq, checksum, protocol_type.
     IPPROTO_GRE: IP protocol number 47 — GRE (RFC 2784).
     GRE_PROTO_IPV4: GRE Protocol Type 0x0800 — IPv4 payload.
     GRE_PROTO_IPV6: GRE Protocol Type 0x86DD — IPv6 payload.
@@ -149,7 +151,8 @@ Public API:
     IPHeader: Dataclass for IPv4 header fields.
     IPv6Header: Dataclass for IPv6 header fields.
     TCPHeader: Dataclass for TCP header fields.
-    TCP_FIN, TCP_SYN, TCP_RST, TCP_PSH, TCP_ACK, TCP_URG, TCP_ECE, TCP_CWR: TCP flag bit-mask constants.
+    TCP_FIN, TCP_SYN, TCP_RST, TCP_PSH, TCP_ACK, TCP_URG, TCP_ECE, TCP_CWR:
+        TCP flag bit-mask constants.
     TCPOptions: Dataclass for TCP header options (MSS, Window Scale, SACK, Timestamps).
     UDPHeader: Dataclass for UDP header fields.
     ICMPHeader: Dataclass for ICMPv4 header fields.

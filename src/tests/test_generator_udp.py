@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import struct
 import socket
 import unittest
@@ -5,7 +7,7 @@ from packeteer.generate.udp import UDPHeader, build_udp_header
 from packeteer.generate.checksum import ones_complement_checksum
 
 
-def _verify_udp_checksum_v4(src_ip, dst_ip, udp_bytes, payload):
+def _verify_udp_checksum_v4(src_ip: str, dst_ip: str, udp_bytes: bytes, payload: bytes) -> int:
     udp_length = len(udp_bytes) + len(payload)
     pseudo = (
         socket.inet_aton(src_ip)
@@ -15,7 +17,7 @@ def _verify_udp_checksum_v4(src_ip, dst_ip, udp_bytes, payload):
     return ones_complement_checksum(pseudo + udp_bytes + payload)
 
 
-def _verify_udp_checksum_v6(src_ip, dst_ip, udp_bytes, payload):
+def _verify_udp_checksum_v6(src_ip: str, dst_ip: str, udp_bytes: bytes, payload: bytes) -> int:
     udp_length = len(udp_bytes) + len(payload)
     pseudo = (
         socket.inet_pton(socket.AF_INET6, src_ip)

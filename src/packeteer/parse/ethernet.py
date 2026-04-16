@@ -24,6 +24,7 @@ def packet_parser(data: bytes) -> tuple[int, int | None, EthernetHeader | None]:
         *next_protocol* is the EtherType of the encapsulated protocol, and
         *header* is the parsed :class:`EthernetHeader` object.
         Returns ``(0, None, None)`` if parsing fails.
+
     """
     if len(data) < 14:
         return (0, None, None)
@@ -55,5 +56,5 @@ def packet_parser(data: bytes) -> tuple[int, int | None, EthernetHeader | None]:
         hdr = EthernetHeader(dst_mac=dst_mac, src_mac=src_mac, ethertype=ethertype)
         return (14, ethertype, hdr)
 
-    except Exception:
+    except struct.error:
         return (0, None, None)

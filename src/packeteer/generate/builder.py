@@ -173,7 +173,10 @@ def _ethertype_for(layer: object) -> int:
     use when *layer* is its direct payload.
     """
     if isinstance(layer, PPPoEHeader):
-        return ETHERTYPE_PPPOE_SESSION if layer.code == PPPOE_CODE_SESSION else ETHERTYPE_PPPOE_DISCOVERY
+        return (
+            ETHERTYPE_PPPOE_SESSION if layer.code == PPPOE_CODE_SESSION
+            else ETHERTYPE_PPPOE_DISCOVERY
+        )
     return _ETHERTYPE_MAP.get(type(layer), 0)
 
 

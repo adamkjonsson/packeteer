@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import struct
 import unittest
 from packeteer.generate import PacketBuilder
@@ -5,7 +7,10 @@ from packeteer.generate import PacketBuilder
 
 class TestPacketBuilderSizes(unittest.TestCase):
     def test_tcp_ipv4_with_ethernet(self):
-        pkt = PacketBuilder().ethernet().ip(src="1.2.3.4", dst="5.6.7.8").tcp().payload(size=10).build()
+        pkt = (
+            PacketBuilder().ethernet()
+            .ip(src="1.2.3.4", dst="5.6.7.8").tcp().payload(size=10).build()
+        )
         self.assertEqual(len(pkt), 14 + 20 + 20 + 10)
 
     def test_udp_ipv4_with_ethernet(self):
@@ -13,7 +18,10 @@ class TestPacketBuilderSizes(unittest.TestCase):
         self.assertEqual(len(pkt), 14 + 20 + 8)
 
     def test_icmp_ipv4_with_ethernet(self):
-        pkt = PacketBuilder().ethernet().ip(src="1.2.3.4", dst="5.6.7.8").icmp().payload(size=4).build()
+        pkt = (
+            PacketBuilder().ethernet()
+            .ip(src="1.2.3.4", dst="5.6.7.8").icmp().payload(size=4).build()
+        )
         self.assertEqual(len(pkt), 14 + 20 + 8 + 4)
 
     def test_tcp_ipv6_with_ethernet(self):
@@ -86,16 +94,25 @@ class TestPacketBuilderVLAN(unittest.TestCase):
 
     def test_single_vlan_size(self):
         # Eth(14) + VLAN(4) + IPv4(20) + UDP(8) = 46
-        pkt = PacketBuilder().ethernet().vlan(vid=100).ip(src="1.2.3.4", dst="5.6.7.8").udp().build()
+        pkt = (
+            PacketBuilder().ethernet().vlan(vid=100)
+            .ip(src="1.2.3.4", dst="5.6.7.8").udp().build()
+        )
         self.assertEqual(len(pkt), 14 + 4 + 20 + 8)
 
     def test_single_vlan_outer_ethertype_is_8021q(self):
-        pkt = PacketBuilder().ethernet().vlan(vid=100).ip(src="1.2.3.4", dst="5.6.7.8").udp().build()
+        pkt = (
+            PacketBuilder().ethernet().vlan(vid=100)
+            .ip(src="1.2.3.4", dst="5.6.7.8").udp().build()
+        )
         outer_ethertype, = struct.unpack("!H", pkt[12:14])
         self.assertEqual(outer_ethertype, 0x8100)
 
     def test_single_vlan_inner_ethertype_is_ipv4(self):
-        pkt = PacketBuilder().ethernet().vlan(vid=100).ip(src="1.2.3.4", dst="5.6.7.8").udp().build()
+        pkt = (
+            PacketBuilder().ethernet().vlan(vid=100)
+            .ip(src="1.2.3.4", dst="5.6.7.8").udp().build()
+        )
         inner_ethertype, = struct.unpack("!H", pkt[16:18])
         self.assertEqual(inner_ethertype, 0x0800)
 
@@ -105,7 +122,10 @@ class TestPacketBuilderVLAN(unittest.TestCase):
         self.assertEqual(inner_ethertype, 0x86DD)
 
     def test_single_vlan_tci_fields(self):
-        pkt = PacketBuilder().ethernet().vlan(vid=300, pcp=5, dei=1).ip(src="1.2.3.4", dst="5.6.7.8").udp().build()
+        pkt = (
+            PacketBuilder().ethernet().vlan(vid=300, pcp=5, dei=1)
+            .ip(src="1.2.3.4", dst="5.6.7.8").udp().build()
+        )
         tci, = struct.unpack("!H", pkt[14:16])
         self.assertEqual(tci >> 13, 5)        # pcp
         self.assertEqual((tci >> 12) & 1, 1)  # dei
@@ -113,7 +133,10 @@ class TestPacketBuilderVLAN(unittest.TestCase):
 
     def test_qinq_size(self):
         # Eth(14) + VLAN(4) + VLAN(4) + IPv4(20) + UDP(8) = 50
-        pkt = PacketBuilder().ethernet().vlan(vid=100).vlan(vid=200).ip(src="1.2.3.4", dst="5.6.7.8").udp().build()
+        pkt = (
+            PacketBuilder().ethernet().vlan(vid=100).vlan(vid=200)
+            .ip(src="1.2.3.4", dst="5.6.7.8").udp().build()
+        )
         self.assertEqual(len(pkt), 14 + 4 + 4 + 20 + 8)
 
     def test_qinq_ethertypes(self):
@@ -122,7 +145,10 @@ class TestPacketBuilderVLAN(unittest.TestCase):
         # pkt[16:18] = outer VLAN ethertype (0x8100)
         # pkt[18:20] = inner TCI
         # pkt[20:22] = inner VLAN ethertype (0x0800)
-        pkt = PacketBuilder().ethernet().vlan(vid=100).vlan(vid=200).ip(src="1.2.3.4", dst="5.6.7.8").udp().build()
+        pkt = (
+            PacketBuilder().ethernet().vlan(vid=100).vlan(vid=200)
+            .ip(src="1.2.3.4", dst="5.6.7.8").udp().build()
+        )
         eth_etype,  = struct.unpack("!H", pkt[12:14])
         mid_etype,  = struct.unpack("!H", pkt[16:18])
         inner_etype,= struct.unpack("!H", pkt[20:22])
@@ -131,7 +157,10 @@ class TestPacketBuilderVLAN(unittest.TestCase):
         self.assertEqual(inner_etype, 0x0800)
 
     def test_qinq_vlan_ids(self):
-        pkt = PacketBuilder().ethernet().vlan(vid=100).vlan(vid=200).ip(src="1.2.3.4", dst="5.6.7.8").udp().build()
+        pkt = (
+            PacketBuilder().ethernet().vlan(vid=100).vlan(vid=200)
+            .ip(src="1.2.3.4", dst="5.6.7.8").udp().build()
+        )
         outer_tci, = struct.unpack("!H", pkt[14:16])
         inner_tci, = struct.unpack("!H", pkt[18:20])
         self.assertEqual(outer_tci & 0x0FFF, 100)

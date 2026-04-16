@@ -1,4 +1,6 @@
 """Tests for IP fragmentation — RFC 791 (IPv4) and RFC 8200 §4.5 (IPv6)."""
+from __future__ import annotations
+
 import socket
 import struct
 import unittest
@@ -15,7 +17,7 @@ from packeteer.generate.ethernet import EthernetHeader, ETHERTYPE_IPV4, ETHERTYP
 
 class TestFragmentIPv4(unittest.TestCase):
 
-    def _make_hdr(self, proto=socket.IPPROTO_UDP):
+    def _make_hdr(self, proto: int = socket.IPPROTO_UDP) -> IPHeader:
         return IPHeader("10.0.0.1", "10.0.0.2", proto, ttl=64)
 
     # --- fragment count -------------------------------------------------------
@@ -55,7 +57,10 @@ class TestFragmentIPv4(unittest.TestCase):
     def test_shared_identification(self):
         frags = fragment_ipv4(self._make_hdr(), b"\x00" * 500, mtu=200)
         ids = [struct.unpack("!H", f[4:6])[0] for f in frags]
-        self.assertTrue(all(i == ids[0] for i in ids), "All fragments must share the same identification")
+        self.assertTrue(
+            all(i == ids[0] for i in ids),
+            "All fragments must share the same identification",
+        )
 
     def test_mf_flag_set_on_all_but_last(self):
         data = b"\x00" * 500
@@ -170,7 +175,7 @@ _NEXT_HEADER_FRAGMENT = 44
 
 class TestFragmentIPv6(unittest.TestCase):
 
-    def _make_hdr(self, next_header=17):
+    def _make_hdr(self, next_header: int = 17) -> IPv6Header:
         return IPv6Header("::1", "::2", next_header=next_header, hop_limit=64)
 
     # --- fragment count -------------------------------------------------------

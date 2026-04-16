@@ -30,7 +30,7 @@ TCP_RST: int = 0x004  # Reset the connection
 TCP_PSH: int = 0x008  # Push buffered data to the application
 TCP_ACK: int = 0x010  # Acknowledgement field is significant
 TCP_URG: int = 0x020  # Urgent pointer field is significant
-TCP_ECE: int = 0x040  # ECN-Echo: SYN=1 → sender is ECN-capable; SYN=0 → congestion experienced (RFC 3168)
+TCP_ECE: int = 0x040  # ECN-Echo: SYN=1 → ECN-capable; SYN=0 → congestion experienced (RFC 3168)
 TCP_CWR: int = 0x080  # Congestion Window Reduced — sender reduced its congestion window (RFC 3168)
 
 
@@ -60,6 +60,7 @@ class TCPOptions:
             ``(TSval, TSecr)`` — the sender's timestamp value and the most
             recent timestamp received from the remote end.  Both are 32-bit
             unsigned integers (RFC 7323 §3).
+
     """
 
     mss: int | None = None
@@ -124,6 +125,7 @@ class TCPHeader:
         options: Optional TCP header options.  When set, the Data Offset field
             is adjusted automatically to reflect the extended header length.
             Defaults to ``None`` (no options, 20-byte header).
+
     """
 
     src_port: int
@@ -147,6 +149,7 @@ def _pseudo_header_v4(src_ip: str, dst_ip: str, tcp_length: int) -> bytes:
 
     Returns:
         12 bytes: src(4) + dst(4) + zero(1) + protocol=6(1) + tcp_length(2).
+
     """
     return (
         socket.inet_aton(src_ip)
@@ -166,6 +169,7 @@ def _pseudo_header_v6(src_ip: str, dst_ip: str, tcp_length: int) -> bytes:
 
     Returns:
         40 bytes: src(16) + dst(16) + tcp_length(4) + zeros(3) + next_header=6(1).
+
     """
     return (
         socket.inet_pton(socket.AF_INET6, src_ip)
@@ -181,7 +185,7 @@ def build_tcp_header(
     dst_ip: str,
     ip_version: int = 4,
 ) -> bytes:
-    """Build a TCP header with a correct checksum.
+    r"""Build a TCP header with a correct checksum.
 
     The minimum header is 20 bytes (data offset = 5) with no options.  When
     TCP options are present in *hdr*, the data offset and total header length
@@ -216,6 +220,7 @@ def build_tcp_header(
         20
         >>> (raw[12] >> 4)  # data offset (should be 5)
         5
+
     """
     options_bytes = _build_options(hdr.options) if hdr.options is not None else b""
     data_offset = 5 + len(options_bytes) // 4   # in 32-bit words

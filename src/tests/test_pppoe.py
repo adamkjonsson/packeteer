@@ -1,4 +1,6 @@
 """Tests for PPPoE support (RFC 2516)."""
+from __future__ import annotations
+
 import struct
 import unittest
 
@@ -51,7 +53,7 @@ class TestBuildPPPoEHeader(unittest.TestCase):
 # ── PacketBuilder session tests ───────────────────────────────────────────────
 
 class TestPacketBuilderPPPoESession(unittest.TestCase):
-    def _session_pkt(self, **ip_kwargs):
+    def _session_pkt(self, **ip_kwargs: object) -> bytes:
         return (PacketBuilder()
                 .ethernet()
                 .pppoe(session_id=0x1234)
@@ -226,13 +228,13 @@ class TestPacketBuilderPPPoEDiscovery(unittest.TestCase):
 # ── PPPoE parser unit tests ───────────────────────────────────────────────────
 
 class TestPPPoEParser(unittest.TestCase):
-    def _make_session(self, session_id=0x1234, ppp_proto=PPP_IPV4):
+    def _make_session(self, session_id: int = 0x1234, ppp_proto: int = PPP_IPV4) -> bytes:
         header = struct.pack("!BBHH", 0x11, 0x00, session_id, 22)
         ppp = struct.pack("!H", ppp_proto)
         ip_stub = b"\x45" + b"\x00" * 19   # minimal IPv4 version nibble
         return header + ppp + ip_stub
 
-    def _make_discovery(self, code=PPPOE_CODE_PADI, tags=b""):
+    def _make_discovery(self, code: int = PPPOE_CODE_PADI, tags: bytes = b"") -> bytes:
         header = struct.pack("!BBHH", 0x11, code, 0x0000, len(tags))
         return header + tags
 

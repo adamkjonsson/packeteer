@@ -49,6 +49,7 @@ class IPHeader:
             Defaults to ``0b010`` (DF set, no fragmentation).
         fragment_offset: 13-bit offset (in 8-byte units) of this fragment
             within the original datagram.  Defaults to ``0``.
+
     """
 
     src: str
@@ -62,7 +63,7 @@ class IPHeader:
 
 
 def build_ip_header(hdr: IPHeader, payload: bytes) -> bytes:
-    """Build a 20-byte IPv4 header with a correct header checksum.
+    r"""Build a 20-byte IPv4 header with a correct header checksum.
 
     The ``total_length`` field is derived automatically from *payload*.
     The header checksum is computed per RFC 1071 and written into the
@@ -87,11 +88,12 @@ def build_ip_header(hdr: IPHeader, payload: bytes) -> bytes:
         >>> from packet_generator.ip import IPHeader, build_ip_header
         >>> import socket
         >>> hdr = IPHeader("10.0.0.1", "10.0.0.2", socket.IPPROTO_TCP)
-        >>> raw = build_ip_header(hdr, b"\\x00" * 20)
+        >>> raw = build_ip_header(hdr, b"\x00" * 20)
         >>> len(raw)
         20
         >>> raw[0]  # version=4, IHL=5
         69
+
     """
     total_length = 20 + len(payload)
     flags_frag = (hdr.flags << 13) | hdr.fragment_offset

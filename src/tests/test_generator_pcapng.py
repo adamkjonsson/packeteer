@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import io
 import struct
 import unittest
@@ -10,7 +12,7 @@ _EPB_TYPE = 0x00000006
 _BOM      = 0x1A2B3C4D
 
 
-def _write(packets, **kwargs) -> io.BytesIO:
+def _write(packets: list, **kwargs: object) -> io.BytesIO:
     buf = io.BytesIO()
     write_pcapng(packets, file_object=buf, **kwargs)
     buf.seek(0)
@@ -61,7 +63,7 @@ class TestWritePcapngIDB(unittest.TestCase):
         shb_len, = struct.unpack_from("<I", raw, 4)
         return shb_len
 
-    def _idb_body(self, **kwargs) -> bytes:
+    def _idb_body(self, **kwargs: object) -> bytes:
         raw = _write([(b"\x00" * 10, 0, 0)], **kwargs).read()
         _, body = _read_block(raw, self._idb_offset(raw))
         return body
@@ -114,7 +116,7 @@ class TestWritePcapngEPB(unittest.TestCase):
         idb_len, = struct.unpack_from("<I", raw, shb_len + 4)
         return shb_len + idb_len
 
-    def _epb_body(self, packets, **kwargs) -> bytes:
+    def _epb_body(self, packets: list, **kwargs: object) -> bytes:
         raw = _write(packets, **kwargs).read()
         _, body = _read_block(raw, self._epb_offset(raw))
         return body

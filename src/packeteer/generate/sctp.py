@@ -115,7 +115,9 @@ class SCTPDataChunk:
             :data:`SCTP_DATA_FLAG_ENDING`, :data:`SCTP_DATA_FLAG_UNORDERED`,
             and :data:`SCTP_DATA_FLAG_IMMEDIATE`.  Defaults to B|E (complete,
             unfragmented message).
+
     """
+
     tsn:        int
     stream_id:  int   = 0
     stream_seq: int   = 0
@@ -138,7 +140,9 @@ class SCTPInitChunk:
         initial_tsn: Initial TSN value (32-bit).
         params: Raw bytes of optional/variable-length parameters that follow
             the fixed fields (e.g. Supported Address Types, ECN Capable).
+
     """
+
     initiate_tag:     int   = 0
     a_rwnd:           int   = 131072
     outbound_streams: int   = 1
@@ -161,7 +165,9 @@ class SCTPInitAckChunk:
         initial_tsn: Initial TSN value (32-bit).
         params: Raw bytes of optional/variable-length parameters (must include
             a State Cookie parameter — type 7).
+
     """
+
     initiate_tag:     int   = 0
     a_rwnd:           int   = 131072
     outbound_streams: int   = 1
@@ -182,7 +188,9 @@ class SCTPSackChunk:
         gap_ack_blocks: List of ``(start, end)`` pairs of TSN gap blocks
             relative to *cum_tsn_ack* (each value 16-bit).
         dup_tsns: List of duplicate TSNs received (each 32-bit).
+
     """
+
     cum_tsn_ack:    int                     = 0
     a_rwnd:         int                     = 131072
     gap_ack_blocks: list[tuple[int, int]]   = field(default_factory=list)
@@ -198,7 +206,9 @@ class SCTPHeartbeatChunk:
     Attributes:
         info: Sender-specific heartbeat information bytes.  Encoded on the
             wire as a Heartbeat Info parameter (type 1).
+
     """
+
     info: bytes = b""
 
 
@@ -210,7 +220,9 @@ class SCTPHeartbeatAckChunk:
 
     Attributes:
         info: The heartbeat info bytes copied verbatim from the HEARTBEAT.
+
     """
+
     info: bytes = b""
 
 
@@ -224,7 +236,9 @@ class SCTPAbortChunk:
         causes: Raw bytes of zero or more Error Cause blocks.
         flags: Chunk flags byte.  Bit 0 (T) indicates the Verification Tag
             is reflected from the peer (not from the sender's own tag).
+
     """
+
     causes: bytes = b""
     flags:  int   = 0
 
@@ -237,7 +251,9 @@ class SCTPShutdownChunk:
 
     Attributes:
         cum_tsn_ack: Cumulative TSN acknowledged up to this point (32-bit).
+
     """
+
     cum_tsn_ack: int = 0
 
 
@@ -257,7 +273,9 @@ class SCTPErrorChunk:
 
     Attributes:
         causes: Raw bytes of one or more Error Cause blocks.
+
     """
+
     causes: bytes = b""
 
 
@@ -269,7 +287,9 @@ class SCTPCookieEchoChunk:
 
     Attributes:
         cookie: The opaque cookie bytes from the INIT ACK.
+
     """
+
     cookie: bytes = b""
 
 
@@ -290,7 +310,9 @@ class SCTPShutdownCompleteChunk:
     Attributes:
         flags: Chunk flags byte.  Bit 0 (T) has the same meaning as in
             :class:`SCTPAbortChunk`.
+
     """
+
     flags: int = 0
 
 
@@ -302,7 +324,9 @@ class SCTPGenericChunk:
         chunk_type: Raw chunk type byte (0–255).
         flags: Chunk flags byte.
         value: Raw value bytes (excluding the 4-byte chunk header).
+
     """
+
     chunk_type: int   = 0
     flags:      int   = 0
     value:      bytes = b""
@@ -339,7 +363,9 @@ class SCTPHeader:
         chunks: List of SCTP chunks to include in this packet.  Defaults to
             a single unfragmented DATA chunk carrying an empty payload when
             ``None`` is passed to :func:`build_sctp_packet`.
+
     """
+
     src_port:         int             = 0
     dst_port:         int             = 0
     verification_tag: int             = 0
@@ -406,7 +432,10 @@ def _encode_chunk(chunk: SCTPChunk) -> bytes:
         if hb_len % 4:
             param += b"\x00" * (4 - hb_len % 4)
         value       = param
-        chunk_type  = SCTP_CHUNK_HEARTBEAT if isinstance(chunk, SCTPHeartbeatChunk) else SCTP_CHUNK_HEARTBEAT_ACK
+        chunk_type  = (
+            SCTP_CHUNK_HEARTBEAT if isinstance(chunk, SCTPHeartbeatChunk)
+            else SCTP_CHUNK_HEARTBEAT_ACK
+        )
         chunk_flags = 0
 
     elif isinstance(chunk, SCTPAbortChunk):
@@ -486,6 +515,7 @@ def build_sctp_packet(hdr: SCTPHeader) -> bytes:
             chunks=[SCTPDataChunk(tsn=1, data=b"hello")],
         ))
         assert len(raw) >= 12 + 16 + 5  # header + chunk header + data
+
     """
     chunks = hdr.chunks if hdr.chunks else [SCTPDataChunk(tsn=0)]
     chunks_bytes = b"".join(_encode_chunk(c) for c in chunks)

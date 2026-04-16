@@ -42,6 +42,7 @@ class ICMPv6Header:
             Defaults to ``1``.
         sequence: 16-bit sequence number, incremented for each successive
             request.  Defaults to ``1``.
+
     """
 
     type: int = 128     # Echo Request (129 = Echo Reply)
@@ -87,6 +88,7 @@ def build_icmpv6_header(
         128
         >>> raw[1]  # code
         0
+
     """
     raw = struct.pack('!BBHHH', hdr.type, hdr.code, 0, hdr.identifier, hdr.sequence)
     icmpv6_length = len(raw) + len(payload)
