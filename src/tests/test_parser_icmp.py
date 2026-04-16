@@ -177,7 +177,7 @@ class TestParserICMPv6Failure(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Roundtrip: packet_generator → packet_parser
+# Roundtrip: packeteer.generate → packeteer.parse
 # ---------------------------------------------------------------------------
 
 class TestParserICMPRoundtrip(unittest.TestCase):

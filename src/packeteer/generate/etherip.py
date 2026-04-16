@@ -11,7 +11,7 @@ Typical encapsulation::
 
 Example — build an EtherIP tunnel packet::
 
-    from packet_generator import PacketBuilder
+    from packeteer.generate import PacketBuilder
 
     pkt = (PacketBuilder()
         .ethernet(src_mac="00:00:00:00:00:01", dst_mac="00:00:00:00:00:02")

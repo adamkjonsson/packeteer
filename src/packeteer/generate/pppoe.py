@@ -137,7 +137,7 @@ def build_pppoe_header(hdr: PPPoEHeader, payload: bytes) -> bytes:
 
     Example::
 
-        >>> from packet_generator.pppoe import PPPoEHeader, build_pppoe_header
+        >>> from packeteer.generate.pppoe import PPPoEHeader, build_pppoe_header
         >>> raw = build_pppoe_header(PPPoEHeader(session_id=0x1234), b"\\x00" * 22)
         >>> len(raw)
         6

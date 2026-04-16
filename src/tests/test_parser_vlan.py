@@ -97,7 +97,7 @@ class TestPacketParserVLANFailure(unittest.TestCase):
 
 
 class TestParserVLANGeneratorRoundtrip(unittest.TestCase):
-    """Verify that packet_parser.vlan and packet_generator.ethernet are compatible."""
+    """Verify that packeteer.parse.vlan and packeteer.generate.ethernet are compatible."""
 
     def _roundtrip(self, vid: int, pcp: int, dei: int, ethertype: int) -> tuple:
         raw_frame = build_ethernet_header(

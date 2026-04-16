@@ -170,7 +170,7 @@ fields are computed automatically.
 | `dst_port` | `80` | Destination port |
 | `seq` | `0` | Sequence number |
 | `ack` | `0` | Acknowledgement number |
-| `flags` | `0x002` | 8-bit control flags; common values: `0x002` SYN, `0x012` SYN+ACK, `0x010` ACK, `0x018` PSH+ACK, `0x004` RST, `0x001` FIN |
+| `flags` | `0x010` | 8-bit control flags; common values: `0x002` SYN, `0x012` SYN+ACK, `0x010` ACK, `0x018` PSH+ACK, `0x004` RST, `0x001` FIN |
 | `window` | `65535` | Receive window size in bytes |
 | `urgent_ptr` | `0` | Urgent pointer (used when URG flag set) |
 | `reserved` | `0` | 4-bit reserved field |

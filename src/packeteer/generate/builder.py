@@ -6,7 +6,7 @@ layer-by-layer API.
 
 Typical usage::
 
-    from packet_generator import PacketBuilder
+    from packeteer.generate import PacketBuilder
 
     # IPv4 TCP packet with Ethernet header and 64 bytes of random payload
     pkt = (PacketBuilder()
@@ -73,7 +73,7 @@ Typical usage::
     )
 
     # PPPoE PADI discovery frame
-    from packet_generator.pppoe import PPPOE_CODE_PADI, PPPoETag, PPPOE_TAG_SERVICE_NAME
+    from packeteer.generate import PPPOE_CODE_PADI, PPPoETag, PPPOE_TAG_SERVICE_NAME
     pkt = (PacketBuilder()
         .ethernet(dst_mac="ff:ff:ff:ff:ff:ff")
         .pppoe(code=PPPOE_CODE_PADI, tags=[PPPoETag(PPPOE_TAG_SERVICE_NAME, b"")])
@@ -237,7 +237,7 @@ class PacketBuilder:
       The GRE Protocol Type is set automatically from the layer that follows.
 
     The layer list stores the same public dataclasses exported by
-    ``packet_generator`` (``EthernetHeader``, ``VLANTag``, ``MPLSLabel``,
+    ``packeteer.generate`` (``EthernetHeader``, ``VLANTag``, ``MPLSLabel``,
     ``PPPoEHeader``, ``EtherIPHeader``, ``GREHeader``, ``IPHeader``,
     ``IPv6Header``, ``TCPHeader``, ``UDPHeader``, ``ICMPHeader``,
     ``ICMPv6Header``).  Protocol-number fields that depend on
@@ -247,7 +247,7 @@ class PacketBuilder:
 
     Example::
 
-        from packet_generator import PacketBuilder
+        from packeteer.generate import PacketBuilder
 
         pkt = (PacketBuilder()
             .ethernet()
@@ -557,8 +557,8 @@ class PacketBuilder:
 
         Example::
 
-            from packet_generator import PacketBuilder
-            from packet_generator.sctp import SCTPDataChunk
+            from packeteer.generate import PacketBuilder
+            from packeteer.generate import SCTPDataChunk
 
             pkt = (PacketBuilder()
                 .ethernet()

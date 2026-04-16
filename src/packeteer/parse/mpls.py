@@ -18,7 +18,7 @@ def packet_parser(data: bytes) -> tuple[int, int | None, MPLSLabel | None]:
         Label (20) | TC (3) | S (1) | TTL (8)  ->  4 bytes
 
     When the S (bottom-of-stack) bit is 0, more MPLS labels follow and
-    *next_protocol* is :data:`~packet_generator.mpls.ETHERTYPE_MPLS_UNICAST`
+    *next_protocol* is :data:`~packeteer.generate.mpls.ETHERTYPE_MPLS_UNICAST`
     (``0x8847``).  When S=1 this is the last label; the IP version nibble of
     the first byte of the payload is peeked to determine whether the next layer
     is IPv4 (``0x0800``) or IPv6 (``0x86DD``).

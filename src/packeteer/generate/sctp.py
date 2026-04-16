@@ -37,7 +37,7 @@ Chunk types (RFC 9260 §3.3):
 
 Example::
 
-    from packet_generator.sctp import (
+    from packeteer.generate.sctp import (
         SCTPHeader, SCTPDataChunk, build_sctp_packet,
         SCTP_DATA_FLAG_BEGINNING, SCTP_DATA_FLAG_ENDING,
     )
@@ -507,7 +507,7 @@ def build_sctp_packet(hdr: SCTPHeader) -> bytes:
 
     Example::
 
-        from packet_generator.sctp import SCTPHeader, SCTPDataChunk, build_sctp_packet
+        from packeteer.generate.sctp import SCTPHeader, SCTPDataChunk, build_sctp_packet
 
         raw = build_sctp_packet(SCTPHeader(
             src_port=1234, dst_port=9999,

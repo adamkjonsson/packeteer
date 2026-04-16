@@ -2,9 +2,9 @@
 
 Each dataclass describes one encapsulation type that can be layered on top of a
 generated TCP / UDP / SCTP stream.  Pass the chosen descriptor as the *encap*
-keyword argument of :func:`~packet_generator.tcp_stream.generate_tcp_stream`,
-:func:`~packet_generator.udp_stream.generate_udp_stream`, or
-:func:`~packet_generator.sctp_stream.generate_sctp_stream`.
+keyword argument of :func:`~packeteer.generate.tcp_stream.generate_tcp_stream`,
+:func:`~packeteer.generate.udp_stream.generate_udp_stream`, or
+:func:`~packeteer.generate.sctp_stream.generate_sctp_stream`.
 
 Supported encapsulations
 ------------------------
@@ -23,8 +23,8 @@ IPIPEncap      IP-in-IP tunnel (RFC 2003 / RFC 4213).
 
 Example::
 
-    from packet_generator.stream_encap import VLANEncap, GREEncap
-    from packet_generator.tcp_stream import generate_tcp_stream
+    from packeteer.generate.stream_encap import VLANEncap, GREEncap
+    from packeteer.generate.tcp_stream import generate_tcp_stream
 
     # Single VLAN-tagged stream
     stream = generate_tcp_stream(
@@ -264,14 +264,14 @@ def _apply_encap(
     after this function returns.
 
     Args:
-        b: A :class:`~packet_generator.builder.PacketBuilder` with the outer
+        b: A :class:`~packeteer.generate.builder.PacketBuilder` with the outer
             Ethernet header already appended (when ``include_ethernet=True``).
         encap: One descriptor, a list of descriptors, or ``None``.
         src_mac: Source MAC address (used for the EtherIP inner Ethernet).
         dst_mac: Destination MAC address (used for the EtherIP inner Ethernet).
 
     Returns:
-        The (possibly extended) :class:`~packet_generator.builder.PacketBuilder`.
+        The (possibly extended) :class:`~packeteer.generate.builder.PacketBuilder`.
 
     """
     for layer in _as_list(encap):

@@ -80,7 +80,7 @@ def build_icmpv6_header(
         OSError: If *src_ip* or *dst_ip* is not a valid IPv6 address.
 
     Example:
-        >>> from packet_generator.icmpv6 import ICMPv6Header, build_icmpv6_header
+        >>> from packeteer.generate.icmpv6 import ICMPv6Header, build_icmpv6_header
         >>> raw = build_icmpv6_header(ICMPv6Header(), b"ping", "::1", "::2")
         >>> len(raw)
         8

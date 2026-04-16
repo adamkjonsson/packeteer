@@ -1,7 +1,7 @@
 """SCTP packet parser (RFC 9260).
 
 Decodes the 12-byte SCTP common header followed by one or more typed chunks.
-Unknown chunk types are returned as :class:`~packet_generator.sctp.SCTPGenericChunk`.
+Unknown chunk types are returned as :class:`~packeteer.generate.sctp.SCTPGenericChunk`.
 """
 from __future__ import annotations
 
@@ -221,7 +221,7 @@ def packet_parser(data: bytes) -> tuple[int, int | None, SCTPHeader | None]:
         bytes consumed (the full length of *data* — SCTP has no reliable
         length field in the common header; it relies on the IP length),
         *dst_port* is the destination port number, and *header* is the parsed
-        :class:`~packet_generator.sctp.SCTPHeader`.  Returns
+        :class:`~packeteer.generate.sctp.SCTPHeader`.  Returns
         ``(0, None, None)`` if fewer than 12 bytes are available.
 
     """

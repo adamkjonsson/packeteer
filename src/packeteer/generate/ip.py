@@ -85,7 +85,7 @@ def build_ip_header(hdr: IPHeader, payload: bytes) -> bytes:
             (raised by :func:`socket.inet_aton`).
 
     Example:
-        >>> from packet_generator.ip import IPHeader, build_ip_header
+        >>> from packeteer.generate.ip import IPHeader, build_ip_header
         >>> import socket
         >>> hdr = IPHeader("10.0.0.1", "10.0.0.2", socket.IPPROTO_TCP)
         >>> raw = build_ip_header(hdr, b"\x00" * 20)

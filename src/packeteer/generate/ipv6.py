@@ -79,7 +79,7 @@ def build_ipv6_header(hdr: IPv6Header, payload: bytes) -> bytes:
             (raised by :func:`socket.inet_pton`).
 
     Example:
-        >>> from packet_generator.ipv6 import IPv6Header, build_ipv6_header
+        >>> from packeteer.generate.ipv6 import IPv6Header, build_ipv6_header
         >>> hdr = IPv6Header("::1", "::2", next_header=6)
         >>> raw = build_ipv6_header(hdr, b"\\x00" * 20)
         >>> len(raw)

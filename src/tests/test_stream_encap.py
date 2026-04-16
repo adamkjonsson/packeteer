@@ -1,4 +1,4 @@
-"""Tests for packet_generator.stream_encap — encapsulation helpers."""
+"""Tests for packeteer.generate.stream_encap — encapsulation helpers."""
 from __future__ import annotations
 
 import struct

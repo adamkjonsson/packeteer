@@ -9,7 +9,7 @@ and serialise with :func:`to_json_string`.
 
 Typical usage::
 
-    from packet_parser import ethernet_packet_parser, ip_packet_parser, tcp_packet_parser
+    from packeteer.parse import ethernet_packet_parser, ip_packet_parser, tcp_packet_parser
     from .pcap import read_pcap
     from .to_config import update_config, to_packet_spec, to_json_string
 
@@ -387,20 +387,20 @@ def update_config(
 
     Dispatches on the type of *layer*:
 
-    - :class:`~packet_generator.ethernet.EthernetHeader` → ``ethernet`` section
-    - :class:`~packet_generator.mpls.MPLSLabel` → appended to the ``mpls`` array
-    - :class:`~packet_generator.pppoe.PPPoEHeader` → ``pppoe`` section
-    - :class:`~packet_generator.ip.IPHeader` /
-      :class:`~packet_generator.ipv6.IPv6Header` → ``network`` section
-    - :class:`~packet_generator.etherip.EtherIPHeader` / GRE /
+    - :class:`~packeteer.generate.ethernet.EthernetHeader` → ``ethernet`` section
+    - :class:`~packeteer.generate.mpls.MPLSLabel` → appended to the ``mpls`` array
+    - :class:`~packeteer.generate.pppoe.PPPoEHeader` → ``pppoe`` section
+    - :class:`~packeteer.generate.ip.IPHeader` /
+      :class:`~packeteer.generate.ipv6.IPv6Header` → ``network`` section
+    - :class:`~packeteer.generate.etherip.EtherIPHeader` / GRE /
       IP-in-IP → use :func:`apply_tunneled` instead; tunnel serialisation
       requires the inner :class:`~packeteer.parse.core.ParsedPacket` as
       additional context and cannot be dispatched through ``update_config``
       alone.
-    - :class:`~packet_generator.tcp.TCPHeader` → ``transport`` section (TCP fields)
-    - :class:`~packet_generator.udp.UDPHeader` → ``transport`` section (UDP fields)
-    - :class:`~packet_generator.icmp.ICMPHeader` /
-      :class:`~packet_generator.icmpv6.ICMPv6Header` → ``transport`` section (ICMP fields)
+    - :class:`~packeteer.generate.tcp.TCPHeader` → ``transport`` section (TCP fields)
+    - :class:`~packeteer.generate.udp.UDPHeader` → ``transport`` section (UDP fields)
+    - :class:`~packeteer.generate.icmp.ICMPHeader` /
+      :class:`~packeteer.generate.icmpv6.ICMPv6Header` → ``transport`` section (ICMP fields)
     - :class:`bytes` → ``payload`` section (encoded as a hex string)
 
     Modifies *config* in-place and returns it so calls can be chained::

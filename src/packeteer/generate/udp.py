@@ -111,7 +111,7 @@ def build_udp_header(
             specified *ip_version*.
 
     Example:
-        >>> from packet_generator.udp import UDPHeader, build_udp_header
+        >>> from packeteer.generate.udp import UDPHeader, build_udp_header
         >>> hdr = UDPHeader(src_port=5000, dst_port=53)
         >>> raw = build_udp_header(hdr, b"query", "192.168.1.1", "8.8.8.8")
         >>> len(raw)

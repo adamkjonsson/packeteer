@@ -92,7 +92,7 @@ class TestParserUDPFailure(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Roundtrip: packet_generator → packet_parser
+# Roundtrip: packeteer.generate → packeteer.parse
 # ---------------------------------------------------------------------------
 
 class TestParserUDPRoundtrip(unittest.TestCase):

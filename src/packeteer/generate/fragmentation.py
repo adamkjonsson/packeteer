@@ -67,8 +67,8 @@ def fragment_ipv4(
 
     Example::
 
-        from packet_generator.ip import IPHeader
-        from packet_generator.fragmentation import fragment_ipv4
+        from packeteer.generate.ip import IPHeader
+        from packeteer.generate.fragmentation import fragment_ipv4
         import socket
 
         ip_hdr = IPHeader("10.0.0.1", "10.0.0.2", socket.IPPROTO_UDP, ttl=64)
@@ -148,8 +148,8 @@ def fragment_ipv6(
 
     Example::
 
-        from packet_generator.ipv6 import IPv6Header
-        from packet_generator.fragmentation import fragment_ipv6
+        from packeteer.generate.ipv6 import IPv6Header
+        from packeteer.generate.fragmentation import fragment_ipv6
 
         ip_hdr = IPv6Header("::1", "::2", next_header=17, hop_limit=64)
         fragments = fragment_ipv6(ip_hdr, transport_data=b"\\x00" * 3000, mtu=1500)

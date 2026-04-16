@@ -58,7 +58,7 @@ def build_icmp_header(hdr: ICMPHeader, payload: bytes) -> bytes:
         with a valid checksum.
 
     Example:
-        >>> from packet_generator.icmp import ICMPHeader, build_icmp_header
+        >>> from packeteer.generate.icmp import ICMPHeader, build_icmp_header
         >>> raw = build_icmp_header(ICMPHeader(), b"hello")
         >>> len(raw)
         8

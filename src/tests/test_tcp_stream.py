@@ -1,4 +1,4 @@
-"""Tests for packet_generator.tcp_stream — TCP stream generation."""
+"""Tests for packeteer.generate.tcp_stream — TCP stream generation."""
 from __future__ import annotations
 
 import io

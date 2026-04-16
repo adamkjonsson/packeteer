@@ -140,7 +140,7 @@ class TestPacketParserFailure(unittest.TestCase):
 
 
 class TestParsorGeneratorRoundtrip(unittest.TestCase):
-    """Verify that packet_parser.ethernet and packet_generator.ethernet are compatible."""
+    """Verify that packeteer.parse.ethernet and packeteer.generate.ethernet are compatible."""
 
     def test_plain_ipv4_roundtrip(self):
         raw = _plain(ETHERTYPE_IPV4)

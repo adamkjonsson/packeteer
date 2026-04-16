@@ -137,7 +137,7 @@ class TestPacketBuilderMPLS(unittest.TestCase):
 
 
 class TestMPLSParser(unittest.TestCase):
-    """Unit tests for packet_parser.mpls.packet_parser."""
+    """Unit tests for packeteer.parse.mpls.packet_parser."""
 
     def _make_label_bytes(self, label: int, tc: int = 0, ttl: int = 64, bos: bool = True) -> bytes:
         s = 1 if bos else 0

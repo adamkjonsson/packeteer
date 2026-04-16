@@ -64,7 +64,7 @@ def build_mpls_label(entry: MPLSLabel, bottom_of_stack: bool) -> bytes:
 
     Example::
 
-        >>> from packet_generator.mpls import MPLSLabel, build_mpls_label
+        >>> from packeteer.generate.mpls import MPLSLabel, build_mpls_label
         >>> raw = build_mpls_label(MPLSLabel(label=100, tc=0, ttl=64), bottom_of_stack=True)
         >>> len(raw)
         4

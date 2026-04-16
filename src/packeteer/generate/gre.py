@@ -27,7 +27,7 @@ payload (``0x0800`` for IPv4, ``0x86DD`` for IPv6, ``0x6558`` for TEB).
 
 Example — build a GRE packet carrying IPv4 TCP with a Key::
 
-    from packet_generator import PacketBuilder
+    from packeteer.generate import PacketBuilder
 
     pkt = (PacketBuilder()
         .ethernet()

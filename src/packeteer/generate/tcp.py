@@ -213,7 +213,7 @@ def build_tcp_header(
             specified *ip_version*.
 
     Example:
-        >>> from packet_generator.tcp import TCPHeader, build_tcp_header
+        >>> from packeteer.generate.tcp import TCPHeader, build_tcp_header
         >>> hdr = TCPHeader(src_port=12345, dst_port=80)
         >>> raw = build_tcp_header(hdr, b"GET / HTTP/1.0\\r\\n", "10.0.0.1", "10.0.0.2")
         >>> len(raw)

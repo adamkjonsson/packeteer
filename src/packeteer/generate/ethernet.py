@@ -127,7 +127,7 @@ def build_ethernet_header(hdr: EthernetHeader) -> bytes:
         (big-endian) byte order.
 
     Example:
-        >>> from packet_generator.ethernet import (  # noqa: E501
+        >>> from packeteer.generate.ethernet import (  # noqa: E501
         ...     EthernetHeader, build_ethernet_header, ETHERTYPE_IPV4,
         ... )
         >>> hdr = EthernetHeader("aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66", ETHERTYPE_IPV4)

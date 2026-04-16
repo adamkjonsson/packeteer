@@ -310,7 +310,7 @@ class TestToJsonString(unittest.TestCase):
 
 
 class TestRoundtrip(unittest.TestCase):
-    """Parse a packet built by packet_generator and verify the config fields."""
+    """Parse a packet built by packeteer.generate and verify the config fields."""
 
     def _build_and_parse_tcp(
         self, src_port: int = 12345, dst_port: int = 80, flags: int = TCP_ACK,
