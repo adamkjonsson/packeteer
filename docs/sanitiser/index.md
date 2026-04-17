@@ -1,8 +1,22 @@
 # Sanitising Captures
 
-The `sanitise` workflow lets you replace sensitive field values in a JSON
-config with synthetic equivalents, then rebuild the pcap.  The result is a
-structurally faithful capture that contains no real addressing information.
+The `sanitise` workflow replaces sensitive field values with synthetic
+equivalents, producing a structurally faithful capture that contains no real
+addressing information.
+
+Pass a pcap file directly and get a clean pcap in one step:
+
+```
+pcap  --sanitise--→  clean pcap
+```
+
+Or keep an intermediate packet spec for inspection or further editing:
+
+```
+pcap  --sanitise--→  clean JSON  --build--→  clean pcap
+```
+
+The classic three-step workflow still works when you already have a packet spec:
 
 ```
 pcap  --parse--→  JSON  --sanitise--→  clean JSON  --build--→  clean pcap

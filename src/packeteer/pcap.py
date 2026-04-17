@@ -400,6 +400,34 @@ def _write_pcapng(
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
+def is_pcap_or_pcapng(path: str | os.PathLike) -> bool:
+    """Return True if *path* begins with a recognised pcap or pcapng magic number.
+
+    Reads only the first 4 bytes of the file; does not validate the rest.
+    Returns False on any I/O error or if the file is too short.
+
+    Args:
+        path: Path to the file to inspect.
+
+    Returns:
+        True if the file starts with a pcap or pcapng magic number.
+
+    """
+    _pcap_magics = {
+        _MAGIC_USEC.to_bytes(4, "little"),
+        _MAGIC_USEC.to_bytes(4, "big"),
+        _MAGIC_NSEC.to_bytes(4, "little"),
+        _MAGIC_NSEC.to_bytes(4, "big"),
+        _PCAPNG_SHB_TYPE.to_bytes(4, "little"),
+    }
+    try:
+        with open(path, "rb") as f:
+            header = f.read(4)
+    except OSError:
+        return False
+    return header in _pcap_magics
+
+
 def read_pcap(
     *,
     path: str | os.PathLike | None = None,

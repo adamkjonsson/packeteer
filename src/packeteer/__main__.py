@@ -14,6 +14,10 @@ Examples:
   packeteer parse capture.pcap --output replay.json --replay-pcap replayed.pcap
   packeteer sanitise capture.json --output clean.json
   packeteer sanitise capture.json --ports --payload --output clean.json
+  packeteer sanitise capture.pcap --output clean.json
+  packeteer sanitise capture.pcap --pcap clean.pcap
+  packeteer sanitise capture.pcap --pcap clean.pcap --output clean.json
+  packeteer sanitise capture.pcapng --pcapng clean.pcapng
   packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 --packets 50 --pcap out.pcap
   packeteer stream --protocol udp --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
       --server-port 53 --packets 5 --pcap dns.pcap
@@ -31,7 +35,9 @@ import sys
 from importlib.metadata import version as _pkg_version, PackageNotFoundError as _PkgNotFoundError
 from packeteer.generate import PacketBuilder
 from packeteer.generate.tcp import TCPOptions
-from packeteer.pcap import write_pcap, write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW
+from packeteer.pcap import (
+    write_pcap, write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW, is_pcap_or_pcapng,
+)
 from packeteer.generate.tcp_stream import generate_tcp_stream, TCPStreamConfig
 from packeteer.generate.udp_stream import generate_udp_stream
 from packeteer.generate.sctp_stream import generate_sctp_stream
@@ -513,15 +519,25 @@ def _cmd_parse(args: argparse.Namespace) -> None:
 
 
 def _cmd_sanitise(args: argparse.Namespace) -> None:
-    try:
-        with open(args.input) as f:
-            config = json.load(f)
-    except OSError as e:
-        print(f"Error reading '{args.input}': {e}", file=sys.stderr)
-        sys.exit(1)
-    except json.JSONDecodeError as e:
-        print(f"Invalid JSON in '{args.input}': {e}", file=sys.stderr)
-        sys.exit(1)
+    is_pcap_input = is_pcap_or_pcapng(args.input)
+
+    if is_pcap_input:
+        try:
+            json_str = parse_pcap_file(path=args.input)
+            config = json.loads(json_str)
+        except (OSError, ValueError) as e:
+            print(f"Error parsing '{args.input}': {e}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        try:
+            with open(args.input) as f:
+                config = json.load(f)
+        except OSError as e:
+            print(f"Error reading '{args.input}': {e}", file=sys.stderr)
+            sys.exit(1)
+        except json.JSONDecodeError as e:
+            print(f"Invalid JSON in '{args.input}': {e}", file=sys.stderr)
+            sys.exit(1)
 
     opts = SanitiseOptions(
         ips=not args.no_ips,
@@ -537,9 +553,14 @@ def _cmd_sanitise(args: argparse.Namespace) -> None:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    output_str = json.dumps(result, indent=2)
+    pcap_out   = getattr(args, "pcap",   None)
+    pcapng_out = getattr(args, "pcapng", None)
+
+    if pcap_out or pcapng_out:
+        _run_multi_packet(result, pcap_path=pcap_out, pcapng_path=pcapng_out)
 
     if args.output:
+        output_str = json.dumps(result, indent=2)
         try:
             with open(args.output, "w") as f:
                 f.write(output_str)
@@ -547,9 +568,9 @@ def _cmd_sanitise(args: argparse.Namespace) -> None:
         except OSError as e:
             print(f"Error writing '{args.output}': {e}", file=sys.stderr)
             sys.exit(1)
-        print(f"Wrote sanitised config to {args.output}")
-    else:
-        print(output_str)
+        print(f"Wrote sanitised packet spec to {args.output}")
+    elif not pcap_out and not pcapng_out:
+        print(json.dumps(result, indent=2))
 
 
 # ── stream config-file support ────────────────────────────────────────────────
@@ -971,19 +992,32 @@ def main() -> None:
     # ── sanitise subcommand ───────────────────────────────────────────────────
     san_parser = subparsers.add_parser(
         "sanitise",
-        help="Replace sensitive fields in a packet spec with synthetic data",
+        help="Replace sensitive fields in a packet spec or pcap with synthetic data",
         description=(
             "Replace sensitive fields (IP addresses, MACs, ports, payload, timestamps) "
-            "in a packet spec with synthetic data drawn from IANA-reserved ranges. "
+            "with synthetic data drawn from IANA-reserved ranges. "
             "The same original value always maps to the same synthetic value, so the "
-            "communication structure is preserved."
+            "communication structure is preserved.\n\n"
+            "FILE may be a JSON packet spec or a .pcap/.pcapng capture file. "
+            "When a capture file is given, it is parsed automatically before sanitising."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    san_parser.add_argument("input", metavar="FILE", help="Input packet spec file")
+    san_parser.add_argument(
+        "input", metavar="FILE",
+        help="Input packet spec (.json) or capture file (.pcap/.pcapng)",
+    )
     san_parser.add_argument(
         "--output", "-o", metavar="FILE",
-        help="Write sanitised JSON to FILE instead of stdout",
+        help="Write sanitised packet spec (JSON) to FILE instead of stdout",
+    )
+    san_parser.add_argument(
+        "--pcap", metavar="FILE",
+        help="Write sanitised packets to a libpcap (.pcap) file",
+    )
+    san_parser.add_argument(
+        "--pcapng", metavar="FILE",
+        help="Write sanitised packets to a pcapng (.pcapng) file",
     )
     san_parser.add_argument(
         "--no-ips", action="store_true",
