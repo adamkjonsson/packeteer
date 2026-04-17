@@ -32,8 +32,8 @@ class UDPHeader:
     """Fields of a UDP datagram header.
 
     Attributes:
-        src_port: Source port number (0–65535).
-        dst_port: Destination port number (0–65535).
+        src_port: Source port number (0-65535).
+        dst_port: Destination port number (0-65535).
 
     """
 
@@ -109,15 +109,6 @@ def _build_udp_header(
     Raises:
         OSError: If *src_ip* or *dst_ip* is not a valid address for the
             specified *ip_version*.
-
-    Example:
-        >>> from packeteer.generate.udp import UDPHeader, _build_udp_header
-        >>> hdr = UDPHeader(src_port=5000, dst_port=53)
-        >>> raw = _build_udp_header(hdr, b"query", "192.168.1.1", "8.8.8.8")
-        >>> len(raw)
-        8
-        >>> import struct; struct.unpack('!H', raw[4:6])[0]  # length field
-        13
 
     """
     udp_length = 8 + len(payload)
