@@ -17,7 +17,7 @@ SCTP packet structure::
         Flags   (1)
         Length  (2)  — includes the 4-byte chunk header, excludes padding
         Value   (Length - 4 bytes)
-        Padding (0–3 zero bytes to reach next 4-byte boundary, NOT in Length)
+        Padding (0-3 zero bytes to reach next 4-byte boundary, NOT in Length)
 
 Chunk types (RFC 9260 §3.3):
 
