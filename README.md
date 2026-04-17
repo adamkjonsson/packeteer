@@ -33,9 +33,11 @@ packeteer parse capture.pcap --output capture.json
 # Rebuild it as a new pcap
 packeteer build capture.json --pcap replayed.pcap
 
-# Sanitise sensitive fields before sharing
-packeteer sanitise capture.json --ports --payload --output clean.json
-packeteer build clean.json --pcap clean.pcap
+# Sanitise a capture in one step (parse + sanitise + build)
+packeteer sanitise capture.pcap --pcap clean.pcap
+
+# Or keep the intermediate packet spec too
+packeteer sanitise capture.pcap --pcap clean.pcap --output clean.json
 
 # Generate a complete TCP stream (50 packets, bimodal payload sizes)
 packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
@@ -50,7 +52,7 @@ packeteer stream --protocol udp \
 ### Python API
 
 ```python
-from packeteer.generator import PacketBuilder
+from packeteer.generate import PacketBuilder
 
 # TCP SYN packet
 pkt = (PacketBuilder()
@@ -62,7 +64,7 @@ pkt = (PacketBuilder()
 )
 
 # SCTP (RFC 9260) — data lives inside chunks, not a separate payload layer
-from packeteer.generator import SCTPDataChunk
+from packeteer.generate import SCTPDataChunk
 
 pkt = (PacketBuilder()
     .ip(src="10.0.0.1", dst="10.0.0.2")
@@ -78,8 +80,8 @@ pkt = (PacketBuilder()
 
 ```python
 # Generate a GRE-tunnelled TCP stream and write it to pcap
-from packeteer.generator import generate_tcp_stream
-from packeteer.generator import GREEncap, MPLSEncap, IPIPEncap
+from packeteer.generate import generate_tcp_stream
+from packeteer.generate import GREEncap, MPLSEncap, IPIPEncap
 from packeteer.pcap import write_pcap
 
 stream = generate_tcp_stream(

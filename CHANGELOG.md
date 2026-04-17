@@ -4,6 +4,23 @@ All notable changes to packeteer are recorded in this file.
 
 ---
 
+## Unreleased
+
+### `packeteer sanitise` — pcap input and pcap output
+
+- `packeteer sanitise` now accepts a pcap or pcapng file directly as input.
+  The file type is detected from its magic number (not the extension), so the
+  parse step is no longer a separate command.
+- New `--pcap FILE` and `--pcapng FILE` output flags trigger the build step
+  automatically, collapsing the full parse → sanitise → build pipeline into
+  one command: `packeteer sanitise capture.pcap --pcap clean.pcap`.
+- `--output` (JSON), `--pcap`, and `--pcapng` are independent and may be
+  combined to produce multiple output formats in a single run.
+- Added `is_pcap_or_pcapng(path)` to `packeteer.pcap`: reads the first 4 bytes
+  and checks against all known pcap/pcapng magic numbers.
+
+---
+
 ## 0.3.0 — 2026-04-17
 
 ### Stream JSON output

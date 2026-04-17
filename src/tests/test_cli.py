@@ -284,6 +284,48 @@ class TestCmdSanitise(unittest.TestCase):
         with self.assertRaises(SystemExit):
             cli._cmd_sanitise(args)
 
+    def test_sanitise_pcap_input_produces_json(self):
+        pcap_path = _write_pcap_with_one_packet()
+        args = _args(input=pcap_path, output=None, pcap=None, pcapng=None,
+                     no_ips=False, no_macs=False, ports=False,
+                     payload=False, timestamps=False)
+        with patch("sys.stdout", new_callable=StringIO) as out:
+            cli._cmd_sanitise(args)
+        result = json.loads(out.getvalue())
+        self.assertIn("packets", result)
+        src = result["packets"][0]["network"]["src"]
+        self.assertNotEqual(src, "10.0.0.1")
+
+    def test_sanitise_pcap_input_writes_json_file(self):
+        pcap_path = _write_pcap_with_one_packet()
+        out_path = _tmpfile(".json")
+        args = _args(input=pcap_path, output=out_path, pcap=None, pcapng=None,
+                     no_ips=False, no_macs=False, ports=False,
+                     payload=False, timestamps=False)
+        cli._cmd_sanitise(args)
+        data = json.loads(Path(out_path).read_text())
+        self.assertIn("packets", data)
+
+    def test_sanitise_pcap_input_writes_pcap_output(self):
+        pcap_path = _write_pcap_with_one_packet()
+        out_path = _tmpfile(".pcap")
+        args = _args(input=pcap_path, output=None, pcap=out_path, pcapng=None,
+                     no_ips=False, no_macs=False, ports=False,
+                     payload=False, timestamps=False)
+        cli._cmd_sanitise(args)
+        self.assertGreater(os.path.getsize(out_path), 0)
+
+    def test_sanitise_pcap_input_writes_both_json_and_pcap(self):
+        pcap_path = _write_pcap_with_one_packet()
+        json_out = _tmpfile(".json")
+        pcap_out = _tmpfile(".pcap")
+        args = _args(input=pcap_path, output=json_out, pcap=pcap_out, pcapng=None,
+                     no_ips=False, no_macs=False, ports=False,
+                     payload=False, timestamps=False)
+        cli._cmd_sanitise(args)
+        self.assertIn("packets", json.loads(Path(json_out).read_text()))
+        self.assertGreater(os.path.getsize(pcap_out), 0)
+
 
 # ── Group 4: stream ───────────────────────────────────────────────────────────
 
