@@ -315,6 +315,129 @@ The CRC-32c checksum (Castagnoli, RFC 9260 §6.8) is computed automatically.
 
 ---
 
+(packet-spec-dns)=
+## `dns`
+
+An optional DNS message (RFC 1035).  When present, `dns` is encoded as the
+packet payload and the `payload` key is ignored.  Set `transport.dst_port` or
+`transport.src_port` to `53` and use `"udp"` or `"tcp"` as the protocol.
+
+For TCP, the builder prepends the mandatory 2-byte big-endian length field
+automatically (RFC 1035 §4.2.2) when the enclosing transport is TCP.
+
+```json
+"transport": { "src_port": 54321, "dst_port": 53 },
+"dns": {
+  "id": 4660,
+  "flags": {
+    "qr":     false,
+    "opcode": 0,
+    "aa":     false,
+    "tc":     false,
+    "rd":     true,
+    "ra":     false,
+    "rcode":  0
+  },
+  "questions": [
+    { "name": "example.com.", "qtype": 1, "qclass": 1 }
+  ],
+  "answers":    [],
+  "authority":  [],
+  "additional": []
+}
+```
+
+### `dns` top-level fields
+
+| Field | Description |
+|-------|-------------|
+| `id` | 16-bit transaction identifier |
+| `flags` | Header flags object (see below) |
+| `questions` | Array of question section entries |
+| `answers` | Array of resource records in the answer section |
+| `authority` | Array of resource records in the authority section |
+| `additional` | Array of resource records in the additional section |
+
+### `dns.flags`
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `qr` | `false` | `false` = query, `true` = response |
+| `opcode` | `0` | 4-bit opcode: `0`=QUERY, `1`=IQUERY, `2`=STATUS |
+| `aa` | `false` | Authoritative Answer |
+| `tc` | `false` | TrunCated |
+| `rd` | `true` | Recursion Desired |
+| `ra` | `false` | Recursion Available |
+| `rcode` | `0` | 4-bit response code: `0`=NOERROR, `1`=FORMERR, `2`=SERVFAIL, `3`=NXDOMAIN, `4`=NOTIMP, `5`=REFUSED |
+
+### Question entry
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `name` | *(required)* | Domain name, trailing dot optional |
+| `qtype` | `1` | Query type integer (e.g. `1`=A, `28`=AAAA, `5`=CNAME) |
+| `qclass` | `1` | Query class (`1` = IN) |
+
+### Resource record entry
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `name` | *(required)* | Owner name |
+| `rtype` | *(required)* | Record type integer |
+| `rclass` | `1` | Record class (`1` = IN) |
+| `ttl` | `0` | Time-to-live in seconds |
+| `rdata` | *(required)* | Record data object — shape depends on `rtype` (see below) |
+
+### `rdata` shape by type
+
+| `rtype` | Fields | Description |
+|---------|--------|-------------|
+| `1` (A) | `address` (string) | IPv4 address in dotted-decimal notation |
+| `28` (AAAA) | `address` (string) | IPv6 address |
+| `2` (NS) | `name` (string) | Name server domain name |
+| `5` (CNAME) | `name` (string) | Canonical name |
+| `12` (PTR) | `name` (string) | Pointer target name |
+| `15` (MX) | `preference` (int), `exchange` (string) | Mail exchange |
+| `6` (SOA) | `mname`, `rname` (strings); `serial`, `refresh`, `retry`, `expire`, `minimum` (ints) | Start of authority |
+| `16` (TXT) | `strings` (array of strings) | Text strings — each element is one length-prefixed string in the wire format |
+| *(other)* | `data` (hex string) | Raw RDATA bytes for unrecognised types |
+
+### Full DNS response example
+
+```json
+{
+  "metadata": { "nanoseconds": false },
+  "packets": [{
+    "ethernet":  { "src_mac": "00:00:00:00:00:01", "dst_mac": "00:00:00:00:00:02" },
+    "network":   { "src": "8.8.8.8", "dst": "192.168.1.1", "protocol": "udp" },
+    "transport": { "src_port": 53, "dst_port": 54321 },
+    "dns": {
+      "id": 4660,
+      "flags": { "qr": true, "opcode": 0, "aa": false, "tc": false,
+                 "rd": true, "ra": true, "rcode": 0 },
+      "questions": [
+        { "name": "example.com.", "qtype": 1, "qclass": 1 }
+      ],
+      "answers": [
+        { "name": "example.com.", "rtype": 1, "rclass": 1, "ttl": 300,
+          "rdata": { "address": "93.184.216.34" } }
+      ],
+      "authority": [
+        { "name": "example.com.", "rtype": 2, "rclass": 1, "ttl": 3600,
+          "rdata": { "name": "ns1.example.com." } }
+      ],
+      "additional": [
+        { "name": "ns1.example.com.", "rtype": 1, "rclass": 1, "ttl": 3600,
+          "rdata": { "address": "205.251.196.1" } }
+      ]
+    },
+    "packet_metadata": { "timestamp_s": 0, "timestamp_us": 0 }
+  }]
+}
+```
+
+---
+
 (packet-spec-payload)=
 ## `payload`
 

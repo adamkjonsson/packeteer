@@ -6,7 +6,7 @@ from packeteer.sanitise import sanitise, SanitiseOptions
 with open("capture.json") as f:
     config = json.load(f)
 
-# Default: replace IPs and MACs
+# Default: replace IPs, MACs, and DNS names
 clean = sanitise(config)
 
 # Replace everything
@@ -14,6 +14,7 @@ clean = sanitise(config, SanitiseOptions(
     ports=True,
     payload=True,
     timestamps=True,
+    dns_ids=True,
 ))
 
 # Replace only IPs, keep MACs
@@ -27,6 +28,67 @@ clean = sanitise(config, SanitiseOptions(macs=False))
 
 ```{eval-rst}
 .. autofunction:: packeteer.sanitise.sanitise
+```
+
+## DNS sanitisation
+
+Whenever a packet spec contains a `dns` section, names and addresses inside
+it are sanitised automatically — no extra option is needed.
+
+**Domain names** are replaced at label level so that shared structure is
+preserved.  Each unique DNS label (case-insensitive) maps consistently to
+`label0`, `label1`, …  For example:
+
+**Before:**
+```json
+{
+  "dns": {
+    "id": 4660,
+    "questions": [{ "name": "mail.example.com.", "qtype": 1, "qclass": 1 }],
+    "answers": [
+      { "name": "mail.example.com.", "rtype": 1, "rclass": 1, "ttl": 300,
+        "rdata": { "address": "93.184.216.34" } },
+      { "name": "www.example.com.", "rtype": 5, "rclass": 1, "ttl": 300,
+        "rdata": { "name": "host.example.com." } }
+    ],
+    "authority": [], "additional": []
+  }
+}
+```
+
+**After** (`sanitise` with defaults, `dns_ids=False`):
+```json
+{
+  "dns": {
+    "id": 4660,
+    "questions": [{ "name": "label0.label1.label2.", "qtype": 1, "qclass": 1 }],
+    "answers": [
+      { "name": "label0.label1.label2.", "rtype": 1, "rclass": 1, "ttl": 300,
+        "rdata": { "address": "192.0.2.1" } },
+      { "name": "label3.label1.label2.", "rtype": 5, "rclass": 1, "ttl": 300,
+        "rdata": { "name": "label4.label1.label2." } }
+    ],
+    "authority": [], "additional": []
+  }
+}
+```
+
+`example` → `label1` and `com` → `label2` are shared across all three names
+because the same label always maps to the same synthetic value.  The A-record
+address is replaced using the same IPv4 pool used for `network.src`/`dst`, so
+an address that appears in both a DNS response and an IP header will receive
+the same synthetic replacement.
+
+**Transaction IDs** are kept by default.  Set `dns_ids=True` to zero them:
+
+```python
+clean = sanitise(config, SanitiseOptions(dns_ids=True))
+```
+
+**To keep A/AAAA RDATA addresses unchanged**, disable IP replacement:
+
+```python
+clean = sanitise(config, SanitiseOptions(ips=False))
 ```
 
 ## Tunnel handling
@@ -60,4 +122,4 @@ Example — GRE tunnel before and after sanitising:
 }
 ```
 
-Ports are unchanged because `--ports` was not given.
+Ports are unchanged because `ports=True` was not given.

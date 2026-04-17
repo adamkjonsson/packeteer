@@ -119,6 +119,60 @@ all checksums are set automatically.  The same stacking model works for
 EtherIP (`.etherip()`), IP-in-IP (call `.ip()` twice), QinQ (call `.vlan()`
 twice), and MPLS label stacks (call `.mpls()` for each label).
 
+## DNS example
+
+Build a DNS query packet with {class}`~packeteer.generate.dns.DNSMessage` and
+the `.dns()` builder method.  Use after `.udp()` or `.tcp()` on port 53:
+
+```python
+from packeteer.generate import (
+    PacketBuilder,
+    DNSMessage, DNSFlags, DNSQuestion, DNSResourceRecord,
+    DNSRDataA, DNS_TYPE_A, DNS_CLASS_IN,
+)
+
+# DNS query — who is example.com?
+query = DNSMessage(
+    id=0x1234,
+    flags=DNSFlags(qr=False, rd=True),
+    questions=[DNSQuestion("example.com.", DNS_TYPE_A)],
+)
+pkt = (PacketBuilder()
+    .ethernet()
+    .ip(src="192.168.1.1", dst="8.8.8.8")
+    .udp(src_port=54321, dst_port=53)
+    .dns(query)
+    .build()
+)
+
+# DNS response — here it is
+response = DNSMessage(
+    id=0x1234,
+    flags=DNSFlags(qr=True, rd=True, ra=True),
+    questions=[DNSQuestion("example.com.")],
+    answers=[
+        DNSResourceRecord(
+            name="example.com.", rtype=DNS_TYPE_A,
+            rclass=DNS_CLASS_IN, ttl=300,
+            rdata=DNSRDataA("93.184.216.34"),
+        ),
+    ],
+)
+pkt = (PacketBuilder()
+    .ethernet()
+    .ip(src="8.8.8.8", dst="192.168.1.1")
+    .udp(src_port=53, dst_port=54321)
+    .dns(response)
+    .build()
+)
+```
+
+Pass `tcp=True` to `.dns()` to produce a DNS-over-TCP packet with the
+mandatory 2-byte length prefix (RFC 1035 §4.2.2).
+
+See {doc}`build/python-api` for all supported record types and
+{doc}`packet-spec/format` for the JSON representation.
+
 ## SCTP example
 
 SCTP (RFC 9260) uses `.sctp()` instead of `.tcp()` or `.udp()`.  Data lives

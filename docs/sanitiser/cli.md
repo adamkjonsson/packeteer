@@ -4,7 +4,7 @@
 packeteer sanitise <FILE> [--output <output.json>]
                           [--pcap <output.pcap>] [--pcapng <output.pcapng>]
                           [--no-ips] [--no-macs]
-                          [--ports] [--payload] [--timestamps]
+                          [--ports] [--payload] [--timestamps] [--dns-ids]
 ```
 
 `FILE` may be a JSON packet spec **or** a pcap/pcapng capture file.  When a
@@ -24,9 +24,27 @@ magic number, not its extension.
 | `--ports` | Replace TCP/UDP port numbers |
 | `--payload` | Zero out payload bytes |
 | `--timestamps` | Zero out packet timestamps |
+| `--dns-ids` | Zero out DNS transaction IDs (default: kept) |
 
 `--output`, `--pcap`, and `--pcapng` are independent and may be combined.
 When none are given the sanitised packet spec is printed to stdout.
+
+## DNS sanitisation
+
+DNS fields are sanitised automatically whenever a `dns` section is present —
+no extra flag is needed.  The following replacements are applied:
+
+- **Domain names** — every label in every name (questions, RR names, and
+  name-bearing RDATA such as CNAME, NS, PTR, MX exchange, SOA mname/rname)
+  is replaced with a consistent synthetic label of the form `label0`,
+  `label1`, …  Labels are shared across all packets and sections, so
+  `mail.example.com.` and `www.example.com.` will end up with the same
+  synthetic parent labels.
+- **A/AAAA RDATA addresses** — replaced using the same pool and mapping table
+  as IP addresses in the `network` section, so a DNS A record for an address
+  that also appears as an IP source or destination will always receive the
+  same replacement.  Pass `--no-ips` to keep RDATA addresses unchanged.
+- **Transaction IDs** — kept by default; add `--dns-ids` to zero them.
 
 ## Examples
 
@@ -42,6 +60,12 @@ Sanitise a capture and produce both a clean pcap and a packet spec:
 packeteer sanitise capture.pcap --pcap clean.pcap --output clean.json
 ```
 
+Sanitise DNS traffic including transaction IDs:
+
+```bash
+packeteer sanitise dns-capture.pcap --dns-ids --pcap clean.pcap
+```
+
 Sanitise from a packet spec (classic two-step workflow):
 
 ```bash
@@ -54,7 +78,7 @@ Full sanitisation (replace everything), input from a capture file:
 
 ```bash
 packeteer sanitise capture.pcap \
-    --ports --payload --timestamps \
+    --ports --payload --timestamps --dns-ids \
     --pcap fully-clean.pcap
 ```
 

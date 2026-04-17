@@ -49,9 +49,46 @@ pkt = parse_packet(raw, link_type=LINKTYPE_RAW)
 | `etherip` | `EtherIPHeader \| None` | EtherIP tunnel header; `tunneled` holds the inner frame |
 | `tunneled` | `ParsedPacket \| None` | Recursively parsed inner packet for IP-in-IP, GRE, or EtherIP; may itself have a `tunneled` field |
 | `transport` | `TCPHeader \| UDPHeader \| ICMPHeader \| ICMPv6Header \| SCTPHeader \| None` | Transport-layer header |
-| `payload` | `bytes` | Bytes after the last parsed header |
+| `dns` | `DNSMessage \| None` | Decoded DNS message when the transport is UDP or TCP on port 53; `None` otherwise |
+| `payload` | `bytes` | Bytes after the last parsed header; empty when `dns` is set |
 | `ts_sec` | `int` | Capture timestamp — whole seconds (set by `parse_pcap_packet`) |
 | `ts_frac` | `int` | Capture timestamp — microsecond or nanosecond fraction (set by `parse_pcap_packet`) |
+
+## DNS packets
+
+When a UDP or TCP packet has port 53 as source or destination, the payload is
+automatically decoded as a DNS message (RFC 1035).  The result is stored in
+`pkt.dns`; `pkt.payload` is empty in that case.
+
+```python
+from packeteer.generate import PacketBuilder, DNSMessage, DNSQuestion, DNS_TYPE_A
+from packeteer.pcap import LINKTYPE_ETHERNET
+from packeteer.parse import parse_packet
+
+# Build a DNS query, then parse it back
+query = DNSMessage(id=0xABCD, questions=[DNSQuestion("example.com.")])
+raw = (PacketBuilder()
+    .ethernet()
+    .ip(src="192.168.1.1", dst="8.8.8.8")
+    .udp(src_port=54321, dst_port=53)
+    .dns(query)
+    .build()
+)
+
+pkt = parse_packet(raw)
+assert pkt.dns is not None
+print(pkt.dns.id)                          # 0xABCD
+print(pkt.dns.questions[0].name)           # "example.com."
+print(pkt.dns.questions[0].qtype)          # 1  (DNS_TYPE_A)
+```
+
+DNS over TCP is parsed the same way — the 2-byte length prefix is stripped
+automatically when `transport.src_port == 53` or `transport.dst_port == 53`
+and the transport is TCP.
+
+Name compression pointers (RFC 1035 §4.1.4) are fully resolved, and pointer
+loops are detected and reported as `ValueError`.  Failed DNS parses leave the
+raw bytes in `pkt.payload` unchanged so nothing is silently lost.
 
 ## Tunnel packets
 
@@ -201,6 +238,7 @@ json_str = to_json_string(to_packet_spec(packet_configs))
 | `PPPoEHeader` | `cfg["pppoe"]` |
 | `IPHeader` / `IPv6Header` | `cfg["network"]` |
 | `TCPHeader` / `UDPHeader` / `ICMPHeader` / `ICMPv6Header` / `SCTPHeader` | `cfg["transport"]` |
+| `DNSMessage` | `cfg["dns"]` |
 | `bytes` | `cfg["payload"]["data"]` as hex |
 
 `apply_tunneled` handles GRE, EtherIP, and IP-in-IP, which require the full

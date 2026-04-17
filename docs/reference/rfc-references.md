@@ -12,6 +12,9 @@ RFCs implemented or referenced by this library.
 * - [RFC 768](https://datatracker.ietf.org/doc/html/rfc768)
   - User Datagram Protocol
   - `UDPHeader`
+* - [RFC 1035](https://datatracker.ietf.org/doc/html/rfc1035)
+  - Domain Names — Implementation and Specification (DNS)
+  - `DNSMessage`, `packeteer.generate.dns`, `packeteer.parse.dns`; name compression (§4.1.4); TCP length prefix (§4.2.2)
 * - [RFC 791](https://datatracker.ietf.org/doc/html/rfc791)
   - Internet Protocol (IPv4)
   - `IPHeader`, `fragment_ipv4`

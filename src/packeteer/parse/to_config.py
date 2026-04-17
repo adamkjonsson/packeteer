@@ -56,6 +56,18 @@ from packeteer.generate.tcp import TCPHeader, TCPOptions
 from packeteer.generate.udp import UDPHeader
 from packeteer.generate.icmp import ICMPHeader
 from packeteer.generate.icmpv6 import ICMPv6Header
+from packeteer.generate.dns import (
+    DNSMessage,
+    DNSRDataA,
+    DNSRDataAAAA,
+    DNSRDataCNAME,
+    DNSRDataMX,
+    DNSRDataNS,
+    DNSRDataPTR,
+    DNSRDataRaw,
+    DNSRDataSOA,
+    DNSRDataTXT,
+)
 from packeteer.generate.sctp import (
     SCTPHeader,
     SCTPDataChunk,
@@ -376,11 +388,69 @@ def _apply_payload(config: dict[str, Any], payload: bytes) -> None:
     config["payload"] = {"data": payload.hex()}
 
 
+def _serialise_dns_rdata(rdata: object) -> dict[str, Any]:
+    if isinstance(rdata, DNSRDataA):
+        return {"address": rdata.address}
+    if isinstance(rdata, DNSRDataAAAA):
+        return {"address": rdata.address}
+    if isinstance(rdata, (DNSRDataCNAME, DNSRDataNS, DNSRDataPTR)):
+        return {"name": rdata.name}
+    if isinstance(rdata, DNSRDataMX):
+        return {"preference": rdata.preference, "exchange": rdata.exchange}
+    if isinstance(rdata, DNSRDataSOA):
+        return {
+            "mname": rdata.mname, "rname": rdata.rname,
+            "serial": rdata.serial, "refresh": rdata.refresh,
+            "retry": rdata.retry, "expire": rdata.expire,
+            "minimum": rdata.minimum,
+        }
+    if isinstance(rdata, DNSRDataTXT):
+        return {"strings": [s.decode("utf-8", errors="replace") for s in rdata.strings]}
+    if isinstance(rdata, DNSRDataRaw):
+        return {"data": rdata.data.hex()}
+    return {}
+
+
+def _serialise_dns_rr(rr: object) -> dict[str, Any]:
+    from packeteer.generate.dns import DNSResourceRecord
+    assert isinstance(rr, DNSResourceRecord)
+    return {
+        "name":   rr.name,
+        "rtype":  rr.rtype,
+        "rclass": rr.rclass,
+        "ttl":    rr.ttl,
+        "rdata":  _serialise_dns_rdata(rr.rdata),
+    }
+
+
+def _apply_dns(config: dict[str, Any], msg: DNSMessage) -> None:
+    config["dns"] = {
+        "id": msg.id,
+        "flags": {
+            "qr":     msg.flags.qr,
+            "opcode": msg.flags.opcode,
+            "aa":     msg.flags.aa,
+            "tc":     msg.flags.tc,
+            "rd":     msg.flags.rd,
+            "ra":     msg.flags.ra,
+            "rcode":  msg.flags.rcode,
+        },
+        "questions": [
+            {"name": q.name, "qtype": q.qtype, "qclass": q.qclass}
+            for q in msg.questions
+        ],
+        "answers":    [_serialise_dns_rr(rr) for rr in msg.answers],
+        "authority":  [_serialise_dns_rr(rr) for rr in msg.authority],
+        "additional": [_serialise_dns_rr(rr) for rr in msg.additional],
+    }
+
+
 def update_config(
     config: dict[str, Any],
     layer: (
         EthernetHeader | PPPoEHeader | MPLSLabel | IPHeader | IPv6Header
-        | TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | SCTPHeader | bytes
+        | TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | SCTPHeader
+        | DNSMessage | bytes
     ),
 ) -> dict[str, Any]:
     """Add a parsed protocol layer to *config* and return it.
@@ -401,6 +471,7 @@ def update_config(
     - :class:`~packeteer.generate.udp.UDPHeader` → ``transport`` section (UDP fields)
     - :class:`~packeteer.generate.icmp.ICMPHeader` /
       :class:`~packeteer.generate.icmpv6.ICMPv6Header` → ``transport`` section (ICMP fields)
+    - :class:`~packeteer.generate.dns.DNSMessage` → ``dns`` section
     - :class:`bytes` → ``payload`` section (encoded as a hex string)
 
     Modifies *config* in-place and returns it so calls can be chained::
@@ -428,6 +499,8 @@ def update_config(
         _apply_ip(config, layer)
     elif isinstance(layer, (TCPHeader, UDPHeader, ICMPHeader, ICMPv6Header, SCTPHeader)):
         _apply_transport(config, layer)
+    elif isinstance(layer, DNSMessage):
+        _apply_dns(config, layer)
     elif isinstance(layer, bytes):
         _apply_payload(config, layer)
     else:

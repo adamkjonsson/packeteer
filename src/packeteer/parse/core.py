@@ -34,6 +34,7 @@ from __future__ import annotations
 import os
 import io
 import socket
+import struct
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -53,6 +54,7 @@ from packeteer.generate.udp import UDPHeader
 from packeteer.generate.icmp import ICMPHeader
 from packeteer.generate.icmpv6 import ICMPv6Header
 from packeteer.generate.sctp import SCTPHeader
+from packeteer.generate.dns import DNSMessage
 from packeteer.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW, PcapFileHeader, read_pcap
 from .to_config import update_config, to_packet_spec, to_json_string, apply_tunneled
 
@@ -67,6 +69,7 @@ from .udp import packet_parser as _udp_parser
 from .icmp import packet_parser as _icmp_parser
 from .icmpv6 import packet_parser as _icmpv6_parser
 from .sctp import packet_parser as _sctp_parser
+from .dns import parse_dns_udp as _parse_dns_udp, parse_dns_tcp as _parse_dns_tcp
 
 _TRANSPORT_PARSERS = {
     socket.IPPROTO_TCP:    _tcp_parser,
@@ -111,6 +114,10 @@ class ParsedPacket:
             :attr:`gre`, :attr:`ipip`, or :attr:`etherip` for
             double-nested tunnels.
         transport: Parsed TCP, UDP, ICMPv4, or ICMPv6 header.
+        dns: Parsed DNS message when the transport port is 53, otherwise
+            ``None``.  Populated from the payload bytes; on parse failure
+            the raw bytes remain in :attr:`payload` and this field is
+            ``None``.
         payload: Bytes remaining after all parsed headers.
         ts_sec: Capture timestamp — whole seconds (from pcap record).
         ts_frac: Capture timestamp — sub-second fraction (microseconds or
@@ -127,6 +134,7 @@ class ParsedPacket:
     etherip:   EtherIPHeader | None = None
     tunneled:  "ParsedPacket | None" = None
     transport: TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | SCTPHeader | None = None
+    dns:       DNSMessage | None = None
     payload:   bytes = field(default=b"")
     ts_sec:    int = 0
     ts_frac:   int = 0
@@ -212,6 +220,29 @@ def _parse_pppoe_and_mpls(
     return remaining, ethertype
 
 
+def _try_parse_dns(pkt: ParsedPacket, payload: bytes) -> bytes:
+    """Attempt to decode *payload* as DNS if the transport port is 53.
+
+    On success, sets ``pkt.dns`` and returns ``b""``.
+    On failure (wrong port or parse error), returns *payload* unchanged.
+    """
+    t = pkt.transport
+    if t is None or not isinstance(t, (TCPHeader, UDPHeader)):
+        return payload
+    if t.src_port != 53 and t.dst_port != 53:
+        return payload
+    if not payload:
+        return payload
+    try:
+        if isinstance(t, TCPHeader):
+            pkt.dns = _parse_dns_tcp(payload)
+        else:
+            pkt.dns = _parse_dns_udp(payload)
+        return b""
+    except (ValueError, struct.error):
+        return payload
+
+
 def _parse_ip_protocol(
     pkt: ParsedPacket, remaining: bytes, ip_proto: int | None,
 ) -> bytes:
@@ -235,6 +266,7 @@ def _parse_ip_protocol(
         if t_size > 0:
             pkt.transport = t_hdr
             remaining = remaining[t_size:]
+            remaining = _try_parse_dns(pkt, remaining)
     elif ip_proto in (4, 41):
         pkt.ipip = True
         pkt.tunneled = parse_packet(remaining, link_type=LINKTYPE_RAW)
@@ -417,7 +449,9 @@ def parse_pcap_file(
             apply_tunneled(cfg, pkt)
         elif pkt.transport is not None:
             update_config(cfg, pkt.transport)
-            if pkt.payload:
+            if pkt.dns is not None:
+                update_config(cfg, pkt.dns)
+            elif pkt.payload:
                 update_config(cfg, pkt.payload)
         cfg["packet_metadata"] = {"timestamp_s": pkt.ts_sec, ts_frac_key: pkt.ts_frac}
         packet_configs.append(cfg)

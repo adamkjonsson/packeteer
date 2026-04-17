@@ -23,6 +23,8 @@ Replacement strategy
   MAC       Locally-administered unicast 02:00:00:xx:xx:xx
   Port      10000–59999 (consistent remapping)
   Payload   Zero-filled hex string, same byte length
+  DNS name  label0.label1... — each unique label replaced
+            consistently so shared parents are preserved
   ========  =====================================================
 
 Example::
@@ -104,6 +106,10 @@ class SanitiseOptions:
             preserved so the rebuilt packet has the same size.
         timestamps: Zero ``timestamp_s`` and ``timestamp_us`` / ``timestamp_ns``
             in every ``metadata`` section.
+        dns_ids: Zero the 16-bit transaction ``id`` field in every ``dns``
+            section.  DNS names and A/AAAA addresses in DNS RDATA are always
+            sanitised when a ``dns`` section is present (controlled by *ips*
+            for addresses).
 
     """
 
@@ -112,6 +118,7 @@ class SanitiseOptions:
     ports:      bool = False
     payload:    bool = False
     timestamps: bool = False
+    dns_ids:    bool = False
 
 
 # ── Internal replacer state ───────────────────────────────────────────────────
@@ -120,15 +127,17 @@ class SanitiseOptions:
 class _Replacer:
     """Holds mapping tables and allocation counters for one sanitise call."""
 
-    _ipv4_map:  dict[str, str] = field(default_factory=dict)
-    _ipv6_map:  dict[str, str] = field(default_factory=dict)
-    _mac_map:   dict[str, str] = field(default_factory=dict)
-    _port_map:  dict[int, int] = field(default_factory=dict)
+    _ipv4_map:       dict[str, str] = field(default_factory=dict)
+    _ipv6_map:       dict[str, str] = field(default_factory=dict)
+    _mac_map:        dict[str, str] = field(default_factory=dict)
+    _port_map:       dict[int, int] = field(default_factory=dict)
+    _dns_label_map:  dict[str, str] = field(default_factory=dict)
 
-    _ipv4_counter: int = 0
-    _ipv6_counter: int = 0
-    _mac_counter:  int = 0
-    _port_counter: int = 10000
+    _ipv4_counter:      int = 0
+    _ipv6_counter:      int = 0
+    _mac_counter:       int = 0
+    _port_counter:      int = 10000
+    _dns_label_counter: int = 0
 
     def ip(self, addr: str) -> str:
         """Return the consistent synthetic replacement for *addr*."""
@@ -163,8 +172,77 @@ class _Replacer:
                 self._port_counter = 10000
         return self._port_map[p]
 
+    def dns_label(self, label: str) -> str:
+        """Return the consistent synthetic replacement for a single DNS label."""
+        key = label.lower()
+        if key not in self._dns_label_map:
+            self._dns_label_map[key] = f"label{self._dns_label_counter}"
+            self._dns_label_counter += 1
+        return self._dns_label_map[key]
+
+
+# ── DNS record-type constants (duplicated to avoid import) ────────────────────
+
+_DNS_TYPE_A    = 1
+_DNS_TYPE_NS   = 2
+_DNS_TYPE_CNAME = 5
+_DNS_TYPE_SOA  = 6
+_DNS_TYPE_PTR  = 12
+_DNS_TYPE_MX   = 15
+_DNS_TYPE_AAAA = 28
+
+# ── DNS sanitisation helpers ──────────────────────────────────────────────────
+
+def _sanitise_dns_name(name: str, r: _Replacer) -> str:
+    """Replace every label in *name* with a consistent synthetic label."""
+    trailing_dot = name.endswith(".")
+    bare = name.rstrip(".")
+    if not bare:
+        return name  # root label "."
+    new_labels = [r.dns_label(lbl) for lbl in bare.split(".")]
+    result = ".".join(new_labels)
+    return result + "." if trailing_dot else result
+
+
+def _sanitise_dns_rdata(rdata: dict, rtype: int, r: _Replacer, opts: SanitiseOptions) -> None:
+    """Sanitise the rdata dict in-place given the numeric *rtype*."""
+    if rtype in (_DNS_TYPE_A, _DNS_TYPE_AAAA) and opts.ips and "address" in rdata:
+        rdata["address"] = r.ip(rdata["address"])
+    elif rtype in (_DNS_TYPE_CNAME, _DNS_TYPE_NS, _DNS_TYPE_PTR) and "name" in rdata:
+        rdata["name"] = _sanitise_dns_name(rdata["name"], r)
+    elif rtype == _DNS_TYPE_MX and "exchange" in rdata:
+        rdata["exchange"] = _sanitise_dns_name(rdata["exchange"], r)
+    elif rtype == _DNS_TYPE_SOA:
+        if "mname" in rdata:
+            rdata["mname"] = _sanitise_dns_name(rdata["mname"], r)
+        if "rname" in rdata:
+            rdata["rname"] = _sanitise_dns_name(rdata["rname"], r)
+
+
+def _sanitise_dns(dns: dict, r: _Replacer, opts: SanitiseOptions) -> None:
+    """Sanitise a ``dns`` section dict in-place."""
+    if opts.dns_ids:
+        dns["id"] = 0
+    for q in dns.get("questions", []):
+        if "name" in q:
+            q["name"] = _sanitise_dns_name(q["name"], r)
+    for section in ("answers", "authority", "additional"):
+        for rr in dns.get(section, []):
+            if "name" in rr:
+                rr["name"] = _sanitise_dns_name(rr["name"], r)
+            rdata = rr.get("rdata")
+            if isinstance(rdata, dict):
+                _sanitise_dns_rdata(rdata, rr.get("rtype", 0), r, opts)
+
 
 # ── Recursive packet walker ───────────────────────────────────────────────────
+
+def _sanitise_network(net: dict, r: _Replacer) -> None:
+    if "src" in net:
+        net["src"] = r.ip(net["src"])
+    if "dst" in net:
+        net["dst"] = r.ip(net["dst"])
+
 
 def _sanitise_ethernet(eth: dict, r: _Replacer, opts: SanitiseOptions) -> None:
     if opts.macs:
@@ -180,11 +258,7 @@ def _sanitise_packet(pkt: dict, r: _Replacer, opts: SanitiseOptions) -> None:
         _sanitise_ethernet(pkt["ethernet"], r, opts)
 
     if opts.ips and "network" in pkt:
-        net = pkt["network"]
-        if "src" in net:
-            net["src"] = r.ip(net["src"])
-        if "dst" in net:
-            net["dst"] = r.ip(net["dst"])
+        _sanitise_network(pkt["network"], r)
 
     if opts.ports and "transport" in pkt:
         t = pkt["transport"]
@@ -213,6 +287,9 @@ def _sanitise_packet(pkt: dict, r: _Replacer, opts: SanitiseOptions) -> None:
         for key in ("timestamp_us", "timestamp_ns"):
             if key in meta:
                 meta[key] = 0
+
+    if "dns" in pkt:
+        _sanitise_dns(pkt["dns"], r, opts)
 
     # ── Tunnel recursion ──────────────────────────────────────────────────────
     for tunnel_key in ("ipip", "gre", "etherip"):

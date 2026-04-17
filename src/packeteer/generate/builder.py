@@ -129,6 +129,7 @@ from .pppoe import (
     _build_pppoe_header,
 )
 from .sctp import SCTPHeader, SCTPChunk, IPPROTO_SCTP, _build_sctp_packet
+from .dns import DNSMessage, _build_dns_message, _build_dns_message_tcp
 
 # ── protocol-number helpers ───────────────────────────────────────────────────
 
@@ -580,6 +581,22 @@ class PacketBuilder:
             chunks=chunks or [],
         ))
         return self
+
+    def dns(self, msg: DNSMessage, *, tcp: bool = False) -> "PacketBuilder":
+        """Set the payload to a serialised DNS message.
+
+        A convenience wrapper around :meth:`payload` for DNS traffic.  Pass
+        ``tcp=True`` when building a DNS-over-TCP packet to include the
+        mandatory 2-byte length prefix (RFC 1035 §4.2.2).
+
+        Args:
+            msg: The :class:`~packeteer.generate.dns.DNSMessage` to encode.
+            tcp: When ``True``, prefix the encoded message with a 2-byte
+                big-endian length field as required by DNS-over-TCP.
+
+        """
+        data = _build_dns_message_tcp(msg) if tcp else _build_dns_message(msg)
+        return self.payload(data=data)
 
     def payload(self, *, size: int = 0, data: bytes | None = None) -> "PacketBuilder":
         """Set the packet payload.

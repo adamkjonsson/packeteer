@@ -17,6 +17,7 @@ compiled extensions — Python 3.10+ and the standard library only.
 - **IPv4** (RFC 791) and **IPv6** (RFC 8200) with automatic checksums
 - **TCP**, **UDP**, **SCTP** (RFC 9260), **ICMPv4**, **ICMPv6** with correct checksums
 - **Tunnels**: IP-in-IP (RFC 2003/4213), EtherIP (RFC 3378), GRE (RFC 2784/2890) with Key, Sequence, Checksum, and TEB
+- **DNS** (RFC 1035) — parse, build, and sanitise A, AAAA, NS, CNAME, MX, SOA, PTR, and TXT records over UDP or TCP
 - **IPv4 and IPv6 fragmentation** in one call
 - **pcap and pcapng** file I/O with microsecond or nanosecond timestamps
 - **Stream generation** — complete TCP / UDP / SCTP flows written to pcap, pcapng, or packet spec; all streams can be wrapped in any encapsulation layer (VLAN, QinQ, MPLS, PPPoE, GRE, EtherIP, IP-in-IP), combined as a stack, and fragmented through a simulated low-MTU middlebox
@@ -74,6 +75,17 @@ pkt = (PacketBuilder()
         verification_tag=0xDEADBEEF,
         chunks=[SCTPDataChunk(tsn=0, data=b"hello sctp")],
     )
+    .build()
+)
+
+# DNS query over UDP (RFC 1035)
+from packeteer.generate import DNSMessage, DNSQuestion, DNS_TYPE_A
+
+pkt = (PacketBuilder()
+    .ethernet()
+    .ip(src="192.168.1.1", dst="8.8.8.8")
+    .udp(src_port=54321, dst_port=53)
+    .dns(DNSMessage(id=0x1234, questions=[DNSQuestion("example.com.")]))
     .build()
 )
 ```
