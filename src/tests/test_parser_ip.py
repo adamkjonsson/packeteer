@@ -3,8 +3,8 @@ from __future__ import annotations
 import socket
 import unittest
 
-from packeteer.generate.ip import IPHeader, build_ip_header
-from packeteer.generate.ipv6 import IPv6Header, build_ipv6_header
+from packeteer.generate.ip import IPHeader, _build_ip_header
+from packeteer.generate.ipv6 import IPv6Header, _build_ipv6_header
 from packeteer.parse.ip import packet_parser
 
 PROTO_TCP = socket.IPPROTO_TCP    # 6
@@ -17,14 +17,14 @@ def _ipv4(
     src: str = "10.0.0.1", dst: str = "10.0.0.2",
     protocol: int = PROTO_TCP, payload: bytes = b"",
 ) -> bytes:
-    return build_ip_header(IPHeader(src, dst, protocol), payload)
+    return _build_ip_header(IPHeader(src, dst, protocol), payload)
 
 
 def _ipv6(
     src: str = "::1", dst: str = "::2",
     next_header: int = PROTO_TCP, payload: bytes = b"",
 ) -> bytes:
-    return build_ipv6_header(IPv6Header(src, dst, next_header), payload)
+    return _build_ipv6_header(IPv6Header(src, dst, next_header), payload)
 
 
 # ---------------------------------------------------------------------------
@@ -80,22 +80,22 @@ class TestParserIPv4(unittest.TestCase):
         self.assertEqual(hdr.ttl, 64)  # default in IPHeader
 
     def test_header_tos(self):
-        raw = build_ip_header(IPHeader("1.2.3.4", "5.6.7.8", PROTO_TCP, tos=16), b"")
+        raw = _build_ip_header(IPHeader("1.2.3.4", "5.6.7.8", PROTO_TCP, tos=16), b"")
         _, _, hdr = packet_parser(raw)
         self.assertEqual(hdr.tos, 16)
 
     def test_header_identification(self):
-        raw = build_ip_header(IPHeader("1.2.3.4", "5.6.7.8", PROTO_TCP, identification=0xABCD), b"")
+        raw = _build_ip_header(IPHeader("1.2.3.4", "5.6.7.8", PROTO_TCP, identification=0xABCD), b"")
         _, _, hdr = packet_parser(raw)
         self.assertEqual(hdr.identification, 0xABCD)
 
     def test_header_flags(self):
-        raw = build_ip_header(IPHeader("1.2.3.4", "5.6.7.8", PROTO_TCP, flags=0b010), b"")
+        raw = _build_ip_header(IPHeader("1.2.3.4", "5.6.7.8", PROTO_TCP, flags=0b010), b"")
         _, _, hdr = packet_parser(raw)
         self.assertEqual(hdr.flags, 0b010)
 
     def test_header_fragment_offset(self):
-        raw = build_ip_header(
+        raw = _build_ip_header(
             IPHeader("1.2.3.4", "5.6.7.8", PROTO_TCP, flags=0, fragment_offset=100), b""
         )
         _, _, hdr = packet_parser(raw)
@@ -179,12 +179,12 @@ class TestParserIPv6(unittest.TestCase):
         self.assertEqual(hdr.hop_limit, 64)  # default in IPv6Header
 
     def test_header_traffic_class(self):
-        raw = build_ipv6_header(IPv6Header("::1", "::2", PROTO_TCP, traffic_class=0xAB), b"")
+        raw = _build_ipv6_header(IPv6Header("::1", "::2", PROTO_TCP, traffic_class=0xAB), b"")
         _, _, hdr = packet_parser(raw)
         self.assertEqual(hdr.traffic_class, 0xAB)
 
     def test_header_flow_label(self):
-        raw = build_ipv6_header(IPv6Header("::1", "::2", PROTO_TCP, flow_label=0x12345), b"")
+        raw = _build_ipv6_header(IPv6Header("::1", "::2", PROTO_TCP, flow_label=0x12345), b"")
         _, _, hdr = packet_parser(raw)
         self.assertEqual(hdr.flow_label, 0x12345)
 
@@ -263,7 +263,7 @@ class TestParserIPRoundtrip(unittest.TestCase):
     def test_ipv4_roundtrip_header_equals_original(self):
         orig = IPHeader("172.16.0.1", "172.16.0.2", PROTO_UDP, ttl=128, tos=8,
                         identification=0x1234, flags=0b010, fragment_offset=0)
-        raw = build_ip_header(orig, b"")
+        raw = _build_ip_header(orig, b"")
         _, _, hdr = packet_parser(raw)
         self.assertEqual(hdr.src, orig.src)
         self.assertEqual(hdr.dst, orig.dst)
@@ -277,7 +277,7 @@ class TestParserIPRoundtrip(unittest.TestCase):
     def test_ipv6_roundtrip_header_equals_original(self):
         orig = IPv6Header("2001:db8::1", "2001:db8::2", PROTO_TCP,
                           hop_limit=32, traffic_class=0x10, flow_label=0xABCDE)
-        raw = build_ipv6_header(orig, b"")
+        raw = _build_ipv6_header(orig, b"")
         _, _, hdr = packet_parser(raw)
         self.assertEqual(hdr.src, orig.src)
         self.assertEqual(hdr.dst, orig.dst)

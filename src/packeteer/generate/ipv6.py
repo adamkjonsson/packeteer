@@ -58,7 +58,7 @@ class IPv6Header:
     flow_label: int = 0
 
 
-def build_ipv6_header(hdr: IPv6Header, payload: bytes) -> bytes:
+def _build_ipv6_header(hdr: IPv6Header, payload: bytes) -> bytes:
     r"""Build a 40-byte IPv6 fixed header.
 
     The *payload_length* field is set to ``len(payload)`` and reflects only
@@ -79,9 +79,9 @@ def build_ipv6_header(hdr: IPv6Header, payload: bytes) -> bytes:
             (raised by :func:`socket.inet_pton`).
 
     Example:
-        >>> from packeteer.generate.ipv6 import IPv6Header, build_ipv6_header
+        >>> from packeteer.generate.ipv6 import IPv6Header, _build_ipv6_header
         >>> hdr = IPv6Header("::1", "::2", next_header=6)
-        >>> raw = build_ipv6_header(hdr, b"\\x00" * 20)
+        >>> raw = _build_ipv6_header(hdr, b"\\x00" * 20)
         >>> len(raw)
         40
         >>> (raw[0] >> 4)  # version nibble

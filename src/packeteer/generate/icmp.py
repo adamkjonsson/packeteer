@@ -41,7 +41,7 @@ class ICMPHeader:
     sequence: int = 1
 
 
-def build_icmp_header(hdr: ICMPHeader, payload: bytes) -> bytes:
+def _build_icmp_header(hdr: ICMPHeader, payload: bytes) -> bytes:
     """Build an 8-byte ICMPv4 header with a correct checksum.
 
     The checksum is computed over the ICMP header and *payload* concatenated.
@@ -58,8 +58,8 @@ def build_icmp_header(hdr: ICMPHeader, payload: bytes) -> bytes:
         with a valid checksum.
 
     Example:
-        >>> from packeteer.generate.icmp import ICMPHeader, build_icmp_header
-        >>> raw = build_icmp_header(ICMPHeader(), b"hello")
+        >>> from packeteer.generate.icmp import ICMPHeader, _build_icmp_header
+        >>> raw = _build_icmp_header(ICMPHeader(), b"hello")
         >>> len(raw)
         8
         >>> raw[0]  # type = Echo Request

@@ -36,10 +36,10 @@ class VLANTag:
     original EtherType becomes the inner EtherType after the TCI.
 
     Attributes:
-        vid: VLAN Identifier — 12-bit value (1–4094) identifying the VLAN.
+        vid: VLAN Identifier — 12-bit value (1-4094) identifying the VLAN.
             ``0`` means the frame carries no specific VLAN (priority tag only).
             ``4095`` (``0xFFF``) is reserved.
-        pcp: Priority Code Point — 3-bit value (0–7) carrying IEEE 802.1p
+        pcp: Priority Code Point — 3-bit value (0-7) carrying IEEE 802.1p
             class-of-service information.  Defaults to ``0``.
         dei: Drop Eligible Indicator — 1-bit flag (0 or 1) indicating the
             frame may be dropped under congestion.  Defaults to ``0``.
@@ -104,7 +104,7 @@ def _parse_mac(mac: str) -> bytes:
     return bytes.fromhex(mac.replace(':', '').replace('-', ''))
 
 
-def build_ethernet_header(hdr: EthernetHeader) -> bytes:
+def _build_ethernet_header(hdr: EthernetHeader) -> bytes:
     """Build an Ethernet II header (14 bytes, or 18 bytes with a VLAN tag).
 
     The returned bytes are ready to prepend directly to an IPv4 or IPv6
@@ -128,10 +128,10 @@ def build_ethernet_header(hdr: EthernetHeader) -> bytes:
 
     Example:
         >>> from packeteer.generate.ethernet import (  # noqa: E501
-        ...     EthernetHeader, build_ethernet_header, ETHERTYPE_IPV4,
+        ...     EthernetHeader, _build_ethernet_header, ETHERTYPE_IPV4,
         ... )
         >>> hdr = EthernetHeader("aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66", ETHERTYPE_IPV4)
-        >>> raw = build_ethernet_header(hdr)
+        >>> raw = _build_ethernet_header(hdr)
         >>> len(raw)
         14
         >>> raw[:6].hex()

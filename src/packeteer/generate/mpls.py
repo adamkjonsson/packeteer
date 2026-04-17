@@ -46,7 +46,7 @@ class MPLSLabel:
             raise ValueError(f"MPLS TTL must be 0-255, got {self.ttl}")
 
 
-def build_mpls_label(entry: MPLSLabel, bottom_of_stack: bool) -> bytes:
+def _build_mpls_label(entry: MPLSLabel, bottom_of_stack: bool) -> bytes:
     """Build one 4-byte MPLS label stack entry.
 
     Layout (RFC 3032)::
@@ -64,8 +64,8 @@ def build_mpls_label(entry: MPLSLabel, bottom_of_stack: bool) -> bytes:
 
     Example::
 
-        >>> from packeteer.generate.mpls import MPLSLabel, build_mpls_label
-        >>> raw = build_mpls_label(MPLSLabel(label=100, tc=0, ttl=64), bottom_of_stack=True)
+        >>> from packeteer.generate.mpls import MPLSLabel, _build_mpls_label
+        >>> raw = _build_mpls_label(MPLSLabel(label=100, tc=0, ttl=64), bottom_of_stack=True)
         >>> len(raw)
         4
         >>> (int.from_bytes(raw, "big") >> 8) & 1  # S bit

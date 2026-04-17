@@ -4,7 +4,7 @@ import struct
 import unittest
 
 from packeteer.generate.tcp import (
-    TCPHeader, TCPOptions, build_tcp_header,
+    TCPHeader, TCPOptions, _build_tcp_header,
     TCP_SYN, TCP_ACK, TCP_FIN, TCP_RST, TCP_PSH,
 )
 from packeteer.parse.tcp import packet_parser
@@ -18,7 +18,7 @@ def _tcp(
     src_ip = "10.0.0.1" if ip_version == 4 else "::1"
     dst_ip = "10.0.0.2" if ip_version == 4 else "::2"
     hdr = TCPHeader(src_port, dst_port, seq=seq, ack=ack, flags=flags, options=options)
-    return build_tcp_header(hdr, payload, src_ip, dst_ip, ip_version)
+    return _build_tcp_header(hdr, payload, src_ip, dst_ip, ip_version)
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +223,7 @@ class TestParserTCPRoundtrip(unittest.TestCase):
         from packeteer.generate.tcp import TCPHeader
         orig = TCPHeader(src_port=54321, dst_port=8080, seq=0x11223344, ack=0x55667788,
                          flags=TCP_SYN | TCP_ACK, window=4096)
-        raw = build_tcp_header(orig, b"", "10.0.0.1", "10.0.0.2", 4)
+        raw = _build_tcp_header(orig, b"", "10.0.0.1", "10.0.0.2", 4)
         _, _, hdr = packet_parser(raw)
         self.assertEqual(hdr.src_port, orig.src_port)
         self.assertEqual(hdr.dst_port, orig.dst_port)

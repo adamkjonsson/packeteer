@@ -81,7 +81,7 @@ class GREHeader:
     protocol_type: int = 0  # filled at build time
 
 
-def build_gre_header(hdr: GREHeader, payload: bytes) -> bytes:
+def _build_gre_header(hdr: GREHeader, payload: bytes) -> bytes:
     """Build a GRE header from *hdr* and return its bytes (without *payload*).
 
     The checksum (when enabled) is computed over the full GRE header bytes

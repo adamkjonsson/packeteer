@@ -24,8 +24,8 @@ class TestChecksum(unittest.TestCase):
 
     def test_known_ip_header(self):
         # Build a header ourselves and verify the checksum round-trips to 0
-        from packeteer.generate.ip import IPHeader, build_ip_header
-        raw = build_ip_header(IPHeader("192.168.0.1", "10.0.0.1", 6), b'\x00' * 20)
+        from packeteer.generate.ip import IPHeader, _build_ip_header
+        raw = _build_ip_header(IPHeader("192.168.0.1", "10.0.0.1", 6), b'\x00' * 20)
         self.assertEqual(ones_complement_checksum(raw), 0)
 
 

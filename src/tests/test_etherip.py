@@ -5,26 +5,26 @@ import struct
 import unittest
 
 from packeteer.generate import PacketBuilder
-from packeteer.generate.etherip import EtherIPHeader, IPPROTO_ETHERIP, build_etherip_header
+from packeteer.generate.etherip import EtherIPHeader, IPPROTO_ETHERIP, _build_etherip_header
 from packeteer.parse import etherip_packet_parser
 from packeteer.parse.core import parse_packet, ParsedPacket
 
 
 class TestBuildEtherIPHeader(unittest.TestCase):
     def test_wire_bytes(self):
-        raw = build_etherip_header()
+        raw = _build_etherip_header()
         self.assertEqual(raw, b"\x30\x00")
 
     def test_length(self):
-        self.assertEqual(len(build_etherip_header()), 2)
+        self.assertEqual(len(_build_etherip_header()), 2)
 
     def test_version_field(self):
-        raw = build_etherip_header()
+        raw = _build_etherip_header()
         (word,) = struct.unpack("!H", raw)
         self.assertEqual(word >> 12, 3)
 
     def test_reserved_field(self):
-        raw = build_etherip_header()
+        raw = _build_etherip_header()
         (word,) = struct.unpack("!H", raw)
         self.assertEqual(word & 0x0FFF, 0)
 
@@ -297,15 +297,15 @@ class TestParsePacketEtherIP(unittest.TestCase):
     def test_corrupt_etherip_header_goes_to_payload(self):
         # Build valid outer headers then inject bad EtherIP (version != 3)
         from packeteer.generate.ethernet import (
-            build_ethernet_header, EthernetHeader, ETHERTYPE_IPV4,
+            _build_ethernet_header, EthernetHeader, ETHERTYPE_IPV4,
         )
-        from packeteer.generate.ip import build_ip_header, IPHeader
-        eth = build_ethernet_header(
+        from packeteer.generate.ip import _build_ip_header, IPHeader
+        eth = _build_ethernet_header(
             EthernetHeader("00:00:00:00:00:02", "00:00:00:00:00:01", ETHERTYPE_IPV4)
         )
         inner = b"\x20\x00" + b"\xff" * 10   # bad EtherIP version=2
         ip_hdr = IPHeader("10.0.0.1", "10.0.0.2", IPPROTO_ETHERIP)
-        ip_bytes = build_ip_header(ip_hdr, inner)
+        ip_bytes = _build_ip_header(ip_hdr, inner)
         raw = eth + ip_bytes + inner
         pkt = parse_packet(raw)
         # EtherIP parser should fail → etherip=None, data in payload

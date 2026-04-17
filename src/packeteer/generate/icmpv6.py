@@ -51,7 +51,7 @@ class ICMPv6Header:
     sequence: int = 1
 
 
-def build_icmpv6_header(
+def _build_icmpv6_header(
     hdr: ICMPv6Header,
     payload: bytes,
     src_ip: str,
@@ -80,8 +80,8 @@ def build_icmpv6_header(
         OSError: If *src_ip* or *dst_ip* is not a valid IPv6 address.
 
     Example:
-        >>> from packeteer.generate.icmpv6 import ICMPv6Header, build_icmpv6_header
-        >>> raw = build_icmpv6_header(ICMPv6Header(), b"ping", "::1", "::2")
+        >>> from packeteer.generate.icmpv6 import ICMPv6Header, _build_icmpv6_header
+        >>> raw = _build_icmpv6_header(ICMPv6Header(), b"ping", "::1", "::2")
         >>> len(raw)
         8
         >>> raw[0]  # type = Echo Request

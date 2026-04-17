@@ -5,7 +5,7 @@ import unittest
 from packeteer.generate.ethernet import (
     EthernetHeader,
     VLANTag,
-    build_ethernet_header,
+    _build_ethernet_header,
     ETHERTYPE_IPV4,
     ETHERTYPE_IPV6,
 )
@@ -17,11 +17,11 @@ SRC = "11:22:33:44:55:66"
 
 
 def _plain(ethertype: int = ETHERTYPE_IPV4) -> bytes:
-    return build_ethernet_header(EthernetHeader(DST, SRC, ethertype))
+    return _build_ethernet_header(EthernetHeader(DST, SRC, ethertype))
 
 
 def _tagged(vid: int = 10, pcp: int = 0, dei: int = 0, ethertype: int = ETHERTYPE_IPV4) -> bytes:
-    return build_ethernet_header(
+    return _build_ethernet_header(
         EthernetHeader(DST, SRC, ethertype, VLANTag(vid=vid, pcp=pcp, dei=dei))
     )
 
@@ -180,7 +180,7 @@ class TestParsorGeneratorRoundtrip(unittest.TestCase):
 
     def test_roundtrip_header_equals_original(self):
         orig = EthernetHeader(DST, SRC, ETHERTYPE_IPV4)
-        _, _, hdr = packet_parser(build_ethernet_header(orig))
+        _, _, hdr = packet_parser(_build_ethernet_header(orig))
         self.assertEqual(hdr.dst_mac, orig.dst_mac)
         self.assertEqual(hdr.src_mac, orig.src_mac)
         self.assertEqual(hdr.ethertype, orig.ethertype)
@@ -188,7 +188,7 @@ class TestParsorGeneratorRoundtrip(unittest.TestCase):
     def test_roundtrip_vlan_header_equals_original(self):
         tag = VLANTag(vid=77, pcp=3, dei=1)
         orig = EthernetHeader(DST, SRC, ETHERTYPE_IPV6, tag)
-        _, _, hdr = packet_parser(build_ethernet_header(orig))
+        _, _, hdr = packet_parser(_build_ethernet_header(orig))
         self.assertEqual(hdr.dst_mac, orig.dst_mac)
         self.assertEqual(hdr.src_mac, orig.src_mac)
         self.assertEqual(hdr.ethertype, orig.ethertype)

@@ -80,7 +80,7 @@ def _pseudo_header_v6(src_ip: str, dst_ip: str, udp_length: int) -> bytes:
     )
 
 
-def build_udp_header(
+def _build_udp_header(
     hdr: UDPHeader,
     payload: bytes,
     src_ip: str,
@@ -111,9 +111,9 @@ def build_udp_header(
             specified *ip_version*.
 
     Example:
-        >>> from packeteer.generate.udp import UDPHeader, build_udp_header
+        >>> from packeteer.generate.udp import UDPHeader, _build_udp_header
         >>> hdr = UDPHeader(src_port=5000, dst_port=53)
-        >>> raw = build_udp_header(hdr, b"query", "192.168.1.1", "8.8.8.8")
+        >>> raw = _build_udp_header(hdr, b"query", "192.168.1.1", "8.8.8.8")
         >>> len(raw)
         8
         >>> import struct; struct.unpack('!H', raw[4:6])[0]  # length field

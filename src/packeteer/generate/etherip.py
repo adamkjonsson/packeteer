@@ -45,7 +45,7 @@ class EtherIPHeader:
     pass
 
 
-def build_etherip_header() -> bytes:
+def _build_etherip_header() -> bytes:
     r"""Return the 2-byte EtherIP header (version=3, reserved=0).
 
     Returns:

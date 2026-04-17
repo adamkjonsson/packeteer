@@ -1,7 +1,7 @@
 """SCTP packet builder (RFC 9260).
 
 This module provides dataclasses for every SCTP chunk type defined in
-RFC 9260 and a :func:`build_sctp_packet` function that assembles them into
+RFC 9260 and a :func:`_build_sctp_packet` function that assembles them into
 wire-format bytes with a correct CRC-32c checksum.
 
 SCTP packet structure::
@@ -38,7 +38,7 @@ Chunk types (RFC 9260 §3.3):
 Example::
 
     from packeteer.generate.sctp import (
-        SCTPHeader, SCTPDataChunk, build_sctp_packet,
+        SCTPHeader, SCTPDataChunk, _build_sctp_packet,
         SCTP_DATA_FLAG_BEGINNING, SCTP_DATA_FLAG_ENDING,
     )
 
@@ -57,7 +57,7 @@ Example::
             )
         ],
     )
-    raw = build_sctp_packet(hdr)
+    raw = _build_sctp_packet(hdr)
 """
 from __future__ import annotations
 
@@ -362,7 +362,7 @@ class SCTPHeader:
             on each other's tag during the handshake.
         chunks: List of SCTP chunks to include in this packet.  Defaults to
             a single unfragmented DATA chunk carrying an empty payload when
-            ``None`` is passed to :func:`build_sctp_packet`.
+            ``None`` is passed to :func:`_build_sctp_packet`.
 
     """
 
@@ -488,7 +488,7 @@ def _encode_chunk(chunk: SCTPChunk) -> bytes:
 
 # ── Public builder function ───────────────────────────────────────────────────
 
-def build_sctp_packet(hdr: SCTPHeader) -> bytes:
+def _build_sctp_packet(hdr: SCTPHeader) -> bytes:
     """Encode *hdr* to a complete wire-format SCTP packet with CRC-32c checksum.
 
     Encodes each chunk, pads it to a 4-byte boundary, concatenates them, then
@@ -507,9 +507,9 @@ def build_sctp_packet(hdr: SCTPHeader) -> bytes:
 
     Example::
 
-        from packeteer.generate.sctp import SCTPHeader, SCTPDataChunk, build_sctp_packet
+        from packeteer.generate.sctp import SCTPHeader, SCTPDataChunk, _build_sctp_packet
 
-        raw = build_sctp_packet(SCTPHeader(
+        raw = _build_sctp_packet(SCTPHeader(
             src_port=1234, dst_port=9999,
             verification_tag=0x12345678,
             chunks=[SCTPDataChunk(tsn=1, data=b"hello")],

@@ -6,7 +6,7 @@ import unittest
 from packeteer.generate.ethernet import (
     EthernetHeader,
     VLANTag,
-    build_ethernet_header,
+    _build_ethernet_header,
     ETHERTYPE_IPV4,
     ETHERTYPE_IPV6,
     ETHERTYPE_8021Q,
@@ -26,7 +26,7 @@ def _vlan_bytes(
     vid: int = 10, pcp: int = 0, dei: int = 0, ethertype: int = ETHERTYPE_IPV4,
 ) -> bytes:
     """Return just the 4-byte VLAN tag portion (TCI + inner EtherType)."""
-    raw = build_ethernet_header(
+    raw = _build_ethernet_header(
         EthernetHeader(DST, SRC, ethertype, VLANTag(vid=vid, pcp=pcp, dei=dei))
     )
     return raw[_VLAN_OFFSET:]
@@ -100,7 +100,7 @@ class TestParserVLANGeneratorRoundtrip(unittest.TestCase):
     """Verify that packeteer.parse.vlan and packeteer.generate.ethernet are compatible."""
 
     def _roundtrip(self, vid: int, pcp: int, dei: int, ethertype: int) -> tuple:
-        raw_frame = build_ethernet_header(
+        raw_frame = _build_ethernet_header(
             EthernetHeader(DST, SRC, ethertype, VLANTag(vid=vid, pcp=pcp, dei=dei))
         )
         vlan_data = raw_frame[_VLAN_OFFSET:]
@@ -131,7 +131,7 @@ class TestParserVLANGeneratorRoundtrip(unittest.TestCase):
 
     def test_vlan_tag_offset_aligns_with_ethernet_parser(self):
         """Bytes at _VLAN_OFFSET in a tagged frame must be valid VLAN input."""
-        raw_frame = build_ethernet_header(
+        raw_frame = _build_ethernet_header(
             EthernetHeader(DST, SRC, ETHERTYPE_IPV4, VLANTag(vid=99))
         )
         outer_ethertype = struct.unpack("!H", raw_frame[12:14])[0]

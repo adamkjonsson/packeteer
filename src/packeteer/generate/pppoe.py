@@ -113,7 +113,7 @@ class PPPoEHeader:
     tags: list[PPPoETag] = field(default_factory=list)
 
 
-def build_pppoe_header(hdr: PPPoEHeader, payload: bytes) -> bytes:
+def _build_pppoe_header(hdr: PPPoEHeader, payload: bytes) -> bytes:
     r"""Build a 6-byte PPPoE header with the correct Length field.
 
     The returned bytes contain only the PPPoE header (6 bytes).  The caller
@@ -137,8 +137,8 @@ def build_pppoe_header(hdr: PPPoEHeader, payload: bytes) -> bytes:
 
     Example::
 
-        >>> from packeteer.generate.pppoe import PPPoEHeader, build_pppoe_header
-        >>> raw = build_pppoe_header(PPPoEHeader(session_id=0x1234), b"\\x00" * 22)
+        >>> from packeteer.generate.pppoe import PPPoEHeader, _build_pppoe_header
+        >>> raw = _build_pppoe_header(PPPoEHeader(session_id=0x1234), b"\\x00" * 22)
         >>> len(raw)
         6
         >>> raw[0]  # Ver=1, Type=1 packed as 0x11

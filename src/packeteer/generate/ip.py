@@ -62,7 +62,7 @@ class IPHeader:
     fragment_offset: int = 0
 
 
-def build_ip_header(hdr: IPHeader, payload: bytes) -> bytes:
+def _build_ip_header(hdr: IPHeader, payload: bytes) -> bytes:
     r"""Build a 20-byte IPv4 header with a correct header checksum.
 
     The ``total_length`` field is derived automatically from *payload*.
@@ -85,10 +85,10 @@ def build_ip_header(hdr: IPHeader, payload: bytes) -> bytes:
             (raised by :func:`socket.inet_aton`).
 
     Example:
-        >>> from packeteer.generate.ip import IPHeader, build_ip_header
+        >>> from packeteer.generate.ip import IPHeader, _build_ip_header
         >>> import socket
         >>> hdr = IPHeader("10.0.0.1", "10.0.0.2", socket.IPPROTO_TCP)
-        >>> raw = build_ip_header(hdr, b"\x00" * 20)
+        >>> raw = _build_ip_header(hdr, b"\x00" * 20)
         >>> len(raw)
         20
         >>> raw[0]  # version=4, IHL=5

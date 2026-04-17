@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from packeteer.generate.icmp import ICMPHeader, build_icmp_header
-from packeteer.generate.icmpv6 import ICMPv6Header, build_icmpv6_header
+from packeteer.generate.icmp import ICMPHeader, _build_icmp_header
+from packeteer.generate.icmpv6 import ICMPv6Header, _build_icmpv6_header
 from packeteer.parse.icmp import packet_parser as parse_icmp
 from packeteer.parse.icmpv6 import packet_parser as parse_icmpv6
 
@@ -22,14 +22,14 @@ def _icmp(
     type: int = TYPE_ECHO_REQUEST, code: int = 0, identifier: int = 1,
     sequence: int = 1, payload: bytes = b"",
 ) -> bytes:
-    return build_icmp_header(ICMPHeader(type, code, identifier, sequence), payload)
+    return _build_icmp_header(ICMPHeader(type, code, identifier, sequence), payload)
 
 
 def _icmpv6(
     type: int = TYPE_V6_ECHO_REQUEST, code: int = 0, identifier: int = 1,
     sequence: int = 1, payload: bytes = b"",
 ) -> bytes:
-    return build_icmpv6_header(
+    return _build_icmpv6_header(
         ICMPv6Header(type, code, identifier, sequence), payload, "::1", "::2"
     )
 

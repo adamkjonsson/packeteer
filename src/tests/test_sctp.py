@@ -22,7 +22,7 @@ from packeteer.generate.sctp import (
     SCTPCookieAckChunk,
     SCTPShutdownCompleteChunk,
     SCTPGenericChunk,
-    build_sctp_packet,
+    _build_sctp_packet,
     IPPROTO_SCTP,
     SCTP_DATA_FLAG_BEGINNING,
     SCTP_DATA_FLAG_ENDING,
@@ -59,7 +59,7 @@ class TestCrc32c:
         assert crc32c(b"\x00" * 16) != 0
 
 
-# ── Group 2: build_sctp_packet common header ──────────────────────────────────
+# ── Group 2: _build_sctp_packet common header ──────────────────────────────────
 
 class TestBuildSctpPacketHeader:
     def _make(
@@ -71,7 +71,7 @@ class TestBuildSctpPacketHeader:
     ) -> bytes:
         hdr = SCTPHeader(src_port=src, dst_port=dst, verification_tag=tag,
                          chunks=chunks or [])
-        return build_sctp_packet(hdr)
+        return _build_sctp_packet(hdr)
 
     def test_minimum_length(self):
         raw = self._make()
@@ -122,7 +122,7 @@ class TestDataChunk:
             tsn=tsn, stream_id=stream_id, stream_seq=stream_seq,
             ppid=ppid, data=data, flags=flags,
         )])
-        return build_sctp_packet(hdr)
+        return _build_sctp_packet(hdr)
 
     def test_chunk_type_byte(self):
         raw = self._build()
@@ -167,7 +167,7 @@ class TestDataChunk:
 
 class TestInitChunks:
     def _build_init(self, chunk: object) -> bytes:
-        return build_sctp_packet(SCTPHeader(chunks=[chunk]))
+        return _build_sctp_packet(SCTPHeader(chunks=[chunk]))
 
     def test_init_chunk_type(self):
         raw = self._build_init(SCTPInitChunk(initiate_tag=1))
@@ -206,7 +206,7 @@ class TestSackChunk:
         gaps: list[object] | None = None,
         dups: list[object] | None = None,
     ) -> bytes:
-        return build_sctp_packet(SCTPHeader(chunks=[SCTPSackChunk(
+        return _build_sctp_packet(SCTPHeader(chunks=[SCTPSackChunk(
             cum_tsn_ack=cum, a_rwnd=rwnd,
             gap_ack_blocks=gaps or [], dup_tsns=dups or [],
         )]))
@@ -242,7 +242,7 @@ class TestSackChunk:
 
 class TestSmallChunks:
     def _type(self, chunk: object) -> int:
-        raw = build_sctp_packet(SCTPHeader(chunks=[chunk]))
+        raw = _build_sctp_packet(SCTPHeader(chunks=[chunk]))
         return raw[12]
 
     def test_heartbeat_type(self):
@@ -277,7 +277,7 @@ class TestSmallChunks:
 
     def test_heartbeat_info_encoded(self):
         info = b"\xde\xad\xbe\xef"
-        raw = build_sctp_packet(SCTPHeader(chunks=[SCTPHeartbeatChunk(info=info)]))
+        raw = _build_sctp_packet(SCTPHeader(chunks=[SCTPHeartbeatChunk(info=info)]))
         # chunk header at 12; type(1)+flags(1)+len(2) = 16 offset for value
         # value = param_type(2)+param_len(2)+info
         param_type, param_len = struct.unpack("!HH", raw[16:20])
@@ -287,11 +287,11 @@ class TestSmallChunks:
 
     def test_cookie_echo_data(self):
         cookie = b"\xaa\xbb\xcc\xdd"
-        raw = build_sctp_packet(SCTPHeader(chunks=[SCTPCookieEchoChunk(cookie=cookie)]))
+        raw = _build_sctp_packet(SCTPHeader(chunks=[SCTPCookieEchoChunk(cookie=cookie)]))
         assert raw[16:16 + len(cookie)] == cookie
 
     def test_shutdown_cum_tsn(self):
-        raw = build_sctp_packet(SCTPHeader(chunks=[SCTPShutdownChunk(cum_tsn_ack=999)]))
+        raw = _build_sctp_packet(SCTPHeader(chunks=[SCTPShutdownChunk(cum_tsn_ack=999)]))
         (tsn,) = struct.unpack("!I", raw[16:20])
         assert tsn == 999
 
@@ -304,7 +304,7 @@ class TestMultipleChunks:
             SCTPDataChunk(tsn=0, data=b"first"),
             SCTPDataChunk(tsn=1, data=b"second"),
         ])
-        raw = build_sctp_packet(hdr)
+        raw = _build_sctp_packet(hdr)
         # Should have two distinct DATA chunks after the 12-byte header
         assert raw[12] == 0   # first chunk type
         # Find second chunk: first chunk length = 16+5 = 21, padded to 24
@@ -316,7 +316,7 @@ class TestMultipleChunks:
             SCTPDataChunk(tsn=0, data=b"a"),
             SCTPDataChunk(tsn=1, data=b"bb"),
         ])
-        raw = build_sctp_packet(hdr)
+        raw = _build_sctp_packet(hdr)
         zeroed = raw[:8] + b"\x00\x00\x00\x00" + raw[12:]
         assert crc32c(zeroed) == struct.unpack("!I", raw[8:12])[0]
 
@@ -373,7 +373,7 @@ class TestBuilderIntegration:
 
 class TestParser:
     def _roundtrip(self, chunks: list[object]) -> object:
-        raw = build_sctp_packet(SCTPHeader(
+        raw = _build_sctp_packet(SCTPHeader(
             src_port=1111, dst_port=2222, verification_tag=0x42,
             chunks=chunks,
         ))
@@ -381,7 +381,7 @@ class TestParser:
         return hdr
 
     def test_consumed_equals_input_length(self):
-        raw = build_sctp_packet(SCTPHeader(chunks=[SCTPDataChunk(tsn=0)]))
+        raw = _build_sctp_packet(SCTPHeader(chunks=[SCTPDataChunk(tsn=0)]))
         consumed, _, _ = sctp_parser(raw)
         assert consumed == len(raw)
 
@@ -497,7 +497,7 @@ class TestParsePacketIntegration:
 
 class TestToConfig:
     def _config(self, chunks: list[object]) -> dict:
-        raw = build_sctp_packet(SCTPHeader(
+        raw = _build_sctp_packet(SCTPHeader(
             src_port=100, dst_port=200, verification_tag=0x99,
             chunks=chunks,
         ))

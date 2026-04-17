@@ -12,40 +12,40 @@ from packeteer.generate.pppoe import (
     PPPOE_CODE_SESSION, PPPOE_CODE_PADI, PPPOE_CODE_PADO,
     PPPOE_CODE_PADS, PPPOE_CODE_PADT,
     PPPOE_TAG_SERVICE_NAME, PPPOE_TAG_HOST_UNIQ,
-    build_pppoe_header,
+    _build_pppoe_header,
 )
 from packeteer.parse.pppoe import packet_parser as pppoe_packet_parser
 from packeteer.parse.core import parse_packet
 from packeteer.pcap import LINKTYPE_ETHERNET
 
 
-# ── build_pppoe_header unit tests ─────────────────────────────────────────────
+# ── _build_pppoe_header unit tests ─────────────────────────────────────────────
 
 class TestBuildPPPoEHeader(unittest.TestCase):
     def test_size(self):
-        raw = build_pppoe_header(PPPoEHeader(), b"\x00" * 10)
+        raw = _build_pppoe_header(PPPoEHeader(), b"\x00" * 10)
         self.assertEqual(len(raw), 6)
 
     def test_ver_type_byte(self):
-        raw = build_pppoe_header(PPPoEHeader(), b"")
+        raw = _build_pppoe_header(PPPoEHeader(), b"")
         self.assertEqual(raw[0], 0x11)  # Ver=1, Type=1
 
     def test_code_session(self):
-        raw = build_pppoe_header(PPPoEHeader(code=PPPOE_CODE_SESSION), b"")
+        raw = _build_pppoe_header(PPPoEHeader(code=PPPOE_CODE_SESSION), b"")
         self.assertEqual(raw[1], 0x00)
 
     def test_code_padi(self):
-        raw = build_pppoe_header(PPPoEHeader(code=PPPOE_CODE_PADI), b"")
+        raw = _build_pppoe_header(PPPoEHeader(code=PPPOE_CODE_PADI), b"")
         self.assertEqual(raw[1], 0x09)
 
     def test_session_id_encoded(self):
-        raw = build_pppoe_header(PPPoEHeader(session_id=0xABCD), b"")
+        raw = _build_pppoe_header(PPPoEHeader(session_id=0xABCD), b"")
         sid, = struct.unpack("!H", raw[2:4])
         self.assertEqual(sid, 0xABCD)
 
     def test_length_field(self):
         payload = b"\x00" * 22
-        raw = build_pppoe_header(PPPoEHeader(), payload)
+        raw = _build_pppoe_header(PPPoEHeader(), payload)
         length, = struct.unpack("!H", raw[4:6])
         self.assertEqual(length, 22)
 

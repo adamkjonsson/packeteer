@@ -109,26 +109,26 @@ import struct
 
 from .ethernet import (
     EthernetHeader, VLANTag, ETHERTYPE_IPV4, ETHERTYPE_IPV6, ETHERTYPE_8021Q,
-    ETHERNET_MIN_FRAME_SIZE, build_ethernet_header,
+    ETHERNET_MIN_FRAME_SIZE, _build_ethernet_header,
 )
-from .ip import IPHeader, build_ip_header
-from .ipv6 import IPv6Header, build_ipv6_header
-from .tcp import TCPHeader, TCPOptions, TCP_ACK, build_tcp_header
-from .udp import UDPHeader, build_udp_header
-from .icmp import ICMPHeader, build_icmp_header
-from .icmpv6 import ICMPv6Header, build_icmpv6_header
-from .etherip import EtherIPHeader, IPPROTO_ETHERIP, build_etherip_header
+from .ip import IPHeader, _build_ip_header
+from .ipv6 import IPv6Header, _build_ipv6_header
+from .tcp import TCPHeader, TCPOptions, TCP_ACK, _build_tcp_header
+from .udp import UDPHeader, _build_udp_header
+from .icmp import ICMPHeader, _build_icmp_header
+from .icmpv6 import ICMPv6Header, _build_icmpv6_header
+from .etherip import EtherIPHeader, IPPROTO_ETHERIP, _build_etherip_header
 from .gre import GREHeader, IPPROTO_GRE, GRE_PROTO_IPV4
-from .gre import GRE_PROTO_IPV6, GRE_PROTO_TEB, build_gre_header
-from .mpls import MPLSLabel, ETHERTYPE_MPLS_UNICAST, build_mpls_label
+from .gre import GRE_PROTO_IPV6, GRE_PROTO_TEB, _build_gre_header
+from .mpls import MPLSLabel, ETHERTYPE_MPLS_UNICAST, _build_mpls_label
 from .pppoe import (
     PPPoEHeader, PPPoETag,
     ETHERTYPE_PPPOE_DISCOVERY, ETHERTYPE_PPPOE_SESSION,
     PPP_IPV4, PPP_IPV6,
     PPPOE_CODE_SESSION,
-    build_pppoe_header,
+    _build_pppoe_header,
 )
-from .sctp import SCTPHeader, SCTPChunk, IPPROTO_SCTP, build_sctp_packet
+from .sctp import SCTPHeader, SCTPChunk, IPPROTO_SCTP, _build_sctp_packet
 
 # ── protocol-number helpers ───────────────────────────────────────────────────
 
@@ -662,30 +662,30 @@ class PacketBuilder:
 
             if isinstance(layer, TCPHeader):
                 src, dst, ver = self._ip_context(i)
-                data = build_tcp_header(layer, data, src, dst, ver) + data
+                data = _build_tcp_header(layer, data, src, dst, ver) + data
 
             elif isinstance(layer, UDPHeader):
                 src, dst, ver = self._ip_context(i)
-                data = build_udp_header(layer, data, src, dst, ver) + data
+                data = _build_udp_header(layer, data, src, dst, ver) + data
 
             elif isinstance(layer, ICMPHeader):
-                data = build_icmp_header(layer, data) + data
+                data = _build_icmp_header(layer, data) + data
 
             elif isinstance(layer, ICMPv6Header):
                 ip = self._find_ip_before(i)
-                data = build_icmpv6_header(layer, data, ip.src, ip.dst) + data
+                data = _build_icmpv6_header(layer, data, ip.src, ip.dst) + data
 
             elif isinstance(layer, SCTPHeader):
                 # SCTP data lives inside chunks; ignore downstream payload bytes.
-                data = build_sctp_packet(layer)
+                data = _build_sctp_packet(layer)
 
             elif isinstance(layer, IPHeader):
                 proto = _ip_proto_for(next_layer) if next_layer else 0
-                data = build_ip_header(self._clone_ip(layer, proto), data) + data
+                data = _build_ip_header(self._clone_ip(layer, proto), data) + data
 
             elif isinstance(layer, IPv6Header):
                 proto = _ip_proto_for(next_layer) if next_layer else 0
-                data = build_ipv6_header(self._clone_ipv6(layer, proto), data) + data
+                data = _build_ipv6_header(self._clone_ipv6(layer, proto), data) + data
 
             elif isinstance(layer, PPPoEHeader):
                 if layer.code == PPPOE_CODE_SESSION:
@@ -698,10 +698,10 @@ class PacketBuilder:
                         struct.pack("!HH", t.type, len(t.data)) + t.data
                         for t in layer.tags
                     )
-                data = build_pppoe_header(layer, payload) + payload
+                data = _build_pppoe_header(layer, payload) + payload
 
             elif isinstance(layer, EtherIPHeader):
-                data = build_etherip_header() + data
+                data = _build_etherip_header() + data
 
             elif isinstance(layer, GREHeader):
                 proto_type = _GRE_PROTO_MAP.get(type(next_layer), 0)
@@ -709,11 +709,11 @@ class PacketBuilder:
                     key=layer.key, seq=layer.seq,
                     checksum=layer.checksum, protocol_type=proto_type,
                 )
-                data = build_gre_header(hdr, data) + data
+                data = _build_gre_header(hdr, data) + data
 
             elif isinstance(layer, MPLSLabel):
                 bos = not isinstance(next_layer, MPLSLabel)
-                data = build_mpls_label(layer, bos) + data
+                data = _build_mpls_label(layer, bos) + data
 
             elif isinstance(layer, VLANTag):
                 ethertype = _ethertype_for(next_layer) if next_layer else 0
@@ -723,7 +723,7 @@ class PacketBuilder:
             elif isinstance(layer, EthernetHeader):
                 ethertype = _ethertype_for(next_layer) if next_layer else 0
                 eth = EthernetHeader(layer.dst_mac, layer.src_mac, ethertype)
-                data = build_ethernet_header(eth) + data
+                data = _build_ethernet_header(eth) + data
 
         return data
 

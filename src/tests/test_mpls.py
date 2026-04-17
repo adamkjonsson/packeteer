@@ -5,41 +5,41 @@ import struct
 import unittest
 
 from packeteer.generate import PacketBuilder
-from packeteer.generate.mpls import MPLSLabel, build_mpls_label, ETHERTYPE_MPLS_UNICAST
+from packeteer.generate.mpls import MPLSLabel, _build_mpls_label, ETHERTYPE_MPLS_UNICAST
 from packeteer.parse.mpls import packet_parser as mpls_packet_parser
 from packeteer.parse.core import parse_packet
 from packeteer.pcap import LINKTYPE_ETHERNET
 
 
 class TestMPLSLabelBuild(unittest.TestCase):
-    """Unit tests for build_mpls_label."""
+    """Unit tests for _build_mpls_label."""
 
     def test_size(self):
-        raw = build_mpls_label(MPLSLabel(label=100), bottom_of_stack=True)
+        raw = _build_mpls_label(MPLSLabel(label=100), bottom_of_stack=True)
         self.assertEqual(len(raw), 4)
 
     def test_label_field(self):
-        raw = build_mpls_label(MPLSLabel(label=0x12345), bottom_of_stack=True)
+        raw = _build_mpls_label(MPLSLabel(label=0x12345), bottom_of_stack=True)
         word, = struct.unpack("!I", raw)
         self.assertEqual((word >> 12) & 0xFFFFF, 0x12345)
 
     def test_tc_field(self):
-        raw = build_mpls_label(MPLSLabel(label=0, tc=5), bottom_of_stack=False)
+        raw = _build_mpls_label(MPLSLabel(label=0, tc=5), bottom_of_stack=False)
         word, = struct.unpack("!I", raw)
         self.assertEqual((word >> 9) & 0x7, 5)
 
     def test_ttl_field(self):
-        raw = build_mpls_label(MPLSLabel(label=0, ttl=200), bottom_of_stack=True)
+        raw = _build_mpls_label(MPLSLabel(label=0, ttl=200), bottom_of_stack=True)
         word, = struct.unpack("!I", raw)
         self.assertEqual(word & 0xFF, 200)
 
     def test_bos_set(self):
-        raw = build_mpls_label(MPLSLabel(label=0), bottom_of_stack=True)
+        raw = _build_mpls_label(MPLSLabel(label=0), bottom_of_stack=True)
         word, = struct.unpack("!I", raw)
         self.assertEqual((word >> 8) & 0x1, 1)
 
     def test_bos_clear(self):
-        raw = build_mpls_label(MPLSLabel(label=0), bottom_of_stack=False)
+        raw = _build_mpls_label(MPLSLabel(label=0), bottom_of_stack=False)
         word, = struct.unpack("!I", raw)
         self.assertEqual((word >> 8) & 0x1, 0)
 
