@@ -1,8 +1,7 @@
 """SCTP packet builder (RFC 9260).
 
 This module provides dataclasses for every SCTP chunk type defined in
-RFC 9260 and a :func:`_build_sctp_packet` function that assembles them into
-wire-format bytes with a correct CRC-32c checksum.
+RFC 9260.  Packets are assembled via :class:`~packeteer.generate.builder.PacketBuilder`.
 
 SCTP packet structure::
 
@@ -37,27 +36,24 @@ Chunk types (RFC 9260 §3.3):
 
 Example::
 
-    from packeteer.generate.sctp import (
-        SCTPHeader, SCTPDataChunk, _build_sctp_packet,
-        SCTP_DATA_FLAG_BEGINNING, SCTP_DATA_FLAG_ENDING,
-    )
+    from packeteer.generate import PacketBuilder, SCTPDataChunk
+    from packeteer.generate import SCTP_DATA_FLAG_BEGINNING, SCTP_DATA_FLAG_ENDING
 
-    hdr = SCTPHeader(
-        src_port=1234,
-        dst_port=9999,
-        verification_tag=0xDEADBEEF,
-        chunks=[
-            SCTPDataChunk(
+    pkt = (PacketBuilder()
+        .ethernet()
+        .ip(src="10.0.0.1", dst="10.0.0.2")
+        .sctp(
+            src_port=1234,
+            dst_port=9999,
+            verification_tag=0xDEADBEEF,
+            chunks=[SCTPDataChunk(
                 tsn=0,
-                stream_id=0,
-                stream_seq=0,
-                ppid=0,
                 data=b"Hello, SCTP!",
                 flags=SCTP_DATA_FLAG_BEGINNING | SCTP_DATA_FLAG_ENDING,
-            )
-        ],
+            )],
+        )
+        .build()
     )
-    raw = _build_sctp_packet(hdr)
 """
 from __future__ import annotations
 
