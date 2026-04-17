@@ -22,7 +22,7 @@ sanitiser
 | Module | Purpose |
 |--------|---------|
 | `packeteer/generate/builder.py` | `PacketBuilder` — fluent layer-by-layer assembly |
-| `packeteer/generate/*.py` | One module per protocol: header dataclass + `build_*` function |
+| `packeteer/generate/*.py` | One module per protocol: header dataclass + `_build_*` function |
 | `packeteer/generate/fragmentation.py` | IPv4 and IPv6 IP fragmentation |
 | `packeteer/generate/stream_encap.py` | Encap descriptor dataclasses + `_apply_encap` / `_encap_ip_start` |
 | `packeteer/generate/tcp_stream.py` | `generate_tcp_stream` — full TCP lifecycle |

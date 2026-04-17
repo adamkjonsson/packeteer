@@ -66,21 +66,21 @@ function.
 
 ## Checksum computation
 
-Checksums are computed by the individual `build_*` functions, not by
+Checksums are computed by the individual `_build_*` functions, not by
 `PacketBuilder` itself:
 
-- **IP**: `build_ip_header()` in `ip.py` computes the header checksum using
+- **IP**: `_build_ip_header()` in `ip.py` computes the header checksum using
   RFC 1071 ones-complement addition.
-- **TCP / UDP**: `build_tcp_header()` / `build_udp_header()` compute the
+- **TCP / UDP**: `_build_tcp_header()` / `_build_udp_header()` compute the
   checksum over a pseudo-header (12 bytes for IPv4, 40 bytes for IPv6) plus
   the header and payload.  The pseudo-header is constructed on-demand from the
   `(src, dst, ip_version)` tuple returned by `_ip_context()`.
-- **SCTP**: `build_sctp_packet()` in `sctp.py` uses CRC-32c (Castagnoli,
+- **SCTP**: `_build_sctp_packet()` in `sctp.py` uses CRC-32c (Castagnoli,
   RFC 9260 §6.8).  The CRC is initialised to zero, computed over the full
   packet, then written back into the checksum field.
-- **ICMPv6**: `build_icmpv6_header()` uses a pseudo-header with the IPv6 source
+- **ICMPv6**: `_build_icmpv6_header()` uses a pseudo-header with the IPv6 source
   and destination addresses, matching RFC 4443 §2.3.
-- **GRE** (when `checksum=True`): `build_gre_header()` computes an RFC 1071
+- **GRE** (when `checksum=True`): `_build_gre_header()` computes an RFC 1071
   checksum over the GRE header and payload.
 
 ## Fragmentation
