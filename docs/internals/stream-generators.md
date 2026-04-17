@@ -4,7 +4,7 @@ The three stream generator modules (`tcp_stream.py`, `udp_stream.py`,
 `sctp_stream.py`) produce sequences of fully assembled, timestamped packets
 that represent realistic network exchanges.
 
-Shared utilities live in `packet_generator/_stream_common.py`.
+Shared utilities live in `packeteer/generate/_stream_common.py`.
 
 ## TCP stream
 
@@ -40,7 +40,7 @@ and the inner IP header by `_apply_encap()`.
 
 1. **Handshake**: SYN (client), SYN-ACK (server), ACK (client).
 2. **Data transfer loop**: for each of *n* data packets:
-   - `DATA[i]` (client→server, PSH set with probability *psh_probability*)
+   - `DATA[i]` (client→server, PSH set with probability `config.psh_probability`)
    - `ACK[i]` (server→client)
 3. **Teardown**: FIN-ACK (client), ACK (server), FIN-ACK (server), ACK (client).
 
@@ -49,7 +49,7 @@ and the inner IP header by `_apply_encap()`.
 Anomalies are injected into the already-assembled packet list *after* the main
 loop, keeping the main loop clean:
 
-| Parameter | Effect |
+| `TCPStreamConfig` field | Effect |
 |---|---|
 | `packet_loss_probability` | Each packet is independently dropped from the output list.  Seq/ack numbers are not affected. |
 | `retransmission_probability` | A copy of each data packet (same seq, flags, payload) is appended at `original_ts + retransmission_timeout`. |
@@ -60,8 +60,8 @@ loop, keeping the main loop clean:
 ### Timestamps and uniqueness — `_alloc_usec`
 
 Each packet is assigned a capture timestamp.  The baseline is
-`base_time + n * inter_packet_gap`, optionally perturbed by
-`random.uniform(0, gap_jitter)`.  This can produce duplicate microsecond
+`config.base_time + n * inter_packet_gap`, optionally perturbed by
+`random.uniform(0, config.gap_jitter)`.  This can produce duplicate microsecond
 timestamps when jitter is small relative to the packet gap.
 
 `_alloc_usec(desired_usec, used_ts: set[int])` guarantees uniqueness by
@@ -85,7 +85,7 @@ When `mtu` is set, every packet whose IP-layer size exceeds the MTU is split
 into fragments after it is built.  `_fragment_packet()` calls
 `_fragment_ip_raw(raw, ip_start, mtu, encap)` from `_stream_common.py`, which
 delegates to `fragment_ipv4` or `fragment_ipv6` from
-`packet_generator/fragmentation.py`.
+`packeteer/generate/fragmentation.py`.
 
 `_encap_ip_start(encap, include_ethernet)` computes the byte offset of the
 outermost IP header so that the fragmentation point is always the outer

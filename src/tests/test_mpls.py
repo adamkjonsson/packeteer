@@ -1,43 +1,45 @@
 """Tests for MPLS label stack support (RFC 3032)."""
+from __future__ import annotations
+
 import struct
 import unittest
 
-from packet_generator import PacketBuilder
-from packet_generator.mpls import MPLSLabel, build_mpls_label, ETHERTYPE_MPLS_UNICAST
-from packet_parser.mpls import packet_parser as mpls_packet_parser
-from packet_parser.parser import parse_packet
-from packet_generator.pcap import LINKTYPE_ETHERNET
+from packeteer.generate import PacketBuilder
+from packeteer.generate.mpls import MPLSLabel, _build_mpls_label, ETHERTYPE_MPLS_UNICAST
+from packeteer.parse.mpls import packet_parser as mpls_packet_parser
+from packeteer.parse.core import parse_packet
+from packeteer.pcap import LINKTYPE_ETHERNET
 
 
 class TestMPLSLabelBuild(unittest.TestCase):
-    """Unit tests for build_mpls_label."""
+    """Unit tests for _build_mpls_label."""
 
     def test_size(self):
-        raw = build_mpls_label(MPLSLabel(label=100), bottom_of_stack=True)
+        raw = _build_mpls_label(MPLSLabel(label=100), bottom_of_stack=True)
         self.assertEqual(len(raw), 4)
 
     def test_label_field(self):
-        raw = build_mpls_label(MPLSLabel(label=0x12345), bottom_of_stack=True)
+        raw = _build_mpls_label(MPLSLabel(label=0x12345), bottom_of_stack=True)
         word, = struct.unpack("!I", raw)
         self.assertEqual((word >> 12) & 0xFFFFF, 0x12345)
 
     def test_tc_field(self):
-        raw = build_mpls_label(MPLSLabel(label=0, tc=5), bottom_of_stack=False)
+        raw = _build_mpls_label(MPLSLabel(label=0, tc=5), bottom_of_stack=False)
         word, = struct.unpack("!I", raw)
         self.assertEqual((word >> 9) & 0x7, 5)
 
     def test_ttl_field(self):
-        raw = build_mpls_label(MPLSLabel(label=0, ttl=200), bottom_of_stack=True)
+        raw = _build_mpls_label(MPLSLabel(label=0, ttl=200), bottom_of_stack=True)
         word, = struct.unpack("!I", raw)
         self.assertEqual(word & 0xFF, 200)
 
     def test_bos_set(self):
-        raw = build_mpls_label(MPLSLabel(label=0), bottom_of_stack=True)
+        raw = _build_mpls_label(MPLSLabel(label=0), bottom_of_stack=True)
         word, = struct.unpack("!I", raw)
         self.assertEqual((word >> 8) & 0x1, 1)
 
     def test_bos_clear(self):
-        raw = build_mpls_label(MPLSLabel(label=0), bottom_of_stack=False)
+        raw = _build_mpls_label(MPLSLabel(label=0), bottom_of_stack=False)
         word, = struct.unpack("!I", raw)
         self.assertEqual((word >> 8) & 0x1, 0)
 
@@ -135,9 +137,9 @@ class TestPacketBuilderMPLS(unittest.TestCase):
 
 
 class TestMPLSParser(unittest.TestCase):
-    """Unit tests for packet_parser.mpls.packet_parser."""
+    """Unit tests for packeteer.parse.mpls.packet_parser."""
 
-    def _make_label_bytes(self, label, tc=0, ttl=64, bos=True):
+    def _make_label_bytes(self, label: int, tc: int = 0, ttl: int = 64, bos: bool = True) -> bytes:
         s = 1 if bos else 0
         word = (label << 12) | (tc << 9) | (s << 8) | ttl
         return struct.pack("!I", word)
@@ -159,13 +161,13 @@ class TestMPLSParser(unittest.TestCase):
         self.assertEqual(next_proto, ETHERTYPE_MPLS_UNICAST)
 
     def test_parser_bos1_ipv4_next_proto(self):
-        from packet_generator.ethernet import ETHERTYPE_IPV4
+        from packeteer.generate.ethernet import ETHERTYPE_IPV4
         data = self._make_label_bytes(100, bos=True) + b"\x45" + b"\x00" * 19
         _, next_proto, _ = mpls_packet_parser(data)
         self.assertEqual(next_proto, ETHERTYPE_IPV4)
 
     def test_parser_bos1_ipv6_next_proto(self):
-        from packet_generator.ethernet import ETHERTYPE_IPV6
+        from packeteer.generate.ethernet import ETHERTYPE_IPV6
         data = self._make_label_bytes(100, bos=True) + b"\x60" + b"\x00" * 19
         _, next_proto, _ = mpls_packet_parser(data)
         self.assertEqual(next_proto, ETHERTYPE_IPV6)

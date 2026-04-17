@@ -1,10 +1,11 @@
-import struct
+from __future__ import annotations
+
 import unittest
 
-from packet_generator.icmp import ICMPHeader, build_icmp_header
-from packet_generator.icmpv6 import ICMPv6Header, build_icmpv6_header
-from packet_parser.icmp import packet_parser as parse_icmp
-from packet_parser.icmpv6 import packet_parser as parse_icmpv6
+from packeteer.generate.icmp import ICMPHeader, _build_icmp_header
+from packeteer.generate.icmpv6 import ICMPv6Header, _build_icmpv6_header
+from packeteer.parse.icmp import packet_parser as parse_icmp
+from packeteer.parse.icmpv6 import packet_parser as parse_icmpv6
 
 TYPE_ECHO_REQUEST = 8
 TYPE_ECHO_REPLY = 0
@@ -17,12 +18,18 @@ TYPE_V6_DEST_UNREACHABLE = 1
 TYPE_V6_TIME_EXCEEDED = 3
 
 
-def _icmp(type=TYPE_ECHO_REQUEST, code=0, identifier=1, sequence=1, payload=b"") -> bytes:
-    return build_icmp_header(ICMPHeader(type, code, identifier, sequence), payload)
+def _icmp(
+    type: int = TYPE_ECHO_REQUEST, code: int = 0, identifier: int = 1,
+    sequence: int = 1, payload: bytes = b"",
+) -> bytes:
+    return _build_icmp_header(ICMPHeader(type, code, identifier, sequence), payload)
 
 
-def _icmpv6(type=TYPE_V6_ECHO_REQUEST, code=0, identifier=1, sequence=1, payload=b"") -> bytes:
-    return build_icmpv6_header(
+def _icmpv6(
+    type: int = TYPE_V6_ECHO_REQUEST, code: int = 0, identifier: int = 1,
+    sequence: int = 1, payload: bytes = b"",
+) -> bytes:
+    return _build_icmpv6_header(
         ICMPv6Header(type, code, identifier, sequence), payload, "::1", "::2"
     )
 
@@ -170,7 +177,7 @@ class TestParserICMPv6Failure(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Roundtrip: packet_generator → packet_parser
+# Roundtrip: packeteer.generate → packeteer.parse
 # ---------------------------------------------------------------------------
 
 class TestParserICMPRoundtrip(unittest.TestCase):
@@ -182,7 +189,10 @@ class TestParserICMPRoundtrip(unittest.TestCase):
                 self.assertEqual(parsed_type, t)
 
     def test_icmpv6_type_preserved(self):
-        for t in (TYPE_V6_ECHO_REQUEST, TYPE_V6_ECHO_REPLY, TYPE_V6_DEST_UNREACHABLE, TYPE_V6_TIME_EXCEEDED):
+        for t in (
+            TYPE_V6_ECHO_REQUEST, TYPE_V6_ECHO_REPLY,
+            TYPE_V6_DEST_UNREACHABLE, TYPE_V6_TIME_EXCEEDED,
+        ):
             with self.subTest(type=t):
                 raw = _icmpv6(type=t)
                 _, parsed_type, hdr = parse_icmpv6(raw)

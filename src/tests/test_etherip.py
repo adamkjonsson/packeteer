@@ -1,29 +1,30 @@
 """Tests for EtherIP (RFC 3378) building and parsing."""
+from __future__ import annotations
+
 import struct
 import unittest
 
-from packet_generator import PacketBuilder
-from packet_generator.etherip import EtherIPHeader, IPPROTO_ETHERIP, build_etherip_header
-from packet_generator.pcap import LINKTYPE_ETHERNET
-from packet_parser import etherip_packet_parser
-from packet_parser.parser import parse_packet, ParsedPacket
+from packeteer.generate import PacketBuilder
+from packeteer.generate.etherip import EtherIPHeader, IPPROTO_ETHERIP, _build_etherip_header
+from packeteer.parse import etherip_packet_parser
+from packeteer.parse.core import parse_packet, ParsedPacket
 
 
 class TestBuildEtherIPHeader(unittest.TestCase):
     def test_wire_bytes(self):
-        raw = build_etherip_header()
+        raw = _build_etherip_header()
         self.assertEqual(raw, b"\x30\x00")
 
     def test_length(self):
-        self.assertEqual(len(build_etherip_header()), 2)
+        self.assertEqual(len(_build_etherip_header()), 2)
 
     def test_version_field(self):
-        raw = build_etherip_header()
+        raw = _build_etherip_header()
         (word,) = struct.unpack("!H", raw)
         self.assertEqual(word >> 12, 3)
 
     def test_reserved_field(self):
-        raw = build_etherip_header()
+        raw = _build_etherip_header()
         (word,) = struct.unpack("!H", raw)
         self.assertEqual(word & 0x0FFF, 0)
 
@@ -74,7 +75,7 @@ class TestEtherIPParser(unittest.TestCase):
 
 
 class TestPacketBuilderEtherIP(unittest.TestCase):
-    def _build_tunnel(self, **kwargs):
+    def _build_tunnel(self, **kwargs: object) -> bytes:
         """Build a standard EtherIP tunnel packet."""
         return (PacketBuilder()
             .ethernet(src_mac="00:00:00:00:00:01", dst_mac="00:00:00:00:00:02")
@@ -172,7 +173,7 @@ class TestPacketBuilderEtherIP(unittest.TestCase):
 
 
 class TestParsePacketEtherIP(unittest.TestCase):
-    def _build_tunnel(self):
+    def _build_tunnel(self) -> bytes:
         return (PacketBuilder()
             .ethernet(src_mac="00:00:00:00:00:01", dst_mac="00:00:00:00:00:02")
             .ip(src="10.0.0.1", dst="10.0.0.2")
@@ -295,13 +296,16 @@ class TestParsePacketEtherIP(unittest.TestCase):
 
     def test_corrupt_etherip_header_goes_to_payload(self):
         # Build valid outer headers then inject bad EtherIP (version != 3)
-        from packet_generator.ethernet import build_ethernet_header, EthernetHeader, ETHERTYPE_IPV4
-        from packet_generator.ip import build_ip_header, IPHeader
-        import socket
-        eth = build_ethernet_header(EthernetHeader("00:00:00:00:00:02", "00:00:00:00:00:01", ETHERTYPE_IPV4))
+        from packeteer.generate.ethernet import (
+            _build_ethernet_header, EthernetHeader, ETHERTYPE_IPV4,
+        )
+        from packeteer.generate.ip import _build_ip_header, IPHeader
+        eth = _build_ethernet_header(
+            EthernetHeader("00:00:00:00:00:02", "00:00:00:00:00:01", ETHERTYPE_IPV4)
+        )
         inner = b"\x20\x00" + b"\xff" * 10   # bad EtherIP version=2
         ip_hdr = IPHeader("10.0.0.1", "10.0.0.2", IPPROTO_ETHERIP)
-        ip_bytes = build_ip_header(ip_hdr, inner)
+        ip_bytes = _build_ip_header(ip_hdr, inner)
         raw = eth + ip_bytes + inner
         pkt = parse_packet(raw)
         # EtherIP parser should fail → etherip=None, data in payload
@@ -314,8 +318,8 @@ class TestParsePacketEtherIPRoundTrip(unittest.TestCase):
 
     def test_round_trip_via_json(self):
         import json
-        from packet_parser.parser import parse_pcap_file
-        from packet_generator.pcap import write_pcap
+        from packeteer.parse.core import parse_pcap_file
+        from packeteer.pcap import write_pcap
         import io
 
         raw = (PacketBuilder()
@@ -350,8 +354,8 @@ class TestParsePacketEtherIPRoundTrip(unittest.TestCase):
 
     def test_double_nested_round_trip_json(self):
         import json
-        from packet_parser.parser import parse_pcap_file
-        from packet_generator.pcap import write_pcap
+        from packeteer.parse.core import parse_pcap_file
+        from packeteer.pcap import write_pcap
         import io
 
         raw = (PacketBuilder()

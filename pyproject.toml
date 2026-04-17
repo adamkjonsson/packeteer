@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "packeteer"
-version = "0.2.0"
+version = "0.3.0"
 requires-python = ">=3.10"
 description = "Pure-Python library for building, parsing, and sanitising raw network packets"
 authors = [ { name = "Adam Jonsson", email = "adam.jonsson@live.se"} ]
@@ -16,22 +16,21 @@ classifiers = [
     "Programming Language :: Python :: 3.10" ]
 
 [tool.setuptools]
-py-modules = ["packeteer_cli", "replacer"]
 package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["packet_generator*", "packet_parser*"]
+include = ["packeteer*"]
 
 [tool.setuptools.package-data]
-packet_generator = ["default_payload.txt", "stream.ini.template"]
+"packeteer.generate" = ["default_payload.txt", "stream.ini.template"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["src/tests"]
 
 [project.scripts]
-packeteer = "packeteer_cli:main"
+packeteer = "packeteer.__main__:main"
 
 [project.urls]
 Repository = "https://github.com/adamkjonsson/packeteer.git"

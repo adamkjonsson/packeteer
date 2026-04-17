@@ -1,16 +1,18 @@
 """Tests for replacer.sanitise()."""
+from __future__ import annotations
+
 import copy
 import unittest
 
-from replacer import SanitiseOptions, sanitise
+from packeteer.sanitise import SanitiseOptions, sanitise
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _simple(src_ip="10.0.0.1", dst_ip="10.0.0.2",
-            src_mac="aa:bb:cc:dd:ee:01", dst_mac="aa:bb:cc:dd:ee:02",
-            src_port=12345, dst_port=80,
-            payload_data="deadbeef",
-            ts_s=1700000000, ts_us=500000) -> dict:
+def _simple(src_ip: str = "10.0.0.1", dst_ip: str = "10.0.0.2",
+            src_mac: str = "aa:bb:cc:dd:ee:01", dst_mac: str = "aa:bb:cc:dd:ee:02",
+            src_port: int = 12345, dst_port: int = 80,
+            payload_data: str = "deadbeef",
+            ts_s: int = 1700000000, ts_us: int = 500000) -> dict:
     """Minimal single-packet config."""
     return {
         "packets": [{
@@ -23,8 +25,8 @@ def _simple(src_ip="10.0.0.1", dst_ip="10.0.0.2",
     }
 
 
-def _two_packets(src1="10.0.0.1", dst1="10.0.0.2",
-                 src2="10.0.0.3", dst2="10.0.0.1") -> dict:
+def _two_packets(src1: str = "10.0.0.1", dst1: str = "10.0.0.2",
+                 src2: str = "10.0.0.3", dst2: str = "10.0.0.1") -> dict:
     """Two-packet config; dst2 == src1 to test consistency."""
     return {
         "packets": [

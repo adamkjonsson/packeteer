@@ -1,12 +1,14 @@
+from __future__ import annotations
+
 import struct
 import unittest
-from packet_generator.ip import IPHeader, build_ip_header
-from packet_generator.checksum import ones_complement_checksum
+from packeteer.generate.ip import IPHeader, _build_ip_header
+from packeteer.generate.checksum import ones_complement_checksum
 
 
 class TestIPHeader(unittest.TestCase):
-    def _make(self, payload=b''):
-        return build_ip_header(IPHeader("192.168.1.1", "10.0.0.1", 6), payload)
+    def _make(self, payload: bytes = b'') -> bytes:
+        return _build_ip_header(IPHeader("192.168.1.1", "10.0.0.1", 6), payload)
 
     def test_length(self):
         self.assertEqual(len(self._make()), 20)
@@ -17,7 +19,7 @@ class TestIPHeader(unittest.TestCase):
 
     def test_total_length(self):
         payload = b'\x00' * 40
-        raw = build_ip_header(IPHeader("1.2.3.4", "5.6.7.8", 17), payload)
+        raw = _build_ip_header(IPHeader("1.2.3.4", "5.6.7.8", 17), payload)
         total = struct.unpack('!H', raw[2:4])[0]
         self.assertEqual(total, 60)
 

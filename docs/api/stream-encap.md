@@ -1,6 +1,6 @@
 # Stream Encapsulation Types
 
-The `packet_generator.stream_encap` module provides descriptor dataclasses for
+The `packeteer.generate.stream_encap` module provides descriptor dataclasses for
 wrapping generated streams in encapsulation layers.  Pass one or a list of
 these to the `encap` parameter of any stream generator.
 
@@ -11,12 +11,12 @@ See {doc}`../stream/python-api` for usage examples and combination rules.
 ## VLAN (802.1Q)
 
 ```{eval-rst}
-.. autoclass:: packet_generator.stream_encap.VLANEncap
+.. autoclass:: packeteer.generate.stream_encap.VLANEncap
    :members:
 ```
 
 ```{eval-rst}
-.. autoclass:: packet_generator.stream_encap.QinQEncap
+.. autoclass:: packeteer.generate.stream_encap.QinQEncap
    :members:
 ```
 
@@ -25,7 +25,7 @@ See {doc}`../stream/python-api` for usage examples and combination rules.
 ## MPLS
 
 ```{eval-rst}
-.. autoclass:: packet_generator.stream_encap.MPLSEncap
+.. autoclass:: packeteer.generate.stream_encap.MPLSEncap
    :members:
 ```
 
@@ -34,7 +34,7 @@ See {doc}`../stream/python-api` for usage examples and combination rules.
 ## PPPoE
 
 ```{eval-rst}
-.. autoclass:: packet_generator.stream_encap.PPPoEEncap
+.. autoclass:: packeteer.generate.stream_encap.PPPoEEncap
    :members:
 ```
 
@@ -43,17 +43,17 @@ See {doc}`../stream/python-api` for usage examples and combination rules.
 ## Tunnels
 
 ```{eval-rst}
-.. autoclass:: packet_generator.stream_encap.GREEncap
+.. autoclass:: packeteer.generate.stream_encap.GREEncap
    :members:
 ```
 
 ```{eval-rst}
-.. autoclass:: packet_generator.stream_encap.EtherIPEncap
+.. autoclass:: packeteer.generate.stream_encap.EtherIPEncap
    :members:
 ```
 
 ```{eval-rst}
-.. autoclass:: packet_generator.stream_encap.IPIPEncap
+.. autoclass:: packeteer.generate.stream_encap.IPIPEncap
    :members:
 ```
 
@@ -62,6 +62,6 @@ See {doc}`../stream/python-api` for usage examples and combination rules.
 ## Type aliases
 
 ```{eval-rst}
-.. autodata:: packet_generator.stream_encap.StreamEncap
-.. autodata:: packet_generator.stream_encap.EncapSpec
+.. autodata:: packeteer.generate.stream_encap.StreamEncap
+.. autodata:: packeteer.generate.stream_encap.EncapSpec
 ```

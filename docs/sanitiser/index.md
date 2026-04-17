@@ -5,7 +5,7 @@ config with synthetic equivalents, then rebuild the pcap.  The result is a
 structurally faithful capture that contains no real addressing information.
 
 ```
-pcap  ──parse──▶  JSON  ──sanitise──▶  clean JSON  ──build──▶  clean pcap
+pcap  --parse--→  JSON  --sanitise--→  clean JSON  --build--→  clean pcap
 ```
 
 ## What gets replaced

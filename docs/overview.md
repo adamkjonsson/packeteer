@@ -6,7 +6,7 @@ and a human-readable packet spec format.
 ## The core workflow
 
 ```
-pcap file  ──parse──▶  packet spec  ──build──▶  pcap file
+pcap file  --parse--→  packet spec  --build--→  pcap file
 ```
 
 **Parsing** (`packeteer parse`) reads a `.pcap` or `.pcapng` capture and
@@ -32,8 +32,8 @@ fragments, rare protocol combinations) without having to capture live traffic.
 The Python API gives full control when scripting is more convenient than JSON:
 
 ```python
-from packet_generator import PacketBuilder
-from packet_generator.pcap import write_pcap
+from packeteer.generate import PacketBuilder
+from packeteer.pcap import write_pcap
 
 packets = []
 for dst_port in [80, 443, 8080]:

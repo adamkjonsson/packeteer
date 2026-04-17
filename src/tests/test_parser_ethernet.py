@@ -1,26 +1,27 @@
+from __future__ import annotations
+
 import unittest
 
-from packet_generator.ethernet import (
+from packeteer.generate.ethernet import (
     EthernetHeader,
     VLANTag,
-    build_ethernet_header,
+    _build_ethernet_header,
     ETHERTYPE_IPV4,
     ETHERTYPE_IPV6,
-    ETHERTYPE_8021Q,
 )
-from packet_parser.ethernet import packet_parser
+from packeteer.parse.ethernet import packet_parser
 
 
 DST = "aa:bb:cc:dd:ee:ff"
 SRC = "11:22:33:44:55:66"
 
 
-def _plain(ethertype=ETHERTYPE_IPV4) -> bytes:
-    return build_ethernet_header(EthernetHeader(DST, SRC, ethertype))
+def _plain(ethertype: int = ETHERTYPE_IPV4) -> bytes:
+    return _build_ethernet_header(EthernetHeader(DST, SRC, ethertype))
 
 
-def _tagged(vid=10, pcp=0, dei=0, ethertype=ETHERTYPE_IPV4) -> bytes:
-    return build_ethernet_header(
+def _tagged(vid: int = 10, pcp: int = 0, dei: int = 0, ethertype: int = ETHERTYPE_IPV4) -> bytes:
+    return _build_ethernet_header(
         EthernetHeader(DST, SRC, ethertype, VLANTag(vid=vid, pcp=pcp, dei=dei))
     )
 
@@ -139,7 +140,7 @@ class TestPacketParserFailure(unittest.TestCase):
 
 
 class TestParsorGeneratorRoundtrip(unittest.TestCase):
-    """Verify that packet_parser.ethernet and packet_generator.ethernet are compatible."""
+    """Verify that packeteer.parse.ethernet and packeteer.generate.ethernet are compatible."""
 
     def test_plain_ipv4_roundtrip(self):
         raw = _plain(ETHERTYPE_IPV4)
@@ -179,7 +180,7 @@ class TestParsorGeneratorRoundtrip(unittest.TestCase):
 
     def test_roundtrip_header_equals_original(self):
         orig = EthernetHeader(DST, SRC, ETHERTYPE_IPV4)
-        _, _, hdr = packet_parser(build_ethernet_header(orig))
+        _, _, hdr = packet_parser(_build_ethernet_header(orig))
         self.assertEqual(hdr.dst_mac, orig.dst_mac)
         self.assertEqual(hdr.src_mac, orig.src_mac)
         self.assertEqual(hdr.ethertype, orig.ethertype)
@@ -187,7 +188,7 @@ class TestParsorGeneratorRoundtrip(unittest.TestCase):
     def test_roundtrip_vlan_header_equals_original(self):
         tag = VLANTag(vid=77, pcp=3, dei=1)
         orig = EthernetHeader(DST, SRC, ETHERTYPE_IPV6, tag)
-        _, _, hdr = packet_parser(build_ethernet_header(orig))
+        _, _, hdr = packet_parser(_build_ethernet_header(orig))
         self.assertEqual(hdr.dst_mac, orig.dst_mac)
         self.assertEqual(hdr.src_mac, orig.src_mac)
         self.assertEqual(hdr.ethertype, orig.ethertype)

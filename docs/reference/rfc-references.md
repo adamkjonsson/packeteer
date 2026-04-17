@@ -53,7 +53,7 @@ RFCs implemented or referenced by this library.
   - `EtherIPHeader`, `IPPROTO_ETHERIP`
 * - [RFC 3849](https://datatracker.ietf.org/doc/html/rfc3849)
   - IPv6 Address Prefix Reserved for Documentation
-  - Synthetic IPv6 addresses used by `replacer.sanitise` (2001:db8::/32)
+  - Synthetic IPv6 addresses used by `packeteer.sanitise.sanitise` (2001:db8::/32)
 * - [RFC 4213](https://datatracker.ietf.org/doc/html/rfc4213)
   - Basic Transition Mechanisms for IPv6 (IPv6-in-IP)
   - `.ip()` twice, protocol `41`
@@ -65,7 +65,7 @@ RFCs implemented or referenced by this library.
   - `ICMPv6Header`
 * - [RFC 5737](https://datatracker.ietf.org/doc/html/rfc5737)
   - IPv4 Address Blocks Reserved for Documentation
-  - Synthetic IPv4 addresses used by `replacer.sanitise` (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24)
+  - Synthetic IPv4 addresses used by `packeteer.sanitise.sanitise` (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24)
 * - [RFC 7323](https://datatracker.ietf.org/doc/html/rfc7323)
   - TCP Extensions for High Performance
   - `TCPOptions.window_scale`, `TCPOptions.timestamps`

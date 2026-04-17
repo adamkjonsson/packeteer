@@ -50,7 +50,7 @@ packeteer stream --protocol udp \
 ### Python API
 
 ```python
-from packet_generator import PacketBuilder
+from packeteer.generator import PacketBuilder
 
 # TCP SYN packet
 pkt = (PacketBuilder()
@@ -62,7 +62,7 @@ pkt = (PacketBuilder()
 )
 
 # SCTP (RFC 9260) — data lives inside chunks, not a separate payload layer
-from packet_generator.sctp import SCTPDataChunk
+from packeteer.generator import SCTPDataChunk
 
 pkt = (PacketBuilder()
     .ip(src="10.0.0.1", dst="10.0.0.2")
@@ -78,9 +78,9 @@ pkt = (PacketBuilder()
 
 ```python
 # Generate a GRE-tunnelled TCP stream and write it to pcap
-from packet_generator.tcp_stream import generate_tcp_stream
-from packet_generator.stream_encap import GREEncap, MPLSEncap, IPIPEncap
-from packet_generator import write_pcap
+from packeteer.generator import generate_tcp_stream
+from packeteer.generator import GREEncap, MPLSEncap, IPIPEncap
+from packeteer.pcap import write_pcap
 
 stream = generate_tcp_stream(
     client_ip="10.0.0.1",
@@ -116,7 +116,7 @@ Or read the source pages directly:
 | [docs/quickstart.md](docs/quickstart.md) | Five worked examples |
 | [docs/overview.md](docs/overview.md) | Purpose and use cases |
 | [docs/build/](docs/build/) | `packeteer build` CLI, `PacketBuilder` Python API, and IP fragmentation |
-| [docs/parse/](docs/parse/) | `packeteer parse` CLI and `packet_parser` Python API |
+| [docs/parse/](docs/parse/) | `packeteer parse` CLI and `packeteer.parser` Python API |
 | [docs/sanitiser/](docs/sanitiser/) | `packeteer sanitise` — replacing sensitive fields with synthetic data |
 | [docs/stream/](docs/stream/) | `packeteer stream` CLI and TCP / UDP / SCTP stream generators |
 | [docs/packet-spec/](docs/packet-spec/) | Packet spec format reference and Python API |

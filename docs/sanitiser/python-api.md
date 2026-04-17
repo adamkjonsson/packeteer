@@ -1,7 +1,7 @@
 # Python API
 
 ```python
-from replacer import sanitise, SanitiseOptions
+from packeteer.sanitise import sanitise, SanitiseOptions
 
 with open("capture.json") as f:
     config = json.load(f)
@@ -21,12 +21,12 @@ clean = sanitise(config, SanitiseOptions(macs=False))
 ```
 
 ```{eval-rst}
-.. autoclass:: replacer.SanitiseOptions
+.. autoclass:: packeteer.sanitise.SanitiseOptions
    :members:
 ```
 
 ```{eval-rst}
-.. autofunction:: replacer.sanitise
+.. autofunction:: packeteer.sanitise.sanitise
 ```
 
 ## Tunnel handling

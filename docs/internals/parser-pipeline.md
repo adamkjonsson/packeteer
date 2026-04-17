@@ -1,6 +1,6 @@
 # Parser pipeline
 
-`parse_packet()` (in `packet_parser/parser.py`) is a linear state machine that
+`parse_packet()` (in `packeteer/parse/parser.py`) is a linear state machine that
 walks a raw byte string from left to right, dispatching to one sub-parser per
 layer.
 
@@ -28,25 +28,25 @@ decide what to parse next.
 
 ```
 link_type
-  │
-  ├─ LINKTYPE_ETHERNET ──▶ _ethernet_parser
-  │                              │  returns EtherType
-  │                              ▼
-  │                         MPLS loop (EtherType 0x8847/0x8848)
-  │                              │  _mpls_parser repeated until BOS
-  │                              ▼
-  │                         PPPoE (EtherType 0x8863/0x8864)
-  │                              │  _pppoe_parser; discovery → stop
-  │                              ▼
-  │                         IP (EtherType 0x0800/0x86DD)
-  │
-  └─ LINKTYPE_RAW ─────────────▶ IP
-                                   │  ip_proto / next_header
-                                   ▼
-                     ┌─────────────┼───────────────────────────┐
+  |
+  +- LINKTYPE_ETHERNET --→ _ethernet_parser
+  |                              |  returns EtherType
+  |                              v
+  |                         MPLS loop (EtherType 0x8847/0x8848)
+  |                              |  _mpls_parser repeated until BOS
+  |                              v
+  |                         PPPoE (EtherType 0x8863/0x8864)
+  |                              |  _pppoe_parser; discovery → stop
+  |                              v
+  |                         IP (EtherType 0x0800/0x86DD)
+  |
+  +- LINKTYPE_RAW -------------→ IP
+                                   |  ip_proto / next_header
+                                   v
+                     +-------------+---------------------------+
                    TCP/UDP/      IP-in-IP    GRE          EtherIP
                    ICMP/SCTP     (4, 41)    (47)          (97)
-                   ──────────    ─────────  ──────────    ────────
+                   ----------    ---------  ----------    --------
                    transport     recurse    _gre_parser   _etherip_parser
                    parser        with       + recurse     + recurse with
                                  LINKTYPE_  with          LINKTYPE_

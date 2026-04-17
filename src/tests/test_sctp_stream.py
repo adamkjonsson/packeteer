@@ -2,26 +2,25 @@
 from __future__ import annotations
 
 import struct
-import pytest
 
-from packet_generator.sctp_stream import generate_sctp_stream, SCTPStream, SCTPStreamPacket
+from packeteer.generate.sctp_stream import generate_sctp_stream, SCTPStream, SCTPStreamPacket
 
 _HANDSHAKE_LABELS = ["INIT", "INIT-ACK", "COOKIE-ECHO", "COOKIE-ACK"]
 _SHUTDOWN_LABELS  = ["SHUTDOWN", "SHUTDOWN-ACK", "SHUTDOWN-COMPLETE"]
 
 
-def _make_stream(**kw) -> SCTPStream:
-    defaults = dict(
-        client_ip="10.0.0.1",
-        server_ip="10.0.0.2",
-        client_port=54321,
-        server_port=9999,
-        num_data_packets=3,
-        min_payload=20,
-        max_payload=100,
-        payload_distribution="fixed",
-        inter_packet_gap=0.001,
-    )
+def _make_stream(**kw: object) -> SCTPStream:
+    defaults: dict[str, object] = {
+        "client_ip": "10.0.0.1",
+        "server_ip": "10.0.0.2",
+        "client_port": 54321,
+        "server_port": 9999,
+        "num_data_packets": 3,
+        "min_payload": 20,
+        "max_payload": 100,
+        "payload_distribution": "fixed",
+        "inter_packet_gap": 0.001,
+    }
     defaults.update(kw)
     return generate_sctp_stream(**defaults)
 

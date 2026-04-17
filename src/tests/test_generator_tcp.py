@@ -1,14 +1,16 @@
+from __future__ import annotations
+
 import struct
 import socket
 import unittest
-from packet_generator.tcp import (
-    TCPHeader, TCPOptions, build_tcp_header,
+from packeteer.generate.tcp import (
+    TCPHeader, TCPOptions, _build_tcp_header,
     TCP_FIN, TCP_SYN, TCP_RST, TCP_PSH, TCP_ACK, TCP_URG, TCP_ECE, TCP_CWR,
 )
-from packet_generator.checksum import ones_complement_checksum
+from packeteer.generate.checksum import ones_complement_checksum
 
 
-def _verify_tcp_checksum_v4(src_ip, dst_ip, tcp_bytes, payload):
+def _verify_tcp_checksum_v4(src_ip: str, dst_ip: str, tcp_bytes: bytes, payload: bytes) -> int:
     tcp_length = len(tcp_bytes) + len(payload)
     pseudo = (
         socket.inet_aton(src_ip)
@@ -18,7 +20,7 @@ def _verify_tcp_checksum_v4(src_ip, dst_ip, tcp_bytes, payload):
     return ones_complement_checksum(pseudo + tcp_bytes + payload)
 
 
-def _verify_tcp_checksum_v6(src_ip, dst_ip, tcp_bytes, payload):
+def _verify_tcp_checksum_v6(src_ip: str, dst_ip: str, tcp_bytes: bytes, payload: bytes) -> int:
     tcp_length = len(tcp_bytes) + len(payload)
     pseudo = (
         socket.inet_pton(socket.AF_INET6, src_ip)
@@ -30,48 +32,48 @@ def _verify_tcp_checksum_v6(src_ip, dst_ip, tcp_bytes, payload):
 
 class TestTCPHeader(unittest.TestCase):
     def test_length(self):
-        h = build_tcp_header(TCPHeader(1234, 80), b'', "1.2.3.4", "5.6.7.8")
+        h = _build_tcp_header(TCPHeader(1234, 80), b'', "1.2.3.4", "5.6.7.8")
         self.assertEqual(len(h), 20)
 
     def test_data_offset(self):
-        raw = build_tcp_header(TCPHeader(1234, 80), b'', "1.2.3.4", "5.6.7.8")
+        raw = _build_tcp_header(TCPHeader(1234, 80), b'', "1.2.3.4", "5.6.7.8")
         data_offset = (raw[12] >> 4) & 0xF
         self.assertEqual(data_offset, 5)
 
     def test_ack_flag_default(self):
-        raw = build_tcp_header(TCPHeader(1234, 80), b'', "1.2.3.4", "5.6.7.8")
+        raw = _build_tcp_header(TCPHeader(1234, 80), b'', "1.2.3.4", "5.6.7.8")
         self.assertEqual(raw[13], 0x10)
 
     def test_checksum_v4(self):
         payload = b'hello'
-        raw = build_tcp_header(TCPHeader(5000, 443), payload, "10.0.0.1", "10.0.0.2")
+        raw = _build_tcp_header(TCPHeader(5000, 443), payload, "10.0.0.1", "10.0.0.2")
         self.assertEqual(_verify_tcp_checksum_v4("10.0.0.1", "10.0.0.2", raw, payload), 0)
 
     def test_checksum_v6(self):
         payload = b'world'
-        raw = build_tcp_header(
+        raw = _build_tcp_header(
             TCPHeader(5000, 443), payload, "fe80::1", "fe80::2", ip_version=6
         )
         self.assertEqual(_verify_tcp_checksum_v6("fe80::1", "fe80::2", raw, payload), 0)
 
     def test_ports(self):
-        raw = build_tcp_header(TCPHeader(12345, 8080), b'', "1.2.3.4", "5.6.7.8")
+        raw = _build_tcp_header(TCPHeader(12345, 8080), b'', "1.2.3.4", "5.6.7.8")
         src, dst = struct.unpack('!HH', raw[:4])
         self.assertEqual(src, 12345)
         self.assertEqual(dst, 8080)
 
     def test_seq_default_is_zero(self):
-        raw = build_tcp_header(TCPHeader(1234, 80), b'', "1.2.3.4", "5.6.7.8")
+        raw = _build_tcp_header(TCPHeader(1234, 80), b'', "1.2.3.4", "5.6.7.8")
         seq = struct.unpack('!I', raw[4:8])[0]
         self.assertEqual(seq, 0)
 
     def test_seq_custom_value(self):
-        raw = build_tcp_header(TCPHeader(1234, 80, seq=0xDEADBEEF), b'', "1.2.3.4", "5.6.7.8")
+        raw = _build_tcp_header(TCPHeader(1234, 80, seq=0xDEADBEEF), b'', "1.2.3.4", "5.6.7.8")
         seq = struct.unpack('!I', raw[4:8])[0]
         self.assertEqual(seq, 0xDEADBEEF)
 
     def test_seq_via_packet_builder(self):
-        from packet_generator import PacketBuilder
+        from packeteer.generate import PacketBuilder
         pkt = (PacketBuilder()
                .ip(src="10.0.0.1", dst="10.0.0.2")
                .tcp(seq=0x12345678)
@@ -97,13 +99,13 @@ class TestTCPFlagConstants(unittest.TestCase):
         self.assertEqual(len(set(flags)), 8)
 
     def test_combined_flags_encoded(self):
-        raw = build_tcp_header(
+        raw = _build_tcp_header(
             TCPHeader(1234, 80, flags=TCP_PSH | TCP_ACK), b'', "1.2.3.4", "5.6.7.8"
         )
         self.assertEqual(raw[13], TCP_PSH | TCP_ACK)
 
     def test_ece_cwr_flags_encoded(self):
-        raw = build_tcp_header(
+        raw = _build_tcp_header(
             TCPHeader(1234, 80, flags=TCP_SYN | TCP_ECE | TCP_CWR), b'', "1.2.3.4", "5.6.7.8"
         )
         self.assertEqual(raw[13], TCP_SYN | TCP_ECE | TCP_CWR)
@@ -111,17 +113,17 @@ class TestTCPFlagConstants(unittest.TestCase):
 
 class TestTCPReservedField(unittest.TestCase):
     def test_reserved_default_is_zero(self):
-        raw = build_tcp_header(TCPHeader(1234, 80), b'', "1.2.3.4", "5.6.7.8")
+        raw = _build_tcp_header(TCPHeader(1234, 80), b'', "1.2.3.4", "5.6.7.8")
         reserved = raw[12] & 0xF
         self.assertEqual(reserved, 0)
 
     def test_reserved_custom_value(self):
-        raw = build_tcp_header(TCPHeader(1234, 80, reserved=0b1010), b'', "1.2.3.4", "5.6.7.8")
+        raw = _build_tcp_header(TCPHeader(1234, 80, reserved=0b1010), b'', "1.2.3.4", "5.6.7.8")
         reserved = raw[12] & 0xF
         self.assertEqual(reserved, 0b1010)
 
     def test_reserved_does_not_corrupt_data_offset(self):
-        raw = build_tcp_header(TCPHeader(1234, 80, reserved=0xF), b'', "1.2.3.4", "5.6.7.8")
+        raw = _build_tcp_header(TCPHeader(1234, 80, reserved=0xF), b'', "1.2.3.4", "5.6.7.8")
         data_offset = (raw[12] >> 4) & 0xF
         self.assertEqual(data_offset, 5)
 
@@ -130,16 +132,16 @@ class TestTCPOptions(unittest.TestCase):
     # ── helpers ──────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _build(opts):
+    def _build(opts: TCPOptions) -> bytes:
         hdr = TCPHeader(1234, 80, flags=TCP_SYN, options=opts)
-        return build_tcp_header(hdr, b'', "10.0.0.1", "10.0.0.2")
+        return _build_tcp_header(hdr, b'', "10.0.0.1", "10.0.0.2")
 
     @staticmethod
-    def _data_offset(raw):
+    def _data_offset(raw: bytes) -> int:
         return (raw[12] >> 4) & 0xF
 
     @staticmethod
-    def _options_bytes(raw):
+    def _options_bytes(raw: bytes) -> bytes:
         """Return the options area (everything after the fixed 20-byte header)."""
         data_offset = (raw[12] >> 4) & 0xF
         return raw[20: data_offset * 4]
@@ -253,13 +255,13 @@ class TestTCPOptions(unittest.TestCase):
     def test_combined_checksum_v6(self):
         opts = TCPOptions(mss=1440, timestamps=(500, 0))
         hdr = TCPHeader(9000, 443, flags=TCP_SYN, options=opts)
-        raw = build_tcp_header(hdr, b'data', "fe80::1", "fe80::2", ip_version=6)
+        raw = _build_tcp_header(hdr, b'data', "fe80::1", "fe80::2", ip_version=6)
         self.assertEqual(_verify_tcp_checksum_v6("fe80::1", "fe80::2", raw, b'data'), 0)
 
     # ── PacketBuilder integration ─────────────────────────────────────────────
 
     def test_options_via_packet_builder(self):
-        from packet_generator import PacketBuilder
+        from packeteer.generate import PacketBuilder
         opts = TCPOptions(mss=1460, window_scale=7)
         pkt = (PacketBuilder()
                .ip(src="10.0.0.1", dst="10.0.0.2")
@@ -271,7 +273,7 @@ class TestTCPOptions(unittest.TestCase):
         self.assertGreater(data_offset, 5)
 
     def test_reserved_via_packet_builder(self):
-        from packet_generator import PacketBuilder
+        from packeteer.generate import PacketBuilder
         pkt = (PacketBuilder()
                .ip(src="10.0.0.1", dst="10.0.0.2")
                .tcp(reserved=0b0011)

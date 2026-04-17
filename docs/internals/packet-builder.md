@@ -1,6 +1,6 @@
 # PacketBuilder internals
 
-`PacketBuilder` (in `packet_generator/builder.py`) assembles complete raw
+`PacketBuilder` (in `packeteer/generate/builder.py`) assembles complete raw
 packet bytes from a sequence of protocol layers.  Callers append layers via
 fluent methods (`.ethernet()`, `.ip()`, `.tcp()`, …), then call `.build()` or
 `.fragment()` to produce bytes.
@@ -30,10 +30,10 @@ fill the protocol-number placeholder.
 
 ```
   index 0         index 1         index 2
-  Ethernet   ←    IP         ←    TCP         ← payload bytes
+  Ethernet   <-    IP         <-    TCP         <- payload bytes
   (ethertype      (protocol         |
    filled from     filled from      |
-   _layers[1])    _layers[2])       ▼
+   _layers[1])    _layers[2])       v
                                  _assemble_range builds right-to-left
 ```
 
@@ -66,21 +66,21 @@ function.
 
 ## Checksum computation
 
-Checksums are computed by the individual `build_*` functions, not by
+Checksums are computed by the individual `_build_*` functions, not by
 `PacketBuilder` itself:
 
-- **IP**: `build_ip_header()` in `ip.py` computes the header checksum using
+- **IP**: `_build_ip_header()` in `ip.py` computes the header checksum using
   RFC 1071 ones-complement addition.
-- **TCP / UDP**: `build_tcp_header()` / `build_udp_header()` compute the
+- **TCP / UDP**: `_build_tcp_header()` / `_build_udp_header()` compute the
   checksum over a pseudo-header (12 bytes for IPv4, 40 bytes for IPv6) plus
   the header and payload.  The pseudo-header is constructed on-demand from the
   `(src, dst, ip_version)` tuple returned by `_ip_context()`.
-- **SCTP**: `build_sctp_packet()` in `sctp.py` uses CRC-32c (Castagnoli,
+- **SCTP**: `_build_sctp_packet()` in `sctp.py` uses CRC-32c (Castagnoli,
   RFC 9260 §6.8).  The CRC is initialised to zero, computed over the full
   packet, then written back into the checksum field.
-- **ICMPv6**: `build_icmpv6_header()` uses a pseudo-header with the IPv6 source
+- **ICMPv6**: `_build_icmpv6_header()` uses a pseudo-header with the IPv6 source
   and destination addresses, matching RFC 4443 §2.3.
-- **GRE** (when `checksum=True`): `build_gre_header()` computes an RFC 1071
+- **GRE** (when `checksum=True`): `_build_gre_header()` computes an RFC 1071
   checksum over the GRE header and payload.
 
 ## Fragmentation
@@ -92,7 +92,7 @@ Checksums are computed by the individual `build_*` functions, not by
    everything to the right of the IP header: transport header, any inner IP
    headers, and application payload.
 3. Pass the result to `fragment_ipv4()` or `fragment_ipv6()` in
-   `packet_generator/fragmentation.py`.
+   `packeteer/generate/fragmentation.py`.
 4. Build the prefix (everything to the left of the IP header) with
    `_assemble_range(0, k, b"")`.
 5. Prepend the prefix to every fragment.

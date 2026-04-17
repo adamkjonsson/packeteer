@@ -4,7 +4,7 @@ All notable changes to packeteer are recorded in this file.
 
 ---
 
-## [0.2.0] — 2026-04-12
+## 0.3.0 — 2026-04-17
 
 ### Stream JSON output
 
@@ -70,6 +70,35 @@ All notable changes to packeteer are recorded in this file.
 - `docs/json-config.md` split into `docs/packet-spec/`: `index.md`, `format.md` (field-by-field spec), and `python-api.md` (programmatic packet spec usage).
 - `docs/cli.md` removed — content was fully covered by the per-subcommand subpages.
 - `docs/index.md` toctree updated to reference all new subdirectory index pages.
+
+### Module rename
+
+- `packet_generator` → `packeteer.generate`, `packet_parser` → `packeteer.parse`, `replacer.py` → `packeteer.sanitise`, `packeteer_cli.py` → `packeteer.__main__`.  All internal imports, tests, and documentation updated; clean break with no backward-compatibility shims.
+- Final sub-package names settled after an intermediate rename pass: `packeteer.generate` (not `.generator`), `packeteer.parse` (not `.parser`), `packeteer.sanitise` (not `.sanitiser`).
+
+### pcap I/O consolidated
+
+- All pcap read/write logic (`read_pcap`, `write_pcap`, `write_pcapng`) moved to a single `packeteer.pcap` module.  Neither `packeteer.generate` nor `packeteer.parse` re-exports pcap functions; users import them directly from `packeteer.pcap`.
+
+### Internal wire-assembly functions
+
+- All 12 `build_*` wire-assembly functions renamed to `_build_*`, making them private implementation details.  The public entry point for building packets is `PacketBuilder`; the `_build_*` functions are no longer part of the public API.
+
+### TCPStreamConfig
+
+- `generate_tcp_stream()` now accepts a `TCPStreamConfig` dataclass instead of individual keyword arguments.  All stream parameters are grouped into one typed, inspectable object.  Exported from `packeteer.generate`.
+
+### Public API completions
+
+- `ETHERTYPE_IPV4`, `ETHERTYPE_IPV6`, and `ETHERTYPE_8021Q` are now exported from the `packeteer.generate` top-level package (previously only accessible via `packeteer.generate.ethernet`).
+- `read_pcap`, `update_config`, `apply_tunneled`, `to_packet_spec`, and `to_json_string` are now exported from the `packeteer.parse` top-level package (previously only accessible via their sub-modules).
+- `__all__` added to `packeteer.sanitise` and all `packeteer.generate` / `packeteer.parse` sub-modules to make the public API surface explicit.
+
+### PDF documentation
+
+- `docs/Makefile` gains `fresh`, `pdf`, and `fresh-pdf` targets.  `fresh`/`fresh-pdf` reinstall the package before building so the version number is always current.  `pdf`/`fresh-pdf` compile via `sphinx -b latex` + `latexmk` (two-step), which runs as many pdflatex passes as needed to resolve cross-references.
+- Box-drawing characters (`┌─│┐└┘├┬┼`) and filled triangles (`▶`, `▼`) replaced with ASCII equivalents throughout all Markdown source files so pdflatex does not error on unsupported Unicode.
+- `conf.py`: added `latex_toplevel_sectioning = "part"` and `latex_elements` with `\setcounter{tocdepth}{2}` so sections appear as chapters in the PDF and the table of contents shows two levels of depth.
 
 ### Developer documentation
 

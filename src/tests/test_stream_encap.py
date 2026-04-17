@@ -1,18 +1,18 @@
-"""Tests for packet_generator.stream_encap — encapsulation helpers."""
+"""Tests for packeteer.generate.stream_encap — encapsulation helpers."""
 from __future__ import annotations
 
 import struct
 import unittest
 
-from packet_generator.stream_encap import (
+from packeteer.generate.stream_encap import (
     VLANEncap, QinQEncap, MPLSEncap, PPPoEEncap,
     GREEncap, EtherIPEncap, IPIPEncap,
     _as_list, _apply_encap, _encap_ip_start, _fix_encap_prefix,
 )
-from packet_generator.builder import PacketBuilder
-from packet_generator.tcp_stream import generate_tcp_stream
-from packet_generator.udp_stream import generate_udp_stream
-from packet_generator.sctp_stream import generate_sctp_stream
+from packeteer.generate.builder import PacketBuilder
+from packeteer.generate.tcp_stream import generate_tcp_stream, TCPStream
+from packeteer.generate.udp_stream import generate_udp_stream
+from packeteer.generate.sctp_stream import generate_sctp_stream
 
 
 # ── _as_list ──────────────────────────────────────────────────────────────────
@@ -154,7 +154,7 @@ class TestFixEncapPrefix(unittest.TestCase):
 
 # ── _apply_encap — packet structure ──────────────────────────────────────────
 
-def _build_with_encap(encap, src_ip="10.0.0.1", dst_ip="10.0.0.2") -> bytes:
+def _build_with_encap(encap: object, src_ip: str = "10.0.0.1", dst_ip: str = "10.0.0.2") -> bytes:
     b = PacketBuilder().ethernet(src_mac="00:00:00:00:00:01",
                                   dst_mac="00:00:00:00:00:02")
     b = _apply_encap(b, encap, src_mac="00:00:00:00:00:01",
@@ -267,7 +267,7 @@ class TestApplyEncap(unittest.TestCase):
 
 class TestTCPStreamWithEncap(unittest.TestCase):
 
-    def _stream(self, encap, **kw):
+    def _stream(self, encap: object, **kw: object) -> TCPStream:
         return generate_tcp_stream(
             client_ip="10.0.0.1", server_ip="10.0.0.2",
             num_data_packets=3, encap=encap, **kw
@@ -393,7 +393,7 @@ class TestSCTPStreamWithEncap(unittest.TestCase):
 class TestFragmentationWithEncap(unittest.TestCase):
     """Ensure mtu fragmentation works correctly with encap layers."""
 
-    def _frag_labels(self, stream) -> list[str]:
+    def _frag_labels(self, stream: TCPStream) -> list[str]:
         return [p.label for p in stream.packets if "FRAG" in p.label]
 
     def test_vlan_fragmentation_produces_frags(self):

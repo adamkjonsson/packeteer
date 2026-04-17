@@ -1,12 +1,14 @@
 """Tests for IP-in-IP tunneling (RFC 2003 / RFC 4213) building and parsing."""
+from __future__ import annotations
+
 import io
 import json
 import unittest
 
-from packet_generator import PacketBuilder
-from packet_generator.pcap import LINKTYPE_RAW
-from packet_parser.parser import parse_packet, parse_pcap_file, ParsedPacket
-from packet_generator.pcap import write_pcap
+from packeteer.generate import PacketBuilder
+from packeteer.pcap import LINKTYPE_RAW
+from packeteer.parse.core import parse_packet, parse_pcap_file, ParsedPacket
+from packeteer.pcap import write_pcap
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +95,7 @@ class TestPacketBuilderIPIP(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestParsePacketIPIP(unittest.TestCase):
-    def _build_single_tunnel(self):
+    def _build_single_tunnel(self) -> bytes:
         return (PacketBuilder()
             .ethernet(src_mac="00:00:00:00:00:01", dst_mac="00:00:00:00:00:02")
             .ip(src="10.0.0.1", dst="10.0.0.2")
@@ -144,7 +146,7 @@ class TestParsePacketIPIP(unittest.TestCase):
         self.assertIsNone(pkt.tunneled.ethernet)
 
     def test_etherip_is_none(self):
-        """ipip and etherip are mutually exclusive."""
+        """Ipip and etherip are mutually exclusive."""
         pkt = parse_packet(self._build_single_tunnel())
         self.assertIsNone(pkt.etherip)
 
@@ -277,7 +279,11 @@ class TestIPIPRoundTrip(unittest.TestCase):
 
     def test_packet_lab_round_trip(self):
         """Build via packet spec → parse → verify inner addresses."""
-        import subprocess, sys, json, tempfile, os
+        import subprocess
+        import sys
+        import json
+        import tempfile
+        import os
 
         config = {
             "packets": [{
@@ -297,15 +303,15 @@ class TestIPIPRoundTrip(unittest.TestCase):
         with tempfile.NamedTemporaryFile(suffix=".pcap", delete=False) as pf:
             pf_path = pf.name
         try:
-            packet_lab = os.path.join(os.path.dirname(__file__), "..", "packeteer_cli.py")
+            packet_lab = os.path.join(os.path.dirname(__file__), "..", "packeteer/__main__.py")
             result = subprocess.run(
                 [sys.executable, packet_lab, "build", jf_path, "--pcap", pf_path],
-                capture_output=True, text=True
+                capture_output=True, text=True, check=False,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
 
             with open(pf_path, "rb") as f:
-                from packet_parser.pcap import read_pcap
+                from packeteer.pcap import read_pcap
                 pcap = read_pcap(file_object=f)
             raw, _, _ = pcap.packets[0]
             pkt = parse_packet(raw)

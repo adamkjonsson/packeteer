@@ -2,14 +2,14 @@
 
 ## `parse_packet` — single raw packet
 
-{func}`packet_parser.parser.parse_packet` decodes a raw `bytes` object through
-all protocol layers and returns a {class}`~packet_parser.parser.ParsedPacket`
+{func}`packeteer.parse.core.parse_packet` decodes a raw `bytes` object through
+all protocol layers and returns a {class}`~packeteer.parse.core.ParsedPacket`
 dataclass with each layer in its own typed field.
 
 ```python
-from packet_generator import PacketBuilder
-from packet_generator.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW
-from packet_parser.parser import parse_packet
+from packeteer.generate import PacketBuilder
+from packeteer.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW
+from packeteer.parse import parse_packet
 
 # Build a test packet, then parse it back
 raw = (PacketBuilder()
@@ -91,13 +91,13 @@ print(pkt.tunneled.transport.dst_port) # 53
 
 ## `parse_pcap_packet` — one record from a pcap file
 
-{func}`packet_parser.parser.parse_pcap_packet` parses one
+{func}`packeteer.parse.core.parse_pcap_packet` parses one
 `(data, ts_sec, ts_frac)` tuple from a pcap file and stamps the resulting
 `ParsedPacket` with the capture timestamp.
 
 ```python
-from packet_parser.pcap import read_pcap
-from packet_parser.parser import parse_pcap_packet
+from packeteer.parse import read_pcap
+from packeteer.parse import parse_pcap_packet
 
 pcap = read_pcap(path="capture.pcap")
 for record in pcap.packets:
@@ -113,12 +113,12 @@ nanoseconds.
 
 ## `parse_pcap_file` — whole file to JSON
 
-{func}`packet_parser.parser.parse_pcap_file` reads every packet in a pcap
+{func}`packeteer.parse.core.parse_pcap_file` reads every packet in a pcap
 file and returns the complete packet spec as a string — the same output as
 `packeteer parse`.
 
 ```python
-from packet_parser.parser import parse_pcap_file
+from packeteer.parse import parse_pcap_file
 
 # Print JSON to stdout
 json_str = parse_pcap_file(path="capture.pcap")
@@ -152,16 +152,16 @@ json_str = parse_pcap_file(
 
 ## Converting a `ParsedPacket` to a config dict
 
-Use {func}`packet_parser.to_config.update_config` and
-{func}`packet_parser.to_config.apply_tunneled` to serialise individual parsed
+Use {func}`packeteer.parse.to_config.update_config` and
+{func}`packeteer.parse.to_config.apply_tunneled` to serialise individual parsed
 packets into the packet spec dict format, then wrap them with
-{func}`packet_parser.to_config.to_packet_spec` and serialise with
-{func}`packet_parser.to_config.to_json_string`.
+{func}`packeteer.parse.to_config.to_packet_spec` and serialise with
+{func}`packeteer.parse.to_config.to_json_string`.
 
 ```python
-from packet_parser.pcap import read_pcap
-from packet_parser.parser import parse_pcap_packet
-from packet_parser.to_config import (
+from packeteer.parse import read_pcap
+from packeteer.parse import parse_pcap_packet
+from packeteer.parse import (
     update_config, apply_tunneled, to_packet_spec, to_json_string,
 )
 
@@ -224,7 +224,7 @@ def packet_parser(data: bytes) -> tuple[int, int | None, HeaderType | None]:
 | `[2]` | Parsed header dataclass, or `None` on failure |
 
 ```python
-from packet_parser import ip_packet_parser, tcp_packet_parser
+from packeteer.parse import ip_packet_parser, tcp_packet_parser
 
 # Parse just the IP header from a raw IP packet
 ip_size, ip_proto, ip_hdr = ip_packet_parser(raw_ip_bytes)
@@ -237,18 +237,18 @@ if ip_hdr is not None:
         print("dst_port:", tcp_hdr.dst_port)
 ```
 
-All per-protocol parsers are exported from the `packet_parser` top-level
+All per-protocol parsers are exported from the `packeteer.parse` top-level
 package:
 
 | Name | Module | Returns |
 |------|--------|---------|
-| `ethernet_packet_parser` | `packet_parser.ethernet` | `EthernetHeader` |
-| `mpls_packet_parser` | `packet_parser.mpls` | `MPLSLabel` |
-| `pppoe_packet_parser` | `packet_parser.pppoe` | `PPPoEHeader` |
-| `ip_packet_parser` | `packet_parser.ip` | `IPHeader` / `IPv6Header` |
-| `tcp_packet_parser` | `packet_parser.tcp` | `TCPHeader` |
-| `udp_packet_parser` | `packet_parser.udp` | `UDPHeader` |
-| `icmp_packet_parser` | `packet_parser.icmp` | `ICMPHeader` |
-| `icmpv6_packet_parser` | `packet_parser.icmpv6` | `ICMPv6Header` |
-| `gre_packet_parser` | `packet_parser.gre` | `GREHeader` |
-| `etherip_packet_parser` | `packet_parser.etherip` | `EtherIPHeader` |
+| `ethernet_packet_parser` | `packeteer.parse.ethernet` | `EthernetHeader` |
+| `mpls_packet_parser` | `packeteer.parse.mpls` | `MPLSLabel` |
+| `pppoe_packet_parser` | `packeteer.parse.pppoe` | `PPPoEHeader` |
+| `ip_packet_parser` | `packeteer.parse.ip` | `IPHeader` / `IPv6Header` |
+| `tcp_packet_parser` | `packeteer.parse.tcp` | `TCPHeader` |
+| `udp_packet_parser` | `packeteer.parse.udp` | `UDPHeader` |
+| `icmp_packet_parser` | `packeteer.parse.icmp` | `ICMPHeader` |
+| `icmpv6_packet_parser` | `packeteer.parse.icmpv6` | `ICMPv6Header` |
+| `gre_packet_parser` | `packeteer.parse.gre` | `GREHeader` |
+| `etherip_packet_parser` | `packeteer.parse.etherip` | `EtherIPHeader` |

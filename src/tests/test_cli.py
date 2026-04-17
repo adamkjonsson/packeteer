@@ -11,7 +11,7 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-import packeteer_cli as cli
+import packeteer.__main__ as cli
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -33,8 +33,8 @@ def _write_json(data: dict) -> str:
 
 def _write_pcap_with_one_packet() -> str:
     """Write a minimal valid pcap file containing one SYN packet; return path."""
-    from packet_generator import PacketBuilder
-    from packet_generator.pcap import write_pcap, LINKTYPE_ETHERNET
+    from packeteer.generate import PacketBuilder
+    from packeteer.pcap import write_pcap, LINKTYPE_ETHERNET
     raw = (PacketBuilder()
            .ethernet()
            .ip(src="10.0.0.1", dst="10.0.0.2")
@@ -46,13 +46,13 @@ def _write_pcap_with_one_packet() -> str:
     return path
 
 
-def _tmpfile(suffix=".pcap") -> str:
+def _tmpfile(suffix: str = ".pcap") -> str:
     fd, path = tempfile.mkstemp(suffix=suffix)
     os.close(fd)
     return path
 
 
-def _args(**kwargs) -> argparse.Namespace:
+def _args(**kwargs: object) -> argparse.Namespace:
     return argparse.Namespace(**kwargs)
 
 
@@ -210,8 +210,7 @@ class TestCmdSanitise(unittest.TestCase):
 
     def _config_path(self) -> str:
         pcap = _write_pcap_with_one_packet()
-        import io
-        from packet_parser.parser import parse_pcap_file
+        from packeteer.parse.core import parse_pcap_file
         json_str = parse_pcap_file(path=pcap)
         fd, path = tempfile.mkstemp(suffix=".json")
         with os.fdopen(fd, "w") as f:
@@ -290,34 +289,34 @@ class TestCmdSanitise(unittest.TestCase):
 
 class TestCmdStream(unittest.TestCase):
 
-    def _base_args(self, **kwargs) -> argparse.Namespace:
-        defaults = dict(
-            config=None,
-            client_ip="10.0.0.1",
-            server_ip="10.0.0.2",
-            client_port=None,
-            server_port=None,
-            client_mac=None,
-            server_mac=None,
-            packets=None,
-            min_payload=None,
-            max_payload=None,
-            distribution=None,
-            ttl=None,
-            window=None,
-            gap=None,
-            gap_jitter=None,
-            psh_probability=None,
-            packet_loss_probability=None,
-            retransmission_probability=None,
-            retransmission_timeout=None,
-            payload_corruption_probability=None,
-            server_rst_probability=None,
-            rst_propagation_delay=None,
-            no_ethernet=False,
-            pcap=None,
-            pcapng=None,
-        )
+    def _base_args(self, **kwargs: object) -> argparse.Namespace:
+        defaults: dict[str, object] = {
+            "config": None,
+            "client_ip": "10.0.0.1",
+            "server_ip": "10.0.0.2",
+            "client_port": None,
+            "server_port": None,
+            "client_mac": None,
+            "server_mac": None,
+            "packets": None,
+            "min_payload": None,
+            "max_payload": None,
+            "distribution": None,
+            "ttl": None,
+            "window": None,
+            "gap": None,
+            "gap_jitter": None,
+            "psh_probability": None,
+            "packet_loss_probability": None,
+            "retransmission_probability": None,
+            "retransmission_timeout": None,
+            "payload_corruption_probability": None,
+            "server_rst_probability": None,
+            "rst_propagation_delay": None,
+            "no_ethernet": False,
+            "pcap": None,
+            "pcapng": None,
+        }
         defaults.update(kwargs)
         return argparse.Namespace(**defaults)
 
@@ -390,7 +389,7 @@ class TestCmdStream(unittest.TestCase):
         self.assertGreater(os.path.getsize(out), 0)
 
     def test_stream_from_config_file(self):
-        import configparser, textwrap
+        import textwrap
         fd, ini_path = tempfile.mkstemp(suffix=".ini")
         out = _tmpfile(".pcap")
         with os.fdopen(fd, "w") as f:
@@ -555,18 +554,18 @@ class TestRunMultiPacketEdgeCases(unittest.TestCase):
 class TestParseStreamEncap(unittest.TestCase):
     """Tests for _parse_stream_encap — building encap layer lists from args."""
 
-    def _encap_args(self, **kwargs):
+    def _encap_args(self, **kwargs: object) -> argparse.Namespace:
         """Build a minimal Namespace with all encap fields defaulting to None."""
-        defaults = dict(
-            vlan=None, vlan_pcp=None, vlan_dei=None,
-            qinq=None, qinq_outer_pcp=None, qinq_outer_dei=None,
-            qinq_inner_pcp=None, qinq_inner_dei=None,
-            mpls=None, mpls_tc=None, mpls_ttl=None,
-            pppoe=None,
-            gre=None, gre_key=None, gre_ttl=None,
-            etherip=None, etherip_ttl=None,
-            ipip=None, ipip_ttl=None,
-        )
+        defaults: dict[str, object] = {
+            "vlan": None, "vlan_pcp": None, "vlan_dei": None,
+            "qinq": None, "qinq_outer_pcp": None, "qinq_outer_dei": None,
+            "qinq_inner_pcp": None, "qinq_inner_dei": None,
+            "mpls": None, "mpls_tc": None, "mpls_ttl": None,
+            "pppoe": None,
+            "gre": None, "gre_key": None, "gre_ttl": None,
+            "etherip": None, "etherip_ttl": None,
+            "ipip": None, "ipip_ttl": None,
+        }
         defaults.update(kwargs)
         return argparse.Namespace(**defaults)
 
@@ -575,7 +574,7 @@ class TestParseStreamEncap(unittest.TestCase):
         self.assertIsNone(cli._parse_stream_encap(args))
 
     def test_vlan_basic(self):
-        from packet_generator.stream_encap import VLANEncap
+        from packeteer.generate.stream_encap import VLANEncap
         args = self._encap_args(vlan=100)
         result = cli._parse_stream_encap(args)
         self.assertEqual(len(result), 1)
@@ -583,14 +582,13 @@ class TestParseStreamEncap(unittest.TestCase):
         self.assertEqual(result[0].vid, 100)
 
     def test_vlan_with_pcp_and_dei(self):
-        from packet_generator.stream_encap import VLANEncap
         args = self._encap_args(vlan=200, vlan_pcp=5, vlan_dei=1)
         result = cli._parse_stream_encap(args)
         self.assertEqual(result[0].pcp, 5)
         self.assertEqual(result[0].dei, 1)
 
     def test_qinq_basic(self):
-        from packet_generator.stream_encap import QinQEncap
+        from packeteer.generate.stream_encap import QinQEncap
         args = self._encap_args(qinq=[100, 200])
         result = cli._parse_stream_encap(args)
         self.assertEqual(len(result), 1)
@@ -599,7 +597,6 @@ class TestParseStreamEncap(unittest.TestCase):
         self.assertEqual(result[0].inner_vid, 200)
 
     def test_qinq_with_details(self):
-        from packet_generator.stream_encap import QinQEncap
         args = self._encap_args(
             qinq=[10, 20],
             qinq_outer_pcp=3, qinq_outer_dei=0,
@@ -617,28 +614,27 @@ class TestParseStreamEncap(unittest.TestCase):
             cli._parse_stream_encap(args)
 
     def test_mpls_basic(self):
-        from packet_generator.stream_encap import MPLSEncap
+        from packeteer.generate.stream_encap import MPLSEncap
         args = self._encap_args(mpls=[100, 200])
         result = cli._parse_stream_encap(args)
         self.assertIsInstance(result[0], MPLSEncap)
         self.assertEqual(result[0].labels, [100, 200])
 
     def test_mpls_with_tc_and_ttl(self):
-        from packet_generator.stream_encap import MPLSEncap
         args = self._encap_args(mpls=[100], mpls_tc=5, mpls_ttl=32)
         result = cli._parse_stream_encap(args)
         self.assertEqual(result[0].tc, 5)
         self.assertEqual(result[0].ttl, 32)
 
     def test_pppoe_basic(self):
-        from packet_generator.stream_encap import PPPoEEncap
+        from packeteer.generate.stream_encap import PPPoEEncap
         args = self._encap_args(pppoe=0x1234)
         result = cli._parse_stream_encap(args)
         self.assertIsInstance(result[0], PPPoEEncap)
         self.assertEqual(result[0].session_id, 0x1234)
 
     def test_gre_basic(self):
-        from packet_generator.stream_encap import GREEncap
+        from packeteer.generate.stream_encap import GREEncap
         args = self._encap_args(gre=["203.0.113.1", "203.0.113.2"])
         result = cli._parse_stream_encap(args)
         self.assertIsInstance(result[0], GREEncap)
@@ -647,37 +643,33 @@ class TestParseStreamEncap(unittest.TestCase):
         self.assertIsNone(result[0].key)
 
     def test_gre_with_key(self):
-        from packet_generator.stream_encap import GREEncap
         args = self._encap_args(gre=["1.2.3.4", "5.6.7.8"], gre_key=9999)
         result = cli._parse_stream_encap(args)
         self.assertEqual(result[0].key, 9999)
 
     def test_gre_with_ttl(self):
-        from packet_generator.stream_encap import GREEncap
         args = self._encap_args(gre=["1.2.3.4", "5.6.7.8"], gre_ttl=128)
         result = cli._parse_stream_encap(args)
         self.assertEqual(result[0].ttl, 128)
 
     def test_etherip_basic(self):
-        from packet_generator.stream_encap import EtherIPEncap
+        from packeteer.generate.stream_encap import EtherIPEncap
         args = self._encap_args(etherip=["10.0.0.1", "10.0.0.2"])
         result = cli._parse_stream_encap(args)
         self.assertIsInstance(result[0], EtherIPEncap)
 
     def test_etherip_with_ttl(self):
-        from packet_generator.stream_encap import EtherIPEncap
         args = self._encap_args(etherip=["10.0.0.1", "10.0.0.2"], etherip_ttl=32)
         result = cli._parse_stream_encap(args)
         self.assertEqual(result[0].ttl, 32)
 
     def test_ipip_basic(self):
-        from packet_generator.stream_encap import IPIPEncap
+        from packeteer.generate.stream_encap import IPIPEncap
         args = self._encap_args(ipip=["10.0.0.1", "10.0.0.2"])
         result = cli._parse_stream_encap(args)
         self.assertIsInstance(result[0], IPIPEncap)
 
     def test_ipip_with_ttl(self):
-        from packet_generator.stream_encap import IPIPEncap
         args = self._encap_args(ipip=["10.0.0.1", "10.0.0.2"], ipip_ttl=32)
         result = cli._parse_stream_encap(args)
         self.assertEqual(result[0].ttl, 32)
@@ -699,7 +691,7 @@ class TestParseStreamEncap(unittest.TestCase):
             cli._parse_stream_encap(args)
 
     def test_mpls_and_ipip_combined(self):
-        from packet_generator.stream_encap import MPLSEncap, IPIPEncap
+        from packeteer.generate.stream_encap import MPLSEncap, IPIPEncap
         args = self._encap_args(mpls=[100, 200], ipip=["1.2.3.4", "5.6.7.8"])
         result = cli._parse_stream_encap(args)
         self.assertEqual(len(result), 2)
@@ -707,7 +699,7 @@ class TestParseStreamEncap(unittest.TestCase):
         self.assertIsInstance(result[1], IPIPEncap)
 
     def test_vlan_and_gre_combined(self):
-        from packet_generator.stream_encap import VLANEncap, GREEncap
+        from packeteer.generate.stream_encap import VLANEncap, GREEncap
         args = self._encap_args(vlan=100, gre=["1.2.3.4", "5.6.7.8"])
         result = cli._parse_stream_encap(args)
         self.assertEqual(len(result), 2)
@@ -715,7 +707,7 @@ class TestParseStreamEncap(unittest.TestCase):
         self.assertIsInstance(result[1], GREEncap)
 
     def test_ordering_vlan_mpls_pppoe_gre(self):
-        from packet_generator.stream_encap import VLANEncap, MPLSEncap, PPPoEEncap, GREEncap
+        from packeteer.generate.stream_encap import VLANEncap, MPLSEncap, PPPoEEncap, GREEncap
         args = self._encap_args(
             vlan=10, mpls=[100], pppoe=1,
             gre=["1.2.3.4", "5.6.7.8"],
@@ -732,37 +724,37 @@ class TestParseStreamEncap(unittest.TestCase):
 class TestCmdStreamWithEncap(unittest.TestCase):
     """End-to-end tests: CLI _cmd_stream with various encap flags."""
 
-    def _base_args(self, **kwargs):
-        defaults = dict(
-            config=None, protocol=None,
-            client_ip="10.0.0.1", server_ip="10.0.0.2",
-            client_port=None, server_port=None,
-            client_mac=None, server_mac=None,
-            packets=3, min_payload=None, max_payload=None,
-            distribution=None, ttl=None, window=None,
-            gap=None, gap_jitter=None,
-            psh_probability=None,
-            packet_loss_probability=None,
-            retransmission_probability=None,
-            retransmission_timeout=None,
-            payload_corruption_probability=None,
-            server_rst_probability=None,
-            rst_propagation_delay=None,
-            no_ethernet=False,
-            mtu=None,
-            stray_packet_count=None,
-            stray_timing_window=None,
-            pcap=None, pcapng=None,
+    def _base_args(self, **kwargs: object) -> argparse.Namespace:
+        defaults: dict[str, object] = {
+            "config": None, "protocol": None,
+            "client_ip": "10.0.0.1", "server_ip": "10.0.0.2",
+            "client_port": None, "server_port": None,
+            "client_mac": None, "server_mac": None,
+            "packets": 3, "min_payload": None, "max_payload": None,
+            "distribution": None, "ttl": None, "window": None,
+            "gap": None, "gap_jitter": None,
+            "psh_probability": None,
+            "packet_loss_probability": None,
+            "retransmission_probability": None,
+            "retransmission_timeout": None,
+            "payload_corruption_probability": None,
+            "server_rst_probability": None,
+            "rst_propagation_delay": None,
+            "no_ethernet": False,
+            "mtu": None,
+            "stray_packet_count": None,
+            "stray_timing_window": None,
+            "pcap": None, "pcapng": None,
             # Encap fields
-            vlan=None, vlan_pcp=None, vlan_dei=None,
-            qinq=None, qinq_outer_pcp=None, qinq_outer_dei=None,
-            qinq_inner_pcp=None, qinq_inner_dei=None,
-            mpls=None, mpls_tc=None, mpls_ttl=None,
-            pppoe=None,
-            gre=None, gre_key=None, gre_ttl=None,
-            etherip=None, etherip_ttl=None,
-            ipip=None, ipip_ttl=None,
-        )
+            "vlan": None, "vlan_pcp": None, "vlan_dei": None,
+            "qinq": None, "qinq_outer_pcp": None, "qinq_outer_dei": None,
+            "qinq_inner_pcp": None, "qinq_inner_dei": None,
+            "mpls": None, "mpls_tc": None, "mpls_ttl": None,
+            "pppoe": None,
+            "gre": None, "gre_key": None, "gre_ttl": None,
+            "etherip": None, "etherip_ttl": None,
+            "ipip": None, "ipip_ttl": None,
+        }
         defaults.update(kwargs)
         return argparse.Namespace(**defaults)
 
@@ -841,7 +833,7 @@ class TestCmdStreamWithEncap(unittest.TestCase):
         self.assertGreater(os.path.getsize(out), 0)
 
     def test_stream_config_file_with_vlan(self):
-        import configparser, textwrap
+        import textwrap
         out = _tmpfile(".pcap")
         fd, ini_path = tempfile.mkstemp(suffix=".ini")
         with os.fdopen(fd, "w") as f:

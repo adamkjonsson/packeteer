@@ -3,7 +3,7 @@ import os
 import sys
 from importlib.metadata import version as _pkg_version, PackageNotFoundError
 
-# Make packet_generator and packet_parser importable without pip install
+# Make packeteer importable without pip install
 sys.path.insert(0, os.path.abspath("../src"))
 
 # ── Project metadata ──────────────────────────────────────────────────────────
@@ -62,6 +62,14 @@ autodoc_default_options = {
 
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
+}
+
+# ── LaTeX / PDF ───────────────────────────────────────────────────────────────
+
+latex_toplevel_sectioning = "part"
+
+latex_elements = {
+    "preamble": r"\setcounter{tocdepth}{2}",
 }
 
 # ── Theme ─────────────────────────────────────────────────────────────────────

@@ -1,11 +1,13 @@
+from __future__ import annotations
+
 import struct
 import unittest
-from packet_generator.ipv6 import IPv6Header, build_ipv6_header
+from packeteer.generate.ipv6 import IPv6Header, _build_ipv6_header
 
 
 class TestIPv6Header(unittest.TestCase):
-    def _make(self, payload=b''):
-        return build_ipv6_header(IPv6Header("::1", "::2", 6), payload)
+    def _make(self, payload: bytes = b'') -> bytes:
+        return _build_ipv6_header(IPv6Header("::1", "::2", 6), payload)
 
     def test_length(self):
         self.assertEqual(len(self._make()), 40)

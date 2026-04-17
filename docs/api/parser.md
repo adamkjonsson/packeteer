@@ -1,53 +1,55 @@
 # Parser
 
-`packet_parser` decodes raw bytes back into the same header dataclasses used
+**Import:** All classes and functions on this page are exported from `packeteer.parse`, e.g. `from packeteer.parse import parse_packet, ParsedPacket, update_config, ethernet_packet_parser`.
+
+`packeteer.parse` decodes raw bytes back into the same header dataclasses used
 by {doc}`../api/header-dataclasses`.  The high-level entry points are
-{func}`~packet_parser.parser.parse_packet` and
-{func}`~packet_parser.parser.parse_pcap_file`.
+{func}`~packeteer.parse.core.parse_packet` and
+{func}`~packeteer.parse.core.parse_pcap_file`.
 
 ---
 
 ## High-level interface
 
 ```{eval-rst}
-.. autoclass:: packet_parser.parser.ParsedPacket
+.. autoclass:: packeteer.parse.core.ParsedPacket
    :members:
 ```
 
 ```{eval-rst}
-.. autofunction:: packet_parser.parser.parse_packet
+.. autofunction:: packeteer.parse.core.parse_packet
 ```
 
 ```{eval-rst}
-.. autofunction:: packet_parser.parser.parse_pcap_packet
+.. autofunction:: packeteer.parse.core.parse_pcap_packet
 ```
 
 ```{eval-rst}
-.. autofunction:: packet_parser.parser.parse_pcap_file
+.. autofunction:: packeteer.parse.core.parse_pcap_file
 ```
 
 ---
 
 ## Packet spec serialisation
 
-These functions convert {class}`~packet_parser.parser.ParsedPacket` objects
+These functions convert {class}`~packeteer.parse.core.ParsedPacket` objects
 (or individual header dataclasses) into the packet spec dict format consumed
 by `packeteer build`.
 
 ```{eval-rst}
-.. autofunction:: packet_parser.to_config.update_config
+.. autofunction:: packeteer.parse.to_config.update_config
 ```
 
 ```{eval-rst}
-.. autofunction:: packet_parser.to_config.apply_tunneled
+.. autofunction:: packeteer.parse.to_config.apply_tunneled
 ```
 
 ```{eval-rst}
-.. autofunction:: packet_parser.to_config.to_packet_spec
+.. autofunction:: packeteer.parse.to_config.to_packet_spec
 ```
 
 ```{eval-rst}
-.. autofunction:: packet_parser.to_config.to_json_string
+.. autofunction:: packeteer.parse.to_config.to_json_string
 ```
 
 ---
@@ -69,15 +71,15 @@ def packet_parser(data: bytes) -> tuple[int, int | None, HeaderType | None]:
 
 | Imported name | Module | Header type |
 |---------------|--------|-------------|
-| `ethernet_packet_parser` | `packet_parser.ethernet` | `EthernetHeader` |
-| `mpls_packet_parser` | `packet_parser.mpls` | `MPLSLabel` |
-| `pppoe_packet_parser` | `packet_parser.pppoe` | `PPPoEHeader` |
-| `ip_packet_parser` | `packet_parser.ip` | `IPHeader` / `IPv6Header` |
-| `tcp_packet_parser` | `packet_parser.tcp` | `TCPHeader` |
-| `udp_packet_parser` | `packet_parser.udp` | `UDPHeader` |
-| `icmp_packet_parser` | `packet_parser.icmp` | `ICMPHeader` |
-| `icmpv6_packet_parser` | `packet_parser.icmpv6` | `ICMPv6Header` |
-| `etherip_packet_parser` | `packet_parser.etherip` | `EtherIPHeader` |
-| `gre_packet_parser` | `packet_parser.gre` | `GREHeader` |
+| `ethernet_packet_parser` | `packeteer.parse.ethernet` | `EthernetHeader` |
+| `mpls_packet_parser` | `packeteer.parse.mpls` | `MPLSLabel` |
+| `pppoe_packet_parser` | `packeteer.parse.pppoe` | `PPPoEHeader` |
+| `ip_packet_parser` | `packeteer.parse.ip` | `IPHeader` / `IPv6Header` |
+| `tcp_packet_parser` | `packeteer.parse.tcp` | `TCPHeader` |
+| `udp_packet_parser` | `packeteer.parse.udp` | `UDPHeader` |
+| `icmp_packet_parser` | `packeteer.parse.icmp` | `ICMPHeader` |
+| `icmpv6_packet_parser` | `packeteer.parse.icmpv6` | `ICMPv6Header` |
+| `etherip_packet_parser` | `packeteer.parse.etherip` | `EtherIPHeader` |
+| `gre_packet_parser` | `packeteer.parse.gre` | `GREHeader` |
 
-All names are exported from `packet_parser` (the top-level package).
+All names are exported from `packeteer.parse` (the top-level package).

@@ -1,14 +1,18 @@
+from __future__ import annotations
+
 import struct
 import unittest
 
-from packet_generator.udp import UDPHeader, build_udp_header
-from packet_parser.udp import packet_parser
+from packeteer.generate.udp import UDPHeader, _build_udp_header
+from packeteer.parse.udp import packet_parser
 
 
-def _udp(src_port=5000, dst_port=53, payload=b"", ip_version=4) -> bytes:
+def _udp(
+    src_port: int = 5000, dst_port: int = 53, payload: bytes = b"", ip_version: int = 4,
+) -> bytes:
     src_ip = "10.0.0.1" if ip_version == 4 else "::1"
     dst_ip = "10.0.0.2" if ip_version == 4 else "::2"
-    return build_udp_header(UDPHeader(src_port, dst_port), payload, src_ip, dst_ip, ip_version)
+    return _build_udp_header(UDPHeader(src_port, dst_port), payload, src_ip, dst_ip, ip_version)
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +92,7 @@ class TestParserUDPFailure(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Roundtrip: packet_generator → packet_parser
+# Roundtrip: packeteer.generate → packeteer.parse
 # ---------------------------------------------------------------------------
 
 class TestParserUDPRoundtrip(unittest.TestCase):
@@ -126,7 +130,7 @@ class TestParserUDPRoundtrip(unittest.TestCase):
 
     def test_roundtrip_header_equals_original(self):
         orig = UDPHeader(src_port=54321, dst_port=8080)
-        raw = build_udp_header(orig, b"", "10.0.0.1", "10.0.0.2")
+        raw = _build_udp_header(orig, b"", "10.0.0.1", "10.0.0.2")
         _, _, hdr = packet_parser(raw)
         self.assertEqual(hdr.src_port, orig.src_port)
         self.assertEqual(hdr.dst_port, orig.dst_port)

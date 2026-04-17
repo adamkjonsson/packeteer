@@ -98,7 +98,7 @@ flag names: `packet_loss` (flag: `--packet-loss`) and `server_rst` (flag:
 `--server-rst`).
 
 A fully commented template is at
-[stream.ini.template](../../src/packet_generator/stream.ini.template).
+[stream.ini.template](../../src/packeteer/generate/stream.ini.template).
 
 ```ini
 [stream]

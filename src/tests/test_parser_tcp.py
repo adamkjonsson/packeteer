@@ -1,21 +1,24 @@
+from __future__ import annotations
+
 import struct
 import unittest
 
-from packet_generator.tcp import (
-    TCPHeader, TCPOptions, build_tcp_header,
+from packeteer.generate.tcp import (
+    TCPHeader, TCPOptions, _build_tcp_header,
     TCP_SYN, TCP_ACK, TCP_FIN, TCP_RST, TCP_PSH,
 )
-from packet_parser.tcp import packet_parser
+from packeteer.parse.tcp import packet_parser
 
 
 def _tcp(
-    src_port=12345, dst_port=80, seq=0, ack=0,
-    flags=TCP_ACK, payload=b"", ip_version=4, options=None,
+    src_port: int = 12345, dst_port: int = 80, seq: int = 0, ack: int = 0,
+    flags: int = TCP_ACK, payload: bytes = b"", ip_version: int = 4,
+    options: TCPOptions | None = None,
 ) -> bytes:
     src_ip = "10.0.0.1" if ip_version == 4 else "::1"
     dst_ip = "10.0.0.2" if ip_version == 4 else "::2"
     hdr = TCPHeader(src_port, dst_port, seq=seq, ack=ack, flags=flags, options=options)
-    return build_tcp_header(hdr, payload, src_ip, dst_ip, ip_version)
+    return _build_tcp_header(hdr, payload, src_ip, dst_ip, ip_version)
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +127,8 @@ class TestParserTCPOptions(unittest.TestCase):
     def test_full_syn_options_header_size(self):
         # MSS(4) + WindowScale(3) + SACK Permitted(2) + Timestamps(10) = 19 → padded to 20
         # data_offset = 5 + 20//4 = 10 → header = 40
-        raw = _tcp(options=TCPOptions(mss=1460, window_scale=7, sack_permitted=True, timestamps=(0, 0)))
+        raw = _tcp(options=TCPOptions(mss=1460, window_scale=7, sack_permitted=True,
+                                    timestamps=(0, 0)))
         size, _, hdr = packet_parser(raw)
         self.assertEqual(size, 40)
 
@@ -171,7 +175,7 @@ class TestParserTCPFailure(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Roundtrip: packet_generator → packet_parser
+# Roundtrip: packeteer.generate → packeteer.parse
 # ---------------------------------------------------------------------------
 
 class TestParserTCPRoundtrip(unittest.TestCase):
@@ -216,10 +220,10 @@ class TestParserTCPRoundtrip(unittest.TestCase):
         self.assertEqual(dst_port, 80)
 
     def test_roundtrip_header_equals_original(self):
-        from packet_generator.tcp import TCPHeader
+        from packeteer.generate.tcp import TCPHeader
         orig = TCPHeader(src_port=54321, dst_port=8080, seq=0x11223344, ack=0x55667788,
                          flags=TCP_SYN | TCP_ACK, window=4096)
-        raw = build_tcp_header(orig, b"", "10.0.0.1", "10.0.0.2", 4)
+        raw = _build_tcp_header(orig, b"", "10.0.0.1", "10.0.0.2", 4)
         _, _, hdr = packet_parser(raw)
         self.assertEqual(hdr.src_port, orig.src_port)
         self.assertEqual(hdr.dst_port, orig.dst_port)
