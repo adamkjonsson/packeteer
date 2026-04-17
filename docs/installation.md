@@ -32,10 +32,21 @@ To build the documentation locally:
 
 ```bash
 pip install -r docs/requirements.txt
-cd docs && make html
 ```
 
-The rendered output appears at `docs/_build/html/index.html`.
+Then from the `docs/` directory:
+
+| Target | Command | Output |
+|--------|---------|--------|
+| HTML (incremental) | `make html` | `_build/html/index.html` |
+| HTML (clean, reinstalls package) | `make fresh` | `_build/html/index.html` |
+| PDF (incremental) | `make pdf` | `_build/latex/packeteer.pdf` |
+| PDF (clean, reinstalls package) | `make fresh-pdf` | `_build/latex/packeteer.pdf` |
+
+Use `make fresh` or `make fresh-pdf` after a version bump — they reinstall the
+package so the version number in the rendered output is always up to date.
+
+PDF builds require a TeX distribution with `latexmk` (e.g. `brew install --cask mactex` on macOS).
 
 ---
 

@@ -5,7 +5,7 @@
 packeteer has two primary data representations that it converts between:
 
 ```
-raw bytes (pcap)  ──parse──▶  packet spec dict  ──build──▶  raw bytes (pcap)
+raw bytes (pcap)  --parse--→  packet spec dict  --build--→  raw bytes (pcap)
 ```
 
 The **packet spec dict** is the pivot format.  It mirrors the wire layout of a
@@ -16,21 +16,21 @@ dict; the CLI simply drives them from the command line.
 ## Components
 
 ```
-┌────────────────────────────────────────────────────────────────────┐
-│  packeteer_cli.py                                                  │
-│  (parse / build / sanitise / stream subcommands)                   │
-└──────────────┬────────────────────────────────┬────────────────────┘
-               │                                │
-    ┌──────────▼──────────┐        ┌────────────▼────────────┐
-    │  packeteer/parse/     │        │  packeteer/generate/      │
-    │  parser.py          │        │  builder.py             │
-    │  to_config.py       │        │  tcp_stream.py  …       │
-    └──────────┬──────────┘        └────────────┬────────────┘
-               │                                │
-    ┌──────────▼──────────┐        ┌────────────▼────────────┐
-    │  Parsed header      │        │  Raw packet bytes       │
-    │  dataclasses        │        │  (to pcap / pcapng)     │
-    └─────────────────────┘        └─────────────────────────┘
++--------------------------------------------------------------------+
+|  packeteer_cli.py                                                  |
+|  (parse / build / sanitise / stream subcommands)                   |
++--------------+--------------------------------+--------------------+
+               |                                |
+    +----------v----------+        +------------v------------+
+    |  packeteer/parse/   |        |  packeteer/generate/    |
+    |  parser.py          |        |  builder.py             |
+    |  to_config.py       |        |  tcp_stream.py ...      |
+    +----------+----------+        +------------+------------+
+               |                                |
+    +----------v----------+        +------------v------------+
+    |  Parsed header      |        |  Raw packet bytes       |
+    |  dataclasses        |        |  (to pcap / pcapng)     |
+    +---------------------+        +-------------------------+
 ```
 
 **`packeteer.parse`** reads raw bytes and produces `ParsedPacket` objects, which

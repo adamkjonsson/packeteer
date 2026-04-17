@@ -212,15 +212,6 @@ def _build_tcp_header(
         OSError: If *src_ip* or *dst_ip* is not a valid address for the
             specified *ip_version*.
 
-    Example:
-        >>> from packeteer.generate.tcp import TCPHeader, _build_tcp_header
-        >>> hdr = TCPHeader(src_port=12345, dst_port=80)
-        >>> raw = _build_tcp_header(hdr, b"GET / HTTP/1.0\\r\\n", "10.0.0.1", "10.0.0.2")
-        >>> len(raw)
-        20
-        >>> (raw[12] >> 4)  # data offset (should be 5)
-        5
-
     """
     options_bytes = _build_options(hdr.options) if hdr.options is not None else b""
     data_offset = 5 + len(options_bytes) // 4   # in 32-bit words

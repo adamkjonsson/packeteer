@@ -84,16 +84,6 @@ def _build_ip_header(hdr: IPHeader, payload: bytes) -> bytes:
         OSError: If *hdr.src* or *hdr.dst* is not a valid IPv4 address
             (raised by :func:`socket.inet_aton`).
 
-    Example:
-        >>> from packeteer.generate.ip import IPHeader, _build_ip_header
-        >>> import socket
-        >>> hdr = IPHeader("10.0.0.1", "10.0.0.2", socket.IPPROTO_TCP)
-        >>> raw = _build_ip_header(hdr, b"\x00" * 20)
-        >>> len(raw)
-        20
-        >>> raw[0]  # version=4, IHL=5
-        69
-
     """
     total_length = 20 + len(payload)
     flags_frag = (hdr.flags << 13) | hdr.fragment_offset

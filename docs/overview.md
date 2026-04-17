@@ -6,7 +6,7 @@ and a human-readable packet spec format.
 ## The core workflow
 
 ```
-pcap file  ──parse──▶  packet spec  ──build──▶  pcap file
+pcap file  --parse--→  packet spec  --build--→  pcap file
 ```
 
 **Parsing** (`packeteer parse`) reads a `.pcap` or `.pcapng` capture and

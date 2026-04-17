@@ -78,15 +78,6 @@ def _build_ipv6_header(hdr: IPv6Header, payload: bytes) -> bytes:
         OSError: If *hdr.src* or *hdr.dst* is not a valid IPv6 address
             (raised by :func:`socket.inet_pton`).
 
-    Example:
-        >>> from packeteer.generate.ipv6 import IPv6Header, _build_ipv6_header
-        >>> hdr = IPv6Header("::1", "::2", next_header=6)
-        >>> raw = _build_ipv6_header(hdr, b"\\x00" * 20)
-        >>> len(raw)
-        40
-        >>> (raw[0] >> 4)  # version nibble
-        6
-
     """
     version_tc_fl = (6 << 28) | (hdr.traffic_class << 20) | (hdr.flow_label & 0xFFFFF)
     src = socket.inet_pton(socket.AF_INET6, hdr.src)

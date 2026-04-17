@@ -30,10 +30,10 @@ fill the protocol-number placeholder.
 
 ```
   index 0         index 1         index 2
-  Ethernet   ←    IP         ←    TCP         ← payload bytes
+  Ethernet   <-    IP         <-    TCP         <- payload bytes
   (ethertype      (protocol         |
    filled from     filled from      |
-   _layers[1])    _layers[2])       ▼
+   _layers[1])    _layers[2])       v
                                  _assemble_range builds right-to-left
 ```
 

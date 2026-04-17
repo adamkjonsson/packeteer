@@ -64,6 +64,14 @@ intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
 }
 
+# ── LaTeX / PDF ───────────────────────────────────────────────────────────────
+
+latex_toplevel_sectioning = "part"
+
+latex_elements = {
+    "preamble": r"\setcounter{tocdepth}{2}",
+}
+
 # ── Theme ─────────────────────────────────────────────────────────────────────
 
 html_theme = "furo"
