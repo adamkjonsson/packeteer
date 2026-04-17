@@ -1,5 +1,7 @@
 # Header Dataclasses
 
+**Import:** All classes and constants on this page are exported from `packeteer.generate` and can be imported directly from there, e.g. `from packeteer.generate import EthernetHeader, IPHeader, TCPHeader`.
+
 Every protocol layer is represented by a plain dataclass.
 {class}`~packeteer.generate.builder.PacketBuilder` stores instances of these
 classes internally and they are also returned by the parser functions in

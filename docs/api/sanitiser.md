@@ -1,5 +1,7 @@
 # Sanitiser
 
+**Import:** `from packeteer.sanitise import sanitise, SanitiseOptions`
+
 `packeteer.sanitise.sanitise` replaces sensitive fields in a packet config dict with
 deterministic synthetic values drawn from IANA-reserved address ranges.  The
 original dict is never modified.

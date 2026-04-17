@@ -1,5 +1,7 @@
 # Parser
 
+**Import:** All classes and functions on this page are exported from `packeteer.parse`, e.g. `from packeteer.parse import parse_packet, ParsedPacket, update_config, ethernet_packet_parser`.
+
 `packeteer.parse` decodes raw bytes back into the same header dataclasses used
 by {doc}`../api/header-dataclasses`.  The high-level entry points are
 {func}`~packeteer.parse.core.parse_packet` and

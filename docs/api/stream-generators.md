@@ -1,5 +1,7 @@
 # Stream Generators
 
+**Import:** All classes and functions on this page are exported from `packeteer.generate`, e.g. `from packeteer.generate import generate_tcp_stream, TCPStreamConfig`.
+
 `packeteer.generate` provides three stream generators — TCP, UDP, and SCTP — each
 producing a typed stream object whose `.packets` list can be written to pcap,
 pcapng, or packet spec, or inspected and modified before output.

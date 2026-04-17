@@ -69,7 +69,7 @@ Optional parameters are grouped into a `TCPStreamConfig` dataclass.  Pass an
 instance as the `config` keyword argument; any field left unset uses its default.
 
 ```python
-from packeteer.generate.tcp_stream import TCPStreamConfig
+from packeteer.generate import TCPStreamConfig
 
 stream = generate_tcp_stream(
     client_ip="10.0.0.1",
@@ -109,7 +109,7 @@ independent, packets can overtake each other, producing genuine out-of-order
 timestamps in the sorted stream.
 
 ```python
-from packeteer.generate.tcp_stream import TCPStreamConfig
+from packeteer.generate import TCPStreamConfig
 
 # 1 ms base gap with up to 0.8 ms extra jitter
 stream = generate_tcp_stream(
@@ -157,7 +157,7 @@ the SYN and SYN-ACK:
 
 ```python
 from packeteer.generate import TCPOptions
-from packeteer.generate.tcp_stream import TCPStreamConfig
+from packeteer.generate import TCPStreamConfig
 
 stream = generate_tcp_stream(
     client_ip="10.0.0.1", server_ip="10.0.0.2",
@@ -330,7 +330,7 @@ are chosen from the `[min_payload, max_payload]` range:
 Pass an explicit `payload_sizes` list to override the distribution entirely:
 
 ```python
-from packeteer.generate.tcp_stream import TCPStreamConfig
+from packeteer.generate import TCPStreamConfig
 
 stream = generate_tcp_stream(
     client_ip="10.0.0.1", server_ip="10.0.0.2",
@@ -460,7 +460,7 @@ to drop the packet.
 
 ```python
 from dataclasses import replace
-from packeteer.generate.tcp_stream import TCPStreamConfig
+from packeteer.generate import TCPStreamConfig
 
 def corrupt_checksum(pkt, idx):
     """Flip the last two bytes of packet 5 to corrupt the TCP checksum."""

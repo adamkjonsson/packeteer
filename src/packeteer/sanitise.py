@@ -28,7 +28,7 @@ Replacement strategy
 Example::
 
     import json
-    from replacer import sanitise, SanitiseOptions
+    from packeteer.sanitise import sanitise, SanitiseOptions
 
     with open("capture.json") as f:
         config = json.load(f)
@@ -44,6 +44,7 @@ import copy
 import ipaddress
 from dataclasses import dataclass, field
 
+__all__ = ["sanitise", "SanitiseOptions"]
 
 # ── RFC 5737 IPv4 documentation blocks ───────────────────────────────────────
 

@@ -1,5 +1,7 @@
 # `PacketBuilder`
 
+**Import:** `from packeteer.generate import PacketBuilder`
+
 {class}`~packeteer.generate.builder.PacketBuilder` is the primary entry point
 for constructing raw network packets.  Each fluent method **appends** one
 layer to an ordered stack; call `.build()` or `.fragment()` to assemble the
