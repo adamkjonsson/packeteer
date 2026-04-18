@@ -16,7 +16,7 @@ html:
 clean:
 	@rm -rf "$(BUILDDIR)"
 
-fresh:
+fresh-html:
 	@cd .. && .venv/bin/pip install -e . -q
 	@$(SPHINXBUILD) -aE "$(SOURCEDIR)" "$(BUILDDIR)/html" $(SPHINXOPTS) $(O)
 
