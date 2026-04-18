@@ -50,6 +50,7 @@ pkt = parse_packet(raw, link_type=LINKTYPE_RAW)
 | `tunneled` | `ParsedPacket \| None` | Recursively parsed inner packet for IP-in-IP, GRE, or EtherIP; may itself have a `tunneled` field |
 | `transport` | `TCPHeader \| UDPHeader \| ICMPHeader \| ICMPv6Header \| SCTPHeader \| None` | Transport-layer header |
 | `dns` | `DNSMessage \| None` | Decoded DNS or mDNS message when the transport is UDP or TCP on port 53 or 5353; `None` otherwise |
+| `dhcp` | `DHCPMessage \| None` | Decoded DHCP message when the transport is UDP on port 67 or 68; `None` otherwise |
 | `payload` | `bytes` | Bytes after the last parsed header; empty when `dns` is set |
 | `ts_sec` | `int` | Capture timestamp — whole seconds (set by `parse_pcap_packet`) |
 | `ts_frac` | `int` | Capture timestamp — microsecond or nanosecond fraction (set by `parse_pcap_packet`) |
@@ -119,6 +120,44 @@ automatically when the transport port is 53 or 5353 and the transport is TCP.
 Name compression pointers (RFC 1035 §4.1.4) are fully resolved, and pointer
 loops are detected and reported as `ValueError`.  Failed DNS parses leave the
 raw bytes in `pkt.payload` unchanged so nothing is silently lost.
+
+## DHCP packets
+
+When a **UDP** packet has port 67 or 68 as source or destination, the payload
+is automatically decoded as a DHCP message (RFC 2131).  The result is stored
+in `pkt.dhcp`; `pkt.payload` is empty in that case.
+
+```python
+from packeteer.generate import (
+    PacketBuilder,
+    DHCPMessage, DHCPOptMessageType, DHCP_OP_REQUEST, DHCP_MSG_DISCOVER,
+    DHCP_PORT_CLIENT, DHCP_PORT_SERVER,
+)
+from packeteer.parse import parse_packet
+
+chaddr = bytes.fromhex("aabbccddeeff") + b"\x00" * 10
+discover = DHCPMessage(
+    op=DHCP_OP_REQUEST,
+    xid=0xDEADBEEF,
+    chaddr=chaddr,
+    options=[DHCPOptMessageType(DHCP_MSG_DISCOVER)],
+)
+raw = (PacketBuilder()
+    .ethernet()
+    .ip(src="0.0.0.0", dst="255.255.255.255")
+    .udp(src_port=DHCP_PORT_CLIENT, dst_port=DHCP_PORT_SERVER)
+    .dhcp(discover)
+    .build()
+)
+
+pkt = parse_packet(raw)
+assert pkt.dhcp is not None
+print(hex(pkt.dhcp.xid))              # 0xdeadbeef
+print(pkt.dhcp.chaddr.hex()[:12])     # "aabbccddeeff"
+from packeteer.generate import DHCPOptMessageType
+mtype = next(o for o in pkt.dhcp.options if isinstance(o, DHCPOptMessageType))
+print(mtype.mtype)                    # 1  (DHCP_MSG_DISCOVER)
+```
 
 ## Tunnel packets
 
@@ -269,6 +308,7 @@ json_str = to_json_string(to_packet_spec(packet_configs))
 | `IPHeader` / `IPv6Header` | `cfg["network"]` |
 | `TCPHeader` / `UDPHeader` / `ICMPHeader` / `ICMPv6Header` / `SCTPHeader` | `cfg["transport"]` |
 | `DNSMessage` | `cfg["dns"]` |
+| `DHCPMessage` | `cfg["dhcp"]` |
 | `bytes` | `cfg["payload"]["data"]` as hex |
 
 `apply_tunneled` handles GRE, EtherIP, and IP-in-IP, which require the full

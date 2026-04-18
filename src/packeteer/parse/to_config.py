@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import json
 import socket
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from .core import ParsedPacket
@@ -84,6 +84,34 @@ from packeteer.generate.sctp import (
     SCTPCookieAckChunk,
     SCTPShutdownCompleteChunk,
     SCTPChunk,
+)
+from packeteer.generate.dhcp import (
+    DHCPMessage,
+    DHCPOptMessageType,
+    DHCPOptSubnetMask,
+    DHCPOptRouter,
+    DHCPOptDNSServer,
+    DHCPOptHostname,
+    DHCPOptDomainName,
+    DHCPOptRequestedIP,
+    DHCPOptLeaseTime,
+    DHCPOptServerID,
+    DHCPOptParamRequestList,
+    DHCPOptVendorClassID,
+    DHCPOptClientID,
+    DHCPOptRaw,
+    DHCP_OPT_MESSAGE_TYPE,
+    DHCP_OPT_SUBNET_MASK,
+    DHCP_OPT_ROUTER,
+    DHCP_OPT_DNS_SERVER,
+    DHCP_OPT_HOSTNAME,
+    DHCP_OPT_DOMAIN_NAME,
+    DHCP_OPT_REQUESTED_IP,
+    DHCP_OPT_LEASE_TIME,
+    DHCP_OPT_SERVER_ID,
+    DHCP_OPT_PARAM_REQUEST_LIST,
+    DHCP_OPT_VENDOR_CLASS_ID,
+    DHCP_OPT_CLIENT_ID,
 )
 
 _PROTO_TO_STR: dict[int, str] = {
@@ -454,12 +482,60 @@ def _apply_dns(config: dict[str, Any], msg: DNSMessage) -> None:
     }
 
 
+# ── DHCP serialisation ────────────────────────────────────────────────────────
+
+_DHCP_SERIALISERS: dict[type, Callable[[Any], dict[str, Any]]] = {
+    DHCPOptMessageType:      lambda o: {"code": DHCP_OPT_MESSAGE_TYPE, "mtype": o.mtype},
+    DHCPOptSubnetMask:       lambda o: {"code": DHCP_OPT_SUBNET_MASK, "mask": o.mask},
+    DHCPOptRouter:           lambda o: {"code": DHCP_OPT_ROUTER, "routers": list(o.routers)},
+    DHCPOptDNSServer:        lambda o: {"code": DHCP_OPT_DNS_SERVER, "servers": list(o.servers)},
+    DHCPOptHostname:         lambda o: {"code": DHCP_OPT_HOSTNAME, "hostname": o.hostname},
+    DHCPOptDomainName:       lambda o: {"code": DHCP_OPT_DOMAIN_NAME, "domain": o.domain},
+    DHCPOptRequestedIP:      lambda o: {"code": DHCP_OPT_REQUESTED_IP, "address": o.address},
+    DHCPOptLeaseTime:        lambda o: {"code": DHCP_OPT_LEASE_TIME, "seconds": o.seconds},
+    DHCPOptServerID:         lambda o: {"code": DHCP_OPT_SERVER_ID, "address": o.address},
+    DHCPOptParamRequestList: lambda o: {
+        "code": DHCP_OPT_PARAM_REQUEST_LIST, "codes": list(o.codes)},
+    DHCPOptVendorClassID:    lambda o: {"code": DHCP_OPT_VENDOR_CLASS_ID, "data": o.data.hex()},
+    DHCPOptClientID:         lambda o: {"code": DHCP_OPT_CLIENT_ID, "data": o.data.hex()},
+}
+
+
+def _serialise_dhcp_option(opt: object) -> dict[str, Any]:
+    """Serialise a single DHCP option to a JSON-compatible dict."""
+    fn = _DHCP_SERIALISERS.get(type(opt))
+    if fn is not None:
+        return fn(opt)
+    assert isinstance(opt, DHCPOptRaw)
+    return {"code": opt.code, "data": opt.data.hex()}
+
+
+def _apply_dhcp(config: dict[str, Any], msg: DHCPMessage) -> None:
+    config["dhcp"] = {
+        "op":      msg.op,
+        "htype":   msg.htype,
+        "hlen":    msg.hlen,
+        "hops":    msg.hops,
+        "xid":     msg.xid,
+        "secs":    msg.secs,
+        "flags":   msg.flags,
+        "ciaddr":  msg.ciaddr,
+        "yiaddr":  msg.yiaddr,
+        "siaddr":  msg.siaddr,
+        "giaddr":  msg.giaddr,
+        "chaddr":  msg.chaddr.hex(),
+        "sname":   msg.sname.rstrip(b"\x00").decode("ascii", errors="replace"),
+        "file":    msg.file.rstrip(b"\x00").decode("ascii", errors="replace"),
+        "options": [_serialise_dhcp_option(o) for o in msg.options],
+    }
+
+
 def update_config(
     config: dict[str, Any],
     layer: (
         EthernetHeader | PPPoEHeader | MPLSLabel | IPHeader | IPv6Header
         | TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | SCTPHeader
-        | DNSMessage | bytes
+        | DNSMessage | DHCPMessage | bytes
     ),
 ) -> dict[str, Any]:
     """Add a parsed protocol layer to *config* and return it.
@@ -481,6 +557,7 @@ def update_config(
     - :class:`~packeteer.generate.icmp.ICMPHeader` /
       :class:`~packeteer.generate.icmpv6.ICMPv6Header` → ``transport`` section (ICMP fields)
     - :class:`~packeteer.generate.dns.DNSMessage` → ``dns`` section
+    - :class:`~packeteer.generate.dhcp.DHCPMessage` → ``dhcp`` section
     - :class:`bytes` → ``payload`` section (encoded as a hex string)
 
     Modifies *config* in-place and returns it so calls can be chained::
@@ -510,6 +587,8 @@ def update_config(
         _apply_transport(config, layer)
     elif isinstance(layer, DNSMessage):
         _apply_dns(config, layer)
+    elif isinstance(layer, DHCPMessage):
+        _apply_dhcp(config, layer)
     elif isinstance(layer, bytes):
         _apply_payload(config, layer)
     else:

@@ -4,7 +4,8 @@
 packeteer sanitise <FILE> [--output <output.json>]
                           [--pcap <output.pcap>] [--pcapng <output.pcapng>]
                           [--no-ips] [--no-macs]
-                          [--ports] [--payload] [--timestamps] [--dns-ids]
+                          [--ports] [--payload] [--timestamps]
+                          [--dns-ids] [--dhcp-xids]
 ```
 
 `FILE` may be a JSON packet spec **or** a pcap/pcapng capture file.  When a
@@ -25,9 +26,25 @@ magic number, not its extension.
 | `--payload` | Zero out payload bytes |
 | `--timestamps` | Zero out packet timestamps |
 | `--dns-ids` | Zero out DNS transaction IDs (default: kept) |
+| `--dhcp-xids` | Zero out DHCP transaction IDs / `xid` fields (default: kept) |
 
 `--output`, `--pcap`, and `--pcapng` are independent and may be combined.
 When none are given the sanitised packet spec is printed to stdout.
+
+## DHCP sanitisation
+
+DHCP IP fields and the client hardware address are sanitised automatically
+whenever a `dhcp` section is present — no extra flag is needed.  The
+following replacements are applied:
+
+- **Fixed IP fields** — `ciaddr`, `yiaddr`, `siaddr`, `giaddr` (skipped when
+  `"0.0.0.0"`).
+- **Client hardware address** (`chaddr`) — first six bytes treated as MAC;
+  replaced consistently with other MAC addresses.  Pass `--no-macs` to keep
+  it unchanged.
+- **Option IPs** — subnet mask, requested IP, server ID, routers list, DNS
+  servers list.  Pass `--no-ips` to keep all DHCP addresses unchanged.
+- **Transaction ID** (`xid`) — kept by default; add `--dhcp-xids` to zero it.
 
 ## DNS sanitisation
 

@@ -440,6 +440,83 @@ automatically (RFC 1035 §4.2.2) when the enclosing transport is TCP.
 
 ---
 
+(packet-spec-dhcp)=
+## `dhcp`
+
+An optional DHCP message (RFC 2131 / RFC 2132).  When present, `dhcp` is
+encoded as the UDP payload.  Use with `transport.src_port` or
+`transport.dst_port` set to 67 (server) or 68 (client).
+
+### `dhcp` fixed fields
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `op` | `1` | Message op code: `1` = BOOTREQUEST, `2` = BOOTREPLY |
+| `htype` | `1` | Hardware address type: `1` = Ethernet |
+| `hlen` | `6` | Hardware address length in bytes |
+| `hops` | `0` | Relay agent hop count |
+| `xid` | `0` | 32-bit transaction identifier |
+| `secs` | `0` | Seconds since client began address acquisition |
+| `flags` | `0` | Flags word; set bit 15 (`32768`) to request broadcast reply |
+| `ciaddr` | `"0.0.0.0"` | Client IP address |
+| `yiaddr` | `"0.0.0.0"` | "Your" IP — address offered/assigned by the server |
+| `siaddr` | `"0.0.0.0"` | IP of next bootstrap server |
+| `giaddr` | `"0.0.0.0"` | Relay agent IP |
+| `chaddr` | `"000000000000" + "00"×10` | Client hardware address as 32-char hex string (16 bytes) |
+| `sname` | `""` | Server host name (up to 64 bytes) |
+| `file` | `""` | Boot file name (up to 128 bytes) |
+| `options` | `[]` | Array of option objects; see below |
+
+### `dhcp.options` entries
+
+Each entry has a `code` field that selects the option type.
+
+| `code` | Additional fields | Description |
+|--------|-------------------|-------------|
+| `1` | `address` (string) | Subnet mask |
+| `3` | `routers` (array of strings) | Router IPv4 addresses |
+| `6` | `servers` (array of strings) | DNS server IPv4 addresses |
+| `12` | `hostname` (string) | Client hostname |
+| `15` | `domain` (string) | Domain name |
+| `50` | `address` (string) | Requested IP address |
+| `51` | `seconds` (integer) | Lease time in seconds |
+| `53` | `mtype` (integer) | DHCP message type (1–8) |
+| `54` | `address` (string) | Server identifier |
+| `55` | `codes` (array of integers) | Parameter request list |
+| `60` | `data` (hex string) | Vendor class identifier |
+| `61` | `data` (hex string) | Client identifier |
+| *(other)* | `data` (hex string) | Raw option data |
+
+### DHCP example (DHCPDISCOVER)
+
+```json
+{
+  "metadata": { "nanoseconds": false },
+  "packets": [{
+    "ethernet":  { "src_mac": "aa:bb:cc:dd:ee:ff", "dst_mac": "ff:ff:ff:ff:ff:ff" },
+    "network":   { "src": "0.0.0.0", "dst": "255.255.255.255", "protocol": "udp" },
+    "transport": { "src_port": 68, "dst_port": 67 },
+    "dhcp": {
+      "op": 1, "htype": 1, "hlen": 6, "hops": 0,
+      "xid": 305419896,
+      "secs": 0, "flags": 0,
+      "ciaddr": "0.0.0.0", "yiaddr": "0.0.0.0",
+      "siaddr": "0.0.0.0", "giaddr": "0.0.0.0",
+      "chaddr": "aabbccddeeff00000000000000000000",
+      "sname": "", "file": "",
+      "options": [
+        { "code": 53, "mtype": 1 },
+        { "code": 50, "address": "192.168.1.50" },
+        { "code": 55, "codes": [1, 3, 6, 15] }
+      ]
+    },
+    "packet_metadata": { "timestamp_s": 0, "timestamp_us": 0 }
+  }]
+}
+```
+
+---
+
 (packet-spec-payload)=
 ## `payload`
 

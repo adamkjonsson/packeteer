@@ -12,6 +12,12 @@ RFCs implemented or referenced by this library.
 * - [RFC 768](https://datatracker.ietf.org/doc/html/rfc768)
   - User Datagram Protocol
   - `UDPHeader`
+* - [RFC 2131](https://datatracker.ietf.org/doc/html/rfc2131)
+  - Dynamic Host Configuration Protocol (DHCP)
+  - `DHCPMessage`, `packeteer.generate.dhcp`, `packeteer.parse.dhcp`; fixed 236-byte header, magic cookie, port 67/68 dispatch
+* - [RFC 2132](https://datatracker.ietf.org/doc/html/rfc2132)
+  - DHCP Options and BOOTP Vendor Extensions
+  - All typed `DHCPOpt*` dataclasses; TLV option encoding/decoding
 * - [RFC 1035](https://datatracker.ietf.org/doc/html/rfc1035)
   - Domain Names — Implementation and Specification (DNS)
   - `DNSMessage`, `packeteer.generate.dns`, `packeteer.parse.dns`; name compression (§4.1.4); TCP length prefix (§4.2.2)

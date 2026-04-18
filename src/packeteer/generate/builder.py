@@ -130,6 +130,7 @@ from .pppoe import (
 )
 from .sctp import SCTPHeader, SCTPChunk, IPPROTO_SCTP, _build_sctp_packet
 from .dns import DNSMessage, _build_dns_message, _build_dns_message_tcp
+from .dhcp import DHCPMessage, _build_dhcp_message
 
 # ── protocol-number helpers ───────────────────────────────────────────────────
 
@@ -597,6 +598,21 @@ class PacketBuilder:
         """
         data = _build_dns_message_tcp(msg) if tcp else _build_dns_message(msg)
         return self.payload(data=data)
+
+    def dhcp(self, msg: DHCPMessage) -> "PacketBuilder":
+        """Set the payload to a serialised DHCP message.
+
+        A convenience wrapper around :meth:`payload` for DHCP traffic.
+        DHCP runs over UDP only; use :meth:`udp` with
+        :data:`~packeteer.generate.dhcp.DHCP_PORT_SERVER` (67) and
+        :data:`~packeteer.generate.dhcp.DHCP_PORT_CLIENT` (68) before calling
+        this method.
+
+        Args:
+            msg: The :class:`~packeteer.generate.dhcp.DHCPMessage` to encode.
+
+        """
+        return self.payload(data=_build_dhcp_message(msg))
 
     def payload(self, *, size: int = 0, data: bytes | None = None) -> "PacketBuilder":
         """Set the packet payload.

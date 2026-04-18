@@ -33,6 +33,7 @@ import configparser
 import json
 import sys
 from importlib.metadata import version as _pkg_version, PackageNotFoundError as _PkgNotFoundError
+from typing import Callable
 from packeteer.generate import PacketBuilder
 from packeteer.generate.tcp import TCPOptions
 from packeteer.generate.dns import (
@@ -42,6 +43,17 @@ from packeteer.generate.dns import (
     DNSFlags, DNSMessage, DNSQuestion, DNSResourceRecord,
     DNSRDataA, DNSRDataAAAA, DNSRDataCNAME, DNSRDataNS, DNSRDataPTR,
     DNSRDataMX, DNSRDataSOA, DNSRDataTXT, DNSRDataRaw,
+)
+from packeteer.generate.dhcp import (
+    DHCP_OPT_MESSAGE_TYPE, DHCP_OPT_SUBNET_MASK, DHCP_OPT_ROUTER,
+    DHCP_OPT_DNS_SERVER, DHCP_OPT_HOSTNAME, DHCP_OPT_DOMAIN_NAME,
+    DHCP_OPT_REQUESTED_IP, DHCP_OPT_LEASE_TIME, DHCP_OPT_SERVER_ID,
+    DHCP_OPT_PARAM_REQUEST_LIST, DHCP_OPT_VENDOR_CLASS_ID, DHCP_OPT_CLIENT_ID,
+    DHCPMessage,
+    DHCPOptMessageType, DHCPOptSubnetMask, DHCPOptRouter, DHCPOptDNSServer,
+    DHCPOptHostname, DHCPOptDomainName, DHCPOptRequestedIP, DHCPOptLeaseTime,
+    DHCPOptServerID, DHCPOptParamRequestList, DHCPOptVendorClassID,
+    DHCPOptClientID, DHCPOptRaw, DHCPOpt,
 )
 from packeteer.pcap import (
     write_pcap, write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW, is_pcap_or_pcapng,
@@ -151,6 +163,56 @@ def _build_dns_from_spec(spec: dict) -> DNSMessage:
         answers=_rrs("answers"),
         authority=_rrs("authority"),
         additional=_rrs("additional"),
+    )
+
+
+_DHCP_OPTION_BUILDERS: dict[int, Callable[[dict], DHCPOpt]] = {  # type: ignore[valid-type]
+    DHCP_OPT_MESSAGE_TYPE:       lambda d: DHCPOptMessageType(mtype=d.get("mtype", 1)),
+    DHCP_OPT_SUBNET_MASK:        lambda d: DHCPOptSubnetMask(mask=d.get("mask", "255.255.255.0")),
+    DHCP_OPT_ROUTER:             lambda d: DHCPOptRouter(routers=d.get("routers", [])),
+    DHCP_OPT_DNS_SERVER:         lambda d: DHCPOptDNSServer(servers=d.get("servers", [])),
+    DHCP_OPT_HOSTNAME:           lambda d: DHCPOptHostname(hostname=d.get("hostname", "")),
+    DHCP_OPT_DOMAIN_NAME:        lambda d: DHCPOptDomainName(domain=d.get("domain", "")),
+    DHCP_OPT_REQUESTED_IP:       lambda d: DHCPOptRequestedIP(address=d.get("address", "0.0.0.0")),
+    DHCP_OPT_LEASE_TIME:         lambda d: DHCPOptLeaseTime(seconds=d.get("seconds", 86400)),
+    DHCP_OPT_SERVER_ID:          lambda d: DHCPOptServerID(address=d.get("address", "0.0.0.0")),
+    DHCP_OPT_PARAM_REQUEST_LIST: lambda d: DHCPOptParamRequestList(codes=d.get("codes", [])),
+    DHCP_OPT_VENDOR_CLASS_ID: lambda d: DHCPOptVendorClassID(data=bytes.fromhex(d.get("data", ""))),
+    DHCP_OPT_CLIENT_ID:          lambda d: DHCPOptClientID(data=bytes.fromhex(d.get("data", ""))),
+}
+
+
+def _build_dhcp_option(d: dict) -> DHCPOpt:  # type: ignore[valid-type]
+    """Convert one ``options`` entry from a packet spec dict to a DHCPOpt."""
+    code = d.get("code", 0)
+    fn = _DHCP_OPTION_BUILDERS.get(code)
+    if fn is not None:
+        return fn(d)
+    return DHCPOptRaw(code=code, data=bytes.fromhex(d.get("data", "")))
+
+
+def _build_dhcp_from_spec(spec: dict) -> DHCPMessage:
+    """Convert a ``dhcp`` packet spec dict to a :class:`DHCPMessage`."""
+    chaddr_hex = spec.get("chaddr", "00" * 16)
+    chaddr = bytes.fromhex(chaddr_hex).ljust(16, b"\x00")[:16]
+    sname_str = spec.get("sname", "")
+    file_str  = spec.get("file", "")
+    return DHCPMessage(
+        op=spec.get("op", 1),
+        htype=spec.get("htype", 1),
+        hlen=spec.get("hlen", 6),
+        hops=spec.get("hops", 0),
+        xid=spec.get("xid", 0),
+        secs=spec.get("secs", 0),
+        flags=spec.get("flags", 0),
+        ciaddr=spec.get("ciaddr", "0.0.0.0"),
+        yiaddr=spec.get("yiaddr", "0.0.0.0"),
+        siaddr=spec.get("siaddr", "0.0.0.0"),
+        giaddr=spec.get("giaddr", "0.0.0.0"),
+        chaddr=chaddr,
+        sname=sname_str.encode("ascii")[:64].ljust(64, b"\x00"),
+        file=file_str.encode("ascii")[:128].ljust(128, b"\x00"),
+        options=[_build_dhcp_option(o) for o in spec.get("options", [])],
     )
 
 
@@ -408,6 +470,8 @@ def _apply_ip_chain(
     b = _dispatch_transport(b, proto_lower, spec.get("transport", {}), packet_num, "ipip inner ")
     if "dns" in spec:
         return b.dns(_build_dns_from_spec(spec["dns"]), tcp=(proto_lower == "tcp"))
+    if "dhcp" in spec:
+        return b.dhcp(_build_dhcp_from_spec(spec["dhcp"]))
     return _apply_payload_spec(b, spec.get("payload", {}), packet_num, "ipip inner ")
 
 
@@ -527,6 +591,8 @@ def _apply_spec_to_builder(
     b = _dispatch_transport(b, proto_lower, spec.get("transport", {}), packet_num)
     if "dns" in spec:
         b = b.dns(_build_dns_from_spec(spec["dns"]), tcp=(proto_lower == "tcp"))
+    elif "dhcp" in spec:
+        b = b.dhcp(_build_dhcp_from_spec(spec["dhcp"]))
     else:
         b = _apply_payload_spec(b, spec.get("payload", {}), packet_num)
     return b, False
@@ -645,6 +711,7 @@ def _cmd_sanitise(args: argparse.Namespace) -> None:
         payload=args.payload,
         timestamps=args.timestamps,
         dns_ids=getattr(args, "dns_ids", False),
+        dhcp_xids=getattr(args, "dhcp_xids", False),
     )
 
     try:
@@ -1142,6 +1209,10 @@ def main() -> None:
     san_parser.add_argument(
         "--dns-ids", action="store_true",
         help="Zero out DNS transaction IDs (default: kept)",
+    )
+    san_parser.add_argument(
+        "--dhcp-xids", action="store_true",
+        help="Zero out DHCP transaction IDs (xid field) (default: kept)",
     )
     san_parser.set_defaults(func=_cmd_sanitise)
 
