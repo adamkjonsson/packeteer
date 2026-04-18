@@ -110,6 +110,11 @@ class SanitiseOptions:
             section.  DNS names and A/AAAA addresses in DNS RDATA are always
             sanitised when a ``dns`` section is present (controlled by *ips*
             for addresses).
+        dhcp_xids: Zero the 32-bit transaction ``xid`` field in every
+            ``dhcp`` section.  DHCP IP fields (``ciaddr``, ``yiaddr``,
+            ``siaddr``, ``giaddr``) and IP addresses in DHCP options are
+            always sanitised when a ``dhcp`` section is present (controlled by
+            *ips* for addresses; *macs* for ``chaddr``).
 
     """
 
@@ -119,6 +124,7 @@ class SanitiseOptions:
     payload:    bool = False
     timestamps: bool = False
     dns_ids:    bool = False
+    dhcp_xids:  bool = False
 
 
 # ── Internal replacer state ───────────────────────────────────────────────────
@@ -235,6 +241,44 @@ def _sanitise_dns(dns: dict, r: _Replacer, opts: SanitiseOptions) -> None:
                 _sanitise_dns_rdata(rdata, rr.get("rtype", 0), r, opts)
 
 
+# ── DHCP option code constants (duplicated to avoid import) ──────────────────
+
+_DHCP_OPT_SUBNET_MASK  = 1
+_DHCP_OPT_ROUTER       = 3
+_DHCP_OPT_DNS_SERVER   = 6
+_DHCP_OPT_HOSTNAME     = 12
+_DHCP_OPT_DOMAIN_NAME  = 15
+_DHCP_OPT_REQUESTED_IP = 50
+_DHCP_OPT_SERVER_ID    = 54
+
+# ── DHCP sanitisation helper ──────────────────────────────────────────────────
+
+def _sanitise_dhcp(dhcp: dict, r: _Replacer, opts: SanitiseOptions) -> None:
+    """Sanitise a ``dhcp`` section dict in-place."""
+    if opts.dhcp_xids:
+        dhcp["xid"] = 0
+    if opts.ips:
+        for field_name in ("ciaddr", "yiaddr", "siaddr", "giaddr"):
+            if field_name in dhcp and dhcp[field_name] != "0.0.0.0":
+                dhcp[field_name] = r.ip(dhcp[field_name])
+    if opts.macs and "chaddr" in dhcp:
+        raw = dhcp["chaddr"]
+        if isinstance(raw, str) and len(raw) >= 12 and raw != "00" * 16:
+            mac_str = ":".join(raw[i:i+2] for i in range(0, 12, 2))
+            new_mac = r.mac(mac_str).replace(":", "")
+            dhcp["chaddr"] = new_mac + raw[12:]
+    for opt in dhcp.get("options", []):
+        code = opt.get("code", 0)
+        if opts.ips:
+            if code in (_DHCP_OPT_SUBNET_MASK, _DHCP_OPT_REQUESTED_IP, _DHCP_OPT_SERVER_ID):
+                if "address" in opt:
+                    opt["address"] = r.ip(opt["address"])
+            elif code == _DHCP_OPT_ROUTER:
+                opt["routers"] = [r.ip(a) for a in opt.get("routers", [])]
+            elif code == _DHCP_OPT_DNS_SERVER:
+                opt["servers"] = [r.ip(a) for a in opt.get("servers", [])]
+
+
 # ── Recursive packet walker ───────────────────────────────────────────────────
 
 def _sanitise_network(net: dict, r: _Replacer) -> None:
@@ -290,6 +334,9 @@ def _sanitise_packet(pkt: dict, r: _Replacer, opts: SanitiseOptions) -> None:
 
     if "dns" in pkt:
         _sanitise_dns(pkt["dns"], r, opts)
+
+    if "dhcp" in pkt:
+        _sanitise_dhcp(pkt["dhcp"], r, opts)
 
     # ── Tunnel recursion ──────────────────────────────────────────────────────
     for tunnel_key in ("ipip", "gre", "etherip"):

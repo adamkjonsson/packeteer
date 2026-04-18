@@ -55,6 +55,7 @@ from packeteer.generate.icmp import ICMPHeader
 from packeteer.generate.icmpv6 import ICMPv6Header
 from packeteer.generate.sctp import SCTPHeader
 from packeteer.generate.dns import DNSMessage
+from packeteer.generate.dhcp import DHCPMessage
 from packeteer.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW, PcapFileHeader, read_pcap
 from .to_config import update_config, to_packet_spec, to_json_string, apply_tunneled
 
@@ -118,6 +119,9 @@ class ParsedPacket:
             5353, otherwise ``None``.  Populated from the payload bytes; on
             parse failure the raw bytes remain in :attr:`payload` and this
             field is ``None``.
+        dhcp: Parsed DHCP message when the transport is UDP on port 67 or 68,
+            otherwise ``None``.  On parse failure the raw bytes remain in
+            :attr:`payload` and this field is ``None``.
         payload: Bytes remaining after all parsed headers.
         ts_sec: Capture timestamp — whole seconds (from pcap record).
         ts_frac: Capture timestamp — sub-second fraction (microseconds or
@@ -135,6 +139,7 @@ class ParsedPacket:
     tunneled:  "ParsedPacket | None" = None
     transport: TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | SCTPHeader | None = None
     dns:       DNSMessage | None = None
+    dhcp:      DHCPMessage | None = None
     payload:   bytes = field(default=b"")
     ts_sec:    int = 0
     ts_frac:   int = 0
@@ -220,7 +225,8 @@ def _parse_pppoe_and_mpls(
     return remaining, ethertype
 
 
-_DNS_PORTS: frozenset[int] = frozenset({53, 5353})
+_DNS_PORTS:  frozenset[int] = frozenset({53, 5353})
+_DHCP_PORTS: frozenset[int] = frozenset({67, 68})
 
 
 def _try_parse_dns(pkt: ParsedPacket, payload: bytes) -> bytes:
@@ -241,6 +247,27 @@ def _try_parse_dns(pkt: ParsedPacket, payload: bytes) -> bytes:
             pkt.dns = _parse_dns_tcp(payload)
         else:
             pkt.dns = _parse_dns_udp(payload)
+        return b""
+    except (ValueError, struct.error):
+        return payload
+
+
+def _try_parse_dhcp(pkt: ParsedPacket, payload: bytes) -> bytes:
+    """Attempt to decode *payload* as DHCP if the transport is UDP on port 67/68.
+
+    On success, sets ``pkt.dhcp`` and returns ``b""``.
+    On failure (wrong port/protocol or parse error), returns *payload* unchanged.
+    """
+    t = pkt.transport
+    if not isinstance(t, UDPHeader):
+        return payload
+    if t.src_port not in _DHCP_PORTS and t.dst_port not in _DHCP_PORTS:
+        return payload
+    if not payload:
+        return payload
+    try:
+        from .dhcp import parse_dhcp
+        pkt.dhcp = parse_dhcp(payload)
         return b""
     except (ValueError, struct.error):
         return payload
@@ -270,6 +297,7 @@ def _parse_ip_protocol(
             pkt.transport = t_hdr
             remaining = remaining[t_size:]
             remaining = _try_parse_dns(pkt, remaining)
+            remaining = _try_parse_dhcp(pkt, remaining)
     elif ip_proto in (4, 41):
         pkt.ipip = True
         pkt.tunneled = parse_packet(remaining, link_type=LINKTYPE_RAW)
@@ -454,6 +482,8 @@ def parse_pcap_file(
             update_config(cfg, pkt.transport)
             if pkt.dns is not None:
                 update_config(cfg, pkt.dns)
+            elif pkt.dhcp is not None:
+                update_config(cfg, pkt.dhcp)
             elif pkt.payload:
                 update_config(cfg, pkt.payload)
         cfg["packet_metadata"] = {"timestamp_s": pkt.ts_sec, ts_frac_key: pkt.ts_frac}

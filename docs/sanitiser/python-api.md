@@ -15,6 +15,7 @@ clean = sanitise(config, SanitiseOptions(
     payload=True,
     timestamps=True,
     dns_ids=True,
+    dhcp_xids=True,
 ))
 
 # Replace only IPs, keep MACs
@@ -86,6 +87,39 @@ clean = sanitise(config, SanitiseOptions(dns_ids=True))
 ```
 
 **To keep A/AAAA RDATA addresses unchanged**, disable IP replacement:
+
+```python
+clean = sanitise(config, SanitiseOptions(ips=False))
+```
+
+## DHCP sanitisation
+
+Whenever a packet spec contains a `dhcp` section, IP addresses and the client
+hardware address inside it are sanitised automatically using the same mapping
+tables as all other IP and MAC fields — no extra option is needed.
+
+The following replacements are applied:
+
+- **Fixed IP fields** — `ciaddr`, `yiaddr`, `siaddr`, and `giaddr` are
+  replaced (skipped when the value is `"0.0.0.0"`).
+- **Client hardware address** (`chaddr`) — the first six bytes (the MAC
+  portion) are replaced using the MAC mapping table, then re-encoded as the
+  full 16-byte hex string.  Controlled by `macs=True/False`.
+- **Option IPs** — IP addresses in common options are replaced:
+  - Code 1 (`DHCPOptSubnetMask`) — `address` field
+  - Code 3 (`DHCPOptRouter`) — all addresses in `routers` list
+  - Code 6 (`DHCPOptDNSServer`) — all addresses in `servers` list
+  - Code 50 (`DHCPOptRequestedIP`) — `address` field
+  - Code 54 (`DHCPOptServerID`) — `address` field
+
+**Transaction IDs** (`xid`) are kept by default.  Set `dhcp_xids=True` to
+zero them:
+
+```python
+clean = sanitise(config, SanitiseOptions(dhcp_xids=True))
+```
+
+**To keep DHCP IP fields unchanged**, disable IP replacement:
 
 ```python
 clean = sanitise(config, SanitiseOptions(ips=False))

@@ -6,6 +6,30 @@ All notable changes to packeteer are recorded in this file.
 
 ## Unreleased
 
+### DHCP support (RFC 2131 / RFC 2132)
+
+- New module `packeteer.generate.dhcp`: wire-format encoder for DHCP messages.
+  `DHCPMessage` dataclass holds all RFC 2131 fixed fields plus a typed option
+  list; `_build_dhcp_message()` serialises to bytes.
+- New module `packeteer.parse.dhcp`: `parse_dhcp()` decodes a UDP payload into
+  a `DHCPMessage`, including all typed option dataclasses for the 12 most
+  common RFC 2132 options.  Unknown options fall back to `DHCPOptRaw`.
+- `parse_packet` / `parse_pcap_file` dispatch to the DHCP parser on UDP ports
+  67 and 68.  The result is stored in `ParsedPacket.dhcp`.
+- `PacketBuilder.dhcp(msg)` encodes a `DHCPMessage` and appends it as the
+  packet payload.
+- `packeteer parse` serialises DHCP packets to the packet spec `dhcp` section
+  with all fixed fields and typed option objects.
+- `packeteer build` reads the `dhcp` section from a packet spec and rebuilds
+  the DHCP wire payload.
+- `packeteer sanitise` replaces DHCP IP addresses (`ciaddr`, `yiaddr`,
+  `siaddr`, `giaddr`, and IPs in options 1/3/6/50/54) and the client hardware
+  address `chaddr` automatically.  New `SanitiseOptions.dhcp_xids` field
+  (default `False`) and `--dhcp-xids` CLI flag zero the `xid` transaction ID.
+- 54 new tests in `TestDHCP*` covering encoding, decode round-trips, parser
+  edge cases, builder integration, to_config serialisation, sanitisation, and
+  the `--dhcp-xids` CLI flag (1321 total).
+
 ### mDNS support (RFC 6762)
 
 - Added `DNSQuestion.unicast_response` (`bool`, default `False`): the mDNS QU

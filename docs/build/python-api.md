@@ -403,6 +403,71 @@ pkt = (PacketBuilder()
 See {doc}`../packet-spec/format` for the JSON representation of DNS/mDNS
 messages in the packet spec format.
 
+### `.dhcp(msg)`
+
+Encodes a {class}`~packeteer.generate.dhcp.DHCPMessage` as wire-format bytes
+and appends it as the payload.  Use after `.udp()` with source/destination
+port 67 (server) or 68 (client).
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `msg` | *(required)* | A {class}`~packeteer.generate.dhcp.DHCPMessage` instance |
+
+```python
+from packeteer.generate import (
+    PacketBuilder,
+    DHCPMessage, DHCPOptMessageType, DHCPOptRequestedIP,
+    DHCP_OP_REQUEST, DHCP_MSG_DISCOVER,
+    DHCP_PORT_SERVER, DHCP_PORT_CLIENT,
+)
+
+chaddr = bytes.fromhex("aabbccddeeff") + b"\x00" * 10  # 16 bytes
+
+# DHCPDISCOVER — client broadcast looking for a server
+discover = DHCPMessage(
+    op=DHCP_OP_REQUEST,
+    xid=0x12345678,
+    chaddr=chaddr,
+    options=[
+        DHCPOptMessageType(DHCP_MSG_DISCOVER),
+        DHCPOptRequestedIP("192.168.1.50"),
+    ],
+)
+pkt = (PacketBuilder()
+    .ethernet(src_mac="aa:bb:cc:dd:ee:ff", dst_mac="ff:ff:ff:ff:ff:ff")
+    .ip(src="0.0.0.0", dst="255.255.255.255")
+    .udp(src_port=DHCP_PORT_CLIENT, dst_port=DHCP_PORT_SERVER)
+    .dhcp(discover)
+    .build()
+)
+```
+
+**Supported option classes** — import from {mod}`packeteer.generate.dhcp` or
+from {mod}`packeteer.generate`:
+
+| Class | Code | Description |
+|-------|------|-------------|
+| `DHCPOptMessageType` | 53 | DHCP message type (DISCOVER, OFFER, REQUEST, …) |
+| `DHCPOptSubnetMask` | 1 | Subnet mask (IPv4 address string) |
+| `DHCPOptRouter` | 3 | List of router IPv4 addresses |
+| `DHCPOptDNSServer` | 6 | List of DNS server IPv4 addresses |
+| `DHCPOptHostname` | 12 | Client hostname string |
+| `DHCPOptDomainName` | 15 | Domain name string |
+| `DHCPOptRequestedIP` | 50 | Requested IPv4 address |
+| `DHCPOptLeaseTime` | 51 | Lease duration in seconds |
+| `DHCPOptServerID` | 54 | Server identifier (IPv4 address string) |
+| `DHCPOptParamRequestList` | 55 | List of option codes the client requests |
+| `DHCPOptVendorClassID` | 60 | Opaque vendor class data (`bytes`) |
+| `DHCPOptClientID` | 61 | Client identifier (`bytes`) |
+| `DHCPOptRaw` | *(any)* | Raw bytes for unrecognised options |
+
+**Message type constants** — `DHCP_MSG_DISCOVER` (1), `DHCP_MSG_OFFER` (2),
+`DHCP_MSG_REQUEST` (3), `DHCP_MSG_DECLINE` (4), `DHCP_MSG_ACK` (5),
+`DHCP_MSG_NAK` (6), `DHCP_MSG_RELEASE` (7), `DHCP_MSG_INFORM` (8).
+
+See {doc}`../packet-spec/format` for the JSON representation of DHCP messages
+in the packet spec format.
+
 ### `.payload(size=0, data=None)`
 
 Appends raw payload bytes.  `data` (bytes) takes precedence over `size`
