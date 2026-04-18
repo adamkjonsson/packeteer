@@ -87,6 +87,10 @@ Parse the capture to JSON, edit or replace the sensitive fields, then rebuild
 a clean pcap that preserves the original timing, structure, and protocol
 behaviour but contains only the data you choose.
 
+For HTTP captures, add `--http-headers` to redact sensitive header values
+(Host, Cookie, Authorization, and others) while preserving the message
+structure.
+
 Common sanitisation tasks in the packet spec:
 
 - Replace IP addresses with RFC 1918 or documentation-range addresses

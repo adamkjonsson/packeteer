@@ -27,9 +27,23 @@ magic number, not its extension.
 | `--timestamps` | Zero out packet timestamps |
 | `--dns-ids` | Zero out DNS transaction IDs (default: kept) |
 | `--dhcp-xids` | Zero out DHCP transaction IDs / `xid` fields (default: kept) |
+| `--http-headers` | Redact sensitive HTTP header values: `Host`, `Cookie`, `Set-Cookie`, `Authorization`, `Location`, `Referer`, `Origin` (default: kept) |
 
 `--output`, `--pcap`, and `--pcapng` are independent and may be combined.
 When none are given the sanitised packet spec is printed to stdout.
+
+## HTTP sanitisation
+
+HTTP header values are **not** redacted by default.  Add `--http-headers` to
+replace sensitive header values with `[redacted]`:
+
+```bash
+packeteer sanitise http-capture.pcap --http-headers --pcap clean.pcap
+```
+
+The following header names are redacted (case-insensitive match):
+`Host`, `Cookie`, `Set-Cookie`, `Authorization`, `Location`, `Referer`,
+`Origin`.
 
 ## DHCP sanitisation
 

@@ -6,6 +6,41 @@ All notable changes to packeteer are recorded in this file.
 
 ## Unreleased
 
+### HTTP/1.x support (RFC 7230)
+
+- New module `packeteer.generate.http`: `HTTPRequest` and `HTTPResponse`
+  dataclasses and `_build_http_message()` wire-format encoder.  Both CRLF and
+  bare-LF line endings are produced; `Content-Length` is added automatically
+  when the body is non-empty and no explicit header is present.
+- New module `packeteer.parse.http`: `parse_http()` decodes an HTTP/1.x
+  message from raw TCP payload bytes.  Responses are identified by the
+  `HTTP/` start token; both CRLF and bare-LF line endings are accepted.
+  Body bytes are trimmed to `Content-Length` when present.
+- `parse_packet` / `parse_pcap_file` dispatch to the HTTP parser on TCP ports
+  80 and 8080.  The result is stored in `ParsedPacket.http`.  Parse failures
+  leave `pkt.payload` unchanged.
+- `PacketBuilder.http(msg)` encodes an `HTTPRequest` or `HTTPResponse` and
+  appends it as the packet payload.
+- `packeteer parse` serialises HTTP messages to the packet spec `http` section
+  with all fields (type, method/status, path/reason, version, headers, body as
+  hex).
+- `packeteer build` reads the `http` section from a packet spec and rebuilds
+  the HTTP wire payload.
+- `packeteer sanitise` redacts sensitive HTTP header values (`Host`, `Cookie`,
+  `Set-Cookie`, `Authorization`, `Location`, `Referer`, `Origin`) when the new
+  `SanitiseOptions.http_headers` option is set (default `False`).  New
+  `--http-headers` CLI flag enables this.
+- 43 new tests in `TestHTTP*` covering wire encoding, decode round-trips,
+  parser edge cases, builder integration, port dispatch, to_config
+  serialisation, sanitisation, and the `--http-headers` CLI flag (1364 total).
+- Documentation: `.http()` method documented in `docs/build/python-api.md`;
+  `http` layer added to `docs/build/cli.md`; HTTP fields added to
+  `docs/parse/python-api.md` and `docs/parse/cli.md`; `--http-headers` flag
+  documented in `docs/sanitiser/cli.md` and `docs/sanitiser/python-api.md`;
+  full `http` spec reference added to `docs/packet-spec/format.md`; RFC 7230
+  entry added to `docs/reference/rfc-references.md`; HTTP feature added to
+  `README.md`.
+
 ### DHCP support (RFC 2131 / RFC 2132)
 
 - New module `packeteer.generate.dhcp`: wire-format encoder for DHCP messages.

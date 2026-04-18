@@ -12,6 +12,9 @@ RFCs implemented or referenced by this library.
 * - [RFC 768](https://datatracker.ietf.org/doc/html/rfc768)
   - User Datagram Protocol
   - `UDPHeader`
+* - [RFC 7230](https://datatracker.ietf.org/doc/html/rfc7230)
+  - Hypertext Transfer Protocol (HTTP/1.1): Message Syntax and Routing
+  - `HTTPRequest`, `HTTPResponse`, `_build_http_message`, `parse_http`; port 80/8080 dispatch in `parse_packet`; `SanitiseOptions.http_headers`
 * - [RFC 2131](https://datatracker.ietf.org/doc/html/rfc2131)
   - Dynamic Host Configuration Protocol (DHCP)
   - `DHCPMessage`, `packeteer.generate.dhcp`, `packeteer.parse.dhcp`; fixed 236-byte header, magic cookie, port 67/68 dispatch

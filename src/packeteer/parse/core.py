@@ -56,6 +56,7 @@ from packeteer.generate.icmpv6 import ICMPv6Header
 from packeteer.generate.sctp import SCTPHeader
 from packeteer.generate.dns import DNSMessage
 from packeteer.generate.dhcp import DHCPMessage
+from packeteer.generate.http import HTTPMessage
 from packeteer.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW, PcapFileHeader, read_pcap
 from .to_config import update_config, to_packet_spec, to_json_string, apply_tunneled
 
@@ -122,6 +123,9 @@ class ParsedPacket:
         dhcp: Parsed DHCP message when the transport is UDP on port 67 or 68,
             otherwise ``None``.  On parse failure the raw bytes remain in
             :attr:`payload` and this field is ``None``.
+        http: Parsed HTTP/1.x request or response when the transport is TCP
+            on port 80 or 8080, otherwise ``None``.  On parse failure the
+            raw bytes remain in :attr:`payload` and this field is ``None``.
         payload: Bytes remaining after all parsed headers.
         ts_sec: Capture timestamp — whole seconds (from pcap record).
         ts_frac: Capture timestamp — sub-second fraction (microseconds or
@@ -140,6 +144,7 @@ class ParsedPacket:
     transport: TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | SCTPHeader | None = None
     dns:       DNSMessage | None = None
     dhcp:      DHCPMessage | None = None
+    http:      HTTPMessage | None = None  # type: ignore[valid-type]
     payload:   bytes = field(default=b"")
     ts_sec:    int = 0
     ts_frac:   int = 0
@@ -227,6 +232,7 @@ def _parse_pppoe_and_mpls(
 
 _DNS_PORTS:  frozenset[int] = frozenset({53, 5353})
 _DHCP_PORTS: frozenset[int] = frozenset({67, 68})
+_HTTP_PORTS: frozenset[int] = frozenset({80, 8080})
 
 
 def _try_parse_dns(pkt: ParsedPacket, payload: bytes) -> bytes:
@@ -273,6 +279,27 @@ def _try_parse_dhcp(pkt: ParsedPacket, payload: bytes) -> bytes:
         return payload
 
 
+def _try_parse_http(pkt: ParsedPacket, payload: bytes) -> bytes:
+    """Attempt to decode *payload* as HTTP if the transport is TCP on port 80/8080.
+
+    On success, sets ``pkt.http`` and returns ``b""``.
+    On failure (wrong port/protocol or parse error), returns *payload* unchanged.
+    """
+    t = pkt.transport
+    if not isinstance(t, TCPHeader):
+        return payload
+    if t.src_port not in _HTTP_PORTS and t.dst_port not in _HTTP_PORTS:
+        return payload
+    if not payload:
+        return payload
+    try:
+        from .http import parse_http
+        pkt.http = parse_http(payload)
+        return b""
+    except (ValueError, UnicodeDecodeError):
+        return payload
+
+
 def _parse_ip_protocol(
     pkt: ParsedPacket, remaining: bytes, ip_proto: int | None,
 ) -> bytes:
@@ -298,6 +325,7 @@ def _parse_ip_protocol(
             remaining = remaining[t_size:]
             remaining = _try_parse_dns(pkt, remaining)
             remaining = _try_parse_dhcp(pkt, remaining)
+            remaining = _try_parse_http(pkt, remaining)
     elif ip_proto in (4, 41):
         pkt.ipip = True
         pkt.tunneled = parse_packet(remaining, link_type=LINKTYPE_RAW)
@@ -484,6 +512,8 @@ def parse_pcap_file(
                 update_config(cfg, pkt.dns)
             elif pkt.dhcp is not None:
                 update_config(cfg, pkt.dhcp)
+            elif pkt.http is not None:
+                update_config(cfg, pkt.http)
             elif pkt.payload:
                 update_config(cfg, pkt.payload)
         cfg["packet_metadata"] = {"timestamp_s": pkt.ts_sec, ts_frac_key: pkt.ts_frac}

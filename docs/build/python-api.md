@@ -468,6 +468,77 @@ from {mod}`packeteer.generate`:
 See {doc}`../packet-spec/format` for the JSON representation of DHCP messages
 in the packet spec format.
 
+### `.http(msg)`
+
+Encodes an {class}`~packeteer.generate.http.HTTPRequest` or
+{class}`~packeteer.generate.http.HTTPResponse` as an HTTP/1.x wire-format
+message and appends it as the payload.  Use after `.tcp()` with destination
+or source port 80 (`HTTP_PORT`) or 8080 (`HTTP_ALT_PORT`).
+
+`Content-Length` is added automatically when the message has a non-empty body
+and no explicit `Content-Length` header is present.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `msg` | *(required)* | An `HTTPRequest` or `HTTPResponse` instance |
+
+```python
+from packeteer.generate import PacketBuilder
+from packeteer.generate.http import (
+    HTTPRequest, HTTPResponse, HTTP_PORT, HTTP_ALT_PORT,
+)
+
+# HTTP GET request
+req = HTTPRequest(
+    method="GET", path="/index.html",
+    headers={"Host": "example.com", "Accept": "text/html"},
+)
+pkt = (PacketBuilder()
+    .ethernet()
+    .ip(src="10.0.0.1", dst="10.0.0.2")
+    .tcp(src_port=54321, dst_port=HTTP_PORT, flags=0x018)
+    .http(req)
+    .build()
+)
+
+# HTTP 200 response with a body
+rsp = HTTPResponse(
+    status_code=200, reason="OK",
+    headers={"Content-Type": "text/html"},
+    body=b"<html>Hello</html>",
+)
+pkt = (PacketBuilder()
+    .ethernet()
+    .ip(src="10.0.0.2", dst="10.0.0.1")
+    .tcp(src_port=HTTP_PORT, dst_port=54321, flags=0x018)
+    .http(rsp)
+    .build()
+)
+```
+
+**HTTPRequest fields:**
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `method` | `"GET"` | HTTP method string |
+| `path` | `"/"` | Request-target path |
+| `version` | `"1.1"` | HTTP version (without `"HTTP/"` prefix) |
+| `headers` | `{}` | Dict of header name → value |
+| `body` | `b""` | Request body bytes |
+
+**HTTPResponse fields:**
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `version` | `"1.1"` | HTTP version |
+| `status_code` | `200` | 3-digit integer status code |
+| `reason` | `"OK"` | Reason phrase |
+| `headers` | `{}` | Dict of header name → value |
+| `body` | `b""` | Response body bytes |
+
+See {doc}`../packet-spec/format` for the JSON representation of HTTP messages
+in the packet spec format.
+
 ### `.payload(size=0, data=None)`
 
 Appends raw payload bytes.  `data` (bytes) takes precedence over `size`

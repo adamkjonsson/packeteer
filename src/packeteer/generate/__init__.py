@@ -252,6 +252,7 @@ from .dhcp import (
     DHCP_OPT_LEASE_TIME, DHCP_OPT_MESSAGE_TYPE, DHCP_OPT_SERVER_ID,
     DHCP_OPT_PARAM_REQUEST_LIST, DHCP_OPT_VENDOR_CLASS_ID, DHCP_OPT_CLIENT_ID,
 )
+from .http import HTTPRequest, HTTPResponse, HTTP_PORT, HTTP_ALT_PORT
 from .tcp_stream import generate_tcp_stream, TCPStream, TCPStreamConfig, TCPStreamPacket
 from .udp_stream import generate_udp_stream, UDPStream, UDPStreamPacket
 from .sctp_stream import generate_sctp_stream, SCTPStream, SCTPStreamPacket
@@ -433,4 +434,8 @@ __all__ = [
     "DHCP_OPT_PARAM_REQUEST_LIST",
     "DHCP_OPT_VENDOR_CLASS_ID",
     "DHCP_OPT_CLIENT_ID",
+    "HTTPRequest",
+    "HTTPResponse",
+    "HTTP_PORT",
+    "HTTP_ALT_PORT",
 ]

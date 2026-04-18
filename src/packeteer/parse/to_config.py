@@ -113,6 +113,7 @@ from packeteer.generate.dhcp import (
     DHCP_OPT_VENDOR_CLASS_ID,
     DHCP_OPT_CLIENT_ID,
 )
+from packeteer.generate.http import HTTPMessage, HTTPRequest, HTTPResponse
 
 _PROTO_TO_STR: dict[int, str] = {
     socket.IPPROTO_TCP:      "tcp",       # 6
@@ -530,12 +531,35 @@ def _apply_dhcp(config: dict[str, Any], msg: DHCPMessage) -> None:
     }
 
 
+# ── HTTP serialisation ────────────────────────────────────────────────────────
+
+def _apply_http(config: dict[str, Any], msg: HTTPMessage) -> None:  # type: ignore[valid-type]
+    if isinstance(msg, HTTPRequest):
+        config["http"] = {
+            "type":    "request",
+            "method":  msg.method,
+            "path":    msg.path,
+            "version": msg.version,
+            "headers": dict(msg.headers),
+            "body":    msg.body.hex(),
+        }
+    else:
+        config["http"] = {
+            "type":        "response",
+            "version":     msg.version,
+            "status_code": msg.status_code,
+            "reason":      msg.reason,
+            "headers":     dict(msg.headers),
+            "body":        msg.body.hex(),
+        }
+
+
 def update_config(
     config: dict[str, Any],
     layer: (
         EthernetHeader | PPPoEHeader | MPLSLabel | IPHeader | IPv6Header
         | TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | SCTPHeader
-        | DNSMessage | DHCPMessage | bytes
+        | DNSMessage | DHCPMessage | HTTPMessage | bytes  # type: ignore[valid-type]
     ),
 ) -> dict[str, Any]:
     """Add a parsed protocol layer to *config* and return it.
@@ -558,6 +582,8 @@ def update_config(
       :class:`~packeteer.generate.icmpv6.ICMPv6Header` → ``transport`` section (ICMP fields)
     - :class:`~packeteer.generate.dns.DNSMessage` → ``dns`` section
     - :class:`~packeteer.generate.dhcp.DHCPMessage` → ``dhcp`` section
+    - :class:`~packeteer.generate.http.HTTPRequest` /
+      :class:`~packeteer.generate.http.HTTPResponse` → ``http`` section
     - :class:`bytes` → ``payload`` section (encoded as a hex string)
 
     Modifies *config* in-place and returns it so calls can be chained::
@@ -589,6 +615,8 @@ def update_config(
         _apply_dns(config, layer)
     elif isinstance(layer, DHCPMessage):
         _apply_dhcp(config, layer)
+    elif isinstance(layer, (HTTPRequest, HTTPResponse)):
+        _apply_http(config, layer)
     elif isinstance(layer, bytes):
         _apply_payload(config, layer)
     else:

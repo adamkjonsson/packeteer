@@ -125,6 +125,64 @@ clean = sanitise(config, SanitiseOptions(dhcp_xids=True))
 clean = sanitise(config, SanitiseOptions(ips=False))
 ```
 
+## HTTP sanitisation
+
+Whenever a packet spec contains an `http` section, it is sanitised according
+to the `http_headers` option.  By default HTTP content is left unchanged.
+
+Set `http_headers=True` to redact the values of the following sensitive
+request and response headers:
+
+`Host`, `Cookie`, `Set-Cookie`, `Authorization`, `Location`, `Referer`,
+`Origin`
+
+The header keys are preserved; only their values are replaced with
+`"[redacted]"`.  Non-sensitive headers (e.g. `Content-Type`,
+`Accept-Encoding`) are always kept.
+
+```python
+from packeteer.sanitise import sanitise, SanitiseOptions
+
+# Redact sensitive HTTP headers
+clean = sanitise(config, SanitiseOptions(http_headers=True))
+```
+
+**Before:**
+```json
+{
+  "http": {
+    "type": "request",
+    "method": "GET", "path": "/search", "version": "1.1",
+    "headers": {
+      "Host": "internal.example.com",
+      "Cookie": "session=abc123",
+      "Accept": "text/html"
+    },
+    "body": ""
+  }
+}
+```
+
+**After** (`SanitiseOptions(http_headers=True)`):
+```json
+{
+  "http": {
+    "type": "request",
+    "method": "GET", "path": "/search", "version": "1.1",
+    "headers": {
+      "Host": "[redacted]",
+      "Cookie": "[redacted]",
+      "Accept": "text/html"
+    },
+    "body": ""
+  }
+}
+```
+
+Note: the `http` section itself (method, path, status code, body) is **not**
+modified by sanitisation — only header values named above are affected when
+`http_headers=True`.
+
 ## Tunnel handling
 
 Nested tunnel specs (`ipip`, `gre`, `etherip`) are walked recursively.  The

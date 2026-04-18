@@ -131,6 +131,7 @@ from .pppoe import (
 from .sctp import SCTPHeader, SCTPChunk, IPPROTO_SCTP, _build_sctp_packet
 from .dns import DNSMessage, _build_dns_message, _build_dns_message_tcp
 from .dhcp import DHCPMessage, _build_dhcp_message
+from .http import HTTPMessage, _build_http_message
 
 # ── protocol-number helpers ───────────────────────────────────────────────────
 
@@ -613,6 +614,21 @@ class PacketBuilder:
 
         """
         return self.payload(data=_build_dhcp_message(msg))
+
+    def http(self, msg: HTTPMessage) -> "PacketBuilder":  # type: ignore[valid-type]
+        """Set the payload to a serialised HTTP/1.x message.
+
+        A convenience wrapper around :meth:`payload` for HTTP traffic.
+        Use :meth:`tcp` with :data:`~packeteer.generate.http.HTTP_PORT`
+        (80) or :data:`~packeteer.generate.http.HTTP_ALT_PORT` (8080)
+        before calling this method.
+
+        Args:
+            msg: An :class:`~packeteer.generate.http.HTTPRequest` or
+                :class:`~packeteer.generate.http.HTTPResponse` to encode.
+
+        """
+        return self.payload(data=_build_http_message(msg))
 
     def payload(self, *, size: int = 0, data: bytes | None = None) -> "PacketBuilder":
         """Set the packet payload.
