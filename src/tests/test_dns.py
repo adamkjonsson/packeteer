@@ -30,6 +30,8 @@ from packeteer.generate.dns import (
     DNSRDataSOA,
     DNSRDataTXT,
     DNSResourceRecord,
+    MDNS_ADDR_IPV4,
+    MDNS_PORT,
     _build_dns_message,
     _build_dns_message_tcp,
     _encode_name,
@@ -525,6 +527,202 @@ class TestCLISanitiseDnsIds(unittest.TestCase):
             self.assertEqual(result["packets"][0]["dns"]["id"], 0)
         finally:
             os.unlink(inp)
+
+
+class TestMDNS(unittest.TestCase):
+    """mDNS-specific behaviour: QU bit, cache-flush bit, port 5353 dispatch."""
+
+    # ── QU bit (unicast_response) ─────────────────────────────────────────────
+
+    def test_qu_bit_roundtrip(self) -> None:
+        msg = DNSMessage(
+            id=0,
+            flags=DNSFlags(qr=False, rd=False),
+            questions=[DNSQuestion(
+                "mydevice.local.", DNS_TYPE_A, DNS_CLASS_IN,
+                unicast_response=True,
+            )],
+        )
+        wire = _build_dns_message(msg)
+        rt = parse_dns_udp(wire)
+        self.assertTrue(rt.questions[0].unicast_response)
+        self.assertEqual(rt.questions[0].qclass, DNS_CLASS_IN)
+
+    def test_qu_bit_false_roundtrip(self) -> None:
+        msg = DNSMessage(
+            id=0,
+            questions=[DNSQuestion("mydevice.local.", DNS_TYPE_A, DNS_CLASS_IN,
+                                   unicast_response=False)],
+        )
+        wire = _build_dns_message(msg)
+        rt = parse_dns_udp(wire)
+        self.assertFalse(rt.questions[0].unicast_response)
+        self.assertEqual(rt.questions[0].qclass, DNS_CLASS_IN)
+
+    def test_qu_bit_does_not_corrupt_qclass(self) -> None:
+        # Encoding with QU=True must not bleed into qclass value seen by caller.
+        msg = DNSMessage(
+            id=0,
+            questions=[DNSQuestion("x.local.", DNS_TYPE_A, DNS_CLASS_IN,
+                                   unicast_response=True)],
+        )
+        wire = _build_dns_message(msg)
+        # Raw qclass on the wire should have top bit set.
+        name_len = len(_encode_name("x.local."))
+        raw_qclass = struct.unpack_from("!H", wire, 12 + name_len + 2)[0]
+        self.assertTrue(raw_qclass & 0x8000)
+        # Parsed qclass should be DNS_CLASS_IN (top bit stripped).
+        rt = parse_dns_udp(wire)
+        self.assertEqual(rt.questions[0].qclass, DNS_CLASS_IN)
+
+    # ── Cache-flush bit ───────────────────────────────────────────────────────
+
+    def test_cache_flush_roundtrip(self) -> None:
+        rr = DNSResourceRecord(
+            name="mydevice.local.", rtype=DNS_TYPE_A,
+            rclass=DNS_CLASS_IN, ttl=120,
+            rdata=DNSRDataA("192.168.1.99"),
+            cache_flush=True,
+        )
+        msg = DNSMessage(id=0, answers=[rr])
+        wire = _build_dns_message(msg)
+        rt = parse_dns_udp(wire)
+        self.assertTrue(rt.answers[0].cache_flush)
+        self.assertEqual(rt.answers[0].rclass, DNS_CLASS_IN)
+
+    def test_cache_flush_false_roundtrip(self) -> None:
+        rr = DNSResourceRecord(
+            name="mydevice.local.", rtype=DNS_TYPE_A,
+            rclass=DNS_CLASS_IN, ttl=120,
+            rdata=DNSRDataA("192.168.1.99"),
+            cache_flush=False,
+        )
+        msg = DNSMessage(id=0, answers=[rr])
+        wire = _build_dns_message(msg)
+        rt = parse_dns_udp(wire)
+        self.assertFalse(rt.answers[0].cache_flush)
+
+    def test_cache_flush_does_not_corrupt_rclass(self) -> None:
+        rr = DNSResourceRecord(
+            name="x.local.", rtype=DNS_TYPE_A, rclass=DNS_CLASS_IN,
+            ttl=120, rdata=DNSRDataA("1.2.3.4"), cache_flush=True,
+        )
+        msg = DNSMessage(id=0, answers=[rr])
+        wire = _build_dns_message(msg)
+        rt = parse_dns_udp(wire)
+        self.assertEqual(rt.answers[0].rclass, DNS_CLASS_IN)
+
+    def test_both_bits_independent(self) -> None:
+        msg = DNSMessage(
+            id=0,
+            questions=[DNSQuestion("x.local.", unicast_response=True)],
+            answers=[DNSResourceRecord(
+                name="x.local.", rtype=DNS_TYPE_A, rclass=DNS_CLASS_IN,
+                ttl=120, rdata=DNSRDataA("1.2.3.4"), cache_flush=True,
+            )],
+        )
+        wire = _build_dns_message(msg)
+        rt = parse_dns_udp(wire)
+        self.assertTrue(rt.questions[0].unicast_response)
+        self.assertTrue(rt.answers[0].cache_flush)
+
+    # ── Port 5353 dispatch ────────────────────────────────────────────────────
+
+    def test_parse_packet_dispatches_port_5353(self) -> None:
+        from packeteer.generate import PacketBuilder
+        from packeteer.parse import parse_packet
+        from packeteer.pcap import LINKTYPE_ETHERNET
+        msg = DNSMessage(
+            id=0,
+            flags=DNSFlags(qr=False, rd=False),
+            questions=[DNSQuestion("mydevice.local.", DNS_TYPE_A,
+                                   unicast_response=True)],
+        )
+        pkt = (
+            PacketBuilder()
+            .ethernet()
+            .ip(src="192.168.1.2", dst=MDNS_ADDR_IPV4)
+            .udp(src_port=MDNS_PORT, dst_port=MDNS_PORT)
+            .dns(msg)
+            .build()
+        )
+        parsed = parse_packet(pkt, link_type=LINKTYPE_ETHERNET)
+        self.assertIsNotNone(parsed.dns)
+        assert parsed.dns is not None
+        self.assertTrue(parsed.dns.questions[0].unicast_response)
+
+    def test_parse_packet_does_not_dispatch_other_port(self) -> None:
+        from packeteer.generate import PacketBuilder
+        from packeteer.parse import parse_packet
+        from packeteer.pcap import LINKTYPE_ETHERNET
+        pkt = (
+            PacketBuilder()
+            .ethernet()
+            .ip(src="1.2.3.4", dst="5.6.7.8")
+            .udp(src_port=12345, dst_port=9999)
+            .payload(size=20)
+            .build()
+        )
+        parsed = parse_packet(pkt, link_type=LINKTYPE_ETHERNET)
+        self.assertIsNone(parsed.dns)
+
+    # ── Packet spec round-trip ────────────────────────────────────────────────
+
+    def test_to_config_includes_unicast_response_when_true(self) -> None:
+        from packeteer.parse import update_config
+        msg = DNSMessage(
+            id=0,
+            questions=[DNSQuestion("mydevice.local.", DNS_TYPE_A,
+                                   unicast_response=True)],
+        )
+        cfg: dict = {}
+        update_config(cfg, msg)
+        q = cfg["dns"]["questions"][0]
+        self.assertTrue(q.get("unicast_response"))
+
+    def test_to_config_omits_unicast_response_when_false(self) -> None:
+        from packeteer.parse import update_config
+        msg = DNSMessage(
+            id=0,
+            questions=[DNSQuestion("example.com.", DNS_TYPE_A,
+                                   unicast_response=False)],
+        )
+        cfg: dict = {}
+        update_config(cfg, msg)
+        q = cfg["dns"]["questions"][0]
+        self.assertNotIn("unicast_response", q)
+
+    def test_to_config_includes_cache_flush_when_true(self) -> None:
+        from packeteer.parse import update_config
+        rr = DNSResourceRecord(
+            name="mydevice.local.", rtype=DNS_TYPE_A, rclass=DNS_CLASS_IN,
+            ttl=120, rdata=DNSRDataA("192.168.1.99"), cache_flush=True,
+        )
+        msg = DNSMessage(id=0, answers=[rr])
+        cfg: dict = {}
+        update_config(cfg, msg)
+        ans = cfg["dns"]["answers"][0]
+        self.assertTrue(ans.get("cache_flush"))
+
+    def test_to_config_omits_cache_flush_when_false(self) -> None:
+        from packeteer.parse import update_config
+        rr = DNSResourceRecord(
+            name="example.com.", rtype=DNS_TYPE_A, rclass=DNS_CLASS_IN,
+            ttl=300, rdata=DNSRDataA("1.2.3.4"), cache_flush=False,
+        )
+        msg = DNSMessage(id=0, answers=[rr])
+        cfg: dict = {}
+        update_config(cfg, msg)
+        ans = cfg["dns"]["answers"][0]
+        self.assertNotIn("cache_flush", ans)
+
+    # ── Constants ─────────────────────────────────────────────────────────────
+
+    def test_mdns_constants_exported(self) -> None:
+        from packeteer.generate import MDNS_PORT, MDNS_ADDR_IPV4, MDNS_ADDR_IPV6
+        self.assertEqual(MDNS_PORT, 5353)
+        self.assertEqual(MDNS_ADDR_IPV4, "224.0.0.251")
+        self.assertEqual(MDNS_ADDR_IPV6, "ff02::fb")
 
 
 if __name__ == "__main__":

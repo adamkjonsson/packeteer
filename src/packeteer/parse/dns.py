@@ -34,6 +34,8 @@ from packeteer.generate.dns import (
     DNSRDataSOA,
     DNSRDataTXT,
     DNSResourceRecord,
+    _MDNS_CF_BIT,
+    _MDNS_QU_BIT,
     _unpack_flags,
 )
 
@@ -186,21 +188,29 @@ def _decode_question(msg: bytes, offset: int) -> tuple[DNSQuestion, int]:
     name, offset = _decode_name(msg, offset)
     if offset + 4 > len(msg):
         raise ValueError(f"DNS question truncated at offset {offset}")
-    qtype, qclass = struct.unpack_from("!HH", msg, offset)
-    return DNSQuestion(name=name, qtype=qtype, qclass=qclass), offset + 4
+    qtype, qclass_raw = struct.unpack_from("!HH", msg, offset)
+    unicast_response = bool(qclass_raw & _MDNS_QU_BIT)
+    qclass = qclass_raw & ~_MDNS_QU_BIT
+    return DNSQuestion(
+        name=name, qtype=qtype, qclass=qclass,
+        unicast_response=unicast_response,
+    ), offset + 4
 
 
 def _decode_rr(msg: bytes, offset: int) -> tuple[DNSResourceRecord, int]:
     name, offset = _decode_name(msg, offset)
     if offset + 10 > len(msg):
         raise ValueError(f"DNS RR header truncated at offset {offset}")
-    rtype, rclass, ttl, rdlength = struct.unpack_from("!HHIH", msg, offset)
+    rtype, rclass_raw, ttl, rdlength = struct.unpack_from("!HHIH", msg, offset)
+    cache_flush = bool(rclass_raw & _MDNS_CF_BIT)
+    rclass = rclass_raw & ~_MDNS_CF_BIT
     offset += 10
     if offset + rdlength > len(msg):
         raise ValueError(f"DNS RDATA truncated at offset {offset}")
     rdata = _decode_rdata(rtype, msg[offset : offset + rdlength], msg, offset)
     return DNSResourceRecord(
         name=name, rtype=rtype, rclass=rclass, ttl=ttl, rdata=rdata,
+        cache_flush=cache_flush,
     ), offset + rdlength
 
 

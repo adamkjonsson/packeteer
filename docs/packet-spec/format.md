@@ -377,6 +377,7 @@ automatically (RFC 1035 §4.2.2) when the enclosing transport is TCP.
 | `name` | *(required)* | Domain name, trailing dot optional |
 | `qtype` | `1` | Query type integer (e.g. `1`=A, `28`=AAAA, `5`=CNAME) |
 | `qclass` | `1` | Query class (`1` = IN) |
+| `unicast_response` | *(omitted)* | mDNS QU bit — request a unicast response (RFC 6762 §5.4); omitted when `false` |
 
 ### Resource record entry
 
@@ -387,6 +388,7 @@ automatically (RFC 1035 §4.2.2) when the enclosing transport is TCP.
 | `rclass` | `1` | Record class (`1` = IN) |
 | `ttl` | `0` | Time-to-live in seconds |
 | `rdata` | *(required)* | Record data object — shape depends on `rtype` (see below) |
+| `cache_flush` | *(omitted)* | mDNS cache-flush bit — flush stale cache entries (RFC 6762 §11.3); omitted when `false` |
 
 ### `rdata` shape by type
 

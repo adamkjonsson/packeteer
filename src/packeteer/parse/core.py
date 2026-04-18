@@ -114,10 +114,10 @@ class ParsedPacket:
             :attr:`gre`, :attr:`ipip`, or :attr:`etherip` for
             double-nested tunnels.
         transport: Parsed TCP, UDP, ICMPv4, or ICMPv6 header.
-        dns: Parsed DNS message when the transport port is 53, otherwise
-            ``None``.  Populated from the payload bytes; on parse failure
-            the raw bytes remain in :attr:`payload` and this field is
-            ``None``.
+        dns: Parsed DNS or mDNS message when the transport port is 53 or
+            5353, otherwise ``None``.  Populated from the payload bytes; on
+            parse failure the raw bytes remain in :attr:`payload` and this
+            field is ``None``.
         payload: Bytes remaining after all parsed headers.
         ts_sec: Capture timestamp — whole seconds (from pcap record).
         ts_frac: Capture timestamp — sub-second fraction (microseconds or
@@ -220,8 +220,11 @@ def _parse_pppoe_and_mpls(
     return remaining, ethertype
 
 
+_DNS_PORTS: frozenset[int] = frozenset({53, 5353})
+
+
 def _try_parse_dns(pkt: ParsedPacket, payload: bytes) -> bytes:
-    """Attempt to decode *payload* as DNS if the transport port is 53.
+    """Attempt to decode *payload* as DNS/mDNS if the transport port is 53 or 5353.
 
     On success, sets ``pkt.dns`` and returns ``b""``.
     On failure (wrong port or parse error), returns *payload* unchanged.
@@ -229,7 +232,7 @@ def _try_parse_dns(pkt: ParsedPacket, payload: bytes) -> bytes:
     t = pkt.transport
     if t is None or not isinstance(t, (TCPHeader, UDPHeader)):
         return payload
-    if t.src_port != 53 and t.dst_port != 53:
+    if t.src_port not in _DNS_PORTS and t.dst_port not in _DNS_PORTS:
         return payload
     if not payload:
         return payload

@@ -1,7 +1,15 @@
-"""DNS message construction (RFC 1035).
+"""DNS message construction (RFC 1035) and mDNS constants (RFC 6762).
 
 This module provides dataclasses for DNS messages and a wire-format encoder.
 DNS messages are application-layer payloads carried over UDP or TCP port 53.
+mDNS uses the same wire format on UDP port 5353 to multicast addresses
+:data:`MDNS_ADDR_IPV4` (``224.0.0.251``) and :data:`MDNS_ADDR_IPV6`
+(``ff02::fb``), with two extra bits:
+
+* :attr:`DNSQuestion.unicast_response` — the QU bit (top bit of ``QCLASS``)
+  requests that the response be sent unicast rather than multicast.
+* :attr:`DNSResourceRecord.cache_flush` — the CF bit (top bit of ``RRCLASS``)
+  signals that existing cache entries for this record should be flushed.
 
 Over TCP, each message is prefixed with a 2-byte big-endian length field per
 RFC 1035 §4.2.2.  Use :func:`_build_dns_message_tcp` for TCP payloads and
@@ -33,6 +41,16 @@ DNS_TYPE_TXT: int = 16
 DNS_TYPE_AAAA: int = 28
 
 DNS_CLASS_IN: int = 1
+
+# ── mDNS (RFC 6762) constants ─────────────────────────────────────────────────
+
+MDNS_PORT: int = 5353
+MDNS_ADDR_IPV4: str = "224.0.0.251"
+MDNS_ADDR_IPV6: str = "ff02::fb"
+
+# Bit masks for the QU and cache-flush bits (top bit of qclass / rrclass).
+_MDNS_QU_BIT: int = 0x8000
+_MDNS_CF_BIT: int = 0x8000
 
 DNS_RCODE_NOERROR: int = 0
 DNS_RCODE_FORMERR: int = 1
@@ -234,12 +252,16 @@ class DNSQuestion:
         name: Queried domain name (fully qualified, trailing dot optional).
         qtype: Query type (e.g. :data:`DNS_TYPE_A`).
         qclass: Query class (normally :data:`DNS_CLASS_IN`).
+        unicast_response: mDNS QU bit (RFC 6762 §5.4) — request a unicast
+            response rather than a multicast one.  Encoded as the top bit of
+            the ``QCLASS`` field; ignored in plain DNS.
 
     """
 
     name: str
     qtype: int = DNS_TYPE_A
     qclass: int = DNS_CLASS_IN
+    unicast_response: bool = False
 
 
 @dataclass
@@ -252,6 +274,10 @@ class DNSResourceRecord:
         rclass: Record class (normally :data:`DNS_CLASS_IN`).
         ttl: Time to live in seconds.
         rdata: Decoded record data.
+        cache_flush: mDNS cache-flush bit (RFC 6762 §11.3) — signals that
+            existing cache entries for this name/type/class should be flushed.
+            Encoded as the top bit of the ``RRCLASS`` field; ignored in plain
+            DNS.
 
     """
 
@@ -263,6 +289,7 @@ class DNSResourceRecord:
         DNSRDataA | DNSRDataAAAA | DNSRDataCNAME | DNSRDataNS | DNSRDataPTR
         | DNSRDataMX | DNSRDataSOA | DNSRDataTXT | DNSRDataRaw
     )
+    cache_flush: bool = False
 
 
 # ── DNS message ───────────────────────────────────────────────────────────────
@@ -334,14 +361,16 @@ def _encode_rdata(
 
 
 def _encode_question(q: DNSQuestion) -> bytes:
-    return _encode_name(q.name) + struct.pack("!HH", q.qtype, q.qclass)
+    qclass = q.qclass | (_MDNS_QU_BIT if q.unicast_response else 0)
+    return _encode_name(q.name) + struct.pack("!HH", q.qtype, qclass)
 
 
 def _encode_rr(rr: DNSResourceRecord) -> bytes:
     rdata = _encode_rdata(rr.rdata)
+    rrclass = rr.rclass | (_MDNS_CF_BIT if rr.cache_flush else 0)
     return (
         _encode_name(rr.name)
-        + struct.pack("!HHIH", rr.rtype, rr.rclass, rr.ttl, len(rdata))
+        + struct.pack("!HHIH", rr.rtype, rrclass, rr.ttl, len(rdata))
         + rdata
     )
 

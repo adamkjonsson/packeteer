@@ -414,13 +414,25 @@ def _serialise_dns_rdata(rdata: object) -> dict[str, Any]:
 def _serialise_dns_rr(rr: object) -> dict[str, Any]:
     from packeteer.generate.dns import DNSResourceRecord
     assert isinstance(rr, DNSResourceRecord)
-    return {
+    d: dict[str, Any] = {
         "name":   rr.name,
         "rtype":  rr.rtype,
         "rclass": rr.rclass,
         "ttl":    rr.ttl,
         "rdata":  _serialise_dns_rdata(rr.rdata),
     }
+    if rr.cache_flush:
+        d["cache_flush"] = True
+    return d
+
+
+def _serialise_dns_question(q: object) -> dict[str, Any]:
+    from packeteer.generate.dns import DNSQuestion
+    assert isinstance(q, DNSQuestion)
+    d: dict[str, Any] = {"name": q.name, "qtype": q.qtype, "qclass": q.qclass}
+    if q.unicast_response:
+        d["unicast_response"] = True
+    return d
 
 
 def _apply_dns(config: dict[str, Any], msg: DNSMessage) -> None:
@@ -435,10 +447,7 @@ def _apply_dns(config: dict[str, Any], msg: DNSMessage) -> None:
             "ra":     msg.flags.ra,
             "rcode":  msg.flags.rcode,
         },
-        "questions": [
-            {"name": q.name, "qtype": q.qtype, "qclass": q.qclass}
-            for q in msg.questions
-        ],
+        "questions": [_serialise_dns_question(q) for q in msg.questions],
         "answers":    [_serialise_dns_rr(rr) for rr in msg.answers],
         "authority":  [_serialise_dns_rr(rr) for rr in msg.authority],
         "additional": [_serialise_dns_rr(rr) for rr in msg.additional],

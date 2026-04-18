@@ -126,6 +126,7 @@ def _build_dns_from_spec(spec: dict) -> DNSMessage:
             name=q["name"],
             qtype=q.get("qtype", DNS_TYPE_A),
             qclass=q.get("qclass", DNS_CLASS_IN),
+            unicast_response=q.get("unicast_response", False),
         )
         for q in spec.get("questions", [])
     ]
@@ -138,6 +139,7 @@ def _build_dns_from_spec(spec: dict) -> DNSMessage:
                 rclass=rr.get("rclass", DNS_CLASS_IN),
                 ttl=rr.get("ttl", 0),
                 rdata=_build_dns_rdata(rr["rtype"], rr.get("rdata", {})),
+                cache_flush=rr.get("cache_flush", False),
             )
             for rr in spec.get(section, [])
         ]

@@ -15,6 +15,9 @@ RFCs implemented or referenced by this library.
 * - [RFC 1035](https://datatracker.ietf.org/doc/html/rfc1035)
   - Domain Names — Implementation and Specification (DNS)
   - `DNSMessage`, `packeteer.generate.dns`, `packeteer.parse.dns`; name compression (§4.1.4); TCP length prefix (§4.2.2)
+* - [RFC 6762](https://datatracker.ietf.org/doc/html/rfc6762)
+  - Multicast DNS (mDNS)
+  - `DNSQuestion.unicast_response` (QU bit, §5.4); `DNSResourceRecord.cache_flush` (§11.3); `MDNS_PORT`, `MDNS_ADDR_IPV4`, `MDNS_ADDR_IPV6`; port 5353 dispatch in `parse_packet`
 * - [RFC 791](https://datatracker.ietf.org/doc/html/rfc791)
   - Internet Protocol (IPv4)
   - `IPHeader`, `fragment_ipv4`

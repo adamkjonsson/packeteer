@@ -6,6 +6,30 @@ All notable changes to packeteer are recorded in this file.
 
 ## Unreleased
 
+### mDNS support (RFC 6762)
+
+- Added `DNSQuestion.unicast_response` (`bool`, default `False`): the mDNS QU
+  bit (RFC 6762 §5.4).  When `True`, the top bit of the `QCLASS` wire field is
+  set, requesting that the response be sent unicast rather than multicast.
+- Added `DNSResourceRecord.cache_flush` (`bool`, default `False`): the mDNS
+  cache-flush bit (RFC 6762 §11.3).  When `True`, the top bit of the `RRCLASS`
+  wire field is set, signalling that stale cache entries for this record should
+  be flushed.
+- Both bits survive encode → decode round-trips and are stripped from the parsed
+  `qclass` / `rclass` values so callers always see the plain class integer.
+- `parse_packet` / `parse_pcap_file` now dispatch to the DNS parser on port 5353
+  (mDNS) in addition to port 53 (DNS).
+- Added constants `MDNS_PORT` (`5353`), `MDNS_ADDR_IPV4` (`"224.0.0.251"`),
+  `MDNS_ADDR_IPV6` (`"ff02::fb"`) exported from `packeteer.generate`.
+- `to_packet_spec` serialisation includes `unicast_response` / `cache_flush` in
+  the packet spec when `True`; omits them otherwise to keep existing output clean.
+- `packeteer build` passes `unicast_response` and `cache_flush` through from the
+  packet spec when present.
+- 14 new tests in `TestMDNS` covering bit encode/decode, qclass/rrclass
+  integrity, port 5353 dispatch, packet spec round-trips, and constant exports
+  (1267 total).
+- RFC 6762 entry added to `docs/reference/rfc-references.md`.
+
 ### DNS protocol support (RFC 1035)
 
 - Added `packeteer.generate.dns` module: `DNSMessage`, `DNSFlags`, `DNSQuestion`,

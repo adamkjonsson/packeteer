@@ -235,6 +235,7 @@ from .dns import (
     DNS_CLASS_IN,
     DNS_RCODE_NOERROR, DNS_RCODE_FORMERR, DNS_RCODE_SERVFAIL,
     DNS_RCODE_NXDOMAIN, DNS_RCODE_NOTIMP, DNS_RCODE_REFUSED,
+    MDNS_PORT, MDNS_ADDR_IPV4, MDNS_ADDR_IPV6,
 )
 from .tcp_stream import generate_tcp_stream, TCPStream, TCPStreamConfig, TCPStreamPacket
 from .udp_stream import generate_udp_stream, UDPStream, UDPStreamPacket
@@ -376,4 +377,7 @@ __all__ = [
     "DNS_RCODE_NXDOMAIN",
     "DNS_RCODE_NOTIMP",
     "DNS_RCODE_REFUSED",
+    "MDNS_PORT",
+    "MDNS_ADDR_IPV4",
+    "MDNS_ADDR_IPV6",
 ]

@@ -49,16 +49,17 @@ pkt = parse_packet(raw, link_type=LINKTYPE_RAW)
 | `etherip` | `EtherIPHeader \| None` | EtherIP tunnel header; `tunneled` holds the inner frame |
 | `tunneled` | `ParsedPacket \| None` | Recursively parsed inner packet for IP-in-IP, GRE, or EtherIP; may itself have a `tunneled` field |
 | `transport` | `TCPHeader \| UDPHeader \| ICMPHeader \| ICMPv6Header \| SCTPHeader \| None` | Transport-layer header |
-| `dns` | `DNSMessage \| None` | Decoded DNS message when the transport is UDP or TCP on port 53; `None` otherwise |
+| `dns` | `DNSMessage \| None` | Decoded DNS or mDNS message when the transport is UDP or TCP on port 53 or 5353; `None` otherwise |
 | `payload` | `bytes` | Bytes after the last parsed header; empty when `dns` is set |
 | `ts_sec` | `int` | Capture timestamp — whole seconds (set by `parse_pcap_packet`) |
 | `ts_frac` | `int` | Capture timestamp — microsecond or nanosecond fraction (set by `parse_pcap_packet`) |
 
-## DNS packets
+## DNS and mDNS packets
 
-When a UDP or TCP packet has port 53 as source or destination, the payload is
-automatically decoded as a DNS message (RFC 1035).  The result is stored in
-`pkt.dns`; `pkt.payload` is empty in that case.
+When a UDP or TCP packet has port 53 or 5353 as source or destination, the
+payload is automatically decoded as a DNS message (RFC 1035) or mDNS message
+(RFC 6762).  The result is stored in `pkt.dns`; `pkt.payload` is empty in that
+case.
 
 ```python
 from packeteer.generate import PacketBuilder, DNSMessage, DNSQuestion, DNS_TYPE_A
@@ -82,9 +83,38 @@ print(pkt.dns.questions[0].name)           # "example.com."
 print(pkt.dns.questions[0].qtype)          # 1  (DNS_TYPE_A)
 ```
 
+mDNS traffic on port 5353 is parsed identically.  The parsed
+`DNSQuestion.unicast_response` and `DNSResourceRecord.cache_flush` fields
+reflect the QU and cache-flush bits set by the sender:
+
+```python
+from packeteer.generate import (
+    PacketBuilder, DNSMessage, DNSFlags, DNSQuestion,
+    DNS_TYPE_A, MDNS_PORT, MDNS_ADDR_IPV4,
+)
+from packeteer.parse import parse_packet
+
+mdns_q = DNSMessage(
+    id=0,
+    flags=DNSFlags(qr=False, rd=False),
+    questions=[DNSQuestion("mydevice.local.", DNS_TYPE_A,
+                           unicast_response=True)],
+)
+raw = (PacketBuilder()
+    .ethernet()
+    .ip(src="192.168.1.2", dst=MDNS_ADDR_IPV4)
+    .udp(src_port=MDNS_PORT, dst_port=MDNS_PORT)
+    .dns(mdns_q)
+    .build()
+)
+
+pkt = parse_packet(raw)
+assert pkt.dns is not None
+print(pkt.dns.questions[0].unicast_response)  # True
+```
+
 DNS over TCP is parsed the same way — the 2-byte length prefix is stripped
-automatically when `transport.src_port == 53` or `transport.dst_port == 53`
-and the transport is TCP.
+automatically when the transport port is 53 or 5353 and the transport is TCP.
 
 Name compression pointers (RFC 1035 §4.1.4) are fully resolved, and pointer
 loops are detected and reported as `ValueError`.  Failed DNS parses leave the
