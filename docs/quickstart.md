@@ -1,10 +1,25 @@
 # Quick Start
 
+All public names are importable from four top-level packages:
+
+| Package | What it contains |
+|---|---|
+| `packeteer.generate` | `PacketBuilder`, header dataclasses, DNS/SCTP types, constants |
+| `packeteer.parse` | `parse_packet`, `parse_pcap_file`, `to_packet_spec`, `update_config` |
+| `packeteer.sanitise` | `sanitise`, `SanitiseOptions` |
+| `packeteer.pcap` | `read_pcap`, `write_pcap`, `write_pcapng`, link-type constants |
+
+You never need to import from a sub-module directly.  API reference links in
+this documentation point to sub-module paths (e.g.
+`packeteer.generate.builder.PacketBuilder`) because that is where the class is
+*defined*, but `from packeteer.generate import PacketBuilder` always works.
+
 ## Build a packet in Python
 
-Use {class}`packeteer.generate.builder.PacketBuilder` — a fluent, layer-by-layer
-API.  Call methods in the order you want the layers stacked, then call
-`.build()` to produce the raw bytes.
+Use {class}`packeteer.generate.builder.PacketBuilder` (`from packeteer.generate
+import PacketBuilder`) — a fluent, layer-by-layer API.  Call methods in the
+order you want the layers stacked, then call `.build()` to produce the raw
+bytes.
 
 ```python
 from packeteer.generate import PacketBuilder
@@ -71,9 +86,10 @@ subcommand, and {doc}`packet-spec/index` for the JSON config format.
 
 ## Parse a packet
 
-{func}`packeteer.parse.core.parse_packet` chains all layer parsers automatically
-and returns a {class}`packeteer.parse.core.ParsedPacket` with every recognised
-layer filled in.
+{func}`packeteer.parse.core.parse_packet` (importable as `from packeteer.parse
+import parse_packet`) chains all layer parsers automatically and returns a
+{class}`packeteer.parse.core.ParsedPacket` with every recognised layer filled
+in.
 
 ```python
 from packeteer.generate import PacketBuilder
