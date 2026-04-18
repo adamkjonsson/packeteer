@@ -3,7 +3,9 @@
 ## Code style
 
 - **Type hints everywhere.** All function parameters, return types, and class attributes must be annotated. Use `from __future__ import annotations` at the top of every module.
-- **Zero ruff warnings.** After any change, the file you touched must produce no warnings from `ruff check`. The project config is in `ruff.toml`.
+- **Zero ruff warnings.** After any change, the file you touched must produce no warnings from `ruff check`. The project config is in `ruff.toml`. Never make a warning
+go away by changing values in the config file. Using a # noqa: comment to suppress
+warnings can only be used as a last resort.
 
 ## Git
 
