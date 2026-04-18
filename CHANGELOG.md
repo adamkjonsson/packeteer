@@ -6,6 +6,78 @@ All notable changes to packeteer are recorded in this file.
 
 ## Unreleased
 
+### mDNS support (RFC 6762)
+
+- Added `DNSQuestion.unicast_response` (`bool`, default `False`): the mDNS QU
+  bit (RFC 6762 §5.4).  When `True`, the top bit of the `QCLASS` wire field is
+  set, requesting that the response be sent unicast rather than multicast.
+- Added `DNSResourceRecord.cache_flush` (`bool`, default `False`): the mDNS
+  cache-flush bit (RFC 6762 §11.3).  When `True`, the top bit of the `RRCLASS`
+  wire field is set, signalling that stale cache entries for this record should
+  be flushed.
+- Both bits survive encode → decode round-trips and are stripped from the parsed
+  `qclass` / `rclass` values so callers always see the plain class integer.
+- `parse_packet` / `parse_pcap_file` now dispatch to the DNS parser on port 5353
+  (mDNS) in addition to port 53 (DNS).
+- Added constants `MDNS_PORT` (`5353`), `MDNS_ADDR_IPV4` (`"224.0.0.251"`),
+  `MDNS_ADDR_IPV6` (`"ff02::fb"`) exported from `packeteer.generate`.
+- `to_packet_spec` serialisation includes `unicast_response` / `cache_flush` in
+  the packet spec when `True`; omits them otherwise to keep existing output clean.
+- `packeteer build` passes `unicast_response` and `cache_flush` through from the
+  packet spec when present.
+- 14 new tests in `TestMDNS` covering bit encode/decode, qclass/rrclass
+  integrity, port 5353 dispatch, packet spec round-trips, and constant exports
+  (1267 total).
+- RFC 6762 entry added to `docs/reference/rfc-references.md`.
+
+### DNS protocol support (RFC 1035)
+
+- Added `packeteer.generate.dns` module: `DNSMessage`, `DNSFlags`, `DNSQuestion`,
+  `DNSResourceRecord`, and nine RDATA dataclasses (`DNSRDataA`, `DNSRDataAAAA`,
+  `DNSRDataCNAME`, `DNSRDataNS`, `DNSRDataPTR`, `DNSRDataMX`, `DNSRDataSOA`,
+  `DNSRDataTXT`, `DNSRDataRaw`).  Wire encoding handles label compression
+  (RFC 1035 §4.1.4) and the mandatory 2-byte TCP length prefix (§4.2.2).
+- Added `PacketBuilder.dns(msg, *, tcp=False)` fluent method: appends a
+  serialised `DNSMessage` as the transport payload; pass `tcp=True` to include
+  the TCP length prefix.
+- Added `packeteer.parse.dns` module: decodes DNS wire format from UDP or TCP
+  payloads, following pointer compression chains.  `parse_packet` / `parse_pcap_file`
+  now dispatch to the DNS parser automatically when the destination or source port
+  is 53; parse failures leave `pkt.payload` unchanged.
+- Added `to_packet_spec` serialisation: a parsed DNS message is written to the
+  `"dns"` key of the per-packet config dict, with all question and resource record
+  fields expanded.
+- `packeteer build` deserialises the `"dns"` packet spec key and passes the
+  reconstructed `DNSMessage` to `PacketBuilder.dns()`.
+- `packeteer sanitise` now sanitises DNS content when a `"dns"` key is present:
+  - DNS names are replaced label-by-label (`label0`, `label1`, …) with consistent
+    mapping across all names in all packets in a file, preserving shared domain
+    structure.
+  - IP addresses in A/AAAA RDATA reuse the same `_Replacer.ip()` mapping as
+    network-layer addresses, ensuring consistency across all packet fields.
+- Added `--dns-ids` flag to `packeteer sanitise`: when set, DNS transaction IDs
+  are replaced with sequential synthetic values (default: preserved).
+- All DNS types and constants exported from `packeteer.generate`.
+- 39 new tests in `test_dns.py` covering name encoding, round-trip serialisation,
+  TCP length prefix, pointer-compression edge cases, DNS sanitisation, builder
+  integration, and CLI `--dns-ids`.
+- Documentation: `.dns()` method documented in `docs/build/python-api.md`;
+  DNS layer added to `docs/build/cli.md`; DNS fields added to
+  `docs/parse/python-api.md`; `--dns-ids` flag documented in
+  `docs/sanitiser/cli.md` and `docs/sanitiser/python-api.md`; full `"dns"` spec
+  reference in `docs/packet-spec/format.md`; DNS quick-start example in
+  `docs/quickstart.md`; RFC 1035 entry added to `docs/reference/rfc-references.md`;
+  DNS feature added to `README.md`.
+
+### PDF documentation fix
+
+- Suppressed the spurious "Part I — In this documentation" page that appeared on
+  page 3 of the PDF build.  A `{raw} latex` injection immediately before the
+  `## In this documentation` heading redefines `\part` for exactly one call so
+  the resulting `\part{In this documentation}` silently disappears; all
+  subsequent `\part` calls are unaffected.  The heading remains visible in the
+  HTML build.
+
 ### `packeteer sanitise` — pcap input and pcap output
 
 - `packeteer sanitise` now accepts a pcap or pcapng file directly as input.

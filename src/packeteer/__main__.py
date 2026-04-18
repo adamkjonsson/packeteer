@@ -35,6 +35,14 @@ import sys
 from importlib.metadata import version as _pkg_version, PackageNotFoundError as _PkgNotFoundError
 from packeteer.generate import PacketBuilder
 from packeteer.generate.tcp import TCPOptions
+from packeteer.generate.dns import (
+    DNS_TYPE_A, DNS_TYPE_NS, DNS_TYPE_CNAME, DNS_TYPE_SOA,
+    DNS_TYPE_PTR, DNS_TYPE_MX, DNS_TYPE_TXT, DNS_TYPE_AAAA,
+    DNS_CLASS_IN,
+    DNSFlags, DNSMessage, DNSQuestion, DNSResourceRecord,
+    DNSRDataA, DNSRDataAAAA, DNSRDataCNAME, DNSRDataNS, DNSRDataPTR,
+    DNSRDataMX, DNSRDataSOA, DNSRDataTXT, DNSRDataRaw,
+)
 from packeteer.pcap import (
     write_pcap, write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW, is_pcap_or_pcapng,
 )
@@ -58,6 +66,92 @@ from packeteer.parse.to_config import (
     update_config, to_packet_spec, to_json_string, apply_tunneled,
 )
 from packeteer.sanitise import SanitiseOptions, sanitise
+
+
+_DNSRData = (
+    DNSRDataA | DNSRDataAAAA | DNSRDataCNAME | DNSRDataNS | DNSRDataPTR
+    | DNSRDataMX | DNSRDataSOA | DNSRDataTXT | DNSRDataRaw
+)
+
+
+def _build_dns_rdata(rtype: int, rdata: dict) -> _DNSRData:  # type: ignore[valid-type]
+    if rtype == DNS_TYPE_A:
+        return DNSRDataA(address=rdata.get("address", "0.0.0.0"))
+    if rtype == DNS_TYPE_AAAA:
+        return DNSRDataAAAA(address=rdata.get("address", "::"))
+    if rtype == DNS_TYPE_CNAME:
+        return DNSRDataCNAME(name=rdata.get("name", "."))
+    if rtype == DNS_TYPE_NS:
+        return DNSRDataNS(name=rdata.get("name", "."))
+    if rtype == DNS_TYPE_PTR:
+        return DNSRDataPTR(name=rdata.get("name", "."))
+    if rtype == DNS_TYPE_MX:
+        return DNSRDataMX(
+            preference=rdata.get("preference", 0),
+            exchange=rdata.get("exchange", "."),
+        )
+    if rtype == DNS_TYPE_SOA:
+        return DNSRDataSOA(
+            mname=rdata.get("mname", "."),
+            rname=rdata.get("rname", "."),
+            serial=rdata.get("serial", 0),
+            refresh=rdata.get("refresh", 0),
+            retry=rdata.get("retry", 0),
+            expire=rdata.get("expire", 0),
+            minimum=rdata.get("minimum", 0),
+        )
+    if rtype == DNS_TYPE_TXT:
+        strings = [
+            s.encode("utf-8") if isinstance(s, str) else s
+            for s in rdata.get("strings", [])
+        ]
+        return DNSRDataTXT(strings=strings)
+    return DNSRDataRaw(rtype=rtype, data=bytes.fromhex(rdata.get("data", "")))
+
+
+def _build_dns_from_spec(spec: dict) -> DNSMessage:
+    """Convert a ``dns`` packet spec dict to a :class:`DNSMessage`."""
+    flags_d = spec.get("flags", {})
+    flags = DNSFlags(
+        qr=flags_d.get("qr", False),
+        opcode=flags_d.get("opcode", 0),
+        aa=flags_d.get("aa", False),
+        tc=flags_d.get("tc", False),
+        rd=flags_d.get("rd", True),
+        ra=flags_d.get("ra", False),
+        rcode=flags_d.get("rcode", 0),
+    )
+    questions = [
+        DNSQuestion(
+            name=q["name"],
+            qtype=q.get("qtype", DNS_TYPE_A),
+            qclass=q.get("qclass", DNS_CLASS_IN),
+            unicast_response=q.get("unicast_response", False),
+        )
+        for q in spec.get("questions", [])
+    ]
+
+    def _rrs(section: str) -> list[DNSResourceRecord]:
+        return [
+            DNSResourceRecord(
+                name=rr["name"],
+                rtype=rr["rtype"],
+                rclass=rr.get("rclass", DNS_CLASS_IN),
+                ttl=rr.get("ttl", 0),
+                rdata=_build_dns_rdata(rr["rtype"], rr.get("rdata", {})),
+                cache_flush=rr.get("cache_flush", False),
+            )
+            for rr in spec.get(section, [])
+        ]
+
+    return DNSMessage(
+        id=spec.get("id", 0),
+        flags=flags,
+        questions=questions,
+        answers=_rrs("answers"),
+        authority=_rrs("authority"),
+        additional=_rrs("additional"),
+    )
 
 
 def _parse_sctp_chunk(spec: dict, packet_num: int) -> SCTPChunk:
@@ -312,6 +406,8 @@ def _apply_ip_chain(
         return _apply_ip_chain(b, gre_inner, packet_num)
 
     b = _dispatch_transport(b, proto_lower, spec.get("transport", {}), packet_num, "ipip inner ")
+    if "dns" in spec:
+        return b.dns(_build_dns_from_spec(spec["dns"]), tcp=(proto_lower == "tcp"))
     return _apply_payload_spec(b, spec.get("payload", {}), packet_num, "ipip inner ")
 
 
@@ -429,7 +525,10 @@ def _apply_spec_to_builder(
         return b, False
 
     b = _dispatch_transport(b, proto_lower, spec.get("transport", {}), packet_num)
-    b = _apply_payload_spec(b, spec.get("payload", {}), packet_num)
+    if "dns" in spec:
+        b = b.dns(_build_dns_from_spec(spec["dns"]), tcp=(proto_lower == "tcp"))
+    else:
+        b = _apply_payload_spec(b, spec.get("payload", {}), packet_num)
     return b, False
 
 
@@ -545,6 +644,7 @@ def _cmd_sanitise(args: argparse.Namespace) -> None:
         ports=args.ports,
         payload=args.payload,
         timestamps=args.timestamps,
+        dns_ids=getattr(args, "dns_ids", False),
     )
 
     try:
@@ -1038,6 +1138,10 @@ def main() -> None:
     san_parser.add_argument(
         "--timestamps", action="store_true",
         help="Zero out packet timestamps (default: kept)",
+    )
+    san_parser.add_argument(
+        "--dns-ids", action="store_true",
+        help="Zero out DNS transaction IDs (default: kept)",
     )
     san_parser.set_defaults(func=_cmd_sanitise)
 

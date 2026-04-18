@@ -265,6 +265,144 @@ data_pkt = (PacketBuilder()
 
 See {doc}`../api/header-dataclasses` for all SCTP chunk types and constants.
 
+### `.dns(msg, *, tcp=False)`
+
+Encodes a {class}`~packeteer.generate.dns.DNSMessage` as wire-format bytes and
+appends it as the payload.  Use after `.udp()` or `.tcp()` on port 53 (DNS) or
+port 5353 (mDNS, RFC 6762).
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `msg` | *(required)* | A {class}`~packeteer.generate.dns.DNSMessage` instance |
+| `tcp` | `False` | Prefix with a 2-byte big-endian length field (RFC 1035 §4.2.2) |
+
+```python
+from packeteer.generate import (
+    PacketBuilder,
+    DNSMessage, DNSFlags, DNSQuestion, DNSResourceRecord,
+    DNSRDataA, DNSRDataMX,
+    DNS_TYPE_A, DNS_TYPE_MX, DNS_CLASS_IN,
+)
+
+# DNS query — ask for the A record of example.com
+query = DNSMessage(
+    id=0x1234,
+    flags=DNSFlags(qr=False, rd=True),
+    questions=[DNSQuestion("example.com.", DNS_TYPE_A)],
+)
+pkt = (PacketBuilder()
+    .ethernet()
+    .ip(src="192.168.1.1", dst="8.8.8.8")
+    .udp(src_port=54321, dst_port=53)
+    .dns(query)
+    .build()
+)
+
+# DNS response — return an A record
+response = DNSMessage(
+    id=0x1234,
+    flags=DNSFlags(qr=True, aa=True, rd=True, ra=True),
+    questions=[DNSQuestion("example.com.")],
+    answers=[
+        DNSResourceRecord(
+            name="example.com.", rtype=DNS_TYPE_A,
+            rclass=DNS_CLASS_IN, ttl=300,
+            rdata=DNSRDataA("93.184.216.34"),
+        ),
+    ],
+)
+pkt = (PacketBuilder()
+    .ethernet()
+    .ip(src="8.8.8.8", dst="192.168.1.1")
+    .udp(src_port=53, dst_port=54321)
+    .dns(response)
+    .build()
+)
+
+# DNS over TCP — same API, tcp=True adds the 2-byte length prefix
+pkt = (PacketBuilder()
+    .ethernet()
+    .ip(src="192.168.1.1", dst="8.8.8.8")
+    .tcp(src_port=54321, dst_port=53, flags=0x018)
+    .dns(query, tcp=True)
+    .build()
+)
+```
+
+**Supported record types** — import the dataclasses from
+{mod}`packeteer.generate.dns` or from {mod}`packeteer.generate`:
+
+| Class | Type | Description |
+|-------|------|-------------|
+| `DNSRDataA` | A (1) | IPv4 address |
+| `DNSRDataAAAA` | AAAA (28) | IPv6 address |
+| `DNSRDataNS` | NS (2) | Authoritative name server |
+| `DNSRDataCNAME` | CNAME (5) | Canonical name alias |
+| `DNSRDataSOA` | SOA (6) | Start of authority |
+| `DNSRDataPTR` | PTR (12) | Reverse DNS pointer |
+| `DNSRDataMX` | MX (15) | Mail exchange |
+| `DNSRDataTXT` | TXT (16) | Text strings |
+| `DNSRDataRaw` | *(any)* | Raw bytes for unrecognised types |
+
+**mDNS (RFC 6762)** — mDNS uses the same wire format on port 5353 with two
+extra bit-flags, both optional and defaulting to `False`:
+
+| Field | Type | Where | Description |
+|-------|------|-------|-------------|
+| `DNSQuestion.unicast_response` | `bool` | question | QU bit — request a unicast response (RFC 6762 §5.4) |
+| `DNSResourceRecord.cache_flush` | `bool` | RR | CF bit — flush stale cache entries (RFC 6762 §11.3) |
+
+The multicast addresses and port are exported as `MDNS_ADDR_IPV4`
+(`"224.0.0.251"`), `MDNS_ADDR_IPV6` (`"ff02::fb"`), and `MDNS_PORT` (`5353`).
+
+```python
+from packeteer.generate import (
+    PacketBuilder,
+    DNSMessage, DNSFlags, DNSQuestion, DNSResourceRecord,
+    DNSRDataA, DNS_TYPE_A, DNS_CLASS_IN,
+    MDNS_PORT, MDNS_ADDR_IPV4,
+)
+
+# mDNS query with QU bit — request a unicast response
+mdns_query = DNSMessage(
+    id=0,
+    flags=DNSFlags(qr=False, rd=False),
+    questions=[DNSQuestion(
+        "mydevice.local.", DNS_TYPE_A, DNS_CLASS_IN,
+        unicast_response=True,
+    )],
+)
+pkt = (PacketBuilder()
+    .ethernet()
+    .ip(src="192.168.1.2", dst=MDNS_ADDR_IPV4)
+    .udp(src_port=MDNS_PORT, dst_port=MDNS_PORT)
+    .dns(mdns_query)
+    .build()
+)
+
+# mDNS response with cache-flush bit
+mdns_response = DNSMessage(
+    id=0,
+    flags=DNSFlags(qr=True, aa=True),
+    answers=[DNSResourceRecord(
+        name="mydevice.local.", rtype=DNS_TYPE_A,
+        rclass=DNS_CLASS_IN, ttl=120,
+        rdata=DNSRDataA("192.168.1.99"),
+        cache_flush=True,
+    )],
+)
+pkt = (PacketBuilder()
+    .ethernet()
+    .ip(src="192.168.1.99", dst=MDNS_ADDR_IPV4)
+    .udp(src_port=MDNS_PORT, dst_port=MDNS_PORT)
+    .dns(mdns_response)
+    .build()
+)
+```
+
+See {doc}`../packet-spec/format` for the JSON representation of DNS/mDNS
+messages in the packet spec format.
+
 ### `.payload(size=0, data=None)`
 
 Appends raw payload bytes.  `data` (bytes) takes precedence over `size`

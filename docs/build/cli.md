@@ -54,6 +54,7 @@ Any combination of these layers can be stacked:
 | `pppoe` | PPPoE session or discovery frame |
 | `network` | IPv4 or IPv6 header — auto-detected from `src` |
 | `transport` | TCP, UDP, ICMP, ICMPv6, or SCTP |
+| `dns` | DNS message (RFC 1035) — replaces `payload` when present |
 | `etherip` | EtherIP tunnel inner frame (set `network.protocol = "etherip"`) |
 | `ipip` | IP-in-IP tunnel inner spec (set `network.protocol = "ipip"`) |
 | `gre` | GRE tunnel inner spec (set `network.protocol = "gre"`) |
@@ -145,6 +146,27 @@ packeteer build syn.json --pcap syn.pcap
       "key": 12345,
       "network":   { "src": "192.168.1.1", "dst": "192.168.1.2", "protocol": "tcp", "ttl": 64 },
       "transport": { "dst_port": 80, "flags": 2 }
+    },
+    "packet_metadata": { "timestamp_s": 0, "timestamp_us": 0 }
+  }]
+}
+```
+
+**DNS query over UDP:**
+
+```json
+{
+  "metadata": { "nanoseconds": false },
+  "packets": [{
+    "ethernet":  { "src_mac": "00:00:00:00:00:01", "dst_mac": "00:00:00:00:00:02" },
+    "network":   { "src": "192.168.1.1", "dst": "8.8.8.8", "protocol": "udp" },
+    "transport": { "src_port": 54321, "dst_port": 53 },
+    "dns": {
+      "id": 4660,
+      "flags": { "qr": false, "rd": true, "opcode": 0, "aa": false,
+                 "tc": false, "ra": false, "rcode": 0 },
+      "questions": [{ "name": "example.com.", "qtype": 1, "qclass": 1 }],
+      "answers": [], "authority": [], "additional": []
     },
     "packet_metadata": { "timestamp_s": 0, "timestamp_us": 0 }
   }]

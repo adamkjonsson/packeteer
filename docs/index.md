@@ -11,6 +11,10 @@ sharing, or generate complete synthetic network streams — TCP, UDP, or SCTP
 Everything runs from a CLI or directly from Python. No root, no libpcap, no
 compiled extensions — Python 3.10+ and the standard library only.
 
+```{raw} latex
+\let\origpart\part\renewcommand{\part}[1]{\let\part\origpart}
+```
+
 ## In this documentation
 
 ```{toctree}

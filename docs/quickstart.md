@@ -1,10 +1,25 @@
 # Quick Start
 
+All public names are importable from four top-level packages:
+
+| Package | What it contains |
+|---|---|
+| `packeteer.generate` | `PacketBuilder`, header dataclasses, DNS/SCTP types, constants |
+| `packeteer.parse` | `parse_packet`, `parse_pcap_file`, `to_packet_spec`, `update_config` |
+| `packeteer.sanitise` | `sanitise`, `SanitiseOptions` |
+| `packeteer.pcap` | `read_pcap`, `write_pcap`, `write_pcapng`, link-type constants |
+
+You never need to import from a sub-module directly.  API reference links in
+this documentation point to sub-module paths (e.g.
+`packeteer.generate.builder.PacketBuilder`) because that is where the class is
+*defined*, but `from packeteer.generate import PacketBuilder` always works.
+
 ## Build a packet in Python
 
-Use {class}`packeteer.generate.builder.PacketBuilder` — a fluent, layer-by-layer
-API.  Call methods in the order you want the layers stacked, then call
-`.build()` to produce the raw bytes.
+Use {class}`packeteer.generate.builder.PacketBuilder` (`from packeteer.generate
+import PacketBuilder`) — a fluent, layer-by-layer API.  Call methods in the
+order you want the layers stacked, then call `.build()` to produce the raw
+bytes.
 
 ```python
 from packeteer.generate import PacketBuilder
@@ -71,9 +86,10 @@ subcommand, and {doc}`packet-spec/index` for the JSON config format.
 
 ## Parse a packet
 
-{func}`packeteer.parse.core.parse_packet` chains all layer parsers automatically
-and returns a {class}`packeteer.parse.core.ParsedPacket` with every recognised
-layer filled in.
+{func}`packeteer.parse.core.parse_packet` (importable as `from packeteer.parse
+import parse_packet`) chains all layer parsers automatically and returns a
+{class}`packeteer.parse.core.ParsedPacket` with every recognised layer filled
+in.
 
 ```python
 from packeteer.generate import PacketBuilder
@@ -118,6 +134,60 @@ The outer IP protocol field (47), the GRE Protocol Type (0x0800 for IPv4), and
 all checksums are set automatically.  The same stacking model works for
 EtherIP (`.etherip()`), IP-in-IP (call `.ip()` twice), QinQ (call `.vlan()`
 twice), and MPLS label stacks (call `.mpls()` for each label).
+
+## DNS example
+
+Build a DNS query packet with {class}`~packeteer.generate.dns.DNSMessage` and
+the `.dns()` builder method.  Use after `.udp()` or `.tcp()` on port 53:
+
+```python
+from packeteer.generate import (
+    PacketBuilder,
+    DNSMessage, DNSFlags, DNSQuestion, DNSResourceRecord,
+    DNSRDataA, DNS_TYPE_A, DNS_CLASS_IN,
+)
+
+# DNS query — who is example.com?
+query = DNSMessage(
+    id=0x1234,
+    flags=DNSFlags(qr=False, rd=True),
+    questions=[DNSQuestion("example.com.", DNS_TYPE_A)],
+)
+pkt = (PacketBuilder()
+    .ethernet()
+    .ip(src="192.168.1.1", dst="8.8.8.8")
+    .udp(src_port=54321, dst_port=53)
+    .dns(query)
+    .build()
+)
+
+# DNS response — here it is
+response = DNSMessage(
+    id=0x1234,
+    flags=DNSFlags(qr=True, rd=True, ra=True),
+    questions=[DNSQuestion("example.com.")],
+    answers=[
+        DNSResourceRecord(
+            name="example.com.", rtype=DNS_TYPE_A,
+            rclass=DNS_CLASS_IN, ttl=300,
+            rdata=DNSRDataA("93.184.216.34"),
+        ),
+    ],
+)
+pkt = (PacketBuilder()
+    .ethernet()
+    .ip(src="8.8.8.8", dst="192.168.1.1")
+    .udp(src_port=53, dst_port=54321)
+    .dns(response)
+    .build()
+)
+```
+
+Pass `tcp=True` to `.dns()` to produce a DNS-over-TCP packet with the
+mandatory 2-byte length prefix (RFC 1035 §4.2.2).
+
+See {doc}`build/python-api` for all supported record types and
+{doc}`packet-spec/format` for the JSON representation.
 
 ## SCTP example
 

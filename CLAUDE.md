@@ -30,8 +30,6 @@ python -m venv .venv
 - **Build docs:** `.venv/bin/sphinx-build docs docs/_build/html`
 - **Build wheel:** `.venv/bin/python -m build`
 
-The existing `./docvenv/` was created before `requirements.txt` existed; treat `.venv` as the canonical environment going forward.
-
 ## Conventions
 
 - Use `.venv/bin/pytest` to run tests and `ruff` (on PATH) to lint.
