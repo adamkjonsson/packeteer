@@ -4,7 +4,23 @@ All notable changes to packeteer are recorded in this file.
 
 ---
 
-## Unreleased
+## 0.4.0 — 2026-04-19
+
+### Documentation
+
+- Internals docs updated for DNS, DHCP, HTTP, and `PacketFilter`:
+  `architecture.md` adds `packeteer.filter` to the component diagram and
+  documents application-layer parsing; `parser-pipeline.md` adds the
+  `dns`, `dhcp`, and `http` fields to `ParsedPacket` and a new
+  Application-layer dispatch section; `sanitiser.md` adds `dns_ids`,
+  `dhcp_xids`, and `http_headers` to `SanitiseOptions` and expands the
+  replacement strategy table.
+- `packeteer build` CLI page now cross-references `packeteer parse` and
+  `packeteer sanitise` in the parse → edit → rebuild workflow example.
+- `installation.md`: "Next: Quick Start" navigation link is now
+  HTML-only (suppressed in the PDF via `:::{only} html`).
+- PDF headers now show the chapter name (left mark) on even pages and
+  the section name (right mark) on odd pages.
 
 ### Auto-detected metadata in `packeteer parse`
 
