@@ -150,8 +150,7 @@ class TestCmdParse(unittest.TestCase):
         self.pcap_path = _write_pcap_with_one_packet()
 
     def test_parse_prints_json_to_stdout(self):
-        args = _args(pcap=self.pcap_path, output=None,
-                     replay_pcap=None, replay_pcapng=None)
+        args = _args(pcap=self.pcap_path, output=None)
         with patch("sys.stdout", new_callable=StringIO) as out:
             cli._cmd_parse(args)
         result = json.loads(out.getvalue())
@@ -159,43 +158,37 @@ class TestCmdParse(unittest.TestCase):
 
     def test_parse_writes_json_to_file(self):
         out_path = _tmpfile(".json")
-        args = _args(pcap=self.pcap_path, output=out_path,
-                     replay_pcap=None, replay_pcapng=None)
+        args = _args(pcap=self.pcap_path, output=out_path)
         cli._cmd_parse(args)
         data = json.loads(Path(out_path).read_text())
         self.assertIn("packets", data)
 
     def test_parse_missing_file_exits(self):
-        args = _args(pcap="/nonexistent.pcap", output=None,
-                     replay_pcap=None, replay_pcapng=None)
+        args = _args(pcap="/nonexistent.pcap", output=None)
         with self.assertRaises(SystemExit):
             cli._cmd_parse(args)
 
-    def test_parse_replay_pcap_sets_type(self):
-        out_path = _tmpfile(".json")
-        args = _args(pcap=self.pcap_path, output=out_path,
-                     replay_pcap="replayed.pcap", replay_pcapng=None)
-        cli._cmd_parse(args)
-        data = json.loads(Path(out_path).read_text())
+    def test_parse_auto_detects_pcap_type(self):
+        args = _args(pcap=self.pcap_path, output=None)
+        with patch("sys.stdout", new_callable=StringIO) as out:
+            cli._cmd_parse(args)
+        data = json.loads(out.getvalue())
         self.assertEqual(data.get("metadata", {}).get("type"), "pcap")
 
-    def test_parse_replay_pcapng_sets_type(self):
-        out_path = _tmpfile(".json")
-        args = _args(pcap=self.pcap_path, output=out_path,
-                     replay_pcap=None, replay_pcapng="replayed.pcapng")
-        cli._cmd_parse(args)
-        data = json.loads(Path(out_path).read_text())
-        self.assertEqual(data.get("metadata", {}).get("type"), "pcapng")
+    def test_parse_metadata_includes_from_file(self):
+        args = _args(pcap=self.pcap_path, output=None)
+        with patch("sys.stdout", new_callable=StringIO) as out:
+            cli._cmd_parse(args)
+        data = json.loads(out.getvalue())
+        self.assertEqual(data.get("metadata", {}).get("from_file"), self.pcap_path)
 
     def test_parse_output_to_unwritable_path_exits(self):
-        args = _args(pcap=self.pcap_path, output="/nonexistent/dir/out.json",
-                     replay_pcap=None, replay_pcapng=None)
+        args = _args(pcap=self.pcap_path, output="/nonexistent/dir/out.json")
         with self.assertRaises(SystemExit):
             cli._cmd_parse(args)
 
     def test_parse_result_contains_tcp_packet(self):
-        args = _args(pcap=self.pcap_path, output=None,
-                     replay_pcap=None, replay_pcapng=None)
+        args = _args(pcap=self.pcap_path, output=None)
         with patch("sys.stdout", new_callable=StringIO) as out:
             cli._cmd_parse(args)
         packets = json.loads(out.getvalue())["packets"]

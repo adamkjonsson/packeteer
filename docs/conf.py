@@ -69,7 +69,11 @@ intersphinx_mapping = {
 latex_toplevel_sectioning = "part"
 
 latex_elements = {
-    "preamble": r"\setcounter{tocdepth}{2}",
+    "preamble": r"""
+\setcounter{tocdepth}{2}
+\fancyhead[RE]{\nouppercase{\leftmark}}
+\fancyhead[LO]{\nouppercase{\rightmark}}
+""",
 }
 
 # ── Theme ─────────────────────────────────────────────────────────────────────

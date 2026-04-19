@@ -58,6 +58,7 @@ from packeteer.generate.dns import DNSMessage
 from packeteer.generate.dhcp import DHCPMessage
 from packeteer.generate.http import HTTPMessage
 from packeteer.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW, PcapFileHeader, read_pcap
+from packeteer.filter import PacketFilter
 from .to_config import update_config, to_packet_spec, to_json_string, apply_tunneled
 
 from .ethernet import packet_parser as _ethernet_parser
@@ -456,6 +457,7 @@ def parse_pcap_file(
     path: str | os.PathLike | None = None,
     file_object: io.RawIOBase | io.BufferedIOBase | None = None,
     output: dict[str, Any] | None = None,
+    packet_filter: PacketFilter | None = None,
 ) -> str:
     """Parse every packet in a pcap file and return a packet spec string.
 
@@ -478,6 +480,10 @@ def parse_pcap_file(
             block (e.g. ``{"from_file": "capture.pcap", "type": "pcap"}``).
             ``"nanoseconds"`` and ``"link_type"`` are set automatically from
             the source file and must not be supplied here.
+        packet_filter: Optional :class:`~packeteer.filter.PacketFilter`.
+            When supplied, only packets whose spec dict satisfies
+            :meth:`~packeteer.filter.PacketFilter.matches` are included in
+            the output.
 
     Returns:
         A JSON string whose top-level structure matches the format accepted by
@@ -517,14 +523,16 @@ def parse_pcap_file(
             elif pkt.payload:
                 update_config(cfg, pkt.payload)
         cfg["packet_metadata"] = {"timestamp_s": pkt.ts_sec, ts_frac_key: pkt.ts_frac}
-        packet_configs.append(cfg)
+        if packet_filter is None or packet_filter.matches(cfg):
+            packet_configs.append(cfg)
 
     global_output: dict[str, Any] = dict(output) if output is not None else {}
     global_output.setdefault("nanoseconds", pcap.header.nanoseconds)
     global_output.setdefault("link_type", pcap.header.link_type)
-    if output is not None:
-        # version_major 1 = pcapng, 2 = pcap
-        file_type = "pcapng" if pcap.header.version_major == 1 else "pcap"
-        global_output.setdefault("type", file_type)
+    # version_major 1 = pcapng, 2 = pcap
+    file_type = "pcapng" if pcap.header.version_major == 1 else "pcap"
+    global_output.setdefault("type", file_type)
+    if path is not None:
+        global_output.setdefault("from_file", str(path))
 
     return to_json_string(to_packet_spec(packet_configs, metadata=global_output))

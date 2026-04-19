@@ -23,6 +23,7 @@ compiled extensions — Python 3.10+ and the standard library only.
 - **IPv4 and IPv6 fragmentation** in one call
 - **pcap and pcapng** file I/O with microsecond or nanosecond timestamps
 - **Stream generation** — complete TCP / UDP / SCTP flows written to pcap, pcapng, or packet spec; all streams can be wrapped in any encapsulation layer (VLAN, QinQ, MPLS, PPPoE, GRE, EtherIP, IP-in-IP), combined as a stack, and fragmented through a simulated low-MTU middlebox
+- **Capture filtering** — `packeteer parse` accepts filter flags (`--proto`, `--port`, `--src`, `--dst`, `--host`, `--app`, …) to keep only the traffic you care about; values can be negated with `!` and addresses accept CIDR notation for both IPv4 and IPv6
 - **CLI** (`packeteer`) — build packets from a packet spec, parse captures to a packet spec, sanitise specs by replacing sensitive fields with synthetic data, or generate synthetic streams with `packeteer stream`
 
 ## Quick start
@@ -41,6 +42,9 @@ packeteer sanitise capture.pcap --pcap clean.pcap
 
 # Or keep the intermediate packet spec too
 packeteer sanitise capture.pcap --pcap clean.pcap --output clean.json
+
+# Parse only TCP traffic on port 443 from a specific subnet
+packeteer parse capture.pcap --proto tcp --dst-port 443 --src 10.0.0.0/24 --output https.json
 
 # Generate a complete TCP stream (50 packets, bimodal payload sizes)
 packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \

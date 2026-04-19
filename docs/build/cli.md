@@ -199,6 +199,10 @@ packeteer build syn.json --pcap syn.pcap
 
 **Parse → edit → rebuild workflow:**
 
+`packeteer parse` converts a pcap or pcapng capture into an editable packet
+spec (see {doc}`../parse/cli`); `packeteer sanitise` can scrub sensitive fields
+before sharing (see {doc}`../sanitiser/cli`).
+
 ```bash
 # Capture live traffic and convert it to an editable config
 packeteer parse capture.pcap --output config.json

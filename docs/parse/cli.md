@@ -1,7 +1,9 @@
 # `packeteer parse` — CLI
 
 ```
-packeteer parse <capture> [--output FILE] [--replay-pcap FILE | --replay-pcapng FILE]
+packeteer parse <capture> [--output FILE]
+                          [--proto PROTO] [--port PORTS] [--src-port PORTS] [--dst-port PORTS]
+                          [--src ADDR] [--dst ADDR] [--host ADDR] [--app APP]
 ```
 
 Reads every packet in a pcap or pcapng file, decodes each one through all
@@ -18,8 +20,120 @@ by hand or programmatically before rebuilding.
 |----------|-------------|
 | `capture` | *(required)* Path to a `.pcap` or `.pcapng` file |
 | `--output FILE` / `-o FILE` | Write JSON to FILE instead of printing to stdout |
-| `--replay-pcap FILE` | Add `"type": "pcap"` and `"from_file"` to the top-level `metadata` block |
-| `--replay-pcapng FILE` | Add `"type": "pcapng"` and `"from_file"` to the top-level `metadata` block (mutually exclusive with `--replay-pcap`) |
+
+## Filtering
+
+`packeteer parse` can discard unwanted packets during parsing so that only the
+traffic you care about appears in the output.  All filter flags are optional and
+are **AND-combined** — a packet must satisfy every flag you supply to be kept.
+
+### Filter flags
+
+| Flag | Argument | Description |
+|------|----------|-------------|
+| `--proto` | `PROTO` | IP protocol name: `tcp`, `udp`, `sctp`, `icmp`, `icmpv6` |
+| `--port` | `PORTS` | Source-**or**-destination port; comma-separated for multiple values |
+| `--src-port` | `PORTS` | Source port only |
+| `--dst-port` | `PORTS` | Destination port only |
+| `--src` | `ADDR` | Source IP address or CIDR prefix |
+| `--dst` | `ADDR` | Destination IP address or CIDR prefix |
+| `--host` | `ADDR` | Source-**or**-destination IP address or CIDR prefix |
+| `--app` | `APP` | Application layer present: `dns`, `dhcp`, or `http` |
+
+### Negation with `!`
+
+Prefix any value with `!` to negate the criterion — keeping packets that do
+**not** match instead of those that do:
+
+```bash
+# Keep all packets except TCP
+packeteer parse capture.pcap --proto '!tcp'
+
+# Keep all packets except those to/from port 80
+packeteer parse capture.pcap --port '!80'
+```
+
+For comma-separated lists, all values must be consistently positive or
+consistently negative:
+
+```bash
+# Keep packets with destination port 80 or 443
+packeteer parse capture.pcap --dst-port 80,443
+
+# Keep packets whose destination port is neither 80 nor 443
+packeteer parse capture.pcap --dst-port '!80,!443'
+```
+
+Mixing positive and negative values in the same list (e.g. `80,!443`) is an
+error.
+
+### Address and CIDR matching
+
+`--src`, `--dst`, and `--host` accept any IPv4 or IPv6 address, or a CIDR
+prefix.  A host address without a prefix length is treated as a /32 (IPv4) or
+/128 (IPv6) and matches only that exact address:
+
+```bash
+# Source is anywhere in 10.0.0.0/8
+packeteer parse capture.pcap --src 10.0.0.0/8
+
+# Destination is not in the RFC 1918 private range
+packeteer parse capture.pcap --dst '!192.168.0.0/16'
+
+# Either endpoint is an IPv6 documentation address
+packeteer parse capture.pcap --host 2001:db8::/32
+```
+
+### Tunnelled packets
+
+For tunnelled packets (GRE, EtherIP, IP-in-IP), filtering is applied to the
+**outer** layer only.  The inner IP addresses and ports inside a tunnel are not
+inspected by the filter.
+
+### Examples
+
+**Extract only DNS traffic:**
+
+```bash
+packeteer parse capture.pcap --app dns
+```
+
+**Extract HTTP and HTTPS:**
+
+```bash
+packeteer parse capture.pcap --proto tcp --port 80,443
+```
+
+**Extract traffic from a specific host:**
+
+```bash
+packeteer parse capture.pcap --host 192.168.1.100
+```
+
+**Extract all traffic within a subnet, excluding a noisy host:**
+
+```bash
+packeteer parse capture.pcap --src 10.0.0.0/24 --dst '!10.0.0.1'
+```
+
+**Extract TCP traffic to port 443 from a specific source subnet:**
+
+```bash
+packeteer parse capture.pcap --proto tcp --dst-port 443 --src 10.0.0.0/16
+```
+
+**Drop all ICMP and write the rest to a new pcap:**
+
+```bash
+packeteer parse capture.pcap --proto '!icmp' --output filtered.json
+packeteer build filtered.json --pcap filtered.pcap
+```
+
+**Extract non-DNS UDP traffic:**
+
+```bash
+packeteer parse capture.pcap --proto udp --app '!dns'
+```
 
 ## What gets parsed
 

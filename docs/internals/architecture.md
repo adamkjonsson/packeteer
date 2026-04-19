@@ -19,22 +19,30 @@ dict; the CLI simply drives them from the command line.
 +--------------------------------------------------------------------+
 |  packeteer_cli.py                                                  |
 |  (parse / build / sanitise / stream subcommands)                   |
-+--------------+--------------------------------+--------------------+
-               |                                |
-    +----------v----------+        +------------v------------+
-    |  packeteer/parse/   |        |  packeteer/generate/    |
-    |  parser.py          |        |  builder.py             |
-    |  to_config.py       |        |  tcp_stream.py ...      |
-    +----------+----------+        +------------+------------+
-               |                                |
-    +----------v----------+        +------------v------------+
-    |  Parsed header      |        |  Raw packet bytes       |
-    |  dataclasses        |        |  (to pcap / pcapng)     |
-    +---------------------+        +-------------------------+
++--------------+--------------------+--------------------+-----------+
+               |                    |                    |
+    +----------v----------+  +------v------+  +----------v-----------+
+    |  packeteer/parse/   |  | packeteer/  |  |  packeteer/generate/ |
+    |  parser.py          |  | filter.py   |  |  builder.py          |
+    |  to_config.py       |  | PacketFilter|  |  tcp_stream.py ...   |
+    +----------+----------+  +-------------+  +----------+-----------+
+               |                                         |
+    +----------v----------+                  +-----------v----------+
+    |  Parsed header      |                  |  Raw packet bytes    |
+    |  dataclasses        |                  |  (to pcap / pcapng)  |
+    +---------------------+                  +----------------------+
 ```
 
 **`packeteer.parse`** reads raw bytes and produces `ParsedPacket` objects, which
-are then serialised to packet spec dicts by `to_config.py`.
+are then serialised to packet spec dicts by `to_config.py`.  In addition to
+protocol headers, the parse pipeline decodes application-layer messages: DNS
+and mDNS (UDP port 53/5353), DHCP (UDP port 67/68), and HTTP/1.x (TCP port
+80/8080).
+
+**`packeteer.filter`** provides the `PacketFilter` dataclass, which expresses
+AND-combined filter criteria (protocol, ports, IP addresses/CIDRs, application
+layer) over packet spec dicts.  `parse_pcap_file` accepts an optional
+`PacketFilter` and excludes non-matching packets from its output.
 
 **`packeteer.generate`** reads packet spec dicts and produces raw bytes, one
 packet at a time via `PacketBuilder`, or complete synthetic streams via the

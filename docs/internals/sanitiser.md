@@ -12,21 +12,25 @@ in a packet spec dict with synthetic but structurally valid equivalents.
   documentation, testing, or local administration, so a sanitised capture can
   never be mistaken for live traffic:
 
-  | Field | Synthetic range |
+  | Field | Synthetic range / strategy |
   |---|---|
   | IPv4 | RFC 5737 documentation blocks: `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24` (762 usable addresses) |
   | IPv6 | `2001:db8::/32` (RFC 3849): allocated as `2001:db8::<n+1>` |
   | MAC | Locally-administered unicast: `02:00:00:<b2>:<b1>:<b0>` |
   | Port | 10 000–59 999 (sequential allocation) |
   | Payload | Zero-filled hex string of the same byte length |
+  | DNS names | Each label replaced with `label0`, `label1`, … (consistent within a call); A/AAAA RDATA addresses replaced via the IP replacer |
+  | DNS id | 16-bit transaction id zeroed (opt-in: `dns_ids=True`) |
+  | DHCP XIDs | 32-bit `xid` field zeroed (opt-in: `dhcp_xids=True`); IP fields and IP-valued options replaced via the IP replacer; `chaddr` replaced via the MAC replacer |
+  | HTTP headers | Sensitive header values replaced with `"[redacted]"` (opt-in: `http_headers=True`); affected headers: `Host`, `Cookie`, `Set-Cookie`, `Authorization`, `Location`, `Referer`, `Origin` |
 
 ## `_Replacer` — per-call state
 
 A `_Replacer` instance is created fresh for each `sanitise()` call.  It holds:
 
-- Four mapping dicts: `_ipv4_map`, `_ipv6_map`, `_mac_map`, `_port_map`
-  — mapping original values to synthetic ones.
-- Four counters tracking the next allocation index.
+- Five mapping dicts: `_ipv4_map`, `_ipv6_map`, `_mac_map`, `_port_map`,
+  `_dns_label_map` — mapping original values to synthetic ones.
+- Five counters tracking the next allocation index.
 
 When a value is first seen, a new synthetic value is allocated from the
 appropriate range and stored in the map.  Subsequent occurrences of the same
@@ -65,16 +69,21 @@ limit.
 ```python
 @dataclass
 class SanitiseOptions:
-    ips:        bool = True    # replace src/dst in every "network" section
-    macs:       bool = True    # replace src_mac/dst_mac in every "ethernet" section
-    ports:      bool = False   # replace src_port/dst_port
-    payload:    bool = False   # zero payload.data and SCTP chunk data fields
-    timestamps: bool = False   # zero packet_metadata timestamps
+    ips:          bool = True    # replace src/dst in every "network" section
+    macs:         bool = True    # replace src_mac/dst_mac in every "ethernet" section
+    ports:        bool = False   # replace src_port/dst_port
+    payload:      bool = False   # zero payload.data and SCTP chunk data fields
+    timestamps:   bool = False   # zero packet_metadata timestamps
+    dns_ids:      bool = False   # zero 16-bit DNS transaction id
+    dhcp_xids:    bool = False   # zero 32-bit DHCP transaction xid
+    http_headers: bool = False   # redact sensitive HTTP header values
 ```
 
 The defaults (IP and MAC replacement only) are enough for most sharing
 scenarios.  Ports and payload data are opt-in because replacing them changes
-the observable application behaviour of the capture.
+the observable application behaviour of the capture.  The `dns_ids`,
+`dhcp_xids`, and `http_headers` flags are opt-in because the fields they
+affect are not sensitive in all contexts.
 
 ## SCTP payload handling
 
