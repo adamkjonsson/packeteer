@@ -939,5 +939,87 @@ class TestCmdStreamWithEncap(unittest.TestCase):
         self.assertEqual(ethertype, 0x8847)
 
 
+class TestLinkTypeMetadata(unittest.TestCase):
+    """link_type round-trips through parse → spec → build."""
+
+    def _make_pcap(self, link_type: int, pkt: bytes) -> bytes:
+        from io import BytesIO
+        from packeteer.pcap import write_pcap
+        buf = BytesIO()
+        write_pcap([(pkt, 0, 0)], file_object=buf, link_type=link_type)
+        buf.seek(0)
+        return buf.read()
+
+    def test_parse_writes_link_type_ethernet(self) -> None:
+        from io import BytesIO
+        from packeteer.parse.core import parse_pcap_file
+        from packeteer.pcap import LINKTYPE_ETHERNET
+        pkt = b"\x00" * 14 + b"\x45\x00\x00\x14" + b"\x00" * 16
+        buf = BytesIO(self._make_pcap(LINKTYPE_ETHERNET, pkt))
+        cfg = json.loads(parse_pcap_file(file_object=buf))
+        self.assertEqual(cfg["metadata"]["link_type"], LINKTYPE_ETHERNET)
+
+    def test_parse_writes_link_type_raw(self) -> None:
+        from io import BytesIO
+        from packeteer.parse.core import parse_pcap_file
+        from packeteer.pcap import LINKTYPE_RAW
+        pkt = b"\x45\x00\x00\x14" + b"\x00" * 16  # raw IP, no Ethernet
+        buf = BytesIO(self._make_pcap(LINKTYPE_RAW, pkt))
+        cfg = json.loads(parse_pcap_file(file_object=buf))
+        self.assertEqual(cfg["metadata"]["link_type"], LINKTYPE_RAW)
+
+    def test_build_uses_link_type_from_metadata(self) -> None:
+        from packeteer.pcap import LINKTYPE_RAW, read_pcap
+        spec = {
+            "metadata": {"nanoseconds": False, "link_type": LINKTYPE_RAW},
+            "packets": [{
+                "ethernet": {"enabled": False},
+                "network": {"src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "tcp"},
+                "transport": {"dst_port": 80},
+                "packet_metadata": {"timestamp_s": 0, "timestamp_us": 0},
+            }],
+        }
+        with tempfile.NamedTemporaryFile(suffix=".json", mode="w", delete=False) as jf:
+            json.dump(spec, jf)
+            jf_path = jf.name
+        pcap_path = jf_path + ".pcap"
+        try:
+            import sys
+            sys.argv = ["packeteer", "build", jf_path, "--pcap", pcap_path]
+            cli.main()
+            pcap = read_pcap(path=pcap_path)
+            self.assertEqual(pcap.header.link_type, LINKTYPE_RAW)
+        finally:
+            os.unlink(jf_path)
+            if os.path.exists(pcap_path):
+                os.unlink(pcap_path)
+
+    def test_build_falls_back_to_inference_when_absent(self) -> None:
+        from packeteer.pcap import LINKTYPE_ETHERNET, read_pcap
+        spec = {
+            "metadata": {"nanoseconds": False},  # no link_type
+            "packets": [{
+                "ethernet": {},
+                "network": {"src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "tcp"},
+                "transport": {"dst_port": 80},
+                "packet_metadata": {"timestamp_s": 0, "timestamp_us": 0},
+            }],
+        }
+        with tempfile.NamedTemporaryFile(suffix=".json", mode="w", delete=False) as jf:
+            json.dump(spec, jf)
+            jf_path = jf.name
+        pcap_path = jf_path + ".pcap"
+        try:
+            import sys
+            sys.argv = ["packeteer", "build", jf_path, "--pcap", pcap_path]
+            cli.main()
+            pcap = read_pcap(path=pcap_path)
+            self.assertEqual(pcap.header.link_type, LINKTYPE_ETHERNET)
+        finally:
+            os.unlink(jf_path)
+            if os.path.exists(pcap_path):
+                os.unlink(pcap_path)
+
+
 if __name__ == "__main__":
     unittest.main()

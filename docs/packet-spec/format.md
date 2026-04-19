@@ -517,6 +517,76 @@ Each entry has a `code` field that selects the option type.
 
 ---
 
+(packet-spec-http)=
+## `http`
+
+An optional HTTP/1.x request or response (RFC 7230).  When present, `http` is
+encoded as the TCP payload and the `payload` key is ignored.  Use with
+`network.protocol = "tcp"` and `transport.dst_port` or `transport.src_port`
+set to `80` or `8080`.
+
+The `type` field selects between request and response:
+
+**HTTP request:**
+
+```json
+"transport": { "src_port": 54321, "dst_port": 80, "flags": 24 },
+"http": {
+  "type":    "request",
+  "method":  "GET",
+  "path":    "/index.html",
+  "version": "1.1",
+  "headers": {
+    "Host":   "example.com",
+    "Accept": "text/html"
+  },
+  "body": ""
+}
+```
+
+**HTTP response:**
+
+```json
+"transport": { "src_port": 80, "dst_port": 54321, "flags": 24 },
+"http": {
+  "type":        "response",
+  "version":     "1.1",
+  "status_code": 200,
+  "reason":      "OK",
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "3c68746d6c3e48656c6c6f3c2f68746d6c3e"
+}
+```
+
+### `http` fields — request
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `type` | `"request"` | Must be `"request"` |
+| `method` | `"GET"` | HTTP method string (e.g. `"GET"`, `"POST"`) |
+| `path` | `"/"` | Request-target (path, optionally with query string) |
+| `version` | `"1.1"` | HTTP version without the `"HTTP/"` prefix |
+| `headers` | `{}` | Object of header name → value string pairs |
+| `body` | `""` | Request body encoded as a hex string |
+
+### `http` fields — response
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `type` | — | Must be `"response"` |
+| `version` | `"1.1"` | HTTP version without the `"HTTP/"` prefix |
+| `status_code` | `200` | 3-digit integer status code |
+| `reason` | `"OK"` | Reason phrase |
+| `headers` | `{}` | Object of header name → value string pairs |
+| `body` | `""` | Response body encoded as a hex string |
+
+`Content-Length` is added automatically by the builder when `body` is
+non-empty and the header is not already present.
+
+---
+
 (packet-spec-payload)=
 ## `payload`
 
@@ -538,6 +608,7 @@ Always present in configs produced by `packeteer parse` and
 | Field | Required | Description |
 |-------|----------|-------------|
 | `nanoseconds` | **yes** | `true` when `packet_metadata` timestamps use nanosecond resolution; `false` for microsecond.  Always `false` in stream JSON output. |
+| `link_type` | no | pcap link-layer type integer for the whole file — `1` = Ethernet (default), `101` = Raw IP.  Written by `packeteer parse`; read by `packeteer build` to set the link-layer type of the output pcap/pcapng.  When absent, `packeteer build` infers the type from the packet contents. |
 | `from_file` | no | Path of the source pcap or pcapng file (informational only) |
 | `type` | no | Source file format: `"pcap"` or `"pcapng"` |
 

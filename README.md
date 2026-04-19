@@ -19,6 +19,7 @@ compiled extensions — Python 3.10+ and the standard library only.
 - **Tunnels**: IP-in-IP (RFC 2003/4213), EtherIP (RFC 3378), GRE (RFC 2784/2890) with Key, Sequence, Checksum, and TEB
 - **DNS** (RFC 1035) and **mDNS** (RFC 6762) — parse, build, and sanitise A, AAAA, NS, CNAME, MX, SOA, PTR, and TXT records over UDP or TCP; mDNS QU and cache-flush bits; port 5353 dispatch
 - **DHCP** (RFC 2131 / RFC 2132) — parse, build, and sanitise DHCP messages including all common option types; dispatch on ports 67/68
+- **HTTP/1.x** (RFC 7230) — parse, build, and sanitise HTTP requests and responses over TCP; automatic port 80/8080 dispatch; sensitive header redaction
 - **IPv4 and IPv6 fragmentation** in one call
 - **pcap and pcapng** file I/O with microsecond or nanosecond timestamps
 - **Stream generation** — complete TCP / UDP / SCTP flows written to pcap, pcapng, or packet spec; all streams can be wrapped in any encapsulation layer (VLAN, QinQ, MPLS, PPPoE, GRE, EtherIP, IP-in-IP), combined as a stack, and fragmented through a simulated low-MTU middlebox
@@ -105,6 +106,22 @@ pkt = (PacketBuilder()
         xid=0x12345678,
         chaddr=bytes.fromhex("aabbccddeeff") + b"\x00" * 10,
         options=[DHCPOptMessageType(DHCP_MSG_DISCOVER)],
+    ))
+    .build()
+)
+```
+
+```python
+# HTTP GET request (RFC 7230)
+from packeteer.generate.http import HTTPRequest, HTTP_PORT
+
+pkt = (PacketBuilder()
+    .ethernet()
+    .ip(src="10.0.0.1", dst="10.0.0.2")
+    .tcp(src_port=54321, dst_port=HTTP_PORT, flags=0x018)
+    .http(HTTPRequest(
+        method="GET", path="/api/data",
+        headers={"Host": "example.com", "Accept": "application/json"},
     ))
     .build()
 )

@@ -39,6 +39,7 @@ named keys in the per-packet JSON object:
 | IP-in-IP | `ipip` | Inner spec nested recursively; no inner `ethernet` key |
 | GRE | `gre` | Key, sequence, checksum flags preserved; TEB has inner `ethernet` |
 | EtherIP | `etherip` | Inner Ethernet frame nested recursively |
+| HTTP/1.x request or response | `http` | Parsed when transport is TCP on port 80 or 8080; see {doc}`../packet-spec/format` for the JSON schema |
 | Payload | `payload` | Raw bytes encoded as a hex string |
 
 Bytes that follow the last recognised header are captured in `payload.data`.

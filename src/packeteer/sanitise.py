@@ -25,6 +25,8 @@ Replacement strategy
   Payload   Zero-filled hex string, same byte length
   DNS name  label0.label1... — each unique label replaced
             consistently so shared parents are preserved
+  HTTP hdr  ``[redacted]`` for Host, Cookie, Set-Cookie,
+            Authorization, Location, Referer, Origin
   ========  =====================================================
 
 Example::
@@ -115,16 +117,23 @@ class SanitiseOptions:
             ``siaddr``, ``giaddr``) and IP addresses in DHCP options are
             always sanitised when a ``dhcp`` section is present (controlled by
             *ips* for addresses; *macs* for ``chaddr``).
+        http_headers: Replace the values of sensitive HTTP headers in every
+            ``http`` section with ``"[redacted]"``.  Affected headers:
+            ``Host``, ``Cookie``, ``Set-Cookie``, ``Authorization``,
+            ``Location``, ``Referer``, ``Origin``.  Non-sensitive structural
+            headers (``Content-Type``, ``Content-Length``, etc.) are left
+            unchanged.
 
     """
 
-    ips:        bool = True
-    macs:       bool = True
-    ports:      bool = False
-    payload:    bool = False
-    timestamps: bool = False
-    dns_ids:    bool = False
-    dhcp_xids:  bool = False
+    ips:          bool = True
+    macs:         bool = True
+    ports:        bool = False
+    payload:      bool = False
+    timestamps:   bool = False
+    dns_ids:      bool = False
+    dhcp_xids:    bool = False
+    http_headers: bool = False
 
 
 # ── Internal replacer state ───────────────────────────────────────────────────
@@ -279,6 +288,28 @@ def _sanitise_dhcp(dhcp: dict, r: _Replacer, opts: SanitiseOptions) -> None:
                 opt["servers"] = [r.ip(a) for a in opt.get("servers", [])]
 
 
+# ── HTTP sensitive header names (case-insensitive check uses .lower()) ────────
+
+_HTTP_SENSITIVE_HEADERS: frozenset[str] = frozenset({
+    "host", "cookie", "set-cookie", "authorization",
+    "location", "referer", "origin",
+})
+
+_HTTP_REDACTED = "[redacted]"
+
+
+def _sanitise_http(http: dict, opts: SanitiseOptions) -> None:
+    """Sanitise an ``http`` section dict in-place."""
+    if not opts.http_headers:
+        return
+    headers = http.get("headers")
+    if not isinstance(headers, dict):
+        return
+    for key in list(headers):
+        if key.lower() in _HTTP_SENSITIVE_HEADERS:
+            headers[key] = _HTTP_REDACTED
+
+
 # ── Recursive packet walker ───────────────────────────────────────────────────
 
 def _sanitise_network(net: dict, r: _Replacer) -> None:
@@ -294,6 +325,16 @@ def _sanitise_ethernet(eth: dict, r: _Replacer, opts: SanitiseOptions) -> None:
             eth["src_mac"] = r.mac(eth["src_mac"])
         if "dst_mac" in eth:
             eth["dst_mac"] = r.mac(eth["dst_mac"])
+
+
+def _sanitise_app_layers(pkt: dict, r: _Replacer, opts: SanitiseOptions) -> None:
+    """Sanitise DNS, DHCP, and HTTP sections of *pkt* in-place."""
+    if "dns" in pkt:
+        _sanitise_dns(pkt["dns"], r, opts)
+    if "dhcp" in pkt:
+        _sanitise_dhcp(pkt["dhcp"], r, opts)
+    if "http" in pkt:
+        _sanitise_http(pkt["http"], opts)
 
 
 def _sanitise_packet(pkt: dict, r: _Replacer, opts: SanitiseOptions) -> None:
@@ -332,11 +373,7 @@ def _sanitise_packet(pkt: dict, r: _Replacer, opts: SanitiseOptions) -> None:
             if key in meta:
                 meta[key] = 0
 
-    if "dns" in pkt:
-        _sanitise_dns(pkt["dns"], r, opts)
-
-    if "dhcp" in pkt:
-        _sanitise_dhcp(pkt["dhcp"], r, opts)
+    _sanitise_app_layers(pkt, r, opts)
 
     # ── Tunnel recursion ──────────────────────────────────────────────────────
     for tunnel_key in ("ipip", "gre", "etherip"):

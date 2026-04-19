@@ -11,30 +11,28 @@ the standard library.
 ```bash
 git clone https://github.com/adamkjonsson/packeteer.git
 cd packeteer
-pip install -e .
+python -m venv .venv
+.venv/bin/pip install -e . -r requirements.txt
 ```
 
-The `-e` flag installs the package in *editable* mode, so changes to the
-source are reflected immediately without reinstalling.  After installation the
-`packeteer` command is available on your `PATH`.
+This creates an isolated virtual environment and installs the package in
+*editable* mode alongside the development dependencies (pytest and the
+documentation tools).  After installation the `packeteer` command is available
+as `.venv/bin/packeteer`.
 
 ## Run the tests
 
 ```bash
-PYTHONPATH=src python -m unittest discover src/tests/ -v
+.venv/bin/pytest
 ```
 
-All tests run in under a second with no third-party packages required.
+All tests run in under a second.
 
 ## Install documentation dependencies
 
-To build the documentation locally:
-
-```bash
-pip install -r docs/requirements.txt
-```
-
-Then from the `docs/` directory:
+The documentation dependencies are included in `requirements.txt` and are
+already installed by the step above.  To build the documentation locally, run
+from the `docs/` directory:
 
 | Target | Command | Output |
 |--------|---------|--------|

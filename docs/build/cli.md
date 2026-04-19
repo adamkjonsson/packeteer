@@ -55,6 +55,8 @@ Any combination of these layers can be stacked:
 | `network` | IPv4 or IPv6 header — auto-detected from `src` |
 | `transport` | TCP, UDP, ICMP, ICMPv6, or SCTP |
 | `dns` | DNS message (RFC 1035) — replaces `payload` when present |
+| `dhcp` | DHCP message (RFC 2131) — replaces `payload` when present |
+| `http` | HTTP/1.x request or response (RFC 7230) — replaces `payload` when present |
 | `etherip` | EtherIP tunnel inner frame (set `network.protocol = "etherip"`) |
 | `ipip` | IP-in-IP tunnel inner spec (set `network.protocol = "ipip"`) |
 | `gre` | GRE tunnel inner spec (set `network.protocol = "gre"`) |

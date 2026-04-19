@@ -44,6 +44,7 @@ from packeteer.generate.dns import (
     DNSRDataA, DNSRDataAAAA, DNSRDataCNAME, DNSRDataNS, DNSRDataPTR,
     DNSRDataMX, DNSRDataSOA, DNSRDataTXT, DNSRDataRaw,
 )
+from packeteer.generate.http import HTTPMessage, HTTPRequest, HTTPResponse
 from packeteer.generate.dhcp import (
     DHCP_OPT_MESSAGE_TYPE, DHCP_OPT_SUBNET_MASK, DHCP_OPT_ROUTER,
     DHCP_OPT_DNS_SERVER, DHCP_OPT_HOSTNAME, DHCP_OPT_DOMAIN_NAME,
@@ -213,6 +214,27 @@ def _build_dhcp_from_spec(spec: dict) -> DHCPMessage:
         sname=sname_str.encode("ascii")[:64].ljust(64, b"\x00"),
         file=file_str.encode("ascii")[:128].ljust(128, b"\x00"),
         options=[_build_dhcp_option(o) for o in spec.get("options", [])],
+    )
+
+
+def _build_http_from_spec(spec: dict) -> HTTPMessage:  # type: ignore[valid-type]
+    """Convert an ``http`` packet spec dict to an HTTP message object."""
+    headers = spec.get("headers", {})
+    body = bytes.fromhex(spec.get("body", ""))
+    if spec.get("type") == "response":
+        return HTTPResponse(
+            version=spec.get("version", "1.1"),
+            status_code=spec.get("status_code", 200),
+            reason=spec.get("reason", "OK"),
+            headers=headers,
+            body=body,
+        )
+    return HTTPRequest(
+        method=spec.get("method", "GET"),
+        path=spec.get("path", "/"),
+        version=spec.get("version", "1.1"),
+        headers=headers,
+        body=body,
     )
 
 
@@ -472,6 +494,8 @@ def _apply_ip_chain(
         return b.dns(_build_dns_from_spec(spec["dns"]), tcp=(proto_lower == "tcp"))
     if "dhcp" in spec:
         return b.dhcp(_build_dhcp_from_spec(spec["dhcp"]))
+    if "http" in spec:
+        return b.http(_build_http_from_spec(spec["http"]))
     return _apply_payload_spec(b, spec.get("payload", {}), packet_num, "ipip inner ")
 
 
@@ -593,6 +617,8 @@ def _apply_spec_to_builder(
         b = b.dns(_build_dns_from_spec(spec["dns"]), tcp=(proto_lower == "tcp"))
     elif "dhcp" in spec:
         b = b.dhcp(_build_dhcp_from_spec(spec["dhcp"]))
+    elif "http" in spec:
+        b = b.http(_build_http_from_spec(spec["http"]))
     else:
         b = _apply_payload_spec(b, spec.get("payload", {}), packet_num)
     return b, False
@@ -614,9 +640,12 @@ def _run_multi_packet(
         print("Error: 'packets' array is empty", file=sys.stderr)
         sys.exit(1)
 
-    # Use LINKTYPE_RAW only when every packet disables ethernet
-    all_no_eth = all(not spec.get("ethernet", {}).get("enabled", True) for spec in specs)
-    link_type = LINKTYPE_RAW if all_no_eth else LINKTYPE_ETHERNET
+    # Use link_type from metadata when present; otherwise infer from packet contents.
+    if "link_type" in top_metadata:
+        link_type = int(top_metadata["link_type"])
+    else:
+        all_no_eth = all(not spec.get("ethernet", {}).get("enabled", True) for spec in specs)
+        link_type = LINKTYPE_RAW if all_no_eth else LINKTYPE_ETHERNET
 
     # collected: list of (pkt_bytes, ts_sec, ts_frac)
     collected: list[tuple[bytes, int, int]] = []
@@ -712,6 +741,7 @@ def _cmd_sanitise(args: argparse.Namespace) -> None:
         timestamps=args.timestamps,
         dns_ids=getattr(args, "dns_ids", False),
         dhcp_xids=getattr(args, "dhcp_xids", False),
+        http_headers=getattr(args, "http_headers", False),
     )
 
     try:
@@ -1213,6 +1243,11 @@ def main() -> None:
     san_parser.add_argument(
         "--dhcp-xids", action="store_true",
         help="Zero out DHCP transaction IDs (xid field) (default: kept)",
+    )
+    san_parser.add_argument(
+        "--http-headers", action="store_true",
+        help="Redact sensitive HTTP headers: Host, Cookie, Set-Cookie, "
+             "Authorization, Location, Referer, Origin (default: kept)",
     )
     san_parser.set_defaults(func=_cmd_sanitise)
 

@@ -51,7 +51,8 @@ pkt = parse_packet(raw, link_type=LINKTYPE_RAW)
 | `transport` | `TCPHeader \| UDPHeader \| ICMPHeader \| ICMPv6Header \| SCTPHeader \| None` | Transport-layer header |
 | `dns` | `DNSMessage \| None` | Decoded DNS or mDNS message when the transport is UDP or TCP on port 53 or 5353; `None` otherwise |
 | `dhcp` | `DHCPMessage \| None` | Decoded DHCP message when the transport is UDP on port 67 or 68; `None` otherwise |
-| `payload` | `bytes` | Bytes after the last parsed header; empty when `dns` is set |
+| `http` | `HTTPRequest \| HTTPResponse \| None` | Decoded HTTP/1.x request or response when the transport is TCP on port 80 or 8080; `None` otherwise |
+| `payload` | `bytes` | Bytes after the last parsed header; empty when `dns` or `http` is set |
 | `ts_sec` | `int` | Capture timestamp — whole seconds (set by `parse_pcap_packet`) |
 | `ts_frac` | `int` | Capture timestamp — microsecond or nanosecond fraction (set by `parse_pcap_packet`) |
 
@@ -157,6 +158,59 @@ print(pkt.dhcp.chaddr.hex()[:12])     # "aabbccddeeff"
 from packeteer.generate import DHCPOptMessageType
 mtype = next(o for o in pkt.dhcp.options if isinstance(o, DHCPOptMessageType))
 print(mtype.mtype)                    # 1  (DHCP_MSG_DISCOVER)
+```
+
+## HTTP packets
+
+When a **TCP** packet has port 80 or 8080 as source or destination, the payload
+is automatically decoded as an HTTP/1.x request or response (RFC 7230).  The
+result is stored in `pkt.http`; `pkt.payload` is empty in that case.  Both CRLF
+(`\r\n`) and bare-LF (`\n`) line endings are accepted.  If the payload cannot
+be parsed as HTTP, it is left in `pkt.payload` unchanged.
+
+```python
+from packeteer.generate import PacketBuilder
+from packeteer.generate.http import HTTPRequest, HTTPResponse, HTTP_PORT
+from packeteer.parse import parse_packet
+
+# Build an HTTP GET, then parse it back
+req = HTTPRequest(
+    method="GET", path="/api/data",
+    headers={"Host": "example.com"},
+)
+raw = (PacketBuilder()
+    .ethernet()
+    .ip(src="10.0.0.1", dst="10.0.0.2")
+    .tcp(src_port=54321, dst_port=HTTP_PORT, flags=0x018)
+    .http(req)
+    .build()
+)
+
+pkt = parse_packet(raw)
+assert pkt.http is not None
+assert isinstance(pkt.http, HTTPRequest)
+print(pkt.http.method)   # "GET"
+print(pkt.http.path)     # "/api/data"
+print(pkt.http.headers["Host"])  # "example.com"
+
+# Responses are detected by the "HTTP/" start line
+rsp = HTTPResponse(
+    status_code=200, reason="OK",
+    headers={"Content-Type": "application/json"},
+    body=b'{"ok": true}',
+)
+raw = (PacketBuilder()
+    .ethernet()
+    .ip(src="10.0.0.2", dst="10.0.0.1")
+    .tcp(src_port=HTTP_PORT, dst_port=54321, flags=0x018)
+    .http(rsp)
+    .build()
+)
+
+pkt = parse_packet(raw)
+assert isinstance(pkt.http, HTTPResponse)
+print(pkt.http.status_code)  # 200
+print(pkt.http.body)         # b'{"ok": true}'
 ```
 
 ## Tunnel packets
@@ -309,6 +363,7 @@ json_str = to_json_string(to_packet_spec(packet_configs))
 | `TCPHeader` / `UDPHeader` / `ICMPHeader` / `ICMPv6Header` / `SCTPHeader` | `cfg["transport"]` |
 | `DNSMessage` | `cfg["dns"]` |
 | `DHCPMessage` | `cfg["dhcp"]` |
+| `HTTPRequest` / `HTTPResponse` | `cfg["http"]` |
 | `bytes` | `cfg["payload"]["data"]` as hex |
 
 `apply_tunneled` handles GRE, EtherIP, and IP-in-IP, which require the full
