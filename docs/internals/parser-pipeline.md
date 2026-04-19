@@ -71,6 +71,9 @@ class ParsedPacket:
     etherip:   EtherIPHeader | None
     tunneled:  ParsedPacket | None    # inner packet for ipip/gre/etherip
     transport: TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | SCTPHeader | None
+    dns:       DNSMessage | None      # set when UDP port 53 or 5353
+    dhcp:      DHCPMessage | None     # set when UDP port 67 or 68
+    http:      HTTPMessage | None     # set when TCP port 80 or 8080
     payload:   bytes                  # leftover bytes after all headers
     ts_sec:    int                    # from pcap record
     ts_frac:   int                    # microseconds or nanoseconds
@@ -95,6 +98,22 @@ recursively on the bytes that follow the tunnel header:
 
 There is no recursion depth limit, so triple-nested tunnels parse correctly.
 
+## Application-layer dispatch
+
+After the transport header is parsed, `parse_pcap_packet` (in `core.py`)
+attempts to decode the payload as an application-layer message:
+
+| Protocol | Condition | Field set |
+|---|---|---|
+| DNS / mDNS | UDP port 53 or 5353 | `ParsedPacket.dns` |
+| DHCP | UDP port 67 or 68 | `ParsedPacket.dhcp` |
+| HTTP/1.x | TCP port 80 or 8080 | `ParsedPacket.http` |
+
+Each attempt is best-effort: if the payload cannot be decoded as the expected
+protocol, the raw bytes remain in `ParsedPacket.payload` and the corresponding
+field stays `None`.  At most one application-layer field is set per packet —
+DNS, DHCP, and HTTP are tested in that order and the first successful parse wins.
+
 ## Serialisation to packet spec
 
 `parse_pcap_file()` pipes every `ParsedPacket` through `to_config.py`:
@@ -109,7 +128,11 @@ There is no recursion depth limit, so triple-nested tunnels parse correctly.
    (`_apply_ipip`, `_apply_gre`, or `_apply_etherip`), each of which recurses
    into the inner `ParsedPacket` to build the nested dict.
 
-3. Wrap the list of per-packet dicts in a top-level `{"metadata": …, "packets": […]}`
+3. For non-tunnel packets, call `update_config(cfg, pkt.transport)`, then —
+   in order — `update_config` for whichever of `dns`, `dhcp`, or `http` is
+   set, or for `payload` if none are.
+
+4. Wrap the list of per-packet dicts in a top-level `{"metadata": …, "packets": […]}`
    structure with `to_packet_spec()`, then serialise to JSON with `to_json_string()`.
 
 The JSON key names for the `"network"` section are unified across IPv4 and
