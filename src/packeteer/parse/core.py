@@ -476,8 +476,8 @@ def parse_pcap_file(
             of the pcap data.
         output: Extra fields to merge into the top-level ``metadata``
             block (e.g. ``{"from_file": "capture.pcap", "type": "pcap"}``).
-            ``"nanoseconds"`` is set automatically from the source file and
-            must not be supplied here.
+            ``"nanoseconds"`` and ``"link_type"`` are set automatically from
+            the source file and must not be supplied here.
 
     Returns:
         A JSON string whose top-level structure matches the format accepted by
@@ -521,6 +521,7 @@ def parse_pcap_file(
 
     global_output: dict[str, Any] = dict(output) if output is not None else {}
     global_output.setdefault("nanoseconds", pcap.header.nanoseconds)
+    global_output.setdefault("link_type", pcap.header.link_type)
     if output is not None:
         # version_major 1 = pcapng, 2 = pcap
         file_type = "pcapng" if pcap.header.version_major == 1 else "pcap"

@@ -640,9 +640,12 @@ def _run_multi_packet(
         print("Error: 'packets' array is empty", file=sys.stderr)
         sys.exit(1)
 
-    # Use LINKTYPE_RAW only when every packet disables ethernet
-    all_no_eth = all(not spec.get("ethernet", {}).get("enabled", True) for spec in specs)
-    link_type = LINKTYPE_RAW if all_no_eth else LINKTYPE_ETHERNET
+    # Use link_type from metadata when present; otherwise infer from packet contents.
+    if "link_type" in top_metadata:
+        link_type = int(top_metadata["link_type"])
+    else:
+        all_no_eth = all(not spec.get("ethernet", {}).get("enabled", True) for spec in specs)
+        link_type = LINKTYPE_RAW if all_no_eth else LINKTYPE_ETHERNET
 
     # collected: list of (pkt_bytes, ts_sec, ts_frac)
     collected: list[tuple[bytes, int, int]] = []

@@ -6,6 +6,21 @@ All notable changes to packeteer are recorded in this file.
 
 ## Unreleased
 
+### `link_type` in packet spec metadata
+
+- `packeteer parse` now writes `"link_type"` into the top-level `metadata`
+  block of the packet spec (e.g. `1` for Ethernet, `101` for raw IP), read
+  directly from the pcap/pcapng file header.
+- `packeteer build` reads `link_type` from `metadata` when present and passes
+  it to `write_pcap` / `write_pcapng`.  When the field is absent (hand-written
+  specs), the previous inference behaviour is preserved: `LINKTYPE_RAW` if all
+  packets have `ethernet.enabled: false`, otherwise `LINKTYPE_ETHERNET`.
+- `link_type` documented in the `metadata` table in
+  `docs/packet-spec/format.md`.
+- 4 new tests in `TestLinkTypeMetadata` covering parse output for Ethernet and
+  raw captures, build honouring the metadata field, and build fallback
+  inference (1368 total).
+
 ### HTTP/1.x support (RFC 7230)
 
 - New module `packeteer.generate.http`: `HTTPRequest` and `HTTPResponse`

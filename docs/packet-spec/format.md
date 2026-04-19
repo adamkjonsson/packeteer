@@ -608,6 +608,7 @@ Always present in configs produced by `packeteer parse` and
 | Field | Required | Description |
 |-------|----------|-------------|
 | `nanoseconds` | **yes** | `true` when `packet_metadata` timestamps use nanosecond resolution; `false` for microsecond.  Always `false` in stream JSON output. |
+| `link_type` | no | pcap link-layer type integer for the whole file — `1` = Ethernet (default), `101` = Raw IP.  Written by `packeteer parse`; read by `packeteer build` to set the link-layer type of the output pcap/pcapng.  When absent, `packeteer build` infers the type from the packet contents. |
 | `from_file` | no | Path of the source pcap or pcapng file (informational only) |
 | `type` | no | Source file format: `"pcap"` or `"pcapng"` |
 
