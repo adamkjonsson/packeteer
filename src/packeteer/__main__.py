@@ -59,6 +59,7 @@ from packeteer.generate.dhcp import (
 from packeteer.pcap import (
     write_pcap, write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW, is_pcap_or_pcapng,
 )
+from packeteer.filter import PacketFilter
 from packeteer.generate.tcp_stream import generate_tcp_stream, TCPStreamConfig
 from packeteer.generate.udp_stream import generate_udp_stream
 from packeteer.generate.sctp_stream import generate_sctp_stream
@@ -686,6 +687,24 @@ def _cmd_build(args: argparse.Namespace) -> None:
     _run_multi_packet(raw_cfg, pcap_path=args.pcap, pcapng_path=args.pcapng)
 
 
+def _build_packet_filter(args: argparse.Namespace) -> PacketFilter | None:
+    """Build a PacketFilter from parsed CLI args, or None if no filter flags set."""
+    def _split(val: str | None) -> list[str]:
+        return [v.strip() for v in val.split(",")] if val else []
+
+    f = PacketFilter(
+        proto    = getattr(args, "proto", None) or None,
+        port     = _split(getattr(args, "port", None)),
+        src_port = _split(getattr(args, "src_port", None)),
+        dst_port = _split(getattr(args, "dst_port", None)),
+        src      = _split(getattr(args, "src", None)),
+        dst      = _split(getattr(args, "dst", None)),
+        host     = _split(getattr(args, "host", None)),
+        app      = getattr(args, "app", None) or None,
+    )
+    return None if f.is_empty() else f
+
+
 def _cmd_parse(args: argparse.Namespace) -> None:
     output_block: dict = {"from_file": args.pcap}
     if args.replay_pcap:
@@ -694,7 +713,13 @@ def _cmd_parse(args: argparse.Namespace) -> None:
         output_block["type"] = "pcapng"
 
     try:
-        json_str = parse_pcap_file(path=args.pcap, output=output_block)
+        pf = _build_packet_filter(args)
+    except ValueError as e:
+        print(f"Error in filter: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        json_str = parse_pcap_file(path=args.pcap, output=output_block, packet_filter=pf)
     except (OSError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -1184,6 +1209,46 @@ def main() -> None:
         metavar="FILE",
         help="Set type=pcapng in the generated metadata so the config can be replayed as a pcapng",
     )
+
+    filter_group = parse_parser.add_argument_group(
+        "filtering",
+        "Keep only packets that match ALL of the given criteria.  Prefix a value "
+        "with ! to negate it (e.g. --proto !tcp).  For comma-separated lists all "
+        "values must be consistently positive or consistently negative.",
+    )
+    filter_group.add_argument(
+        "--proto", metavar="PROTO",
+        help="IP protocol: tcp, udp, sctp, icmp, icmpv6 (or negated, e.g. !tcp)",
+    )
+    filter_group.add_argument(
+        "--port", metavar="PORTS",
+        help="Source-or-destination port(s), comma-separated (e.g. 80,443 or !80,!443)",
+    )
+    filter_group.add_argument(
+        "--src-port", metavar="PORTS", dest="src_port",
+        help="Source port(s), comma-separated",
+    )
+    filter_group.add_argument(
+        "--dst-port", metavar="PORTS", dest="dst_port",
+        help="Destination port(s), comma-separated",
+    )
+    filter_group.add_argument(
+        "--src", metavar="ADDR",
+        help="Source IP address or CIDR (IPv4 or IPv6, e.g. 10.0.0.0/24 or !192.168.1.1)",
+    )
+    filter_group.add_argument(
+        "--dst", metavar="ADDR",
+        help="Destination IP address or CIDR",
+    )
+    filter_group.add_argument(
+        "--host", metavar="ADDR",
+        help="Source-or-destination IP address or CIDR",
+    )
+    filter_group.add_argument(
+        "--app", metavar="APP",
+        help="Application layer present: dns, dhcp, http (or negated, e.g. !http)",
+    )
+
     parse_parser.set_defaults(func=_cmd_parse)
 
     # ── sanitise subcommand ───────────────────────────────────────────────────

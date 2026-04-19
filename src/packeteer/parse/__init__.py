@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .core import parse_packet, parse_pcap_packet, parse_pcap_file, ParsedPacket
+from packeteer.filter import PacketFilter
 from .to_config import update_config, apply_tunneled, to_packet_spec, to_json_string
 from .ethernet import packet_parser as ethernet_packet_parser
 from .vlan import packet_parser as vlan_packet_parser
@@ -34,4 +35,5 @@ __all__ = [
     "icmpv6_packet_parser",
     "udp_packet_parser",
     "tcp_packet_parser",
+    "PacketFilter",
 ]

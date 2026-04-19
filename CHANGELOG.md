@@ -6,6 +6,36 @@ All notable changes to packeteer are recorded in this file.
 
 ## Unreleased
 
+### Packet filtering in `packeteer parse`
+
+- New module `packeteer.filter`: `PacketFilter` dataclass with fields
+  `proto`, `port`, `src_port`, `dst_port`, `src`, `dst`, `host`, and `app`.
+  All criteria are AND-combined; a packet must satisfy every set criterion to
+  be kept.
+- Any value may be prefixed with `!` to negate it (e.g. `proto="!tcp"`,
+  `dst_port=["!80", "!443"]`).  For list fields all values must be
+  consistently positive or consistently negative; mixing raises `ValueError`.
+- `src`, `dst`, and `host` accept IPv4 and IPv6 addresses and CIDR prefixes
+  (`10.0.0.0/24`, `2001:db8::/32`); matching uses the stdlib `ipaddress`
+  module with no external dependencies.
+- `PacketFilter.matches(pkt: dict) -> bool` operates on packet spec dicts and
+  can be used independently of `parse_pcap_file` to post-filter an existing
+  spec in memory.
+- `parse_pcap_file` gains an optional `packet_filter: PacketFilter | None`
+  keyword argument; packets that do not match are excluded from the output.
+- `PacketFilter` exported from `packeteer.parse` and `packeteer.filter`.
+- `packeteer parse` gains eight filter flags in a new `filtering` argument
+  group: `--proto`, `--port`, `--src-port`, `--dst-port`, `--src`, `--dst`,
+  `--host`, `--app`.  All support `!`-negation; `--port`/`--src-port`/
+  `--dst-port` accept comma-separated port lists; `--src`/`--dst`/`--host`
+  accept IP addresses and CIDR prefixes.
+- 48 new tests in `TestPacketFilterValidation`, `TestProtoFilter`,
+  `TestPortFilter`, `TestAddressFilter`, `TestAppFilter`,
+  `TestAndCombination`, `TestParseWithFilter`, and `TestFilterCLI`
+  (1416 total).
+- Documentation: full `## Filtering` section added to `docs/parse/cli.md`
+  and a `## PacketFilter` section added to `docs/parse/python-api.md`.
+
 ### `link_type` in packet spec metadata
 
 - `packeteer parse` now writes `"link_type"` into the top-level `metadata`

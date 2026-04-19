@@ -271,6 +271,145 @@ for record in pcap.packets:
 `pcap.header.nanoseconds` tells you whether `ts_frac` is in microseconds or
 nanoseconds.
 
+## `PacketFilter` — filtering packets during parsing
+
+{class}`packeteer.filter.PacketFilter` specifies which packets to keep when
+parsing a pcap file.  A packet must satisfy **all** set criteria to be kept
+(AND logic).  Unset criteria match every packet.
+
+```python
+from packeteer.filter import PacketFilter
+from packeteer.parse import parse_pcap_file
+import json
+
+# Keep only TCP packets on port 80 or 443 from the 10.0.0.0/8 subnet
+f = PacketFilter(
+    proto    = "tcp",
+    port     = ["80", "443"],
+    src      = ["10.0.0.0/8"],
+)
+
+spec = json.loads(parse_pcap_file(path="capture.pcap", packet_filter=f))
+print(f"Kept {len(spec['packets'])} packets")
+```
+
+### `PacketFilter` fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `proto` | `str \| None` | IP protocol name: `"tcp"`, `"udp"`, `"sctp"`, `"icmp"`, `"icmpv6"` |
+| `port` | `list[str]` | Source-**or**-destination port(s) as strings, e.g. `["80", "443"]` |
+| `src_port` | `list[str]` | Source port(s) |
+| `dst_port` | `list[str]` | Destination port(s) |
+| `src` | `list[str]` | Source IP address(es) or CIDR prefix(es) |
+| `dst` | `list[str]` | Destination IP address(es) or CIDR prefix(es) |
+| `host` | `list[str]` | Source-**or**-destination IP address(es) or CIDR prefix(es) |
+| `app` | `str \| None` | Application layer: `"dns"`, `"dhcp"`, or `"http"` |
+
+### Negation
+
+Prefix any value with `!` to negate it — keeping packets that do **not**
+match:
+
+```python
+# Keep all non-TCP packets
+f = PacketFilter(proto="!tcp")
+
+# Keep packets to neither port 80 nor 8080
+f = PacketFilter(dst_port=["!80", "!8080"])
+
+# Keep packets whose source is not in the RFC 1918 private range
+f = PacketFilter(src=["!192.168.0.0/16"])
+```
+
+For list fields, all values must be consistently positive (`["80", "443"]`) or
+consistently negative (`["!80", "!443"]`).  Mixing raises `ValueError`.
+
+### Address and CIDR matching
+
+`src`, `dst`, and `host` accept any IPv4 or IPv6 address or CIDR prefix.
+Both address families are supported transparently via the stdlib `ipaddress`
+module.  An address without a prefix length matches only that exact host:
+
+```python
+# Match a single IPv4 host
+PacketFilter(src=["10.0.0.1"])
+
+# Match an entire IPv4 subnet
+PacketFilter(dst=["10.0.0.0/24"])
+
+# Match an IPv6 documentation prefix
+PacketFilter(host=["2001:db8::/32"])
+
+# Exclude a specific source
+PacketFilter(src=["!203.0.113.5"])
+```
+
+### `host` semantics
+
+`--host` / `host` matches if **either** the source or the destination address
+satisfies the criterion.  When negated, **both** addresses must fail to match:
+
+```python
+# Keep packets where 10.0.0.1 appears as source OR destination
+f = PacketFilter(host=["10.0.0.1"])
+
+# Keep packets where 10.0.0.1 appears as NEITHER source NOR destination
+f = PacketFilter(host=["!10.0.0.1"])
+```
+
+### `port` vs `src_port` / `dst_port`
+
+`port` matches if **either** the source or destination port is in the set.
+Use `src_port` or `dst_port` when the direction matters:
+
+```python
+# Keep packets that involve port 53 in either direction
+PacketFilter(port=["53"])
+
+# Keep only packets whose *destination* is port 53 (DNS queries, not responses)
+PacketFilter(dst_port=["53"])
+```
+
+### `app` criterion
+
+`app` checks whether the named application-layer key is present in the parsed
+packet spec dict.  This is equivalent to checking whether packeteer
+successfully decoded that layer:
+
+```python
+# Keep only packets that were decoded as DNS (port 53/5353, UDP or TCP)
+PacketFilter(app="dns")
+
+# Keep everything except HTTP traffic
+PacketFilter(app="!http")
+```
+
+### Using `PacketFilter.matches` directly
+
+`matches(pkt: dict) -> bool` operates on any packet spec dict, so you can
+use it independently of `parse_pcap_file` — for example to post-filter a spec
+you already have in memory:
+
+```python
+import json
+from packeteer.filter import PacketFilter
+
+with open("all-traffic.json") as f:
+    spec = json.load(f)
+
+f = PacketFilter(proto="tcp", dst_port=["443"])
+spec["packets"] = [p for p in spec["packets"] if f.matches(p)]
+
+with open("https-only.json", "w") as f:
+    json.dump(spec, f)
+```
+
+### Tunnelled packets
+
+For GRE, EtherIP, and IP-in-IP packets the filter is applied to the **outer**
+layer.  The inner IP addresses and ports inside the tunnel are not inspected.
+
 ## `parse_pcap_file` — whole file to JSON
 
 {func}`packeteer.parse.core.parse_pcap_file` reads every packet in a pcap
@@ -298,6 +437,17 @@ with open("capture.pcap", "rb") as f:
     data = f.read()
 
 json_str = parse_pcap_file(file_object=io.BytesIO(data))
+```
+
+Pass a `packet_filter` to discard packets that do not match during parsing:
+
+```python
+from packeteer.filter import PacketFilter
+
+json_str = parse_pcap_file(
+    path="capture.pcap",
+    packet_filter=PacketFilter(proto="tcp", dst_port=["443"]),
+)
 ```
 
 Pass an `output` dict to embed a top-level `metadata` block in the result (the
