@@ -529,9 +529,10 @@ def parse_pcap_file(
     global_output: dict[str, Any] = dict(output) if output is not None else {}
     global_output.setdefault("nanoseconds", pcap.header.nanoseconds)
     global_output.setdefault("link_type", pcap.header.link_type)
-    if output is not None:
-        # version_major 1 = pcapng, 2 = pcap
-        file_type = "pcapng" if pcap.header.version_major == 1 else "pcap"
-        global_output.setdefault("type", file_type)
+    # version_major 1 = pcapng, 2 = pcap
+    file_type = "pcapng" if pcap.header.version_major == 1 else "pcap"
+    global_output.setdefault("type", file_type)
+    if path is not None:
+        global_output.setdefault("from_file", str(path))
 
     return to_json_string(to_packet_spec(packet_configs, metadata=global_output))

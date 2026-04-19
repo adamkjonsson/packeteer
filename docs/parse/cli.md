@@ -1,7 +1,7 @@
 # `packeteer parse` — CLI
 
 ```
-packeteer parse <capture> [--output FILE] [--replay-pcap FILE | --replay-pcapng FILE]
+packeteer parse <capture> [--output FILE]
                           [--proto PROTO] [--port PORTS] [--src-port PORTS] [--dst-port PORTS]
                           [--src ADDR] [--dst ADDR] [--host ADDR] [--app APP]
 ```
@@ -20,8 +20,6 @@ by hand or programmatically before rebuilding.
 |----------|-------------|
 | `capture` | *(required)* Path to a `.pcap` or `.pcapng` file |
 | `--output FILE` / `-o FILE` | Write JSON to FILE instead of printing to stdout |
-| `--replay-pcap FILE` | Add `"type": "pcap"` and `"from_file"` to the top-level `metadata` block |
-| `--replay-pcapng FILE` | Add `"type": "pcapng"` and `"from_file"` to the top-level `metadata` block (mutually exclusive with `--replay-pcap`) |
 
 ## Filtering
 

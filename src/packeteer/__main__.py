@@ -11,7 +11,7 @@ Examples:
   packeteer build packets.json --pcap out.pcap
   packeteer build packets.json --pcapng out.pcapng
   packeteer parse capture.pcap
-  packeteer parse capture.pcap --output replay.json --replay-pcap replayed.pcap
+  packeteer parse capture.pcap --output replay.json
   packeteer sanitise capture.json --output clean.json
   packeteer sanitise capture.json --ports --payload --output clean.json
   packeteer sanitise capture.pcap --output clean.json
@@ -706,12 +706,6 @@ def _build_packet_filter(args: argparse.Namespace) -> PacketFilter | None:
 
 
 def _cmd_parse(args: argparse.Namespace) -> None:
-    output_block: dict = {"from_file": args.pcap}
-    if args.replay_pcap:
-        output_block["type"] = "pcap"
-    elif args.replay_pcapng:
-        output_block["type"] = "pcapng"
-
     try:
         pf = _build_packet_filter(args)
     except ValueError as e:
@@ -719,7 +713,7 @@ def _cmd_parse(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     try:
-        json_str = parse_pcap_file(path=args.pcap, output=output_block, packet_filter=pf)
+        json_str = parse_pcap_file(path=args.pcap, packet_filter=pf)
     except (OSError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -1198,18 +1192,6 @@ def main() -> None:
         metavar="FILE",
         help="Write packet spec to FILE instead of stdout",
     )
-    replay_group = parse_parser.add_mutually_exclusive_group()
-    replay_group.add_argument(
-        "--replay-pcap",
-        metavar="FILE",
-        help="Set type=pcap in the generated metadata so the config can be replayed as a pcap",
-    )
-    replay_group.add_argument(
-        "--replay-pcapng",
-        metavar="FILE",
-        help="Set type=pcapng in the generated metadata so the config can be replayed as a pcapng",
-    )
-
     filter_group = parse_parser.add_argument_group(
         "filtering",
         "Keep only packets that match ALL of the given criteria.  Prefix a value "

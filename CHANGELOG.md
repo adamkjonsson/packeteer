@@ -6,6 +6,17 @@ All notable changes to packeteer are recorded in this file.
 
 ## Unreleased
 
+### Auto-detected metadata in `packeteer parse`
+
+- `packeteer parse` now always writes `"type"` (`"pcap"` or `"pcapng"`) and
+  `"from_file"` (source path) into the top-level `metadata` block of the
+  packet spec, auto-detected from the file header.  No flags are needed.
+- The `--replay-pcap` and `--replay-pcapng` flags have been removed; they are
+  no longer necessary now that detection is automatic.
+- To override the output format when rebuilding, use `--pcap` or `--pcapng`
+  with `packeteer build` as before.
+- `docs/parse/cli.md` and `docs/packet-spec/format.md` updated accordingly.
+
 ### Packet filtering in `packeteer parse`
 
 - New module `packeteer.filter`: `PacketFilter` dataclass with fields
