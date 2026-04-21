@@ -168,6 +168,13 @@ class TCPStreamConfig:
                 def hook(pkt: TCPStreamPacket, index: int) -> TCPStreamPacket | None
 
             Returning ``None`` drops the packet.
+        payload_fn: Optional callable invoked once per data packet to supply
+            its payload bytes.  Signature::
+
+                def payload_fn(packet_index: int, direction: str) -> bytes
+
+            When provided, *min_payload*, *max_payload*, *payload_distribution*,
+            and *payload_sizes* are all ignored.
 
     """
 
@@ -187,6 +194,7 @@ class TCPStreamConfig:
     stray_packet_count: int = 0
     stray_timing_window: int | None = None
     packet_hooks: list[Callable[[TCPStreamPacket, int], TCPStreamPacket | None]] | None = None
+    payload_fn: Callable[[int, str], bytes] | None = None
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -283,6 +291,29 @@ def _fragment_packet(
     return result
 
 
+# ── Data-chunk builder ────────────────────────────────────────────────────────
+
+def _data_chunks(
+    payload_fn: Callable[[int, str], bytes] | None,
+    num: int,
+    min_p: int,
+    max_p: int,
+    distribution: str,
+    explicit_sizes: list[int] | None,
+) -> list[bytes]:
+    """Return *num* payload chunks for the data-transfer phase."""
+    if payload_fn is not None:
+        return [payload_fn(i, "c2s") for i in range(num)]
+    sizes = _payload_sizes(num, min_p, max_p, distribution, explicit_sizes)
+    payload_data = _repeat_payload(sum(sizes))
+    offset = 0
+    result: list[bytes] = []
+    for size in sizes:
+        result.append(payload_data[offset:offset + size])
+        offset += size
+    return result
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def generate_tcp_stream(
@@ -340,6 +371,7 @@ def generate_tcp_stream(
               (near *max_payload*), approximating mixed HTTP/TLS traffic
             * ``"fixed"`` — all segments are *max_payload* bytes
 
+            Ignored when ``config.payload_fn`` is set.
         client_isn: Client initial sequence number.  Randomly chosen if
             ``None`` (default), matching real TCP behaviour.
         server_isn: Server initial sequence number.  Randomly chosen if
@@ -414,6 +446,7 @@ def generate_tcp_stream(
     stray_packet_count = config.stray_packet_count
     stray_timing_window = config.stray_timing_window
     packet_hooks = config.packet_hooks
+    payload_fn = config.payload_fn
     base_time = config.base_time if config.base_time is not None else time.time()
 
     gap_usec = int(inter_packet_gap * 1_000_000)
@@ -433,10 +466,6 @@ def generate_tcp_stream(
         window=window,
     )
 
-    sizes = _payload_sizes(
-        num_data_packets, min_payload, max_payload,
-        payload_distribution, payload_sizes,
-    )
 
     packets: list[TCPStreamPacket] = []
     global_index = 0
@@ -492,17 +521,13 @@ def generate_tcp_stream(
     emit(client, server, TCP_ACK,           b"", "c2s", "ACK")
 
     # ── Data transfer (client → server, server ACKs each packet) ────────────
-    # Pre-tile the default payload once across the entire transfer so that
-    # consecutive packets carry a continuous byte stream rather than each
-    # packet independently restarting from the beginning of the file.
-    payload_data = _repeat_payload(sum(sizes))
-    payload_offset = 0
-    for i, size in enumerate(sizes):
+    for i, chunk in enumerate(_data_chunks(
+        payload_fn, num_data_packets, min_payload, max_payload,
+        payload_distribution, payload_sizes,
+    )):
         flags = TCP_ACK | (TCP_PSH if random.random() < psh_probability else 0)
-        chunk = payload_data[payload_offset:payload_offset + size]
         emit(client, server, flags, chunk, "c2s", f"DATA[{i}]")
         emit(server, client, TCP_ACK, b"", "s2c", f"ACK[{i}]")
-        payload_offset += size
 
     # ── Four-way teardown ─────────────────────────────────────────────────────
     emit(client, server, TCP_FIN | TCP_ACK, b"", "c2s", "FIN-ACK")

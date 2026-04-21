@@ -100,6 +100,7 @@ stream = generate_tcp_stream(
 | `stray_packet_count` | `0` | Number of forged TCP hijack packets to inject |
 | `stray_timing_window` | `None` | If set, constrain each stray timestamp to within N packets of its target |
 | `packet_hooks` | `None` | List of callables applied to each packet — see [Hooks](#hooks) |
+| `payload_fn` | `None` | Callable `(index, direction) -> bytes` supplying each data-packet payload; overrides all size parameters |
 
 ### Timestamp jitter
 
@@ -245,6 +246,183 @@ the client's Initiate Tag.
 
 SCTP streams accept the same core parameters as TCP and UDP.  TCP-specific
 anomaly parameters are not available.
+
+---
+
+## Session builders
+
+Session builders let you focus on the application-layer payload and have all
+the protocol machinery — handshakes, sequence numbers, ACKs, teardowns —
+handled automatically.  Call `.send()` and `.recv()` to describe what each
+side transmits, then call `.build()` to get the same stream type as the
+corresponding low-level generator.
+
+### `TCPSession`
+
+```python
+from packeteer.generate import TCPSession
+from packeteer.pcap import write_pcap
+
+# Bidirectional HTTP-style exchange
+stream = (TCPSession(client_ip="10.0.0.1", server_ip="10.0.0.2", server_port=80)
+    .send(b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n")
+    .recv(b"HTTP/1.1 200 OK\r\n\r\n" + b"x" * 4000)
+    .build()
+)
+write_pcap(stream.to_pcap_tuples(), path="http.pcap")
+```
+
+`TCPSession` generates a three-way handshake, the queued exchanges (MSS-segmented,
+PSH set on the last segment of each exchange), and a four-way teardown.
+Unidirectional flows are expressed naturally — use only `.send()` or only `.recv()`.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `client_ip` | *(required)* | Client IP address (IPv4 or IPv6) |
+| `server_ip` | *(required)* | Server IP address (same family) |
+| `client_port` | `54321` | Client source port |
+| `server_port` | `80` | Server destination port |
+| `client_mac` | `"00:00:00:00:00:01"` | Client MAC address |
+| `server_mac` | `"00:00:00:00:00:02"` | Server MAC address |
+| `mss` | `1460` | Maximum segment size for large payload splitting |
+| `include_ethernet` | `True` | Include Ethernet headers |
+| `ip_ttl` | `64` | IP TTL / hop limit |
+| `inter_packet_gap` | `0.001` | Seconds between consecutive packets |
+| `client_isn` | `None` | Client initial sequence number (random if `None`) |
+| `server_isn` | `None` | Server initial sequence number (random if `None`) |
+| `base_time` | `None` | Unix timestamp for the first packet (current time if `None`) |
+| `encap` | `None` | Encapsulation layer(s) — see [Encapsulation](#encapsulation) |
+
+**Queuing methods:**
+
+| Method | Description |
+|--------|-------------|
+| `.send(data)` | Queue *data* as a client→server payload |
+| `.recv(data)` | Queue *data* as a server→client payload |
+| `.send_many(n, fn)` | Queue *n* client→server payloads from `fn(index) -> bytes` |
+| `.recv_many(n, fn)` | Queue *n* server→client payloads from `fn(index) -> bytes` |
+| `.build()` | Assemble and return the `TCPStream` |
+
+```python
+# Unidirectional log stream (server pushes N events)
+stream = (TCPSession(client_ip="10.0.0.1", server_ip="10.0.0.2", server_port=9000)
+    .recv_many(50, lambda i: f"event {i}\n".encode())
+    .build()
+)
+```
+
+### `UDPSession`
+
+```python
+from packeteer.generate import UDPSession
+
+# DNS query/response
+stream = (UDPSession(client_ip="10.0.0.1", server_ip="8.8.8.8", server_port=53)
+    .send(dns_query_bytes)
+    .recv(dns_response_bytes)
+    .build()
+)
+
+# Unidirectional syslog
+stream = (UDPSession(client_ip="10.0.0.1", server_ip="10.0.0.2", server_port=514)
+    .send_many(100, lambda i: f"<134>event {i}\n".encode())
+    .build()
+)
+```
+
+`UDPSession` has the same constructor parameters as `TCPSession` minus `mss`,
+`client_isn`, and `server_isn`.  Datagrams are emitted in queue order with no
+handshake or teardown.
+
+### `SCTPSession`
+
+```python
+from packeteer.generate import SCTPSession
+
+stream = (SCTPSession(
+        client_ip="10.0.0.1", server_ip="10.0.0.2", server_port=36412)
+    .send(s1ap_setup_request)
+    .recv(s1ap_setup_response)
+    .build()
+)
+```
+
+`SCTPSession` generates the four-way SCTP handshake (INIT / INIT-ACK /
+COOKIE-ECHO / COOKIE-ACK), the queued DATA+SACK exchanges, and a graceful
+shutdown sequence.  TSN tracking is per-direction so bidirectional exchanges
+produce independent, correct TSN sequences.
+
+---
+
+## Standalone helpers
+
+### `tcp_handshake`
+
+Returns `[SYN, SYN-ACK, ACK]` as raw bytes with correct checksums.  Useful
+when assembling packet sequences manually; for full session flows use
+`TCPSession` instead.
+
+```python
+from packeteer.generate import tcp_handshake
+
+packets = tcp_handshake(
+    client_ip="10.0.0.1", server_ip="10.0.0.2",
+    client_isn=1000, server_isn=5000,
+)
+```
+
+### `tcp_teardown`
+
+Returns `[FIN-ACK, ACK, FIN-ACK, ACK]` as raw bytes.  The `client_seq`,
+`client_ack`, `server_seq`, and `server_ack` parameters should reflect TCP
+state at the moment the connection is closed.
+
+```python
+from packeteer.generate import tcp_teardown
+
+packets = tcp_teardown(
+    client_ip="10.0.0.1", server_ip="10.0.0.2",
+    client_seq=5000, client_ack=7000,
+    server_seq=7000, server_ack=5000,
+)
+```
+
+### `sctp_handshake`
+
+Returns `[INIT, INIT-ACK, COOKIE-ECHO, COOKIE-ACK]` as raw bytes with
+correct CRC-32c checksums and a randomly-generated state cookie.
+
+```python
+from packeteer.generate import sctp_handshake
+
+packets = sctp_handshake(
+    client_ip="10.0.0.1", server_ip="10.0.0.2", server_port=36412,
+)
+```
+
+---
+
+## Custom payloads with `TCPStreamConfig.payload_fn`
+
+For `generate_tcp_stream`, pass `payload_fn` in `TCPStreamConfig` to supply
+each data-packet payload from a callable:
+
+```python
+from packeteer.generate import generate_tcp_stream, TCPStreamConfig
+
+def my_payload(index: int, direction: str) -> bytes:
+    return f"packet {index}\n".encode()
+
+stream = generate_tcp_stream(
+    client_ip="10.0.0.1", server_ip="10.0.0.2",
+    num_data_packets=5,
+    config=TCPStreamConfig(payload_fn=my_payload),
+)
+```
+
+When `payload_fn` is set, `min_payload`, `max_payload`, `payload_distribution`,
+and `payload_sizes` are all ignored.  For bidirectional custom payloads, use
+`TCPSession` instead.
 
 ---
 

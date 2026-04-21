@@ -4,6 +4,39 @@ All notable changes to packeteer are recorded in this file.
 
 ---
 
+## 0.5.0 - 2026-04-21
+
+### Session builders for synthetic data
+
+- New `TCPSession`, `UDPSession`, and `SCTPSession` builder classes in
+  `packeteer.generate.session`.  Each follows a `.send()` / `.recv()` /
+  `.send_many()` / `.recv_many()` / `.build()` fluent API: queue application
+  payloads and call `.build()` to receive a fully-assembled `TCPStream`,
+  `UDPStream`, or `SCTPStream` with all handshakes, sequence numbers, ACKs,
+  and teardowns handled automatically.
+- `TCPSession` segments large payloads at the configured MSS and sets PSH on
+  the last segment of each exchange.  Unidirectional streams (call only
+  `.send()` or only `.recv()`) are supported natively.
+- `SCTPSession` maintains independent per-direction TSN counters so
+  bidirectional exchanges produce correct TSN sequences on both sides.
+- New standalone helper functions `tcp_handshake`, `tcp_teardown`, and
+  `sctp_handshake` return pre-built raw-bytes lists for workflows that
+  assemble captures manually.
+- `TCPStreamConfig` gains a `payload_fn` field: a callable
+  `(index, direction) -> bytes` that supplies each data-packet payload for
+  `generate_tcp_stream`, overriding all size parameters.  The parameter was
+  moved from the function signature to `TCPStreamConfig` to keep the argument
+  count within the project limit.
+- All six new names exported from `packeteer.generate`.
+- 44 new tests in `test_session.py` (1460 total).
+- New documentation chapter `docs/synthetic/index.md` — *Creating Synthetic
+  Data* — covering session builders, standalone helpers, pcap output,
+  post-build packet manipulation, and encapsulation.
+- `docs/api/stream-generators.md` updated with autodoc entries for all new
+  classes and functions.
+
+---
+
 ## 0.4.0 — 2026-04-19
 
 ### Documentation

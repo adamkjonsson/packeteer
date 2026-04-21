@@ -256,6 +256,10 @@ from .http import HTTPRequest, HTTPResponse, HTTP_PORT, HTTP_ALT_PORT
 from .tcp_stream import generate_tcp_stream, TCPStream, TCPStreamConfig, TCPStreamPacket
 from .udp_stream import generate_udp_stream, UDPStream, UDPStreamPacket
 from .sctp_stream import generate_sctp_stream, SCTPStream, SCTPStreamPacket
+from .session import (
+    TCPSession, UDPSession, SCTPSession,
+    tcp_handshake, tcp_teardown, sctp_handshake,
+)
 from .stream_encap import (
     StreamEncap, EncapSpec, VLANEncap, QinQEncap, MPLSEncap, PPPoEEncap,
     GREEncap, EtherIPEncap, IPIPEncap,
@@ -354,6 +358,12 @@ __all__ = [
     "generate_sctp_stream",
     "SCTPStream",
     "SCTPStreamPacket",
+    "TCPSession",
+    "UDPSession",
+    "SCTPSession",
+    "tcp_handshake",
+    "tcp_teardown",
+    "sctp_handshake",
     "StreamEncap",
     "EncapSpec",
     "VLANEncap",
