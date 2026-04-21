@@ -224,27 +224,23 @@ def generate_udp_stream(
     if base_time is None:
         base_time = int(time.time())
 
-    sizes = _payload_sizes(
-        num_data_packets, min_payload, max_payload,
-        payload_distribution, payload_sizes,
-    )
-
-    # Continuous payload: tile default_payload.txt across all datagrams
-    payload_data = _repeat_payload(sum(sizes))
-    offset = 0
-
     packets: list[UDPStreamPacket] = []
     used_ts: set[int] = set()
     usec_cursor = base_time * 1_000_000
 
+    sizes = _payload_sizes(
+        num_data_packets, min_payload, max_payload,
+        payload_distribution, payload_sizes,
+    )
+    # Continuous payload: tile default_payload.txt across all datagrams
+    payload_data = _repeat_payload(sum(sizes))
+    offset = 0
     for i, size in enumerate(sizes):
         gap_usec = int((inter_packet_gap + random.uniform(0, gap_jitter)) * 1_000_000)
         usec_cursor += gap_usec
         ts = _alloc_usec(usec_cursor, used_ts)
-
         chunk = payload_data[offset:offset + size]
         offset += size
-
         raw = _build_udp_packet(
             src_ip=client_ip, dst_ip=server_ip,
             src_port=client_port, dst_port=server_port,

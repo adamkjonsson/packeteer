@@ -313,7 +313,7 @@ def generate_sctp_stream(
         num_data_packets, min_payload, max_payload,
         payload_distribution, payload_sizes,
     )
-    payload_data  = _repeat_payload(sum(sizes))
+    payload_data = _repeat_payload(sum(sizes))
     payload_offset = 0
 
     # ── Timestamp state ───────────────────────────────────────────────────────
@@ -387,9 +387,9 @@ def generate_sctp_stream(
 
     # ── Data transfer ─────────────────────────────────────────────────────────
     cur_tsn = client_tsn
-    for i, size in enumerate(sizes):
-        chunk_data = payload_data[payload_offset:payload_offset + size]
-        payload_offset += size
+    for i in range(num_data_packets):
+        chunk_data = payload_data[payload_offset:payload_offset + sizes[i]]
+        payload_offset += sizes[i]
 
         # DATA: client → server
         c2s(vtag=server_vtag, chunks=[SCTPDataChunk(
@@ -399,7 +399,7 @@ def generate_sctp_stream(
             ppid=0,
             data=chunk_data,
             flags=SCTP_DATA_FLAG_BEGINNING | SCTP_DATA_FLAG_ENDING,
-        )], tsn=cur_tsn, plen=size, label=f"DATA[{i}]")
+        )], tsn=cur_tsn, plen=len(chunk_data), label=f"DATA[{i}]")
 
         # SACK: server → client, acknowledges cur_tsn
         s2c(vtag=client_vtag, chunks=[SCTPSackChunk(
