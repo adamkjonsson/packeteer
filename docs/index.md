@@ -26,6 +26,7 @@ quickstart
 build/index
 parse/index
 sanitiser/index
+synthetic/index
 stream/index
 packet-spec/index
 api/index
