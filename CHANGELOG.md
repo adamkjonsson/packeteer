@@ -4,7 +4,7 @@ All notable changes to packeteer are recorded in this file.
 
 ---
 
-## Unreleased
+## 0.5.0 - 2026-04-21
 
 ### Session builders for synthetic data
 
