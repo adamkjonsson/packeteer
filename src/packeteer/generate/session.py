@@ -46,7 +46,7 @@ import time
 from collections.abc import Callable
 
 from ._stream_common import _alloc_usec
-from .stream_encap import EncapSpec
+from .stream_encap import EncapSpec, StreamEncap  # noqa: F401  (StreamEncap needed for Sphinx type resolution)
 from .tcp import TCP_SYN, TCP_ACK, TCP_PSH, TCP_FIN
 from .tcp_stream import (
     _TCPEndpoint, _advance_seq, _build_packet,

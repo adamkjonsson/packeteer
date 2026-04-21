@@ -168,8 +168,8 @@ recomputed from scratch on rebuild).
 Each packet becomes one object in the top-level `"packets"` array.  A
 `"packet_metadata"` object records the capture timestamp.  The top-level
 `"metadata"` block is always present and always contains `"nanoseconds"`.
-`"from_file"` and `"type"` are added when `--replay-pcap` or `--replay-pcapng`
-is given:
+`"from_file"` and `"type"` are always present — auto-detected from the file
+header:
 
 ```json
 {

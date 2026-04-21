@@ -450,13 +450,15 @@ json_str = parse_pcap_file(
 )
 ```
 
-Pass an `output` dict to embed a top-level `metadata` block in the result (the
-same effect as `--replay-pcap` on the CLI):
+The top-level `metadata` block is always present in the output: `"type"`,
+`"from_file"`, `"nanoseconds"`, and `"link_type"` are all auto-detected from
+the file header.  Pass an `output` dict to merge additional custom fields into
+that block:
 
 ```python
 json_str = parse_pcap_file(
     path="capture.pcap",
-    output={"from_file": "capture.pcap", "type": "pcap"},
+    output={"captured_by": "lab-sensor-01", "environment": "staging"},
 )
 ```
 
