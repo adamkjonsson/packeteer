@@ -4,7 +4,7 @@ All notable changes to packeteer are recorded in this file.
 
 ---
 
-## Unreleased
+## 0.5.1 - 2026-04-22
 
 ### Documentation restructure
 
