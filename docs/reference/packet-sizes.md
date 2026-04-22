@@ -92,5 +92,5 @@ The default Ethernet MTU is **1500 bytes** for the IP payload (excludes the
 14-byte Ethernet header).  When the IP datagram (header + transport + payload)
 exceeds the MTU, call `.fragment(mtu=1500)`.
 
-See {doc}`../build/fragmentation` for details on how fragmentation works and how the
+See {doc}`../api/fragmentation` for details on how fragmentation works and how the
 overhead is distributed across fragments.

@@ -39,7 +39,7 @@ multiple times to produce advanced encapsulations:
 
 `.fragment(mtu=1500)` fragments the packet and returns `list[bytes]`.  The
 first IP layer in the stack is the fragmentation point.  See
-{doc}`../build/fragmentation` for details.
+{doc}`fragmentation` for details.
 
 ## Full API
 

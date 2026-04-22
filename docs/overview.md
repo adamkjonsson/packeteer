@@ -1,7 +1,15 @@
 # Overview
 
-packeteer is built around a two-way workflow between pcap capture files
-and a human-readable packet spec format.
+packeteer is a pure-Python toolkit for crafting, capturing, and generating
+network traffic.  It comes with a **command-line interface** for common
+tasks and a **Python API** for everything else.
+
+The CLI (`packeteer parse`, `packeteer sanitise`, `packeteer build`,
+`packeteer stream`) solves well-defined problems with a single command.
+The Python API exposes the same machinery through
+`packeteer.parse`, `packeteer.generate`, `packeteer.filter`,
+`packeteer.sanitise`, and `packeteer.pcap`, giving you the flexibility to
+combine, script, or extend those building blocks however your project needs.
 
 ## The core workflow
 

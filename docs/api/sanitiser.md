@@ -6,7 +6,7 @@
 deterministic synthetic values drawn from IANA-reserved address ranges.  The
 original dict is never modified.
 
-See {doc}`../sanitiser/index` for the full feature description and CLI equivalent.
+See {doc}`../guide/sanitising` for the full feature description and CLI equivalent.
 
 ---
 

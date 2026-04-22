@@ -132,6 +132,20 @@ pkt = (PacketBuilder()
 ```
 
 ```python
+# Session builder — queue application payloads and let the protocol be handled
+from packeteer.generate import TCPSession
+from packeteer.pcap import write_pcap
+
+stream = (TCPSession(client_ip="10.0.0.1", server_ip="10.0.0.2", server_port=80)
+    .send(b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n")
+    .recv(b"HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, world!")
+    .build()
+)
+write_pcap(stream.to_pcap_tuples(), path="http.pcap")
+# Produces: SYN, SYN-ACK, ACK, DATA, ACK, DATA, ACK, FIN-ACK, ACK, FIN-ACK, ACK
+```
+
+```python
 # Generate a GRE-tunnelled TCP stream and write it to pcap
 from packeteer.generate import generate_tcp_stream
 from packeteer.generate import GREEncap, MPLSEncap, IPIPEncap
@@ -163,25 +177,47 @@ make -C docs html
 # open docs/_build/html/index.html
 ```
 
-Or read the source pages directly:
+Or read the source pages directly.  The documentation is organised in four parts:
+
+**Introduction**
 
 | Page | Content |
 |------|---------|
+| [docs/overview.md](docs/overview.md) | Purpose, workflow, and use cases |
 | [docs/installation.md](docs/installation.md) | Install, run tests, build docs |
-| [docs/quickstart.md](docs/quickstart.md) | Five worked examples |
-| [docs/overview.md](docs/overview.md) | Purpose and use cases |
-| [docs/build/](docs/build/) | `packeteer build` CLI, `PacketBuilder` Python API, and IP fragmentation |
-| [docs/parse/](docs/parse/) | `packeteer parse` CLI and `packeteer.parser` Python API |
-| [docs/sanitiser/](docs/sanitiser/) | `packeteer sanitise` — replacing sensitive fields with synthetic data |
-| [docs/stream/](docs/stream/) | `packeteer stream` CLI and TCP / UDP / SCTP stream generators |
-| [docs/packet-spec/](docs/packet-spec/) | Packet spec format reference and Python API |
+
+**CLI reference**
+
+| Page | Content |
+|------|---------|
+| [docs/cli/parse.md](docs/cli/parse.md) | `packeteer parse` — arguments, filtering, output format |
+| [docs/cli/sanitise.md](docs/cli/sanitise.md) | `packeteer sanitise` — what gets replaced, application-layer sanitisation |
+| [docs/cli/build.md](docs/cli/build.md) | `packeteer build` — packet spec structure, supported layers, fragmentation |
+| [docs/cli/stream.md](docs/cli/stream.md) | `packeteer stream` — all flags, encapsulation, INI config |
+
+**Python API guide**
+
+| Page | Content |
+|------|---------|
+| [docs/guide/parsing.md](docs/guide/parsing.md) | Parsing pcap files and individual packets |
+| [docs/guide/sanitising.md](docs/guide/sanitising.md) | Sanitising captures with `sanitise` / `SanitiseOptions` |
+| [docs/guide/generating.md](docs/guide/generating.md) | Generating synthetic data — session builders, stream generators, `PacketBuilder` |
+| [docs/guide/pcap.md](docs/guide/pcap.md) | Reading and writing pcap / pcapng files |
+
+**Reference**
+
+| Page | Content |
+|------|---------|
+| [docs/packet-spec/](docs/packet-spec/) | Packet spec format — field-by-field reference for every layer |
 | [docs/api/packet-builder.md](docs/api/packet-builder.md) | `PacketBuilder` API reference |
+| [docs/api/stream-generators.md](docs/api/stream-generators.md) | Stream generators and session builders API reference |
+| [docs/api/stream-encap.md](docs/api/stream-encap.md) | Encapsulation type API reference |
 | [docs/api/header-dataclasses.md](docs/api/header-dataclasses.md) | Header dataclasses and constants |
-| [docs/api/pcap-io.md](docs/api/pcap-io.md) | pcap/pcapng read and write |
+| [docs/api/pcap-io.md](docs/api/pcap-io.md) | `write_pcap`, `write_pcapng`, `read_pcap` API reference |
 | [docs/api/parser.md](docs/api/parser.md) | Parser API reference |
 | [docs/reference/packet-sizes.md](docs/reference/packet-sizes.md) | Header size tables |
 | [docs/reference/rfc-references.md](docs/reference/rfc-references.md) | RFC index |
-| [docs/internals/](docs/internals/) | Developer internals: architecture, `PacketBuilder`, parser pipeline, stream generators, encapsulation, sanitiser |
+| [docs/internals/](docs/internals/) | Developer internals: architecture, parser pipeline, stream generators, encapsulation, sanitiser |
 
 ## Running tests
 
