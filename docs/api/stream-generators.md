@@ -6,7 +6,7 @@
 producing a typed stream object whose `.packets` list can be written to pcap,
 pcapng, or packet spec, or inspected and modified before output.
 
-See {doc}`../stream/index` for usage examples, encapsulation, and CLI equivalents.
+See {doc}`../guide/generating` for usage examples and encapsulation, and {doc}`../cli/stream` for CLI equivalents.
 
 ---
 
@@ -81,7 +81,7 @@ See {doc}`../stream/index` for usage examples, encapsulation, and CLI equivalent
 
 ## Session builders
 
-See {doc}`../synthetic/index` for usage examples and workflows.
+See {doc}`../guide/generating` for usage examples and workflows.
 
 ```{eval-rst}
 .. autoclass:: packeteer.generate.session.TCPSession

@@ -4,6 +4,35 @@ All notable changes to packeteer are recorded in this file.
 
 ---
 
+## Unreleased
+
+### Documentation restructure
+
+The documentation has been reorganised into four parts that separate the
+CLI reference from the Python API guide and the task-oriented guides from
+the exhaustive API reference.
+
+- **Part 1 — Introduction**: overview (updated to introduce both the CLI and
+  the Python API) and installation.  The Quick Start chapter has been removed.
+- **Part 2 — CLI reference**: four new self-contained pages (`docs/cli/parse.md`,
+  `docs/cli/sanitise.md`, `docs/cli/build.md`, `docs/cli/stream.md`) covering
+  every flag, filter, output format, and encapsulation option for each
+  subcommand with worked examples.
+- **Part 3 — Python API Guide**: four new task-oriented guide pages
+  (`docs/guide/parsing.md`, `docs/guide/sanitising.md`,
+  `docs/guide/generating.md`, `docs/guide/pcap.md`) explaining how to
+  accomplish common goals from Python.  The guide index lists the five
+  importable top-level packages (`packeteer.parse`, `.generate`, `.filter`,
+  `.sanitise`, `.pcap`) so readers know where to look.
+- **Part 4 — Reference**: existing API autodoc pages and packet-spec format
+  reference, now grouped under a single reference index.
+- Old per-subcommand subdirectories (`docs/build/`, `docs/parse/`,
+  `docs/sanitiser/`, `docs/stream/`, `docs/synthetic/`) removed; all
+  cross-references updated to point to their precise new targets.
+- README documentation table updated to reflect the new four-part structure.
+
+---
+
 ## 0.5.0 - 2026-04-21
 
 ### Session builders for synthetic data
@@ -29,9 +58,6 @@ All notable changes to packeteer are recorded in this file.
   count within the project limit.
 - All six new names exported from `packeteer.generate`.
 - 44 new tests in `test_session.py` (1460 total).
-- New documentation chapter `docs/synthetic/index.md` — *Creating Synthetic
-  Data* — covering session builders, standalone helpers, pcap output,
-  post-build packet manipulation, and encapsulation.
 - `docs/api/stream-generators.md` updated with autodoc entries for all new
   classes and functions.
 

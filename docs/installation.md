@@ -49,5 +49,5 @@ PDF builds require a TeX distribution with `latexmk` (e.g. `brew install --cask 
 ---
 
 :::{only} html
-Next: {doc}`quickstart`
+Next: {doc}`../guide/index`
 :::

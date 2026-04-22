@@ -71,6 +71,7 @@ latex_toplevel_sectioning = "part"
 latex_elements = {
     "preamble": r"""
 \setcounter{tocdepth}{2}
+\setcounter{secnumdepth}{2}
 \fancyhead[RE]{\nouppercase{\leftmark}}
 \fancyhead[LO]{\nouppercase{\rightmark}}
 """,
