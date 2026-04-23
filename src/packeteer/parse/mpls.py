@@ -8,6 +8,7 @@ import struct
 
 from packeteer.generate.ethernet import ETHERTYPE_IPV4, ETHERTYPE_IPV6
 from packeteer.generate.mpls import MPLSLabel, ETHERTYPE_MPLS_UNICAST
+from packeteer.generate.pseudowire import ETHERTYPE_PW_CW
 
 
 def packet_parser(data: bytes) -> tuple[int, int | None, MPLSLabel | None]:
@@ -51,10 +52,15 @@ def packet_parser(data: bytes) -> tuple[int, int | None, MPLSLabel | None]:
     if s == 0:
         next_ethertype: int | None = ETHERTYPE_MPLS_UNICAST
     else:
-        # Peek at the IP version nibble to distinguish IPv4 from IPv6.
+        # Peek at the version nibble to distinguish IPv4, IPv6, and PW.
         if len(data) < 5:
             return (0, None, None)
         version = (data[4] >> 4) & 0xF
-        next_ethertype = ETHERTYPE_IPV4 if version == 4 else ETHERTYPE_IPV6
+        if version == 4:
+            next_ethertype = ETHERTYPE_IPV4
+        elif version == 6:
+            next_ethertype = ETHERTYPE_IPV6
+        else:
+            next_ethertype = ETHERTYPE_PW_CW
 
     return (4, next_ethertype, MPLSLabel(label=label, tc=tc, ttl=ttl))

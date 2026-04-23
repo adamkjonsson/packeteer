@@ -48,6 +48,7 @@ from packeteer.generate.ipv6 import IPv6Header
 from packeteer.generate.etherip import EtherIPHeader, IPPROTO_ETHERIP
 from packeteer.generate.gre import GREHeader, IPPROTO_GRE, GRE_PROTO_TEB
 from packeteer.generate.mpls import MPLSLabel, ETHERTYPE_MPLS_UNICAST, ETHERTYPE_MPLS_MULTICAST
+from packeteer.generate.pseudowire import PseudowireHeader, ETHERTYPE_PW_CW
 from packeteer.generate.pppoe import PPPoEHeader, ETHERTYPE_PPPOE_DISCOVERY, ETHERTYPE_PPPOE_SESSION
 from packeteer.generate.tcp import TCPHeader
 from packeteer.generate.udp import UDPHeader
@@ -65,6 +66,7 @@ from .ethernet import packet_parser as _ethernet_parser
 from .etherip import packet_parser as _etherip_parser
 from .gre import packet_parser as _gre_parser
 from .mpls import packet_parser as _mpls_parser
+from .pseudowire import packet_parser as _pw_parser
 from .pppoe import packet_parser as _pppoe_parser
 from .ip import packet_parser as _ip_parser
 from .tcp import packet_parser as _tcp_parser
@@ -111,11 +113,14 @@ class ParsedPacket:
         etherip: Parsed EtherIP tunnel header, or ``None`` when absent.
             When set, :attr:`tunneled` contains the inner frame as a
             :class:`ParsedPacket`.
+        pseudowire: Parsed RFC 4385 pseudowire control word, or ``None``
+            when absent.  Found after the bottom-of-stack MPLS label.
+            When set, :attr:`tunneled` contains the inner frame.
         tunneled: Inner packet parsed recursively when :attr:`ipip` is
-            ``True``, :attr:`gre` is set, or :attr:`etherip` is set,
-            otherwise ``None``.  May itself have a non-``None``
-            :attr:`gre`, :attr:`ipip`, or :attr:`etherip` for
-            double-nested tunnels.
+            ``True``, :attr:`gre` is set, :attr:`etherip` is set, or
+            :attr:`pseudowire` is set, otherwise ``None``.  May itself
+            have a non-``None`` :attr:`gre`, :attr:`ipip`, or
+            :attr:`etherip` for double-nested tunnels.
         transport: Parsed TCP, UDP, ICMPv4, or ICMPv6 header.
         dns: Parsed DNS or mDNS message when the transport port is 53 or
             5353, otherwise ``None``.  Populated from the payload bytes; on
@@ -134,14 +139,15 @@ class ParsedPacket:
 
     """
 
-    ethernet:  EthernetHeader | None = None
-    mpls:      list[MPLSLabel] = field(default_factory=list)
-    pppoe:     PPPoEHeader | None = None
-    ip:        IPHeader | IPv6Header | None = None
-    ipip:      bool = False
-    gre:       GREHeader | None = None
-    etherip:   EtherIPHeader | None = None
-    tunneled:  "ParsedPacket | None" = None
+    ethernet:    EthernetHeader | None = None
+    mpls:        list[MPLSLabel] = field(default_factory=list)
+    pppoe:       PPPoEHeader | None = None
+    ip:          IPHeader | IPv6Header | None = None
+    ipip:        bool = False
+    gre:         GREHeader | None = None
+    etherip:     EtherIPHeader | None = None
+    pseudowire:  PseudowireHeader | None = None
+    tunneled:    "ParsedPacket | None" = None
     transport: TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | SCTPHeader | None = None
     dns:       DNSMessage | None = None
     dhcp:      DHCPMessage | None = None
@@ -224,6 +230,17 @@ def _parse_pppoe_and_mpls(
         if ethertype is None:  # discovery frame — no IP follows
             pkt.payload = remaining
             return None
+
+    if ethertype == ETHERTYPE_PW_CW:
+        pw_size, inner_et, pw_hdr = _pw_parser(remaining)
+        if pw_size == 0 or pw_hdr is None:
+            pkt.payload = remaining
+            return None
+        pkt.pseudowire = pw_hdr
+        remaining = remaining[pw_size:]
+        inner_lt = LINKTYPE_ETHERNET if inner_et == GRE_PROTO_TEB else LINKTYPE_RAW
+        pkt.tunneled = parse_packet(remaining, link_type=inner_lt)
+        return None
 
     if ethertype is not None and ethertype not in (ETHERTYPE_IPV4, ETHERTYPE_IPV6):
         pkt.payload = remaining

@@ -98,7 +98,8 @@ class SanitiseOptions:
 
     Attributes:
         ips: Replace ``src`` and ``dst`` in every ``network`` section,
-            including those inside nested tunnel specs (ipip, gre, etherip).
+            including those inside nested tunnel specs (ipip, gre, etherip,
+            pseudowire).
         macs: Replace ``src_mac`` and ``dst_mac`` in every ``ethernet``
             section, including those inside tunnel specs.
         ports: Replace ``src_port`` and ``dst_port`` in every ``transport``
@@ -376,7 +377,7 @@ def _sanitise_packet(pkt: dict, r: _Replacer, opts: SanitiseOptions) -> None:
     _sanitise_app_layers(pkt, r, opts)
 
     # ── Tunnel recursion ──────────────────────────────────────────────────────
-    for tunnel_key in ("ipip", "gre", "etherip"):
+    for tunnel_key in ("ipip", "gre", "etherip", "pseudowire"):
         if tunnel_key not in pkt:
             continue
         inner = pkt[tunnel_key]
