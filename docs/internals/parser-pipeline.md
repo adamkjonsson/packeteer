@@ -34,6 +34,11 @@ link_type
   |                              v
   |                         MPLS loop (EtherType 0x8847/0x8848)
   |                              |  _mpls_parser repeated until BOS
+  |                              |  (version nibble 0 after BOS → PW)
+  |                              v
+  |                         Pseudowire (sentinel 0xFFFE after BOS label)
+  |                              |  _pw_parser; inner type from next nibble
+  |                              |  → recurse with LINKTYPE_ETHERNET or RAW
   |                              v
   |                         PPPoE (EtherType 0x8863/0x8864)
   |                              |  _pppoe_parser; discovery → stop
@@ -65,11 +70,12 @@ class ParsedPacket:
     ethernet:  EthernetHeader | None
     mpls:      list[MPLSLabel]        # empty list when no MPLS labels
     pppoe:     PPPoEHeader | None
-    ip:        IPHeader | IPv6Header | None
-    ipip:      bool                   # True → outer IP proto is 4 or 41
-    gre:       GREHeader | None
-    etherip:   EtherIPHeader | None
-    tunneled:  ParsedPacket | None    # inner packet for ipip/gre/etherip
+    ip:          IPHeader | IPv6Header | None
+    ipip:        bool                      # True → outer IP proto is 4 or 41
+    gre:         GREHeader | None
+    etherip:     EtherIPHeader | None
+    pseudowire:  PseudowireHeader | None   # RFC 4385 control word after MPLS BOS
+    tunneled:    ParsedPacket | None       # inner packet for ipip/gre/etherip/pseudowire
     transport: TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | SCTPHeader | None
     dns:       DNSMessage | None      # set when UDP port 53 or 5353
     dhcp:      DHCPMessage | None     # set when UDP port 67 or 68
@@ -79,9 +85,9 @@ class ParsedPacket:
     ts_frac:   int                    # microseconds or nanoseconds
 ```
 
-`ipip`, `gre`, and `etherip` are mutually exclusive: at most one tunnel type
-is active per layer.  When a tunnel is present, `tunneled` holds the inner
-`ParsedPacket` parsed recursively.
+`ipip`, `gre`, `etherip`, and `pseudowire` are mutually exclusive: at most one
+tunnel type is active per layer.  When a tunnel is present, `tunneled` holds
+the inner `ParsedPacket` parsed recursively.
 
 ## Tunnel recursion
 
@@ -95,6 +101,12 @@ recursively on the bytes that follow the tunnel header:
   IPv4/IPv6-in-GRE.
 - **EtherIP**: call `parse_packet(remaining[etherip_size:], LINKTYPE_ETHERNET)`.
   EtherIP always carries a full inner Ethernet frame.
+- **Pseudowire** (RFC 4385): detected after the MPLS bottom-of-stack label when
+  the following byte's version nibble is `0x0`.  `_pw_parser` consumes 4 bytes
+  and peeks at the next byte to infer the inner type: nibble `4` →
+  `LINKTYPE_RAW` (IPv4), nibble `6` → `LINKTYPE_RAW` (IPv6), anything else →
+  `LINKTYPE_ETHERNET` (inner Ethernet frame).  `parse_packet` is called
+  recursively with the appropriate link type.
 
 There is no recursion depth limit, so triple-nested tunnels parse correctly.
 
@@ -125,8 +137,9 @@ DNS, DHCP, and HTTP are tested in that order and the first successful parse wins
 
 2. For tunnel layers, call `apply_tunneled(cfg, pkt)`.  This dispatches on
    which tunnel is active and calls the corresponding private function
-   (`_apply_ipip`, `_apply_gre`, or `_apply_etherip`), each of which recurses
-   into the inner `ParsedPacket` to build the nested dict.
+   (`_apply_ipip`, `_apply_gre`, `_apply_etherip`, or `_apply_pseudowire`),
+   each of which recurses into the inner `ParsedPacket` to build the nested
+   dict.
 
 3. For non-tunnel packets, call `update_config(cfg, pkt.transport)`, then —
    in order — `update_config` for whichever of `dns`, `dhcp`, or `http` is

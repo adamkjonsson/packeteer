@@ -31,6 +31,7 @@ common layer stacks.
 | SCTP SACK (fixed) | 16 | 4 chunk header + Cum TSN (4) + a_rwnd (4) + gap/dup counts (2+2) |
 | ICMPv4 | 8 | Type (1) + Code (1) + Checksum (2) + ID (2) + Seq (2) |
 | ICMPv6 | 8 | Same layout as ICMPv4 |
+| RFC 4385 pseudowire control word | 4 | Flags+FRG+Length (2) + Sequence Number (2); sits after the MPLS BOS label |
 | EtherIP | 2 | Version+reserved (2); IP protocol 97 |
 | GRE | 4 | Fixed header; optional fields add more |
 | GRE Checksum field | +4 | Present when C flag set |
@@ -49,6 +50,8 @@ common layer stacks.
 | GRE with Key (IPv4 outer) | 20 + 4 + 4 = **28** | No |
 | GRE TEB (IPv4 outer, no options) | 20 + 4 + 14 = **38** | Yes |
 | EtherIP (IPv4 outer) | 20 + 2 + 14 = **36** | Yes |
+| MPLS PW, Ethernet inner (1 label) | 4 + 4 + 14 = **22** added to Ethernet frame | Yes |
+| MPLS PW, IP inner (1 label) | 4 + 4 = **8** added to Ethernet frame | No |
 
 ---
 
@@ -82,6 +85,12 @@ Ethernet + IPv4 (EtherIP) + EtherIP + Ethernet + IPv4 + TCP (minimum):
 
 ```
 14 + 20 + 2 + 14 + 20 + 20 = 90 bytes
+```
+
+Ethernet + MPLS (1 label) + PW control word + Ethernet + IPv4 + TCP (minimum):
+
+```
+14 + 4 + 4 + 14 + 20 + 20 = 76 bytes
 ```
 
 ---

@@ -4,7 +4,31 @@ All notable changes to packeteer are recorded in this file.
 
 ---
 
-## Unreleased
+## 0.6.0 - 2026-04-23
+
+### New features
+
+- **RFC 4385 pseudowire support** — MPLS-based pseudowires with the RFC 4385
+  control word are now supported end-to-end across the builder, parser,
+  sanitiser, and CLI.
+
+  - `PacketBuilder.pseudowire(flags, frag, length, sequence)` inserts the
+    4-byte control word after the bottom-of-stack MPLS label.  The MPLS S bit
+    is set automatically.  The inner payload can be a full inner Ethernet frame
+    (Ethernet PW) or a raw IP packet (IP PW).
+  - The MPLS parser now detects the version nibble `0x0` after the BOS label
+    and routes to the new `parse/pseudowire.py` parser, which infers the inner
+    payload type by peeking at the following byte.
+  - `ParsedPacket` gains a `pseudowire` field (the parsed `PseudowireHeader`)
+    and stores the inner frame in the existing `tunneled` field.
+  - `packeteer parse` serialises pseudowire packets with a top-level
+    `"pseudowire"` key whose value is the control word fields plus the nested
+    inner-packet spec (same structure as `"gre"` or `"etherip"`).
+  - `packeteer build` reconstructs pseudowire packets from the `"pseudowire"`
+    spec key, without requiring an outer `"network"` section.
+  - `packeteer sanitise` walks `"pseudowire"` recursively alongside
+    `"gre"`, `"ipip"`, and `"etherip"`, applying the same IP and MAC
+    replacement tables to the inner frame.
 
 ### Bug fixes
 

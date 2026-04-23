@@ -524,12 +524,13 @@ def _apply_spec_to_builder(
         pppoe_spec is not None
         and pppoe_spec.get("code", PPPOE_CODE_SESSION) != PPPOE_CODE_SESSION
     )
-    is_etherip = bool(protocol_str) and protocol_str.lower() == "etherip"
-    is_ipip    = bool(protocol_str) and protocol_str.lower() == "ipip"
-    is_gre     = bool(protocol_str) and protocol_str.lower() == "gre"
+    is_etherip    = bool(protocol_str) and protocol_str.lower() == "etherip"
+    is_ipip       = bool(protocol_str) and protocol_str.lower() == "ipip"
+    is_gre        = bool(protocol_str) and protocol_str.lower() == "gre"
+    is_pseudowire = "pseudowire" in spec
 
     if not is_pppoe_discovery and not is_etherip and not is_ipip and not is_gre and \
-            (not src or not dst or not protocol_str):
+            not is_pseudowire and (not src or not dst or not protocol_str):
         print(
             f"Error: packet {packet_num} missing network.src, network.dst, or network.protocol",
             file=sys.stderr,
@@ -580,6 +581,18 @@ def _apply_spec_to_builder(
             tc=mpls_entry.get("tc", 0),
             ttl=mpls_entry.get("ttl", 64),
         )
+
+    # ── Pseudowire ───────────────────────────────────────────────────────────
+    pw_spec = spec.get("pseudowire")
+    if pw_spec is not None:
+        b = b.pseudowire(
+            flags=pw_spec.get("flags", 0),
+            frag=pw_spec.get("frag", 0),
+            length=pw_spec.get("length", 0),
+            sequence=pw_spec.get("sequence", 0),
+        )
+        b, _ = _apply_spec_to_builder(b, pw_spec, packet_num)
+        return b, False
 
     # ── PPPoE ────────────────────────────────────────────────────────────────
     if pppoe_spec is not None:
@@ -1015,7 +1028,7 @@ def _stream_to_json(packets: list, include_ethernet: bool) -> str:
             update_config(cfg, pkt.pppoe)
         if pkt.ip is not None:
             update_config(cfg, pkt.ip)
-        if pkt.ipip or pkt.gre is not None or pkt.etherip is not None:
+        if pkt.ipip or pkt.gre is not None or pkt.etherip is not None or pkt.pseudowire is not None:
             apply_tunneled(cfg, pkt)
         elif pkt.transport is not None:
             update_config(cfg, pkt.transport)

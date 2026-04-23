@@ -72,6 +72,48 @@ The bottom-of-stack (S) bit is set automatically: `1` on the last entry,
 
 ---
 
+(packet-spec-pseudowire)=
+## `pseudowire`
+
+An optional RFC 4385 pseudowire control word inserted between the last MPLS
+label (bottom of stack) and the inner payload.  Include a `"pseudowire"` key
+at the top level of the packet spec; the inner layers are nested inside it.
+
+**Ethernet pseudowire — MPLS carrying an inner Ethernet/IP frame:**
+
+```json
+"mpls": [{ "label": 100, "ttl": 64 }],
+"pseudowire": {
+  "ethernet": { "src_mac": "cc:dd:ee:00:00:01", "dst_mac": "cc:dd:ee:00:00:02" },
+  "network":  { "src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "tcp" },
+  "transport": { "dst_port": 80 }
+}
+```
+
+**IP pseudowire — MPLS carrying a raw IP packet:**
+
+```json
+"mpls": [{ "label": 200, "ttl": 64 }],
+"pseudowire": {
+  "network":   { "src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "udp" },
+  "transport": { "dst_port": 53 }
+}
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `flags` | `0` | 4-bit flags field: bit 3 = L (local AC loss), bit 2 = R (remote AC loss), bits 1–0 reserved |
+| `frag` | `0` | 2-bit fragmentation indicator: `0` = not fragmented |
+| `length` | `0` | 6-bit payload length; must be `0` for Ethernet pseudowires |
+| `sequence` | `0` | 16-bit sequence number; `0` disables sequencing |
+
+The 4-byte control word is built automatically with a leading nibble of `0x0`
+(distinguishing it from IPv4 `0x4` and IPv6 `0x6`).  No outer IP or
+`network.protocol` field is needed — the pseudowire sits directly after the
+MPLS label stack.
+
+---
+
 (packet-spec-pppoe)=
 ## `pppoe`
 

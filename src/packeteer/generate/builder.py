@@ -132,6 +132,7 @@ from .sctp import SCTPHeader, SCTPChunk, IPPROTO_SCTP, _build_sctp_packet
 from .dns import DNSMessage, _build_dns_message, _build_dns_message_tcp
 from .dhcp import DHCPMessage, _build_dhcp_message
 from .http import HTTPMessage, _build_http_message
+from .pseudowire import PseudowireHeader, _build_pseudowire_header
 
 # ── protocol-number helpers ───────────────────────────────────────────────────
 
@@ -419,6 +420,49 @@ class PacketBuilder:
 
         """
         self._layers.append(GREHeader(key=key, seq=seq, checksum=checksum))
+        return self
+
+    def pseudowire(
+        self,
+        *,
+        flags: int = 0,
+        frag: int = 0,
+        length: int = 0,
+        sequence: int = 0,
+    ) -> "PacketBuilder":
+        """Append an RFC 4385 pseudowire control word.
+
+        Call after the bottom-of-stack :meth:`mpls` label and before the inner
+        layer (an inner :meth:`ethernet` frame for Ethernet PW, or :meth:`ip`
+        for IP PW).  The MPLS bottom-of-stack bit is set automatically because
+        :class:`PseudowireHeader` is not an :class:`MPLSLabel`.
+
+        Args:
+            flags: 4-bit flags field (L=bit 3, R=bit 2; bits 1-0 reserved).
+                Defaults to ``0``.
+            frag: 2-bit fragmentation indicator.  ``0`` means not fragmented.
+                Defaults to ``0``.
+            length: 6-bit payload length.  Must be ``0`` for Ethernet PW.
+                Defaults to ``0``.
+            sequence: 16-bit sequence number.  ``0`` means sequencing is
+                disabled.  Defaults to ``0``.
+
+        Example — MPLS pseudowire carrying an inner Ethernet/IPv4/TCP frame::
+
+            pkt = (PacketBuilder()
+                .ethernet()
+                .mpls(label=100)
+                .pseudowire()
+                .ethernet(src_mac="cc:dd:ee:00:00:01", dst_mac="cc:dd:ee:00:00:02")
+                .ip(src="10.0.0.1", dst="10.0.0.2")
+                .tcp(dst_port=80)
+                .build()
+            )
+
+        """
+        self._layers.append(
+            PseudowireHeader(flags=flags, frag=frag, length=length, sequence=sequence)
+        )
         return self
 
     def ip(
@@ -759,6 +803,9 @@ class PacketBuilder:
                     checksum=layer.checksum, protocol_type=proto_type,
                 )
                 data = _build_gre_header(hdr, data) + data
+
+            elif isinstance(layer, PseudowireHeader):
+                data = _build_pseudowire_header(layer, data)
 
             elif isinstance(layer, MPLSLabel):
                 bos = not isinstance(next_layer, MPLSLabel)

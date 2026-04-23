@@ -46,8 +46,8 @@ packeteer parse capture.pcap --dst-port '!80,!443'
 ```
 
 `--src`, `--dst`, and `--host` accept IPv4/IPv6 addresses and CIDR prefixes.
-For tunnelled packets (GRE, EtherIP, IP-in-IP), filtering applies to the outer
-layer only.
+For tunnelled packets (GRE, EtherIP, IP-in-IP, pseudowire), filtering applies
+to the outer layer only.
 
 ## What gets parsed
 
@@ -64,6 +64,7 @@ layer only.
 | IP-in-IP | `ipip` | Inner spec nested recursively |
 | GRE | `gre` | Key, sequence, checksum flags preserved |
 | EtherIP | `etherip` | Inner Ethernet frame nested recursively |
+| Pseudowire (RFC 4385) | `pseudowire` | Control word after MPLS BOS label; inner frame nested recursively |
 | DNS | `dns` | UDP/TCP port 53 and 5353 (mDNS) |
 | DHCP | `dhcp` | UDP ports 67 and 68 |
 | HTTP/1.x | `http` | TCP ports 80 and 8080 |
