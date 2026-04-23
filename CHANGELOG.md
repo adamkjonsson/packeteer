@@ -4,6 +4,22 @@ All notable changes to packeteer are recorded in this file.
 
 ---
 
+## Unreleased
+
+### Bug fixes
+
+- **QinQ (802.1ad) parsing** — `packeteer sanitise` (and `packeteer parse`)
+  now correctly handles double-tagged frames.  Previously the Ethernet parser
+  stopped after the outer VLAN tag because the inner EtherType `0x8100` was
+  not a recognised next-layer, discarding all inner layers and causing the
+  rebuild step to abort with "missing network.src, network.dst, or
+  network.protocol".  The parser now consumes both VLAN tags and returns the
+  true payload EtherType.  The packet spec gains an `"inner_vlan"` key in the
+  `"ethernet"` section (alongside the existing `"vlan"` key) when QinQ is
+  present; `packeteer build` reconstructs both tags faithfully.
+
+---
+
 ## 0.5.1 - 2026-04-22
 
 ### Documentation restructure
