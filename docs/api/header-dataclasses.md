@@ -83,6 +83,19 @@ EtherType and PPP protocol constants:
 
 ---
 
+## Pseudowire — RFC 4385 control word
+
+```{eval-rst}
+.. autoclass:: packeteer.generate.pseudowire.PseudowireHeader
+   :members:
+```
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `ETHERTYPE_PW_CW` | `0xFFFE` | Internal sentinel used by the parse pipeline to signal that a pseudowire control word follows the last MPLS label.  Never appears on the wire. |
+
+---
+
 ## Tunnels — EtherIP
 
 ```{eval-rst}

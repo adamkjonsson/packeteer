@@ -57,6 +57,12 @@ PPP protocol number inserted after a PPPoE session header.
 PPPoE is handled as a special case in `_ethertype_for()` because it needs two
 different EtherTypes depending on `layer.code` (session vs discovery).
 
+`PseudowireHeader` does not appear in any of these maps.  It is handled directly
+in `_assemble_range` by calling `_build_pseudowire_header(layer, data)`, which
+prepends the 4-byte RFC 4385 control word to the assembled inner payload.  The
+surrounding MPLS label automatically sets its S (bottom-of-stack) bit to `1`
+because `PseudowireHeader` is not an `MPLSLabel`.
+
 ## IP cloning
 
 IP headers are immutable dataclasses.  `_assemble_range` cannot modify the

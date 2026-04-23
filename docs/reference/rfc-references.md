@@ -72,6 +72,9 @@ RFCs implemented or referenced by this library.
 * - [RFC 4213](https://datatracker.ietf.org/doc/html/rfc4213)
   - Basic Transition Mechanisms for IPv6 (IPv6-in-IP)
   - `.ip()` twice, protocol `41`
+* - [RFC 4385](https://datatracker.ietf.org/doc/html/rfc4385)
+  - Pseudowire Emulation Edge-to-Edge (PWE3) Control Word for Use over an MPLS PSN
+  - `PseudowireHeader`, `.pseudowire()`, `_build_pseudowire_header`, `packeteer.parse.pseudowire`
 * - [RFC 4291](https://datatracker.ietf.org/doc/html/rfc4291)
   - IPv6 Addressing Architecture
   - `IPv6Header` address format

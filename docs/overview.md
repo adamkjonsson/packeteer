@@ -79,7 +79,7 @@ packeteer stream --protocol udp --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
 Optional features let you inject realistic impairments — packet loss,
 retransmissions, payload corruption, server RST — and wrap every packet in
 one or more encapsulation layers (VLAN, QinQ, MPLS, PPPoE, GRE, EtherIP,
-IP-in-IP) to match the encapsulation stack of the network under test.  The
+IP-in-IP, pseudowire) to match the encapsulation stack of the network under test.  The
 `--mtu` flag causes packets that exceed the limit to be fragmented as they
 would be by a real low-MTU middlebox.
 
@@ -104,7 +104,7 @@ Common sanitisation tasks in the packet spec:
 - Replace IP addresses with RFC 1918 or documentation-range addresses
 - Zero out or randomise payload bytes (`"size"` instead of `"data"`)
 - Replace MAC addresses with locally-administered addresses
-- Strip or overwrite VLAN IDs, MPLS labels, or GRE keys
+- Strip or overwrite VLAN IDs, MPLS labels, GRE keys, or pseudowire sequence numbers
 
 The rebuilt pcap can then be shared, stored in a test fixture, or loaded into
 a traffic replay tool such as `tcpreplay`.

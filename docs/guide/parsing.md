@@ -181,6 +181,27 @@ print(pkt.tunneled.ip.src)              # "192.168.1.1" (inner)
 print(pkt.tunneled.transport.dst_port)  # 80
 ```
 
+The same pattern works for pseudowires.  The RFC 4385 control word is in
+`pkt.pseudowire`; the inner frame is in `pkt.tunneled`:
+
+```python
+raw = (PacketBuilder()
+    .ethernet()
+    .mpls(label=100)
+    .pseudowire(sequence=42)
+    .ethernet(src_mac="cc:dd:ee:00:00:01", dst_mac="cc:dd:ee:00:00:02")
+    .ip(src="10.0.0.1", dst="10.0.0.2")
+    .tcp(dst_port=80)
+    .build()
+)
+pkt = parse_packet(raw)
+
+print(pkt.mpls[0].label)               # 100
+print(pkt.pseudowire.sequence)         # 42
+print(pkt.tunneled.ip.src)             # "10.0.0.1" (inner)
+print(pkt.tunneled.transport.dst_port) # 80
+```
+
 Note: `PacketFilter` matches on the outer layer only — the inner addresses
 and ports inside a tunnel are not inspected.
 

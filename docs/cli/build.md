@@ -53,6 +53,7 @@ are simply omitted.
 | `etherip` | EtherIP tunnel inner frame (`network.protocol = "etherip"`) |
 | `ipip` | IP-in-IP tunnel inner spec (`network.protocol = "ipip"`) |
 | `gre` | GRE tunnel inner spec (`network.protocol = "gre"`) |
+| `pseudowire` | RFC 4385 control word + inner frame; placed after `mpls`, no outer `network` key required |
 | `payload` | Raw bytes — `"size"` for random or `"data"` for a hex string |
 
 See {doc}`../packet-spec/format` for the complete field reference for every
@@ -103,6 +104,25 @@ packeteer build syn.json --pcap syn.pcap
     "gre": {
       "key": 12345,
       "network":   { "src": "192.168.1.1", "dst": "192.168.1.2", "protocol": "tcp" },
+      "transport": { "dst_port": 80, "flags": 2 }
+    },
+    "packet_metadata": { "timestamp_s": 0, "timestamp_us": 0 }
+  }]
+}
+```
+
+**MPLS pseudowire (Ethernet over MPLS with RFC 4385 control word):**
+
+```json
+{
+  "metadata": { "nanoseconds": false },
+  "packets": [{
+    "ethernet": { "src_mac": "00:00:00:00:00:01", "dst_mac": "00:00:00:00:00:02" },
+    "mpls": [{ "label": 100, "ttl": 64 }],
+    "pseudowire": {
+      "sequence": 1,
+      "ethernet": { "src_mac": "cc:dd:ee:00:00:01", "dst_mac": "cc:dd:ee:00:00:02" },
+      "network":  { "src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "tcp" },
       "transport": { "dst_port": 80, "flags": 2 }
     },
     "packet_metadata": { "timestamp_s": 0, "timestamp_us": 0 }

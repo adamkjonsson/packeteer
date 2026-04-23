@@ -169,6 +169,23 @@ Available encapsulation types: `VLANEncap`, `QinQEncap`, `MPLSEncap`,
 `PPPoEEncap`, `GREEncap`, `EtherIPEncap`, `IPIPEncap`.  See the Reference
 section for stacking rules and full parameter lists.
 
+For pseudowire traffic (MPLS + RFC 4385 control word + inner Ethernet/IP),
+use {class}`~packeteer.generate.builder.PacketBuilder` directly:
+
+```python
+from packeteer.generate import PacketBuilder
+
+pkt = (PacketBuilder()
+    .ethernet()
+    .mpls(label=100)
+    .pseudowire()
+    .ethernet(src_mac="cc:dd:ee:00:00:01", dst_mac="cc:dd:ee:00:00:02")
+    .ip(src="10.0.0.1", dst="10.0.0.2")
+    .tcp(dst_port=80)
+    .build()
+)
+```
+
 ## Standalone protocol helpers
 
 When you are assembling a capture manually and only need the bytes for a

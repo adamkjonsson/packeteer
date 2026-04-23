@@ -48,6 +48,7 @@ if TYPE_CHECKING:
 from packeteer.generate.ethernet import EthernetHeader
 from packeteer.generate.etherip import EtherIPHeader, IPPROTO_ETHERIP
 from packeteer.generate.gre import GREHeader
+from packeteer.generate.pseudowire import PseudowireHeader
 from packeteer.generate.ip import IPHeader
 from packeteer.generate.ipv6 import IPv6Header
 from packeteer.generate.mpls import MPLSLabel
@@ -223,6 +224,12 @@ def _apply_ethernet(config: dict[str, Any], hdr: EthernetHeader) -> None:
             "id": hdr.vlan_tag.vid,
             "pcp": hdr.vlan_tag.pcp,
             "dei": hdr.vlan_tag.dei,
+        }
+    if hdr.inner_vlan_tag is not None:
+        section["inner_vlan"] = {
+            "id": hdr.inner_vlan_tag.vid,
+            "pcp": hdr.inner_vlan_tag.pcp,
+            "dei": hdr.inner_vlan_tag.dei,
         }
     config["ethernet"] = section
 
@@ -411,6 +418,38 @@ def _apply_gre(config: dict[str, Any], hdr: GREHeader, tunneled: "ParsedPacket")
     else:
         _apply_inner_tail(inner, tunneled)
     config["gre"] = inner
+
+
+def _apply_pseudowire(
+    config: dict[str, Any], hdr: PseudowireHeader, tunneled: "ParsedPacket",
+) -> None:
+    """Serialise *hdr* and the inner payload *tunneled* into ``config["pseudowire"]``."""
+    inner: dict[str, Any] = {}
+    if hdr.flags != 0:
+        inner["flags"] = hdr.flags
+    if hdr.frag != 0:
+        inner["frag"] = hdr.frag
+    if hdr.length != 0:
+        inner["length"] = hdr.length
+    if hdr.sequence != 0:
+        inner["sequence"] = hdr.sequence
+    if tunneled.ethernet is not None:
+        _apply_ethernet(inner, tunneled.ethernet)
+    for label in tunneled.mpls:
+        _apply_mpls(inner, label)
+    if tunneled.pppoe is not None:
+        _apply_pppoe(inner, tunneled.pppoe)
+    if tunneled.ip is not None:
+        _apply_ip(inner, tunneled.ip)
+    if tunneled.gre is not None and tunneled.tunneled is not None:
+        _apply_gre(inner, tunneled.gre, tunneled.tunneled)
+    elif tunneled.etherip is not None and tunneled.tunneled is not None:
+        _apply_etherip(inner, tunneled.etherip, tunneled.tunneled)
+    elif tunneled.ipip and tunneled.tunneled is not None:
+        _apply_ipip(inner, tunneled.tunneled)
+    else:
+        _apply_inner_tail(inner, tunneled)
+    config["pseudowire"] = inner
 
 
 def _apply_payload(config: dict[str, Any], payload: bytes) -> None:
@@ -648,6 +687,8 @@ def apply_tunneled(config: dict[str, Any], pkt: "ParsedPacket") -> None:
         _apply_gre(config, pkt.gre, pkt.tunneled)
     elif pkt.etherip is not None and pkt.tunneled is not None:
         _apply_etherip(config, pkt.etherip, pkt.tunneled)
+    elif pkt.pseudowire is not None and pkt.tunneled is not None:
+        _apply_pseudowire(config, pkt.pseudowire, pkt.tunneled)
 
 
 def to_packet_spec(

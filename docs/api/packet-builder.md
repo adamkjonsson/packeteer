@@ -12,6 +12,7 @@ multiple times to produce advanced encapsulations:
 
 - `.vlan()` twice → QinQ (IEEE 802.1ad) double-tagged frame
 - `.mpls()` multiple times → MPLS label stack (RFC 3032)
+- `.mpls()` + `.pseudowire()` → MPLS pseudowire with RFC 4385 control word
 - `.ip()` twice → IP-in-IP tunnel (RFC 2003 / RFC 4213)
 - `.gre()` → GRE tunnel header (RFC 2784 / RFC 2890)
 - `.etherip()` → EtherIP tunnel header (RFC 3378)
@@ -23,6 +24,7 @@ multiple times to produce advanced encapsulations:
 | `.ethernet(src_mac, dst_mac, pad=False)` | Ethernet II header.  `pad=True` zero-pads the frame to the IEEE 802.3 minimum of 60 bytes. |
 | `.vlan(vid, pcp=0, dei=0)` | 802.1Q VLAN tag.  Call twice for QinQ. |
 | `.mpls(label, tc=0, ttl=64)` | MPLS label stack entry (RFC 3032).  S bit set automatically. |
+| `.pseudowire(flags=0, frag=0, length=0, sequence=0)` | RFC 4385 pseudowire control word.  Call after the bottom-of-stack `.mpls()` and before the inner `.ethernet()` or `.ip()`. |
 | `.pppoe(code=0, session_id=0, tags=None)` | PPPoE header (RFC 2516).  `code=0` is a session frame; any other code is a discovery frame carrying TLV `tags`. |
 | `.etherip()` | EtherIP tunnel header (RFC 3378).  Call after the outer `.ip()` and before the inner `.ethernet()`. |
 | `.gre(key=None, seq=None, checksum=False)` | GRE tunnel header (RFC 2784 / RFC 2890).  Protocol Type and outer IP protocol (47) are set automatically from the next layer. |

@@ -122,10 +122,10 @@ are always kept unchanged.
 
 ## Tunnel handling
 
-Nested tunnel specs (`gre`, `ipip`, `etherip`) are walked recursively.  The
-same mapping tables are shared at all nesting levels, so an IP address that
-appears as both an outer tunnel endpoint and an inner address will always
-receive the same synthetic replacement.
+Nested tunnel specs (`gre`, `ipip`, `etherip`, `pseudowire`) are walked
+recursively.  The same mapping tables are shared at all nesting levels, so an
+IP address that appears as both an outer tunnel endpoint and an inner address
+will always receive the same synthetic replacement.
 
 ## Post-filtering with PacketFilter
 
