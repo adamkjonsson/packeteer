@@ -567,6 +567,11 @@ def _apply_spec_to_builder(
         vlan = eth.get("vlan", {})
         if vlan:
             b = b.vlan(vid=vlan["id"], pcp=vlan.get("pcp", 0), dei=vlan.get("dei", 0))
+        inner_vlan = eth.get("inner_vlan", {})
+        if inner_vlan:
+            b = b.vlan(
+                vid=inner_vlan["id"], pcp=inner_vlan.get("pcp", 0), dei=inner_vlan.get("dei", 0)
+            )
 
     # ── MPLS ─────────────────────────────────────────────────────────────────
     for mpls_entry in mpls_labels:

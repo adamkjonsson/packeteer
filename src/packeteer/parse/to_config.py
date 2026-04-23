@@ -224,6 +224,12 @@ def _apply_ethernet(config: dict[str, Any], hdr: EthernetHeader) -> None:
             "pcp": hdr.vlan_tag.pcp,
             "dei": hdr.vlan_tag.dei,
         }
+    if hdr.inner_vlan_tag is not None:
+        section["inner_vlan"] = {
+            "id": hdr.inner_vlan_tag.vid,
+            "pcp": hdr.inner_vlan_tag.pcp,
+            "dei": hdr.inner_vlan_tag.dei,
+        }
     config["ethernet"] = section
 
 

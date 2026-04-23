@@ -45,11 +45,31 @@ def packet_parser(data: bytes) -> tuple[int, int | None, EthernetHeader | None]:
             pcp = (tci >> 13) & 0x7
             dei = (tci >> 12) & 0x1
             vid = tci & 0xFFF
+            outer_tag = VLANTag(vid=vid, pcp=pcp, dei=dei)
+
+            if inner_ethertype == ETHERTYPE_8021Q:
+                # QinQ (802.1ad): parse the inner VLAN tag as well.
+                if len(data) < 22:
+                    return (0, None, None)
+                inner_tci = struct.unpack("!H", data[18:20])[0]
+                final_ethertype = struct.unpack("!H", data[20:22])[0]
+                inner_vid = inner_tci & 0xFFF
+                inner_pcp = (inner_tci >> 13) & 0x7
+                inner_dei = (inner_tci >> 12) & 0x1
+                hdr = EthernetHeader(
+                    dst_mac=dst_mac,
+                    src_mac=src_mac,
+                    ethertype=final_ethertype,
+                    vlan_tag=outer_tag,
+                    inner_vlan_tag=VLANTag(vid=inner_vid, pcp=inner_pcp, dei=inner_dei),
+                )
+                return (22, final_ethertype, hdr)
+
             hdr = EthernetHeader(
                 dst_mac=dst_mac,
                 src_mac=src_mac,
                 ethertype=inner_ethertype,
-                vlan_tag=VLANTag(vid=vid, pcp=pcp, dei=dei),
+                vlan_tag=outer_tag,
             )
             return (18, inner_ethertype, hdr)
 
