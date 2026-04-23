@@ -8,6 +8,13 @@ All notable changes to packeteer are recorded in this file.
 
 ### Bug fixes
 
+- **PDF documentation — Part I missing** — the LaTeX/PDF build was silently
+  discarding the Introduction part.  A `{raw} latex` block in `docs/index.md`
+  was overriding `\part` so that the first call (which should typeset
+  "Part I: Introduction") merely restored the original definition without
+  emitting anything; Parts II–IV appeared normally.  The workaround has been
+  removed; all four parts now appear in the generated PDF.
+
 - **QinQ (802.1ad) parsing** — `packeteer sanitise` (and `packeteer parse`)
   now correctly handles double-tagged frames.  Previously the Ethernet parser
   stopped after the outer VLAN tag because the inner EtherType `0x8100` was
