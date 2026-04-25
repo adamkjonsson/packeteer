@@ -127,6 +127,32 @@ recursively.  The same mapping tables are shared at all nesting levels, so an
 IP address that appears as both an outer tunnel endpoint and an inner address
 will always receive the same synthetic replacement.
 
+```{warning}
+**Wireshark / tshark: MPLS pseudowire control word not shown after sanitisation**
+
+Wireshark and tshark use a byte-level heuristic to decide whether an RFC 4385
+pseudowire control word (PW CW) is present after the bottom-of-stack MPLS
+label.  The heuristic checks the first nibble of the byte that follows the
+last MPLS label: if it is `0x0` it *may* indicate a PW CW, but the tool
+cannot tell from the bytes alone whether those four bytes are the control word
+or the beginning of an inner Ethernet frame.
+
+The heuristic works when the inner Ethernet MAC addresses start with `00:`
+(globally administered), because the resulting byte pattern is easy to
+distinguish.  However, packeteer's synthetic MAC addresses start with `02:`
+(locally administered, RFC 5737 / IANA-reserved range), and this trips the
+heuristic: Wireshark/tshark decodes the packet as *Ethernet PW without control
+word* (`pwethnocw`), misreading the PW CW bytes as part of the inner
+Ethernet header and showing EtherType `0x0000`.
+
+The sanitised pcap is byte-for-byte RFC 4385 compliant — `packeteer parse`
+decodes it correctly.  The misidentification is a limitation of the
+Wireshark/tshark CW-presence heuristic.  To verify the structure of a
+sanitised pseudowire capture, use:
+
+    packeteer parse sanitised.pcap
+```
+
 ## Post-filtering with PacketFilter
 
 You can combine sanitisation with filtering to produce a clean, focused

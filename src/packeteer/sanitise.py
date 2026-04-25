@@ -380,10 +380,7 @@ def _sanitise_packet(pkt: dict, r: _Replacer, opts: SanitiseOptions) -> None:
     for tunnel_key in ("ipip", "gre", "etherip", "pseudowire"):
         if tunnel_key not in pkt:
             continue
-        inner = pkt[tunnel_key]
-        if "ethernet" in inner:
-            _sanitise_ethernet(inner["ethernet"], r, opts)
-        _sanitise_packet(inner, r, opts)
+        _sanitise_packet(pkt[tunnel_key], r, opts)
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
