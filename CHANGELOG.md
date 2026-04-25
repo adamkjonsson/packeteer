@@ -4,6 +4,38 @@ All notable changes to packeteer are recorded in this file.
 
 ---
 
+## 0.6.1 - 2026-04-25
+
+### Bug fixes
+
+- **Pseudowire parse: all layers after MPLS silently dropped** —
+  `parse_pcap_file` was not calling `apply_tunneled` for pseudowire packets,
+  so the `"pseudowire"` key and all inner layers (inner Ethernet, IP, transport,
+  payload) were missing from the serialised JSON output.  The condition in
+  `parse/core.py` now includes `pkt.pseudowire is not None` alongside the
+  existing GRE, EtherIP, and IP-in-IP checks.
+
+- **Pseudowire sanitise: inner Ethernet MACs double-mapped** —
+  The tunnel-recursion loop in `_sanitise_packet` called `_sanitise_ethernet`
+  on the inner frame explicitly *before* the recursive `_sanitise_packet` call,
+  but `_sanitise_packet` already calls `_sanitise_ethernet` as its first step.
+  The duplicate call caused the inner MAC addresses to be mapped twice (original
+  → synthetic₁ → synthetic₂), consuming two extra entries in the MAC counter
+  and landing the inner MACs at wrong synthetic values.  The redundant explicit
+  call has been removed.
+
+### Documentation
+
+- **Wireshark / tshark pseudowire CW heuristic warning** — added a note to
+  the Sanitising guide explaining that Wireshark and tshark may misidentify
+  sanitised MPLS pseudowire captures as *Ethernet PW without control word*
+  (`pwethnocw`).  The heuristic fails when the synthetic inner Ethernet MAC
+  addresses start with `02:` (locally administered), causing EtherType
+  `0x0000` to be displayed.  The sanitised pcap is RFC 4385 compliant;
+  `packeteer parse` decodes it correctly.
+
+---
+
 ## 0.6.0 - 2026-04-23
 
 ### New features
