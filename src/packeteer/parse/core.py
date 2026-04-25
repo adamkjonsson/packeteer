@@ -527,7 +527,7 @@ def parse_pcap_file(
             update_config(cfg, pkt.pppoe)
         if pkt.ip is not None:
             update_config(cfg, pkt.ip)
-        if pkt.ipip or pkt.gre is not None or pkt.etherip is not None:
+        if pkt.ipip or pkt.gre is not None or pkt.etherip is not None or pkt.pseudowire is not None:
             apply_tunneled(cfg, pkt)
         elif pkt.transport is not None:
             update_config(cfg, pkt.transport)
