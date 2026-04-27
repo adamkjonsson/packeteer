@@ -29,6 +29,7 @@ multiple times to produce advanced encapsulations:
 | `.etherip()` | EtherIP tunnel header (RFC 3378).  Call after the outer `.ip()` and before the inner `.ethernet()`. |
 | `.gre(key=None, seq=None, checksum=False)` | GRE tunnel header (RFC 2784 / RFC 2890).  Protocol Type and outer IP protocol (47) are set automatically from the next layer. |
 | `.ip(src, dst, ttl=64, …)` | IPv4 or IPv6 header — auto-detected from `src`.  Call twice for IP-in-IP. |
+| `.hop_by_hop_options(options=None)` | IPv6 Hop-by-Hop Options extension header (RFC 8200 §4.3).  Call immediately after `.ip()` for an IPv6 address and before the transport method.  `options` is a list of `RouterAlertOption`, `JumboPayloadOption`, or `RawOption` objects; padding is added automatically. |
 | `.tcp(src_port=12345, dst_port=80, …)` | TCP transport header. |
 | `.udp(src_port=12345, dst_port=80)` | UDP transport header. |
 | `.icmp(type=8, code=0, identifier=1, sequence=1)` | ICMPv4 transport header (use with IPv4). |

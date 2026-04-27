@@ -141,6 +141,42 @@ EtherType and PPP protocol constants:
    :members:
 ```
 
+### Hop-by-Hop Options (RFC 8200 §4.3)
+
+The Hop-by-Hop Options extension header is represented by a container
+dataclass and three option dataclasses.  Attach it to an `IPv6Header` via the
+`hop_by_hop` field, or insert it into a `PacketBuilder` stack with
+`.hop_by_hop_options()`.  Padding to the required 8-byte boundary is computed
+automatically.
+
+```{eval-rst}
+.. autoclass:: packeteer.generate.ipv6.HopByHopOptions
+   :members:
+```
+
+```{eval-rst}
+.. autoclass:: packeteer.generate.ipv6.RouterAlertOption
+   :members:
+```
+
+```{eval-rst}
+.. autoclass:: packeteer.generate.ipv6.JumboPayloadOption
+   :members:
+```
+
+```{eval-rst}
+.. autoclass:: packeteer.generate.ipv6.RawOption
+   :members:
+```
+
+Hop-by-Hop constants:
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `HBH_NEXT_HEADER` | `0` | IPv6 next_header value that signals a Hop-by-Hop Options extension header |
+| `HBH_OPT_ROUTER_ALERT` | `0x05` | Option type for the Router Alert option (RFC 2711) |
+| `HBH_OPT_JUMBO_PAYLOAD` | `0xC2` | Option type for the Jumbo Payload option (RFC 2675) |
+
 ---
 
 ## Layer 4 — TCP

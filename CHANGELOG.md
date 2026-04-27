@@ -4,6 +4,70 @@ All notable changes to packeteer are recorded in this file.
 
 ---
 
+## 0.7.0 - 2026-04-27
+
+### New features
+
+- **IPv6 Hop-by-Hop Options extension header (RFC 8200 §4.3)** — the
+  Hop-by-Hop Options header (next_header=0) is now supported end-to-end across
+  the builder, parser, and packet-spec serialisation.
+
+  - Three new option dataclasses exported from `packeteer.generate`:
+    - `RouterAlertOption(value=0)` — RFC 2711 Router Alert; value `0`=MLD,
+      `1`=RSVP, `2`=Active Networks (IANA registry).
+    - `JumboPayloadOption(jumbo_length=N)` — RFC 2675 Jumbo Payload; carries
+      an IPv6 payload length exceeding 65 535 bytes.
+    - `RawOption(option_type, data)` — arbitrary or unrecognised option encoded
+      as a raw type byte and value bytes.
+  - New container dataclass `HopByHopOptions(options=[…])` holds a list of the
+    above options.  Padding (Pad1 / PadN) to the required 8-byte boundary is
+    computed automatically at build time and is not stored in the model.
+  - `IPv6Header` gains an optional `hop_by_hop` field (default `None`).  When
+    set, the wire `next_header` value is `0`; `IPv6Header.next_header` always
+    reflects the actual transport protocol (e.g. `6` for TCP) for consistent
+    config serialisation.
+  - `PacketBuilder.hop_by_hop_options(options)` — new fluent method.  Call it
+    immediately after `.ip()` (IPv6 address) and before the transport method.
+    The enclosing IPv6 header's `next_header` is set to `0` automatically; the
+    HBH extension header's `next_header` is set to the transport protocol:
+
+    ```python
+    from packeteer.generate import PacketBuilder, RouterAlertOption
+
+    pkt = (PacketBuilder()
+        .ip(src="::1", dst="::2")
+        .hop_by_hop_options([RouterAlertOption(value=0)])  # MLD
+        .udp(dst_port=9999)
+        .build()
+    )
+    ```
+
+  - The parser (`packeteer.parse.ip._parse_ipv6`) detects `next_header == 0`,
+    walks the TLV option list (skipping Pad1/PadN), and populates
+    `IPv6Header.hop_by_hop`.  The returned consumed-byte count advances past
+    the extension header so the transport parser receives the correct slice.
+    Malformed HBH headers (advertised size exceeds available bytes) produce
+    `(0, None, None)` from `packet_parser`, consistent with other parse errors.
+  - `packeteer.parse.to_config` serialises `hop_by_hop_options` as an array
+    inside the `"network"` section when `hop_by_hop` is set:
+
+    ```json
+    "network": {
+      "src": "::1", "dst": "::2", "protocol": "udp", "ttl": 64,
+      "hop_by_hop_options": [
+        { "type": "router_alert", "value": 0 }
+      ]
+    }
+    ```
+
+  - New constants: `HBH_NEXT_HEADER` (`0`), `HBH_OPT_ROUTER_ALERT` (`0x05`),
+    `HBH_OPT_JUMBO_PAYLOAD` (`0xC2`) — all exported from `packeteer.generate`.
+  - 36 new tests in `test_hbh_options.py` covering wire encoding, alignment,
+    parsing, round-trips, `PacketBuilder` integration, and config serialisation
+    (1529 total).
+
+---
+
 ## 0.6.1 - 2026-04-25
 
 ### Bug fixes
