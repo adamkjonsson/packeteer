@@ -253,9 +253,7 @@ def _apply_ip(config: dict[str, Any], hdr: IPHeader | IPv6Header) -> None:
         "dst": hdr.dst,
     }
     if isinstance(hdr, IPHeader):
-        proto_str = _PROTO_TO_STR.get(hdr.protocol)
-        if proto_str is not None:
-            section["protocol"] = proto_str
+        section["protocol"] = _PROTO_TO_STR.get(hdr.protocol, hdr.protocol)
         section["ttl"] = hdr.ttl
         if hdr.tos != 0:
             section["tos"] = hdr.tos
@@ -266,9 +264,7 @@ def _apply_ip(config: dict[str, Any], hdr: IPHeader | IPv6Header) -> None:
         if hdr.fragment_offset != 0:
             section["fragment_offset"] = hdr.fragment_offset
     else:  # IPv6Header
-        proto_str = _PROTO_TO_STR.get(hdr.next_header)
-        if proto_str is not None:
-            section["protocol"] = proto_str
+        section["protocol"] = _PROTO_TO_STR.get(hdr.next_header, hdr.next_header)
         section["ttl"] = hdr.hop_limit
         if hdr.traffic_class != 0:
             section["traffic_class"] = hdr.traffic_class

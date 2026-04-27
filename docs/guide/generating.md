@@ -169,22 +169,10 @@ Available encapsulation types: `VLANEncap`, `QinQEncap`, `MPLSEncap`,
 `PPPoEEncap`, `GREEncap`, `EtherIPEncap`, `IPIPEncap`.  See the Reference
 section for stacking rules and full parameter lists.
 
-For pseudowire traffic (MPLS + RFC 4385 control word + inner Ethernet/IP),
-use {class}`~packeteer.generate.builder.PacketBuilder` directly:
-
-```python
-from packeteer.generate import PacketBuilder
-
-pkt = (PacketBuilder()
-    .ethernet()
-    .mpls(label=100)
-    .pseudowire()
-    .ethernet(src_mac="cc:dd:ee:00:00:01", dst_mac="cc:dd:ee:00:00:02")
-    .ip(src="10.0.0.1", dst="10.0.0.2")
-    .tcp(dst_port=80)
-    .build()
-)
-```
+For pseudowire traffic (MPLS + RFC 4385 control word + inner Ethernet/IP)
+and other layer combinations not covered by the `encap` keyword, use
+{class}`~packeteer.generate.builder.PacketBuilder` directly — see
+[Packet builder](#packet-builder) below.
 
 ## Standalone protocol helpers
 
@@ -230,6 +218,61 @@ IPv6 is auto-detected from the source address format:
 pkt = (PacketBuilder()
     .ip(src="2001:db8::1", dst="2001:db8::2", ttl=128)
     .tcp(dst_port=443)
+    .build()
+)
+```
+
+### Binary payloads
+
+Pass `data=` to `.payload()` to embed an exact byte sequence.  Use
+`struct.pack` to construct structured binary payloads with specific field
+widths and byte order:
+
+```python
+import struct
+from packeteer.generate import PacketBuilder
+from packeteer.pcap import write_pcap
+
+# Hypothetical proprietary protocol over UDP:
+#   2 bytes  message type  (big-endian uint16)
+#   2 bytes  flags         (big-endian uint16)
+#   4 bytes  sequence num  (big-endian uint32)
+#   n bytes  body
+MSG_TYPE_DATA = 0x0001
+
+body = b"sensor-reading:42.7"
+header = struct.pack(">HHI", MSG_TYPE_DATA, 0x0000, 1)
+message = header + body
+
+pkt = (PacketBuilder()
+    .ethernet(src_mac="00:0a:00:00:00:01", dst_mac="00:0a:00:00:00:02")
+    .ip(src="192.168.1.10", dst="192.168.1.20")
+    .udp(src_port=5000, dst_port=5001)
+    .payload(data=message)
+    .build()
+)
+write_pcap([(pkt, 0, 0)], path="sensor.pcap")
+```
+
+The assembled packet will have the correct UDP length and checksum computed
+around the binary body.  Wireshark will show the raw bytes of `message`
+inside the UDP datagram exactly as packed.
+
+### Pseudowire and other advanced encapsulations
+
+`PacketBuilder` supports layer combinations that have no `encap=` equivalent,
+such as MPLS pseudowire (RFC 4385):
+
+```python
+from packeteer.generate import PacketBuilder
+
+pkt = (PacketBuilder()
+    .ethernet()
+    .mpls(label=100)
+    .pseudowire()
+    .ethernet(src_mac="cc:dd:ee:00:00:01", dst_mac="cc:dd:ee:00:00:02")
+    .ip(src="10.0.0.1", dst="10.0.0.2")
+    .tcp(dst_port=80)
     .build()
 )
 ```
