@@ -265,9 +265,55 @@ nested `"gre"` key with `"protocol": "gre"` in the inner `"network"` spec.
 | `fragment_offset` | no (default `0`) | IPv4 13-bit fragment offset in 8-byte units |
 | `traffic_class` | no (default `0`) | IPv6 Traffic Class (DSCP + ECN, 8-bit) |
 | `flow_label` | no (default `0`) | IPv6 20-bit Flow Label |
+| `hop_by_hop_options` | no | IPv6 only.  Array of Hop-by-Hop option objects (RFC 8200 §4.3).  See below. |
 
 IPv4 or IPv6 is detected automatically from `src`.  IPv4-specific fields
 are ignored when `src` is an IPv6 address and vice versa.
+
+### `hop_by_hop_options`
+
+An optional array of IPv6 Hop-by-Hop Options.  Each element is an object with
+a `"type"` discriminator:
+
+**Router Alert (RFC 2711):**
+
+```json
+{ "type": "router_alert", "value": 0 }
+```
+
+`value` is a 16-bit integer from the IANA Router Alert Values registry:
+`0`=MLD datagram, `1`=RSVP message, `2`=Active Networks, and so on.
+
+**Jumbo Payload (RFC 2675):**
+
+```json
+{ "type": "jumbo_payload", "jumbo_length": 131072 }
+```
+
+`jumbo_length` is the actual IPv6 payload size in bytes when it exceeds 65 535.
+
+**Raw / custom option:**
+
+```json
+{ "type": "raw", "option_type": 18, "data": "deadbeef" }
+```
+
+`option_type` is the 1-byte option type number; `data` is the option value as a
+hex string (the bytes after the type and length bytes on the wire).
+
+Padding (Pad1 / PadN) to the required 8-byte boundary is added automatically
+at build time and is not included in the spec.  Multiple options can be listed
+in order:
+
+```json
+"network": {
+  "src": "::1", "dst": "::2", "protocol": "udp", "ttl": 64,
+  "hop_by_hop_options": [
+    { "type": "router_alert", "value": 0 },
+    { "type": "raw", "option_type": 18, "data": "0102" }
+  ]
+}
+```
 
 ---
 

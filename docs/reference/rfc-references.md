@@ -48,6 +48,12 @@ RFCs implemented or referenced by this library.
 * - [RFC 2460](https://datatracker.ietf.org/doc/html/rfc2460)
   - Internet Protocol Version 6
   - `IPv6Header`
+* - [RFC 2675](https://datatracker.ietf.org/doc/html/rfc2675)
+  - IPv6 Jumbograms
+  - `JumboPayloadOption` (Hop-by-Hop option type `0xC2`); `HBH_OPT_JUMBO_PAYLOAD`
+* - [RFC 2711](https://datatracker.ietf.org/doc/html/rfc2711)
+  - IPv6 Router Alert Option
+  - `RouterAlertOption` (Hop-by-Hop option type `0x05`); `HBH_OPT_ROUTER_ALERT`
 * - [RFC 2461](https://datatracker.ietf.org/doc/html/rfc2461)
   - Neighbor Discovery for IPv6
   - Background reference
@@ -89,7 +95,7 @@ RFCs implemented or referenced by this library.
   - `TCPOptions.window_scale`, `TCPOptions.timestamps`
 * - [RFC 8200](https://datatracker.ietf.org/doc/html/rfc8200)
   - Internet Protocol Version 6 (IPv6, obsoletes 2460)
-  - `IPv6Header`, `fragment_ipv6`
+  - `IPv6Header`, `fragment_ipv6`; Hop-by-Hop Options extension header §4.3 (`HopByHopOptions`, `.hop_by_hop_options()`)
 * - [RFC 9260](https://datatracker.ietf.org/doc/html/rfc9260)
   - Stream Control Transmission Protocol (SCTP)
   - `SCTPHeader` and all chunk dataclasses; `IPPROTO_SCTP`; CRC-32c checksum (§6.8)

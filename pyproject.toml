@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "packeteer"
-version = "0.6.0"
+version = "0.7.0"
 requires-python = ">=3.10"
 description = "Pure-Python library for building, parsing, and sanitising raw network packets"
 authors = [ { name = "Adam Jonsson", email = "adam.jonsson@live.se"} ]

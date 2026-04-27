@@ -50,7 +50,12 @@ from packeteer.generate.etherip import EtherIPHeader, IPPROTO_ETHERIP
 from packeteer.generate.gre import GREHeader
 from packeteer.generate.pseudowire import PseudowireHeader
 from packeteer.generate.ip import IPHeader
-from packeteer.generate.ipv6 import IPv6Header
+from packeteer.generate.ipv6 import (
+    IPv6Header,
+    RouterAlertOption,
+    JumboPayloadOption,
+    RawOption,
+)
 from packeteer.generate.mpls import MPLSLabel
 from packeteer.generate.pppoe import PPPoEHeader, PPPOE_CODE_SESSION
 from packeteer.generate.tcp import TCPHeader, TCPOptions
@@ -234,6 +239,14 @@ def _apply_ethernet(config: dict[str, Any], hdr: EthernetHeader) -> None:
     config["ethernet"] = section
 
 
+def _serialise_hbh_opt(opt: RouterAlertOption | JumboPayloadOption | RawOption) -> dict[str, Any]:
+    if isinstance(opt, RouterAlertOption):
+        return {"type": "router_alert", "value": opt.value}
+    if isinstance(opt, JumboPayloadOption):
+        return {"type": "jumbo_payload", "jumbo_length": opt.jumbo_length}
+    return {"type": "raw", "option_type": opt.option_type, "data": opt.data.hex()}
+
+
 def _apply_ip(config: dict[str, Any], hdr: IPHeader | IPv6Header) -> None:
     section: dict[str, Any] = {
         "src": hdr.src,
@@ -261,6 +274,10 @@ def _apply_ip(config: dict[str, Any], hdr: IPHeader | IPv6Header) -> None:
             section["traffic_class"] = hdr.traffic_class
         if hdr.flow_label != 0:
             section["flow_label"] = hdr.flow_label
+        if hdr.hop_by_hop is not None:
+            section["hop_by_hop_options"] = [
+                _serialise_hbh_opt(o) for o in hdr.hop_by_hop.options
+            ]
     config["network"] = section
 
 
