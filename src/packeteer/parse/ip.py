@@ -4,7 +4,15 @@ import socket
 import struct
 
 from packeteer.generate.ip import IPHeader
-from packeteer.generate.ipv6 import IPv6Header
+from packeteer.generate.ipv6 import (
+    IPv6Header,
+    HopByHopOptions,
+    RouterAlertOption,
+    JumboPayloadOption,
+    RawOption,
+    HBH_OPT_ROUTER_ALERT,
+    HBH_OPT_JUMBO_PAYLOAD,
+)
 
 
 def packet_parser(data: bytes) -> tuple[int, int | None, IPHeader | IPv6Header | None]:
@@ -83,6 +91,47 @@ def _parse_ipv4(data: bytes) -> tuple[int, int | None, IPHeader | None]:
     return (header_size, protocol, hdr)
 
 
+def _parse_hbh_options(data: bytes) -> list[RouterAlertOption | JumboPayloadOption | RawOption]:
+    """Parse Hop-by-Hop option TLVs from *data* (the options region only).
+
+    Pad1 (type=0) and PadN (type=1) bytes are silently consumed.  Unknown
+    option types are returned as :class:`RawOption`.  Truncated TLVs cause
+    parsing to stop early; already-decoded options are still returned.
+
+    Args:
+        data: Raw bytes of the options region (excludes the 2-byte HBH header).
+
+    Returns:
+        List of decoded option objects.
+
+    """
+    options: list[RouterAlertOption | JumboPayloadOption | RawOption] = []
+    i = 0
+    while i < len(data):
+        opt_type = data[i]
+        if opt_type == 0:           # Pad1 — single byte, no length
+            i += 1
+            continue
+        i += 1
+        if i >= len(data):
+            break
+        opt_len = data[i]
+        i += 1
+        if i + opt_len > len(data):
+            break
+        opt_data = data[i: i + opt_len]
+        i += opt_len
+        if opt_type == 1:           # PadN — ignore
+            continue
+        if opt_type == HBH_OPT_ROUTER_ALERT and opt_len == 2:
+            options.append(RouterAlertOption(value=struct.unpack("!H", opt_data)[0]))
+        elif opt_type == HBH_OPT_JUMBO_PAYLOAD and opt_len == 4:
+            options.append(JumboPayloadOption(jumbo_length=struct.unpack("!I", opt_data)[0]))
+        else:
+            options.append(RawOption(option_type=opt_type, data=bytes(opt_data)))
+    return options
+
+
 def _parse_ipv6(data: bytes) -> tuple[int, int | None, IPv6Header | None]:
     if len(data) < 40:
         return (0, None, None)
@@ -96,14 +145,31 @@ def _parse_ipv6(data: bytes) -> tuple[int, int | None, IPv6Header | None]:
         src = socket.inet_ntop(socket.AF_INET6, data[8:24])
         dst = socket.inet_ntop(socket.AF_INET6, data[24:40])
 
+        hop_by_hop: HopByHopOptions | None = None
+        consumed = 40
+
+        if next_header == 0:    # Hop-by-Hop Options extension header
+            if len(data) < 42:
+                return (0, None, None)
+            hbh_next_header = data[40]
+            hdr_ext_len = data[41]
+            hbh_size = (hdr_ext_len + 1) * 8
+            if len(data) < 40 + hbh_size:
+                return (0, None, None)
+            options_region = data[42: 40 + hbh_size]
+            hop_by_hop = HopByHopOptions(options=_parse_hbh_options(options_region))
+            next_header = hbh_next_header
+            consumed = 40 + hbh_size
+
         hdr = IPv6Header(
             src=src, dst=dst, next_header=next_header,
             hop_limit=hop_limit,
             traffic_class=traffic_class,
             flow_label=flow_label,
+            hop_by_hop=hop_by_hop,
         )
 
     except struct.error:
         return (0, None, None)
 
-    return (40, next_header, hdr)
+    return (consumed, next_header, hdr)

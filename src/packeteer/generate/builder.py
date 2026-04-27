@@ -112,7 +112,12 @@ from .ethernet import (
     ETHERNET_MIN_FRAME_SIZE, _build_ethernet_header,
 )
 from .ip import IPHeader, _build_ip_header
-from .ipv6 import IPv6Header, _build_ipv6_header
+from .ipv6 import (
+    IPv6Header, _build_ipv6_header,
+    HopByHopOptions, RouterAlertOption, JumboPayloadOption, RawOption,
+    HBH_NEXT_HEADER,
+    _build_hop_by_hop_header,
+)
 from .tcp import TCPHeader, TCPOptions, TCP_ACK, _build_tcp_header
 from .udp import UDPHeader, _build_udp_header
 from .icmp import ICMPHeader, _build_icmp_header
@@ -145,15 +150,16 @@ _ETHERTYPE_MAP: dict[type, int] = {
 }
 
 _IP_PROTO_MAP: dict[type, int] = {
-    TCPHeader:     6,
-    UDPHeader:     17,
-    ICMPHeader:    1,
-    ICMPv6Header:  58,
-    IPHeader:      4,   # IP-in-IP (RFC 2003)
-    IPv6Header:    41,  # IPv6-in-IPv4 (RFC 4213)
-    EtherIPHeader: IPPROTO_ETHERIP,  # EtherIP (RFC 3378)
-    GREHeader:     IPPROTO_GRE,      # GRE (RFC 2784)
-    SCTPHeader:    IPPROTO_SCTP,     # SCTP (RFC 9260)
+    TCPHeader:       6,
+    UDPHeader:       17,
+    ICMPHeader:      1,
+    ICMPv6Header:    58,
+    IPHeader:        4,             # IP-in-IP (RFC 2003)
+    IPv6Header:      41,            # IPv6-in-IPv4 (RFC 4213)
+    EtherIPHeader:   IPPROTO_ETHERIP,  # EtherIP (RFC 3378)
+    GREHeader:       IPPROTO_GRE,      # GRE (RFC 2784)
+    SCTPHeader:      IPPROTO_SCTP,     # SCTP (RFC 9260)
+    HopByHopOptions: HBH_NEXT_HEADER,  # Hop-by-Hop Options (RFC 8200)
 }
 
 # EtherType that a GRE header should advertise based on the next layer type
@@ -521,6 +527,38 @@ class PacketBuilder:
             ))
         return self
 
+    def hop_by_hop_options(
+        self,
+        options: list[RouterAlertOption | JumboPayloadOption | RawOption] | None = None,
+    ) -> "PacketBuilder":
+        """Append an IPv6 Hop-by-Hop Options extension header (RFC 8200 §4.3).
+
+        Must be called immediately after :meth:`ip` when *src* is an IPv6
+        address, and before the transport layer method.  The enclosing
+        IPv6 header's *next_header* field is set to ``0`` automatically.
+
+        Args:
+            options: List of :class:`RouterAlertOption`,
+                :class:`JumboPayloadOption`, or :class:`RawOption` objects to
+                encode.  Padding is added automatically to reach the required
+                8-byte alignment.  Defaults to an empty list (all-padding
+                header, rarely useful on its own).
+
+        Example::
+
+            from packeteer.generate import PacketBuilder, RouterAlertOption
+
+            pkt = (PacketBuilder()
+                .ip(src="::1", dst="::2")
+                .hop_by_hop_options([RouterAlertOption(value=0)])  # MLD
+                .udp(dst_port=9999)
+                .build()
+            )
+
+        """
+        self._layers.append(HopByHopOptions(options=list(options) if options else []))
+        return self
+
     def tcp(
         self,
         *,
@@ -779,6 +817,10 @@ class PacketBuilder:
             elif isinstance(layer, IPv6Header):
                 proto = _ip_proto_for(next_layer) if next_layer else 0
                 data = _build_ipv6_header(self._clone_ipv6(layer, proto), data) + data
+
+            elif isinstance(layer, HopByHopOptions):
+                transport_proto = _ip_proto_for(next_layer) if next_layer else 0
+                data = _build_hop_by_hop_header(layer, transport_proto) + data
 
             elif isinstance(layer, PPPoEHeader):
                 if layer.code == PPPOE_CODE_SESSION:
