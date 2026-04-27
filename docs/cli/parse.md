@@ -73,6 +73,22 @@ to the outer layer only.
 Checksums are read from the wire but not stored; they are recomputed on
 rebuild.
 
+### Unsupported IP protocol numbers
+
+If a packet carries an IP protocol number that is not in the table above,
+`packeteer parse` prints a warning to stderr and continues.  The warning
+is consolidated — one line per unique protocol number, with the count of
+affected packets and the file name:
+
+```
+UserWarning: IP protocol 89 is not supported; encountered in 3 packets
+in 'capture.pcap'. Bytes after each IP header are stored in the payload field.
+```
+
+Those packets still appear in the output.  The `network.protocol` field
+contains the raw integer (`"protocol": 89`) instead of a name string, and
+the bytes after the IP header are stored as a hex string in `payload.data`.
+
 ## Output format
 
 The top-level `"metadata"` block is always present.  `"type"` (`"pcap"` or

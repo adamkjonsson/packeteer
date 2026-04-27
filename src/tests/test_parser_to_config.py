@@ -103,6 +103,11 @@ class TestUpdateConfigIPv4(unittest.TestCase):
         cfg = update_config({}, hdr)
         self.assertEqual(cfg["network"]["fragment_offset"], 8)
 
+    def test_unknown_protocol_emits_numeric(self):
+        hdr = IPHeader("10.0.0.1", "10.0.0.2", 89)  # OSPF — not supported
+        cfg = update_config({}, hdr)
+        self.assertEqual(cfg["network"]["protocol"], 89)
+
 
 class TestUpdateConfigIPv6(unittest.TestCase):
     def test_basic_fields(self):
@@ -133,6 +138,11 @@ class TestUpdateConfigIPv6(unittest.TestCase):
         hdr = IPv6Header("::1", "::2", next_header=6, flow_label=12345)
         cfg = update_config({}, hdr)
         self.assertEqual(cfg["network"]["flow_label"], 12345)
+
+    def test_unknown_protocol_emits_numeric(self):
+        hdr = IPv6Header("::1", "::2", next_header=253)  # experimental — not supported
+        cfg = update_config({}, hdr)
+        self.assertEqual(cfg["network"]["protocol"], 253)
 
 
 class TestUpdateConfigTCP(unittest.TestCase):

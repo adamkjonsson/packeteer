@@ -956,7 +956,8 @@ class TestLinkTypeMetadata(unittest.TestCase):
         from io import BytesIO
         from packeteer.parse.core import parse_pcap_file
         from packeteer.pcap import LINKTYPE_RAW
-        pkt = b"\x45\x00\x00\x14" + b"\x00" * 16  # raw IP, no Ethernet
+        # Minimal IPv4 header (20 bytes, no payload): TTL=64, proto=6 (TCP)
+        pkt = b"\x45\x00\x00\x14\x00\x00\x00\x00\x40\x06\x00\x00" + b"\x00" * 8
         buf = BytesIO(self._make_pcap(LINKTYPE_RAW, pkt))
         cfg = json.loads(parse_pcap_file(file_object=buf))
         self.assertEqual(cfg["metadata"]["link_type"], LINKTYPE_RAW)
