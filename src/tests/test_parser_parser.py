@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import unittest
+import warnings
 
 from packeteer.generate import PacketBuilder
 from packeteer.generate.ethernet import EthernetHeader
@@ -13,7 +14,13 @@ from packeteer.generate.icmp import ICMPHeader
 from packeteer.generate.icmpv6 import ICMPv6Header
 from packeteer.pcap import LINKTYPE_RAW, write_pcap
 
-from packeteer.parse.core import parse_packet, parse_pcap_packet, parse_pcap_file, ParsedPacket
+from packeteer.parse.core import (
+    parse_packet,
+    parse_pcap_packet,
+    parse_pcap_file,
+    ParsedPacket,
+    UnsupportedIPProtocolWarning,
+)
 from packeteer.pcap import read_pcap
 
 
@@ -419,6 +426,140 @@ class TestParsePcapFile(unittest.TestCase):
         buf = self._make_buf([])
         result = json.loads(parse_pcap_file(file_object=buf))
         self.assertEqual(result["packets"], [])
+
+
+class TestUnsupportedIPProtocol(unittest.TestCase):
+    """parse_packet behaviour when the IP protocol number is not recognised."""
+
+    def _build_with_proto(self, proto: int) -> bytes:
+        raw = bytearray(
+            PacketBuilder().ip(src="10.0.0.1", dst="10.0.0.2").tcp().build()
+        )
+        raw[9] = proto   # IPv4 protocol field
+        raw[10] = 0      # zero checksum — not validated by the parser
+        raw[11] = 0
+        return bytes(raw)
+
+    def test_warning_category(self) -> None:
+        with self.assertWarns(UnsupportedIPProtocolWarning):
+            parse_packet(self._build_with_proto(89), link_type=LINKTYPE_RAW)
+
+    def test_warning_protocol_attribute(self) -> None:
+        with self.assertWarns(UnsupportedIPProtocolWarning) as ctx:
+            parse_packet(self._build_with_proto(89), link_type=LINKTYPE_RAW)
+        self.assertEqual(ctx.warning.protocol, 89)
+
+    def test_warning_message_mentions_payload(self) -> None:
+        with self.assertWarns(UnsupportedIPProtocolWarning) as ctx:
+            parse_packet(self._build_with_proto(89), link_type=LINKTYPE_RAW)
+        self.assertIn("payload", str(ctx.warning).lower())
+
+    def test_transport_is_none(self) -> None:
+        with self.assertWarns(UnsupportedIPProtocolWarning):
+            pkt = parse_packet(self._build_with_proto(89), link_type=LINKTYPE_RAW)
+        self.assertIsNone(pkt.transport)
+
+    def test_ip_is_parsed(self) -> None:
+        with self.assertWarns(UnsupportedIPProtocolWarning):
+            pkt = parse_packet(self._build_with_proto(89), link_type=LINKTYPE_RAW)
+        assert isinstance(pkt.ip, IPHeader)
+        self.assertEqual(pkt.ip.protocol, 89)
+
+    def test_remaining_bytes_in_payload(self) -> None:
+        with self.assertWarns(UnsupportedIPProtocolWarning):
+            pkt = parse_packet(self._build_with_proto(89), link_type=LINKTYPE_RAW)
+        self.assertGreater(len(pkt.payload), 0)
+
+    def test_no_warning_for_known_protocol(self) -> None:
+        import warnings
+        raw = PacketBuilder().ip(src="10.0.0.1", dst="10.0.0.2").tcp().build()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            pkt = parse_packet(raw, link_type=LINKTYPE_RAW)
+        self.assertIsNotNone(pkt.transport)
+
+
+class TestParsePcapFileWarning(unittest.TestCase):
+    """parse_pcap_file emits a summary UnsupportedIPProtocolWarning."""
+
+    def _make_buf(
+        self,
+        packets: list[tuple[bytes, int, int]],
+        *,
+        link_type: int = LINKTYPE_RAW,
+    ) -> io.BytesIO:
+        buf = io.BytesIO()
+        write_pcap(packets, file_object=buf, link_type=link_type)
+        buf.seek(0)
+        return buf
+
+    def _ospf(self, ts: int = 0) -> tuple[bytes, int, int]:
+        raw = bytearray(PacketBuilder().ip(src="10.0.0.1", dst="10.0.0.2").tcp().build())
+        raw[9] = 89
+        raw[10] = 0
+        raw[11] = 0
+        return (bytes(raw), ts, 0)
+
+    def test_single_unsupported_packet_warns(self) -> None:
+        buf = self._make_buf([self._ospf()])
+        with self.assertWarns(UnsupportedIPProtocolWarning) as ctx:
+            parse_pcap_file(file_object=buf)
+        self.assertEqual(ctx.warning.protocol, 89)
+
+    def test_count_in_message(self) -> None:
+        buf = self._make_buf([self._ospf(0), self._ospf(1), self._ospf(2)])
+        with self.assertWarns(UnsupportedIPProtocolWarning) as ctx:
+            parse_pcap_file(file_object=buf)
+        self.assertIn("3 packets", str(ctx.warning))
+
+    def test_singular_count_in_message(self) -> None:
+        buf = self._make_buf([self._ospf()])
+        with self.assertWarns(UnsupportedIPProtocolWarning) as ctx:
+            parse_pcap_file(file_object=buf)
+        self.assertIn("1 packet", str(ctx.warning))
+        self.assertNotIn("1 packets", str(ctx.warning))
+
+    def test_file_path_in_message(self) -> None:
+        import os
+        import tempfile
+        raw, ts, frac = self._ospf()
+        with tempfile.NamedTemporaryFile(suffix=".pcap", delete=False) as f:
+            write_pcap([(raw, ts, frac)], file_object=f, link_type=LINKTYPE_RAW)
+            tmp = f.name
+        try:
+            with self.assertWarns(UnsupportedIPProtocolWarning) as ctx:
+                parse_pcap_file(path=tmp)
+            self.assertIn(tmp, str(ctx.warning))
+        finally:
+            os.unlink(tmp)
+
+    def test_no_path_hint_for_file_object(self) -> None:
+        buf = self._make_buf([self._ospf()])
+        with self.assertWarns(UnsupportedIPProtocolWarning) as ctx:
+            parse_pcap_file(file_object=buf)
+        # When no path is given, no path hint appears in the message
+        self.assertNotIn("'", str(ctx.warning))
+
+    def test_one_warning_per_distinct_protocol(self) -> None:
+        vrrp_raw = bytearray(PacketBuilder().ip(src="10.0.0.1", dst="10.0.0.2").tcp().build())
+        vrrp_raw[9] = 112
+        vrrp_raw[10] = 0
+        vrrp_raw[11] = 0
+        buf = self._make_buf([self._ospf(), (bytes(vrrp_raw), 1, 0)])
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            parse_pcap_file(file_object=buf)
+        unsupported = [w for w in caught if issubclass(w.category, UnsupportedIPProtocolWarning)]
+        protos = {w.message.protocol for w in unsupported}
+        self.assertEqual(protos, {89, 112})
+
+    def test_no_warning_for_supported_protocols(self) -> None:
+        import warnings
+        raw = PacketBuilder().ip(src="10.0.0.1", dst="10.0.0.2").tcp().build()
+        buf = self._make_buf([(raw, 0, 0)])
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UnsupportedIPProtocolWarning)
+            parse_pcap_file(file_object=buf)  # must not raise
 
 
 if __name__ == "__main__":

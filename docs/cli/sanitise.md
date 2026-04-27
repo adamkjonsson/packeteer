@@ -43,6 +43,14 @@ Replacements are **consistent within a single run**: the same original value
 always maps to the same synthetic value across all packets and tunnel nesting
 levels.
 
+## Unsupported IP protocol numbers
+
+When the input is a pcap or pcapng file, `packeteer sanitise` parses it
+the same way as `packeteer parse`.  If any packet carries an IP protocol
+number that is not recognised, the same consolidated warning is printed to
+stderr — one line per unique protocol, with the packet count and file name.
+See {doc}`parse` for details.
+
 ## What is never changed
 
 Protocol names, TCP flags, window size, sequence numbers, TTL, DSCP, VLAN

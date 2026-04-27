@@ -35,6 +35,8 @@ import os
 import io
 import socket
 import struct
+import warnings
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -75,6 +77,40 @@ from .icmp import packet_parser as _icmp_parser
 from .icmpv6 import packet_parser as _icmpv6_parser
 from .sctp import packet_parser as _sctp_parser
 from .dns import parse_dns_udp as _parse_dns_udp, parse_dns_tcp as _parse_dns_tcp
+
+class UnsupportedIPProtocolWarning(UserWarning):
+    """Emitted when an IP protocol number is not recognised by the parser.
+
+    The numeric protocol number is available on the :attr:`protocol` attribute
+    so callers can filter or inspect it without parsing the message string.
+
+    Attributes:
+        protocol: The unrecognised IP protocol number.
+
+    Example:
+
+        .. code-block:: python
+
+            import warnings
+            from packeteer.parse import parse_packet, UnsupportedIPProtocolWarning
+            from packeteer.pcap import LINKTYPE_RAW
+
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                pkt = parse_packet(raw, link_type=LINKTYPE_RAW)
+
+            for w in caught:
+                if issubclass(w.category, UnsupportedIPProtocolWarning):
+                    print(f"protocol {w.message.protocol} not supported")
+
+    """
+
+    protocol: int
+
+    def __init__(self, message: str, protocol: int) -> None:
+        super().__init__(message)
+        self.protocol = protocol
+
 
 _TRANSPORT_PARSERS = {
     socket.IPPROTO_TCP:    _tcp_parser,
@@ -361,6 +397,15 @@ def _parse_ip_protocol(
             pkt.etherip = ei_hdr
             pkt.tunneled = parse_packet(remaining[ei_size:], link_type=LINKTYPE_ETHERNET)
             return b""
+    elif ip_proto is not None:
+        warnings.warn(
+            UnsupportedIPProtocolWarning(
+                f"IP protocol {ip_proto} is not supported; "
+                "bytes after the IP header are stored in ParsedPacket.payload",
+                ip_proto,
+            ),
+            stacklevel=3,
+        )
     return remaining
 
 
@@ -516,32 +561,59 @@ def parse_pcap_file(
     ts_frac_key = "timestamp_ns" if pcap.header.nanoseconds else "timestamp_us"
 
     packet_configs: list[dict[str, Any]] = []
-    for record in pcap.packets:
-        pkt = parse_pcap_packet(record, pcap.header)
-        cfg: dict[str, Any] = {}
-        if pkt.ethernet is not None:
-            update_config(cfg, pkt.ethernet)
-        for mpls_label in pkt.mpls:
-            update_config(cfg, mpls_label)
-        if pkt.pppoe is not None:
-            update_config(cfg, pkt.pppoe)
-        if pkt.ip is not None:
-            update_config(cfg, pkt.ip)
-        if pkt.ipip or pkt.gre is not None or pkt.etherip is not None or pkt.pseudowire is not None:
-            apply_tunneled(cfg, pkt)
-        elif pkt.transport is not None:
-            update_config(cfg, pkt.transport)
-            if pkt.dns is not None:
-                update_config(cfg, pkt.dns)
-            elif pkt.dhcp is not None:
-                update_config(cfg, pkt.dhcp)
-            elif pkt.http is not None:
-                update_config(cfg, pkt.http)
-            elif pkt.payload:
-                update_config(cfg, pkt.payload)
-        cfg["packet_metadata"] = {"timestamp_s": pkt.ts_sec, ts_frac_key: pkt.ts_frac}
-        if packet_filter is None or packet_filter.matches(cfg):
-            packet_configs.append(cfg)
+    unsupported: Counter[int] = Counter()
+
+    with warnings.catch_warnings(record=True) as _caught:
+        warnings.simplefilter("always")
+        for record in pcap.packets:
+            pkt = parse_pcap_packet(record, pcap.header)
+            cfg: dict[str, Any] = {}
+            if pkt.ethernet is not None:
+                update_config(cfg, pkt.ethernet)
+            for mpls_label in pkt.mpls:
+                update_config(cfg, mpls_label)
+            if pkt.pppoe is not None:
+                update_config(cfg, pkt.pppoe)
+            if pkt.ip is not None:
+                update_config(cfg, pkt.ip)
+            if (pkt.ipip or pkt.gre is not None
+                    or pkt.etherip is not None or pkt.pseudowire is not None):
+                apply_tunneled(cfg, pkt)
+            elif pkt.transport is not None:
+                update_config(cfg, pkt.transport)
+                if pkt.dns is not None:
+                    update_config(cfg, pkt.dns)
+                elif pkt.dhcp is not None:
+                    update_config(cfg, pkt.dhcp)
+                elif pkt.http is not None:
+                    update_config(cfg, pkt.http)
+                elif pkt.payload:
+                    update_config(cfg, pkt.payload)
+            cfg["packet_metadata"] = {"timestamp_s": pkt.ts_sec, ts_frac_key: pkt.ts_frac}
+            if packet_filter is None or packet_filter.matches(cfg):
+                packet_configs.append(cfg)
+
+    for w in _caught:
+        if issubclass(w.category, UnsupportedIPProtocolWarning):
+            unsupported[w.message.protocol] += 1  # type: ignore[union-attr]
+        else:
+            warnings.warn_explicit(
+                w.message, w.category, w.filename, w.lineno, source=w.source,
+            )
+
+    if unsupported:
+        file_hint = f" in {str(path)!r}" if path is not None else ""
+        for proto, count in sorted(unsupported.items()):
+            n = f"{count} packet{'s' if count != 1 else ''}"
+            warnings.warn(
+                UnsupportedIPProtocolWarning(
+                    f"IP protocol {proto} is not supported; "
+                    f"encountered in {n}{file_hint}. "
+                    "Bytes after each IP header are stored in the payload field.",
+                    proto,
+                ),
+                stacklevel=2,
+            )
 
     global_output: dict[str, Any] = dict(output) if output is not None else {}
     global_output.setdefault("nanoseconds", pcap.header.nanoseconds)

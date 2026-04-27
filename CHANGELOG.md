@@ -66,6 +66,48 @@ All notable changes to packeteer are recorded in this file.
     parsing, round-trips, `PacketBuilder` integration, and config serialisation
     (1529 total).
 
+### Enhancements
+
+- **Informative warning for unsupported IP protocol numbers** — when the
+  parser encounters an IP protocol number it does not recognise (anything other
+  than TCP, UDP, ICMPv4, ICMPv6, SCTP, GRE, EtherIP, and IP-in-IP), it now
+  issues an `UnsupportedIPProtocolWarning` instead of silently discarding the
+  transport layer.
+
+  - New public class `UnsupportedIPProtocolWarning(UserWarning)` exported from
+    `packeteer.parse`.  Its `.protocol` attribute carries the unrecognised
+    number so callers can filter or inspect it without parsing the message
+    string.
+  - Direct calls to `parse_packet` receive one warning per call.
+  - `parse_pcap_file` (and therefore `packeteer parse` and `packeteer
+    sanitise`) consolidates the per-packet warnings into **one summary per
+    unique protocol**, with the packet count and source file name:
+
+    ```
+    UserWarning: IP protocol 89 is not supported; encountered in 47 packets
+    in 'capture.pcap'. Bytes after each IP header are stored in the payload field.
+    ```
+
+- **`network.protocol` always present in packet spec** — `update_config` now
+  always emits the `"protocol"` key in the `"network"` section.  For
+  recognised protocols the value is a string (`"tcp"`, `"udp"`, …); for
+  unrecognised protocols it is the raw integer (`89`, `112`, …).  Previously
+  the field was silently omitted for unknown protocol numbers, making it
+  impossible to tell from the JSON alone why the transport section was absent.
+
+### Documentation
+
+- Expanded introductions for the CLI (`docs/cli/index.md`) and Reference
+  (`docs/reference/index.md`) sections.
+- Generating guide (`docs/guide/generating.md`): reorganised so
+  `PacketBuilder` is no longer used in an example before its own section;
+  added a binary-payload example using `struct.pack`.
+- API parser reference (`docs/api/parser.md`): documented
+  `UnsupportedIPProtocolWarning`, the `.protocol` attribute, the per-call vs.
+  summary warning behaviour, and the suppression pattern.
+- CLI reference: `packeteer parse` and `packeteer sanitise` pages each have a
+  new *Unsupported IP protocol numbers* subsection.
+
 ---
 
 ## 0.6.1 - 2026-04-25
