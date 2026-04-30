@@ -8,6 +8,65 @@ All notable changes to packeteer are recorded in this file.
 
 ### New features
 
+- **`packeteer fuzz` — adversarial packet variant generator** — new subcommand
+  and Python API for testing decoder robustness.  Give it a correctly-formed
+  capture or packet spec and it produces a suite of deliberately unusual or
+  malformed variants covering a wide range of protocol-edge and wire-format
+  corner cases.
+
+  Two complementary mutation families are provided:
+
+  *Spec-level* — operate on the packet spec JSON and produce well-formed but
+  unusual packets (suitable for replay through a real encoder):
+
+  | Mutation | What it produces |
+  |----------|-----------------|
+  | `boundary` | Sets numeric header fields to their minimum, near-minimum, near-maximum, and maximum representable values (TTL, TOS, IP identification, fragment offset, TCP window/seq/ack, port numbers, ICMP id/seq, SCTP verification tag) |
+  | `reserved-bits` | Sets the IPv4 "evil bit" (RFC 3514), the DF+MF combination (RFC-invalid), and the TCP reserved nibble |
+  | `tcp-flags` | All classically pathological TCP flag combinations: SYN+FIN, SYN+RST, null scan, XMAS, FIN-only, PSH+URG without ACK, RST+ACK+URG, ECE+CWR |
+  | `truncate` | Removes the payload or cuts it to 1 byte, 25%, or 50% of its original length |
+  | `extend` | Appends extra zero bytes (1, 4, 8, 64, 512) or 16 random bytes after the existing payload |
+
+  *Byte-level* — operate on raw serialised bytes and produce structurally
+  invalid encodings that no spec-based builder can produce:
+
+  | Mutation | What it produces |
+  |----------|-----------------|
+  | `bit-flip` | Flips a single random bit per variant; `--count` controls how many variants are produced per source packet |
+  | `wrong-checksum` | Sets IP, TCP, and UDP checksum fields to `0x0000`, `0xffff`, and the bitwise inverse of the original value |
+  | `wrong-length` | Sets IP total-length and UDP length fields to zero, IHL-only, off-by-one (both directions), and maximum (`0xffff`) |
+
+  Public Python API in `packeteer.fuzz`:
+
+  ```python
+  from packeteer.fuzz import fuzz, fuzz_bytes, FuzzOptions
+
+  # Spec-level variants — returns list[FuzzVariant]
+  variants = fuzz(config, FuzzOptions(mutations=["boundary", "tcp-flags"], seed=42))
+  for v in variants:
+      print(v.source_idx, v.mutation, v.label)
+
+  # Byte-level variants — returns list[(label, bytes)]
+  for label, corrupted in fuzz_bytes(raw_pkt, FuzzOptions(seed=42)):
+      write_to_pcap(corrupted)
+  ```
+
+  - `FuzzOptions` controls which mutations are applied, how many `bit-flip`
+    variants are produced per packet (`count`, default 10), and the RNG seed
+    for reproducibility.  The same `FuzzOptions` instance can be passed to both
+    `fuzz()` and `fuzz_bytes()`; each silently ignores names irrelevant to its
+    domain.
+  - `FuzzVariant` carries `source_idx`, `mutation`, `label`, and `spec` (an
+    independent deep copy of the mutated packet dict, ready for
+    `{"packets": [v.spec]}` replay through `packeteer build`).
+  - `MUTATION_NAMES`, `BYTE_MUTATION_NAMES`, and `ALL_MUTATION_NAMES` are
+    exported constants listing the supported mutation type names.
+  - `packeteer fuzz <FILE>` accepts a pcap, pcapng, or packet spec as input;
+    output can be written to `--pcap`, `--pcapng`, and/or `--output` (JSON
+    packet spec) simultaneously.  `--mutations`, `--count`, and `--seed` flags
+    map directly to `FuzzOptions`.
+  - 104 new tests in `test_fuzz.py` (1792 total).
+
 - **IPv6 Hop-by-Hop Options extension header (RFC 8200 §4.3)** — the
   Hop-by-Hop Options header (next_header=0) is now supported end-to-end across
   the builder, parser, and packet-spec serialisation.
@@ -159,6 +218,29 @@ All notable changes to packeteer are recorded in this file.
   warnings should pass `SanitiseOptions(scan_pii=False)`.
 
 ### Documentation
+
+- **Fuzzer documentation** — four new pages covering the `fuzz` feature:
+  - `docs/cli/fuzz.md` — CLI reference: usage synopsis, output options, full
+    mutation type tables for both spec-level and byte-level families, flags, and
+    six worked examples.
+  - `docs/guide/fuzzing.md` — task-oriented Python API guide covering quick
+    start, mutation type descriptions, `FuzzOptions` usage, working with
+    `FuzzVariant` objects, byte-level fuzzing with `fuzz_bytes`, reproducibility,
+    and CLI equivalents.
+  - `docs/api/fuzzer.md` — autodoc API reference for `FuzzOptions`,
+    `FuzzVariant`, `fuzz`, `fuzz_bytes`, `MUTATION_NAMES`, `BYTE_MUTATION_NAMES`,
+    and `ALL_MUTATION_NAMES`.
+  - `docs/internals/fuzzer.md` — developer internals: design goals, the
+    `_MUTATIONS` registry pattern, per-mutation implementation details
+    (boundary tables, TCP flag combos, truncate deduplication, extend zero/random
+    sizing), VLAN-aware `_ip_header_offset` algorithm, and `fuzz_bytes` dispatch.
+  - All relevant index pages updated (`docs/cli/index.md`, `docs/guide/index.md`,
+    `docs/api/index.md`, `docs/internals/index.md`).
+  - `docs/internals/architecture.md` updated to include `packeteer/fuzz.py` in
+    the component diagram and module description.
+  - `README.md` updated: fuzzing bullet in the features list, two new CLI
+    examples in the quick-start section, a new Python API code block, and three
+    new rows in the documentation table.
 
 - Sanitiser internals page updated with the full PII scanning pipeline:
   `_maybe_scan_pii`, two-tier name detection, `_excerpt`, and warning

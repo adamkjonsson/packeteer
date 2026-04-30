@@ -26,7 +26,8 @@ compiled extensions — Python 3.10+ and the standard library only.
 - **Stream generation** — complete TCP / UDP / SCTP flows written to pcap, pcapng, or packet spec; all streams can be wrapped in any encapsulation layer (VLAN, QinQ, MPLS, PPPoE, GRE, EtherIP, IP-in-IP), combined as a stack, and fragmented through a simulated low-MTU middlebox
 - **Capture filtering** — `packeteer parse` accepts filter flags (`--proto`, `--port`, `--src`, `--dst`, `--host`, `--app`, …) to keep only the traffic you care about; values can be negated with `!` and addresses accept CIDR notation for both IPv4 and IPv6
 - **PII scanning** — `packeteer sanitise` scans UTF-8 payloads for email addresses and personal names by default; findings are consolidated across packets and reported as structured `PersonalDataWarning` instances (`--no-scan-pii` to disable)
-- **CLI** (`packeteer`) — build packets from a packet spec, parse captures to a packet spec, sanitise specs by replacing sensitive fields with synthetic data, or generate synthetic streams with `packeteer stream`
+- **Fuzzing** — `packeteer fuzz` produces adversarial packet variants for decoder robustness testing: boundary values, reserved-bit settings, pathological TCP flag combinations, truncated/extended payloads, bit flips, wrong checksums, and wrong length fields; full Python API via `packeteer.fuzz`
+- **CLI** (`packeteer`) — build packets from a packet spec, parse captures to a packet spec, sanitise specs by replacing sensitive fields with synthetic data, generate synthetic streams with `packeteer stream`, or generate adversarial variants with `packeteer fuzz`
 
 ## Quick start
 
@@ -56,6 +57,12 @@ packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
 packeteer stream --protocol udp \
     --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
     --server-port 53 --packets 5 --json dns.json
+
+# Produce adversarial variants of every packet in a capture
+packeteer fuzz capture.pcap --pcap fuzzed.pcap
+
+# Apply only boundary-value and TCP-flag mutations, reproducibly
+packeteer fuzz capture.pcap --mutations boundary tcp-flags --seed 42 --pcap fuzzed.pcap
 ```
 
 ### Python API
@@ -181,6 +188,27 @@ stream = generate_tcp_stream(
 )
 ```
 
+```python
+# Fuzz a capture for decoder robustness testing
+import json
+from packeteer.fuzz import fuzz, fuzz_bytes, FuzzOptions
+from packeteer.pcap import read_pcap
+
+with open("capture.json") as f:
+    config = json.load(f)
+
+# Spec-level variants — boundary values, bad TCP flags, truncated payloads
+variants = fuzz(config, FuzzOptions(mutations=["boundary", "tcp-flags"], seed=42))
+for v in variants:
+    print(f"[pkt {v.source_idx}] {v.label}")
+
+# Byte-level variants — bit flips, wrong checksums, wrong lengths
+frames = read_pcap("capture.pcap")
+raw, _ts = frames[0]
+for label, corrupted in fuzz_bytes(raw, FuzzOptions(seed=42)):
+    print(label, len(corrupted))
+```
+
 ## Documentation
 
 Full documentation lives in [`docs/`](docs/).  Build it locally:
@@ -208,6 +236,7 @@ Or read the source pages directly.  The documentation is organised in four parts
 | [docs/cli/sanitise.md](docs/cli/sanitise.md) | `packeteer sanitise` — what gets replaced, application-layer sanitisation |
 | [docs/cli/build.md](docs/cli/build.md) | `packeteer build` — packet spec structure, supported layers, fragmentation |
 | [docs/cli/stream.md](docs/cli/stream.md) | `packeteer stream` — all flags, encapsulation, INI config |
+| [docs/cli/fuzz.md](docs/cli/fuzz.md) | `packeteer fuzz` — mutation types, flags, examples |
 
 **Python API guide**
 
@@ -217,6 +246,7 @@ Or read the source pages directly.  The documentation is organised in four parts
 | [docs/guide/sanitising.md](docs/guide/sanitising.md) | Sanitising captures with `sanitise` / `SanitiseOptions` |
 | [docs/guide/generating.md](docs/guide/generating.md) | Generating synthetic data — session builders, stream generators, `PacketBuilder` |
 | [docs/guide/pcap.md](docs/guide/pcap.md) | Reading and writing pcap / pcapng files |
+| [docs/guide/fuzzing.md](docs/guide/fuzzing.md) | Fuzzing packets with `fuzz` / `fuzz_bytes` / `FuzzOptions` |
 
 **Reference**
 
@@ -229,6 +259,7 @@ Or read the source pages directly.  The documentation is organised in four parts
 | [docs/api/header-dataclasses.md](docs/api/header-dataclasses.md) | Header dataclasses and constants |
 | [docs/api/pcap-io.md](docs/api/pcap-io.md) | `write_pcap`, `write_pcapng`, `read_pcap` API reference |
 | [docs/api/parser.md](docs/api/parser.md) | Parser API reference |
+| [docs/api/fuzzer.md](docs/api/fuzzer.md) | `fuzz`, `fuzz_bytes`, `FuzzOptions`, `FuzzVariant` API reference |
 | [docs/reference/packet-sizes.md](docs/reference/packet-sizes.md) | Header size tables |
 | [docs/reference/rfc-references.md](docs/reference/rfc-references.md) | RFC index |
 | [docs/internals/](docs/internals/) | Developer internals: architecture, parser pipeline, stream generators, encapsulation, sanitiser |

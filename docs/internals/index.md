@@ -15,6 +15,7 @@ parser-pipeline
 stream-generators
 encapsulation
 sanitiser
+fuzzer
 ```
 
 ## Module map
@@ -32,4 +33,5 @@ sanitiser
 | `packeteer/parse/to_config.py` | `update_config` / `to_packet_spec` — parsed headers → packet spec dict |
 | `packeteer/parse/*.py` | One module per protocol: `packet_parser(data)` function |
 | `packeteer/sanitise.py` | `sanitise` — consistent value replacement using IANA-reserved ranges |
+| `packeteer/fuzz.py` | `fuzz` / `fuzz_bytes` — spec-level and byte-level adversarial mutations |
 | `packeteer_cli.py` | CLI entry point — thin dispatcher to the library functions above |

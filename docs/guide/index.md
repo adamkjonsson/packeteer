@@ -13,6 +13,7 @@ All public names are importable from five top-level packages:
 | `packeteer.generate` | `PacketBuilder`, session builders, stream generators, encapsulation types |
 | `packeteer.filter` | `PacketFilter` |
 | `packeteer.sanitise` | `sanitise`, `SanitiseOptions` |
+| `packeteer.fuzz` | `fuzz`, `fuzz_bytes`, `FuzzOptions`, `FuzzVariant` |
 | `packeteer.pcap` | `write_pcap`, `write_pcapng`, `read_pcap`, link-type constants |
 
 ```{toctree}
@@ -22,4 +23,5 @@ parsing
 sanitising
 generating
 pcap
+fuzzing
 ```

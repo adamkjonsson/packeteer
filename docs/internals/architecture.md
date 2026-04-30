@@ -18,7 +18,7 @@ dict; the CLI simply drives them from the command line.
 ```
 +--------------------------------------------------------------------+
 |  packeteer_cli.py                                                  |
-|  (parse / build / sanitise / stream subcommands)                   |
+|  (parse / build / sanitise / stream / fuzz subcommands)            |
 +--------------+--------------------+--------------------+-----------+
                |                    |                    |
     +----------v----------+  +------v------+  +----------v-----------+
@@ -31,6 +31,13 @@ dict; the CLI simply drives them from the command line.
     |  Parsed header      |                   |  Raw packet bytes    |
     |  dataclasses        |                   |  (to pcap / pcapng)  |
     +---------------------+                   +----------------------+
+
+packeteer/sanitise.py and packeteer/fuzz.py both operate on packet spec dicts
+and are independent of the parse/generate pipeline:
+
+    packet spec dict  --sanitise-->  sanitised spec dict
+    packet spec dict  --fuzz------->  list[FuzzVariant]  (spec-level)
+    raw bytes         --fuzz_bytes->  list[(label, bytes)]  (byte-level)
 ```
 
 **`packeteer.parse`** reads raw bytes and produces `ParsedPacket` objects, which
@@ -50,6 +57,10 @@ stream generator modules.
 
 **`packeteer/sanitise.py`** operates on packet spec dicts: it deep-copies the dict and
 replaces sensitive field values in place.
+
+**`packeteer/fuzz.py`** operates on packet spec dicts (via `fuzz()`) or raw
+serialised bytes (via `fuzz_bytes()`).  Both functions are independent of the
+parse/generate pipeline and can be used standalone.
 
 ## Shared header dataclasses
 
