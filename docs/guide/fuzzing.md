@@ -72,18 +72,17 @@ each function silently ignores mutation names that do not apply to its domain:
 
 ```python
 import json
-from packeteer.parse import parse_pcap_file
 from packeteer.fuzz import fuzz, fuzz_bytes, FuzzOptions
-from packeteer.pcap import write_pcap
+from packeteer.parse import parse_pcap_file
+from packeteer.pcap import read_pcap
 
 spec = json.loads(parse_pcap_file("capture.pcap"))
-
-# Build raw bytes for the first packet so we can apply byte-level mutations
-from packeteer.__main__ import _apply_spec_to_builder  # internal; see note below
+frames = read_pcap("capture.pcap")
+raw, _ts = frames[0]
 
 opts = FuzzOptions(mutations=["boundary", "bit-flip"], seed=42)
-spec_variants = fuzz(spec, opts)          # applies "boundary"
-# byte_variants = fuzz_bytes(raw, opts)   # applies "bit-flip" (needs raw bytes)
+spec_variants = fuzz(spec, opts)     # applies "boundary"; ignores "bit-flip"
+byte_variants = fuzz_bytes(raw, opts) # applies "bit-flip"; ignores "boundary"
 ```
 
 ## Working with FuzzVariant objects
