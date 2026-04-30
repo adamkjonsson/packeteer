@@ -145,8 +145,26 @@ All notable changes to packeteer are recorded in this file.
   the field was silently omitted for unknown protocol numbers, making it
   impossible to tell from the JSON alone why the transport section was absent.
 
+### Breaking changes
+
+- **`ethernet.pad` defaults to `true`** — Ethernet frames are now zero-padded
+  to the IEEE 802.3 minimum of 60 bytes by default in both `PacketBuilder` and
+  `packeteer build`.  Set `pad: false` (or `.ethernet(pad=False)`) to suppress
+  padding explicitly.
+
+- **PII scanning enabled by default** — `SanitiseOptions.scan_pii` now defaults
+  to `True`.  `packeteer sanitise` will emit `PersonalDataWarning` instances for
+  any email addresses or names found in UTF-8 payloads unless `--no-scan-pii`
+  is passed.  Code that calls `sanitise()` directly and does not want PII
+  warnings should pass `SanitiseOptions(scan_pii=False)`.
+
 ### Documentation
 
+- Sanitiser internals page updated with the full PII scanning pipeline:
+  `_maybe_scan_pii`, two-tier name detection, `_excerpt`, and warning
+  consolidation.
+- PDF output: raised `\tymin` to 60 pt in the LaTeX preamble so short-label
+  first columns are no longer squeezed in reference tables.
 - Expanded introductions for the CLI (`docs/cli/index.md`) and Reference
   (`docs/reference/index.md`) sections.
 - Generating guide (`docs/guide/generating.md`): reorganised so
