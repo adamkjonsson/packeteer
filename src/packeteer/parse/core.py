@@ -564,7 +564,7 @@ def parse_pcap_file(
     unsupported: Counter[int] = Counter()
 
     with warnings.catch_warnings(record=True) as _caught:
-        warnings.simplefilter("always")
+        warnings.filterwarnings("always", category=UnsupportedIPProtocolWarning)
         for record in pcap.packets:
             pkt = parse_pcap_packet(record, pcap.header)
             cfg: dict[str, Any] = {}
@@ -595,7 +595,8 @@ def parse_pcap_file(
 
     for w in _caught:
         if issubclass(w.category, UnsupportedIPProtocolWarning):
-            unsupported[w.message.protocol] += 1  # type: ignore[union-attr]
+            assert isinstance(w.message, UnsupportedIPProtocolWarning)
+            unsupported[w.message.protocol] += 1
         else:
             warnings.warn_explicit(
                 w.message, w.category, w.filename, w.lineno, source=w.source,
