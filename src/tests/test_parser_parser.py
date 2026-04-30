@@ -428,17 +428,20 @@ class TestParsePcapFile(unittest.TestCase):
         self.assertEqual(result["packets"], [])
 
 
+def _ipv4_with_proto(proto: int) -> bytes:
+    """Build an IPv4 packet with an arbitrary protocol number patched in."""
+    raw = bytearray(PacketBuilder().ip(src="10.0.0.1", dst="10.0.0.2").tcp().build())
+    raw[9] = proto   # IPv4 protocol field
+    raw[10] = 0      # checksum not recalculated after mutation; parser does not validate it
+    raw[11] = 0
+    return bytes(raw)
+
+
 class TestUnsupportedIPProtocol(unittest.TestCase):
     """parse_packet behaviour when the IP protocol number is not recognised."""
 
     def _build_with_proto(self, proto: int) -> bytes:
-        raw = bytearray(
-            PacketBuilder().ip(src="10.0.0.1", dst="10.0.0.2").tcp().build()
-        )
-        raw[9] = proto   # IPv4 protocol field
-        raw[10] = 0      # zero checksum — not validated by the parser
-        raw[11] = 0
-        return bytes(raw)
+        return _ipv4_with_proto(proto)
 
     def test_warning_category(self) -> None:
         with self.assertWarns(UnsupportedIPProtocolWarning):
@@ -494,11 +497,7 @@ class TestParsePcapFileWarning(unittest.TestCase):
         return buf
 
     def _ospf(self, ts: int = 0) -> tuple[bytes, int, int]:
-        raw = bytearray(PacketBuilder().ip(src="10.0.0.1", dst="10.0.0.2").tcp().build())
-        raw[9] = 89
-        raw[10] = 0
-        raw[11] = 0
-        return (bytes(raw), ts, 0)
+        return (_ipv4_with_proto(89), ts, 0)
 
     def test_single_unsupported_packet_warns(self) -> None:
         buf = self._make_buf([self._ospf()])
@@ -537,15 +536,10 @@ class TestParsePcapFileWarning(unittest.TestCase):
         buf = self._make_buf([self._ospf()])
         with self.assertWarns(UnsupportedIPProtocolWarning) as ctx:
             parse_pcap_file(file_object=buf)
-        # When no path is given, no path hint appears in the message
-        self.assertNotIn("'", str(ctx.warning))
+        self.assertNotIn(" in '", str(ctx.warning))
 
     def test_one_warning_per_distinct_protocol(self) -> None:
-        vrrp_raw = bytearray(PacketBuilder().ip(src="10.0.0.1", dst="10.0.0.2").tcp().build())
-        vrrp_raw[9] = 112
-        vrrp_raw[10] = 0
-        vrrp_raw[11] = 0
-        buf = self._make_buf([self._ospf(), (bytes(vrrp_raw), 1, 0)])
+        buf = self._make_buf([self._ospf(), (_ipv4_with_proto(112), 1, 0)])
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             parse_pcap_file(file_object=buf)
