@@ -49,20 +49,66 @@ IPv6 and MAC pools are effectively unlimited for practical input sizes.
 
 ## Recursive packet walking
 
-`_sanitise_packet(pkt, r, opts)` walks one packet dict in place (the dict is
-already a deep copy at this point):
+`_sanitise_packet(pkt, r, opts, packet_num)` walks one packet dict in place
+(the dict is already a deep copy at this point):
 
-1. Replace MAC addresses in the `"ethernet"` section.
-2. Replace IP addresses in the `"network"` section.
-3. Optionally replace ports in `"transport"`.
-4. Optionally zero out `"payload.data"` (byte length preserved; for UTF-8 payloads the byte count is derived from the string, and the `"encoding"` key is removed from the result).
-5. Optionally zero `"packet_metadata"` timestamps.
-6. For each tunnel key (`"ipip"`, `"gre"`, `"etherip"`): call
+1. If `opts.scan_pii`, call `_maybe_scan_pii(pkt, packet_num)` to scan any
+   UTF-8 payload for personal data (see below).
+2. Replace MAC addresses in the `"ethernet"` section.
+3. Replace IP addresses in the `"network"` section.
+4. Optionally replace ports in `"transport"`.
+5. Optionally zero out `"payload.data"` (byte length preserved; for UTF-8 payloads the byte count is derived from the string, and the `"encoding"` key is removed from the result).
+6. Optionally zero `"packet_metadata"` timestamps.
+7. For each tunnel key (`"ipip"`, `"gre"`, `"etherip"`): call
    `_sanitise_ethernet` on the inner `"ethernet"` section (if present), then
-   recurse into `_sanitise_packet(inner, r, opts)`.
+   recurse into `_sanitise_packet(inner, r, opts, packet_num)`.
 
 The tunnel recursion handles arbitrarily nested tunnels without any special
 limit.
+
+## PII scanning
+
+PII scanning is enabled by default (`scan_pii=True`).  `sanitise()` wraps its
+packet loop in a `warnings.catch_warnings(record=True)` context, collects all
+`PersonalDataWarning` instances emitted during the loop, and then re-emits one
+consolidated warning per unique `(kind, text)` pair.
+
+### Detection pipeline
+
+`_maybe_scan_pii(pkt, packet_num)` checks whether the packet has a `"payload"`
+section with `"encoding": "utf8"`, and if so calls `_scan_utf8_payload`.  Hex
+payloads are never inspected.
+
+`_scan_utf8_payload` runs two scanners against the decoded string:
+
+- **`_scan_emails(text)`** — applies `_EMAIL_RE`, a regex for RFC 5321
+  local-part + domain patterns.  Returns a list of `(text, start, end)` tuples.
+- **`_scan_names(text)`** — runs two compiled regexes in order:
+  - *Tier 1* (`_RFC5322_NAME_RE`): quoted or unquoted display names immediately
+    followed by `<addr@domain>` (RFC 5322 mailbox syntax).
+  - *Tier 2* (`_LABEL_NAME_RE`): two-or-more title-case words after a
+    recognised field label (`name:`, `from:`, `recipient:`, `sender:`, `to:`,
+    `contact:`, `full_name:`).
+
+Each match is wrapped in a `_excerpt(text, start, end)` call that returns up to
+40 characters of surrounding context with `…` ellipses when the window is
+truncated.  A `PersonalDataWarning` is then emitted via `warnings.warn` with
+`stacklevel=2`.
+
+### Consolidation
+
+After the packet loop, `_consolidate_pii_warnings(caught)` groups the collected
+warnings by `(kind, text)`.  For each group it keeps the excerpt from the first
+occurrence and the full list of packet numbers, then re-emits a single
+consolidated `PersonalDataWarning`:
+
+```
+[PII] email 'alice@example.com' found in 2 packets (1, 3).
+  Context: 'Contact: alice@example.com — Sales'
+```
+
+The consolidated warning's `packet_num` attribute holds the number of the first
+packet where the finding appeared.
 
 ## `SanitiseOptions`
 
@@ -77,13 +123,16 @@ class SanitiseOptions:
     dns_ids:      bool = False   # zero 16-bit DNS transaction id
     dhcp_xids:    bool = False   # zero 32-bit DHCP transaction xid
     http_headers: bool = False   # redact sensitive HTTP header values
+    scan_pii:     bool = True    # scan UTF-8 payloads for emails and names
 ```
 
-The defaults (IP and MAC replacement only) are enough for most sharing
+The defaults (IP/MAC replacement + PII scanning) cover the most common sharing
 scenarios.  Ports and payload data are opt-in because replacing them changes
 the observable application behaviour of the capture.  The `dns_ids`,
 `dhcp_xids`, and `http_headers` flags are opt-in because the fields they
-affect are not sensitive in all contexts.
+affect are not sensitive in all contexts.  PII scanning is opt-out
+(`scan_pii=False`) because undisclosed personal data in a shared capture is
+almost always unintentional.
 
 ## SCTP payload handling
 

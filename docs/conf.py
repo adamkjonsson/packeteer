@@ -74,6 +74,9 @@ latex_elements = {
 \setcounter{secnumdepth}{2}
 \fancyhead[RE]{\nouppercase{\leftmark}}
 \fancyhead[LO]{\nouppercase{\rightmark}}
+% Raise the minimum column width in tabulary so short-label first columns
+% (Field, Flag, Option, …) are not squeezed to a few characters.
+\setlength{\tymin}{60pt}
 """,
 }
 
