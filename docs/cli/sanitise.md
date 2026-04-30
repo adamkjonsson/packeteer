@@ -33,7 +33,7 @@ When none are given, the sanitised packet spec is printed to stdout.
 | IP `src` / `dst` | **replaced** | `--no-ips` to keep |
 | Ethernet `src_mac` / `dst_mac` | **replaced** | `--no-macs` to keep |
 | TCP/UDP port numbers | kept | `--ports` to replace |
-| `payload.data` | kept | `--payload` to zero (same byte length) |
+| `payload.data` | kept | `--payload` to zero (same byte length; encoding field removed after zeroing) |
 | `packet_metadata` timestamps | kept | `--timestamps` to zero |
 | DNS transaction IDs | kept | `--dns-ids` to zero |
 | DHCP transaction IDs (`xid`) | kept | `--dhcp-xids` to zero |

@@ -683,7 +683,28 @@ non-empty and the header is not already present.
 | Field | Description |
 |-------|-------------|
 | `size` | Generate this many random bytes as the payload |
-| `data` | Explicit payload as a hex string (e.g. `"48656c6c6f"` = `Hello`) |
+| `data` | Explicit payload bytes, encoded as specified by `encoding` |
+| `encoding` | `"hex"` (default) or `"utf8"` — how `data` is encoded |
+
+When `encoding` is omitted it defaults to `"hex"`, so existing specs with a
+bare `data` hex string continue to work unchanged.
+
+**Hex encoding (default):**
+
+```json
+"payload": { "data": "48656c6c6f" }
+```
+
+**UTF-8 encoding:**
+
+```json
+"payload": { "data": "Hello, world!", "encoding": "utf8" }
+```
+
+`packeteer parse` automatically chooses UTF-8 encoding when the captured
+payload consists entirely of printable ASCII characters (byte values 0x20–0x7E),
+making the output easier to read and edit.  All other payloads are encoded as
+hex.
 
 ---
 

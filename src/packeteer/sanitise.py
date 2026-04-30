@@ -356,7 +356,12 @@ def _sanitise_packet(pkt: dict, r: _Replacer, opts: SanitiseOptions) -> None:
     if opts.payload and "payload" in pkt:
         pl = pkt["payload"]
         if "data" in pl and isinstance(pl["data"], str):
-            pl["data"] = "00" * (len(pl["data"]) // 2)
+            if pl.get("encoding") == "utf8":
+                byte_len = len(pl["data"].encode("utf-8"))
+                pl["data"] = "00" * byte_len
+                del pl["encoding"]
+            else:
+                pl["data"] = "00" * (len(pl["data"]) // 2)
 
     if opts.payload and "transport" in pkt:
         t = pkt["transport"]

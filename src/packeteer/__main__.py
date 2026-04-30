@@ -403,11 +403,22 @@ def _apply_payload_spec(
     *context* is a short prefix (e.g. ``"ipip inner "``) used in error messages.
     """
     if "data" in payload_spec:
+        encoding = payload_spec.get("encoding", "hex")
         try:
-            data = bytes.fromhex(payload_spec["data"])
-        except ValueError as e:
+            if encoding == "utf8":
+                data = payload_spec["data"].encode("utf-8")
+            elif encoding == "hex":
+                data = bytes.fromhex(payload_spec["data"])
+            else:
+                print(
+                    f"Error: packet {packet_num} {context}payload.encoding "
+                    f"'{encoding}' is not supported (use 'hex' or 'utf8')",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+        except (ValueError, UnicodeEncodeError) as e:
             print(
-                f"Error: packet {packet_num} {context}payload.data is not valid hex: {e}",
+                f"Error: packet {packet_num} {context}payload.data decode error: {e}",
                 file=sys.stderr,
             )
             sys.exit(1)

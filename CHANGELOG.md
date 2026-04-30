@@ -4,7 +4,7 @@ All notable changes to packeteer are recorded in this file.
 
 ---
 
-## 0.7.0 - 2026-04-27
+## Unreleased
 
 ### New features
 
@@ -87,6 +87,24 @@ All notable changes to packeteer are recorded in this file.
     UserWarning: IP protocol 89 is not supported; encountered in 47 packets
     in 'capture.pcap'. Bytes after each IP header are stored in the payload field.
     ```
+
+- **UTF-8 payload encoding in packet specs** — the `"payload"` section now
+  supports an optional `"encoding"` field alongside `"data"`.
+
+  - `"encoding": "utf8"` — `"data"` is a plain UTF-8 string, making
+    text-protocol captures (HTTP bodies, DNS TXT strings, custom protocols)
+    easy to read and edit directly in the JSON.
+  - `"encoding": "hex"` (or omitted) — `"data"` is a lower-case hex string,
+    the existing default.  Omitting `"encoding"` is fully backward-compatible.
+  - `packeteer parse` auto-selects UTF-8 encoding when the captured payload
+    consists entirely of printable ASCII characters (byte values 0x20–0x7E),
+    and falls back to hex otherwise.
+  - `packeteer build` decodes `"utf8"` payloads by calling `.encode("utf-8")`
+    on the string; unknown encoding values produce an error and exit.
+  - `packeteer sanitise --payload` zeroes UTF-8 payloads correctly: the byte
+    length is derived from the UTF-8 encoding of the string (not the character
+    count), and the `"encoding"` key is removed from the result since zeroed
+    bytes are not printable text.
 
 - **`network.protocol` always present in packet spec** — `update_config` now
   always emits the `"protocol"` key in the `"network"` section.  For
