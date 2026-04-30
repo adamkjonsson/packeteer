@@ -157,14 +157,21 @@ sanitised pseudowire capture, use:
 
 Before sharing a capture, you may want to know whether any packet payloads
 contain personal data — email addresses or names — that should be reviewed or
-zeroed.  Pass `scan_pii=True` to {class}`~packeteer.sanitise.SanitiseOptions`
-(or `--scan-pii` on the CLI) to enable this check:
+zeroed.  PII scanning is **enabled by default** in both the CLI and the Python
+API.  Call `sanitise` with the default options and findings will be reported
+automatically:
 
 ```python
 import warnings
 from packeteer.sanitise import sanitise, SanitiseOptions, PersonalDataWarning
 
-clean = sanitise(spec, SanitiseOptions(scan_pii=True))
+clean = sanitise(spec)  # scan_pii=True by default
+```
+
+Pass `scan_pii=False` (or `--no-scan-pii` on the CLI) to suppress the scan:
+
+```python
+clean = sanitise(spec, SanitiseOptions(scan_pii=False))
 ```
 
 For each unique finding, a {class}`~packeteer.sanitise.PersonalDataWarning` is
@@ -174,7 +181,7 @@ attributes so you can inspect findings programmatically:
 ```python
 with warnings.catch_warnings(record=True) as caught:
     warnings.simplefilter("always")
-    sanitise(spec, SanitiseOptions(scan_pii=True))
+    sanitise(spec)  # scan_pii=True by default
 
 for w in caught:
     if isinstance(w.message, PersonalDataWarning):
@@ -190,11 +197,11 @@ attribute holds the number of the first occurrence; the full list is embedded
 in the warning message string.
 
 Only `"utf8"` encoded payloads are scanned; hex payloads are never inspected.
-The scan does not modify the output — combine `scan_pii=True` with
-`payload=True` to both flag and zero the payloads:
+The scan does not modify the output — combine with `payload=True` to both flag
+and zero the payloads:
 
 ```python
-clean = sanitise(spec, SanitiseOptions(scan_pii=True, payload=True))
+clean = sanitise(spec, SanitiseOptions(payload=True))  # scan_pii=True by default
 ```
 
 ## Post-filtering with PacketFilter

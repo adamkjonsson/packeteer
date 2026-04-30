@@ -321,7 +321,7 @@ class SanitiseOptions:
     dns_ids:      bool = False
     dhcp_xids:    bool = False
     http_headers: bool = False
-    scan_pii:     bool = False
+    scan_pii:     bool = True
 
 
 # ── Internal replacer state ───────────────────────────────────────────────────

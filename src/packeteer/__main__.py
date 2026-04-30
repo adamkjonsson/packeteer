@@ -848,7 +848,7 @@ def _cmd_sanitise(args: argparse.Namespace) -> None:
         dns_ids=getattr(args, "dns_ids", False),
         dhcp_xids=getattr(args, "dhcp_xids", False),
         http_headers=getattr(args, "http_headers", False),
-        scan_pii=getattr(args, "scan_pii", False),
+        scan_pii=getattr(args, "scan_pii", True),
     )
 
     try:
@@ -1385,9 +1385,9 @@ def main() -> None:
              "Authorization, Location, Referer, Origin (default: kept)",
     )
     san_parser.add_argument(
-        "--scan-pii", action="store_true", dest="scan_pii",
+        "--scan-pii", action=argparse.BooleanOptionalAction, default=True, dest="scan_pii",
         help="Scan UTF-8 payloads for email addresses and names; "
-             "warn on findings (does not modify data)",
+             "warn on findings (does not modify data) (default: enabled)",
     )
     san_parser.set_defaults(func=_cmd_sanitise)
 
