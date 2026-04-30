@@ -10,7 +10,6 @@ from packeteer.generate.pseudowire import PseudowireHeader, _build_pseudowire_he
 from packeteer.parse.core import parse_packet
 from packeteer.parse.pseudowire import packet_parser
 
-
 # ---------------------------------------------------------------------------
 # Unit tests — PseudowireHeader dataclass and build function
 # ---------------------------------------------------------------------------
@@ -270,7 +269,7 @@ class TestPseudowireParse(unittest.TestCase):
 class TestPseudowireRoundTrip(unittest.TestCase):
 
     def _round_trip(self, raw: bytes) -> bytes:
-        from packeteer.parse.to_config import update_config, apply_tunneled, to_json_string
+        from packeteer.parse.to_config import apply_tunneled, to_json_string, update_config
         pkt = parse_packet(raw)
         cfg: dict = {}
         if pkt.ethernet is not None:
@@ -360,7 +359,7 @@ class TestPseudowireRoundTrip(unittest.TestCase):
         self.assertEqual(original, rebuilt)
 
     def test_spec_contains_pseudowire_key(self):
-        from packeteer.parse.to_config import update_config, apply_tunneled
+        from packeteer.parse.to_config import apply_tunneled, update_config
         raw = (PacketBuilder()
             .ethernet()
             .mpls(label=100)

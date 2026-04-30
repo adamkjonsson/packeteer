@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import struct
 import socket
+import struct
 import unittest
-from packeteer.generate.udp import UDPHeader, _build_udp_header
+
 from packeteer.generate.checksum import ones_complement_checksum
+from packeteer.generate.udp import UDPHeader, _build_udp_header
 
 
 def _verify_udp_checksum_v4(src_ip: str, dst_ip: str, udp_bytes: bytes, payload: bytes) -> int:

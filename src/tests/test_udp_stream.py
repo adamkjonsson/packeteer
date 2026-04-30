@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import struct
 
-from packeteer.generate.udp_stream import generate_udp_stream, UDPStream, UDPStreamPacket
+from packeteer.generate.udp_stream import UDPStream, UDPStreamPacket, generate_udp_stream
 
 
 def _make_stream(**kw: object) -> UDPStream:

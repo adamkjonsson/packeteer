@@ -85,7 +85,9 @@ class TestParserIPv4(unittest.TestCase):
         self.assertEqual(hdr.tos, 16)
 
     def test_header_identification(self):
-        raw = _build_ip_header(IPHeader("1.2.3.4", "5.6.7.8", PROTO_TCP, identification=0xABCD), b"")
+        raw = _build_ip_header(
+            IPHeader("1.2.3.4", "5.6.7.8", PROTO_TCP, identification=0xABCD), b""
+        )
         _, _, hdr = packet_parser(raw)
         self.assertEqual(hdr.identification, 0xABCD)
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import struct
 
-from packeteer.generate.sctp_stream import generate_sctp_stream, SCTPStream, SCTPStreamPacket
+from packeteer.generate.sctp_stream import SCTPStream, SCTPStreamPacket, generate_sctp_stream
 
 _HANDSHAKE_LABELS = ["INIT", "INIT-ACK", "COOKIE-ECHO", "COOKIE-ACK"]
 _SHUTDOWN_LABELS  = ["SHUTDOWN", "SHUTDOWN-ACK", "SHUTDOWN-COMPLETE"]

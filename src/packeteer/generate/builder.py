@@ -107,37 +107,55 @@ import os
 import socket
 import struct
 
+from .dhcp import DHCPMessage, _build_dhcp_message
+from .dns import DNSMessage, _build_dns_message, _build_dns_message_tcp
+from .etherip import IPPROTO_ETHERIP, EtherIPHeader, _build_etherip_header
 from .ethernet import (
-    EthernetHeader, VLANTag, ETHERTYPE_IPV4, ETHERTYPE_IPV6, ETHERTYPE_8021Q,
-    ETHERNET_MIN_FRAME_SIZE, _build_ethernet_header,
+    ETHERNET_MIN_FRAME_SIZE,
+    ETHERTYPE_8021Q,
+    ETHERTYPE_IPV4,
+    ETHERTYPE_IPV6,
+    EthernetHeader,
+    VLANTag,
+    _build_ethernet_header,
 )
-from .ip import IPHeader, _build_ip_header
-from .ipv6 import (
-    IPv6Header, _build_ipv6_header,
-    HopByHopOptions, RouterAlertOption, JumboPayloadOption, RawOption,
-    HBH_NEXT_HEADER,
-    _build_hop_by_hop_header,
+from .gre import (
+    GRE_PROTO_IPV4,
+    GRE_PROTO_IPV6,
+    GRE_PROTO_TEB,
+    IPPROTO_GRE,
+    GREHeader,
+    _build_gre_header,
 )
-from .tcp import TCPHeader, TCPOptions, TCP_ACK, _build_tcp_header
-from .udp import UDPHeader, _build_udp_header
+from .http import HTTPMessage, _build_http_message
 from .icmp import ICMPHeader, _build_icmp_header
 from .icmpv6 import ICMPv6Header, _build_icmpv6_header
-from .etherip import EtherIPHeader, IPPROTO_ETHERIP, _build_etherip_header
-from .gre import GREHeader, IPPROTO_GRE, GRE_PROTO_IPV4
-from .gre import GRE_PROTO_IPV6, GRE_PROTO_TEB, _build_gre_header
-from .mpls import MPLSLabel, ETHERTYPE_MPLS_UNICAST, _build_mpls_label
+from .ip import IPHeader, _build_ip_header
+from .ipv6 import (
+    HBH_NEXT_HEADER,
+    HopByHopOptions,
+    IPv6Header,
+    JumboPayloadOption,
+    RawOption,
+    RouterAlertOption,
+    _build_hop_by_hop_header,
+    _build_ipv6_header,
+)
+from .mpls import ETHERTYPE_MPLS_UNICAST, MPLSLabel, _build_mpls_label
 from .pppoe import (
-    PPPoEHeader, PPPoETag,
-    ETHERTYPE_PPPOE_DISCOVERY, ETHERTYPE_PPPOE_SESSION,
-    PPP_IPV4, PPP_IPV6,
+    ETHERTYPE_PPPOE_DISCOVERY,
+    ETHERTYPE_PPPOE_SESSION,
+    PPP_IPV4,
+    PPP_IPV6,
     PPPOE_CODE_SESSION,
+    PPPoEHeader,
+    PPPoETag,
     _build_pppoe_header,
 )
-from .sctp import SCTPHeader, SCTPChunk, IPPROTO_SCTP, _build_sctp_packet
-from .dns import DNSMessage, _build_dns_message, _build_dns_message_tcp
-from .dhcp import DHCPMessage, _build_dhcp_message
-from .http import HTTPMessage, _build_http_message
 from .pseudowire import PseudowireHeader, _build_pseudowire_header
+from .sctp import IPPROTO_SCTP, SCTPChunk, SCTPHeader, _build_sctp_packet
+from .tcp import TCP_ACK, TCPHeader, TCPOptions, _build_tcp_header
+from .udp import UDPHeader, _build_udp_header
 
 # ── protocol-number helpers ───────────────────────────────────────────────────
 

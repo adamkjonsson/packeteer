@@ -5,9 +5,9 @@ import struct
 import unittest
 
 from packeteer.generate import PacketBuilder
-from packeteer.generate.mpls import MPLSLabel, _build_mpls_label, ETHERTYPE_MPLS_UNICAST
-from packeteer.parse.mpls import packet_parser as mpls_packet_parser
+from packeteer.generate.mpls import ETHERTYPE_MPLS_UNICAST, MPLSLabel, _build_mpls_label
 from packeteer.parse.core import parse_packet
+from packeteer.parse.mpls import packet_parser as mpls_packet_parser
 from packeteer.pcap import LINKTYPE_ETHERNET
 
 

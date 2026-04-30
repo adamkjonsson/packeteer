@@ -5,13 +5,13 @@ import struct
 
 from packeteer.generate.ip import IPHeader
 from packeteer.generate.ipv6 import (
-    IPv6Header,
+    HBH_OPT_JUMBO_PAYLOAD,
+    HBH_OPT_ROUTER_ALERT,
     HopByHopOptions,
-    RouterAlertOption,
+    IPv6Header,
     JumboPayloadOption,
     RawOption,
-    HBH_OPT_ROUTER_ALERT,
-    HBH_OPT_JUMBO_PAYLOAD,
+    RouterAlertOption,
 )
 
 

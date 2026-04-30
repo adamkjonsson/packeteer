@@ -4,16 +4,23 @@ from __future__ import annotations
 import struct
 import unittest
 
-from packeteer.generate.stream_encap import (
-    VLANEncap, QinQEncap, MPLSEncap, PPPoEEncap,
-    GREEncap, EtherIPEncap, IPIPEncap,
-    _as_list, _apply_encap, _encap_ip_start, _fix_encap_prefix,
-)
 from packeteer.generate.builder import PacketBuilder
-from packeteer.generate.tcp_stream import generate_tcp_stream, TCPStream
-from packeteer.generate.udp_stream import generate_udp_stream
 from packeteer.generate.sctp_stream import generate_sctp_stream
-
+from packeteer.generate.stream_encap import (
+    EtherIPEncap,
+    GREEncap,
+    IPIPEncap,
+    MPLSEncap,
+    PPPoEEncap,
+    QinQEncap,
+    VLANEncap,
+    _apply_encap,
+    _as_list,
+    _encap_ip_start,
+    _fix_encap_prefix,
+)
+from packeteer.generate.tcp_stream import TCPStream, generate_tcp_stream
+from packeteer.generate.udp_stream import generate_udp_stream
 
 # ── _as_list ──────────────────────────────────────────────────────────────────
 

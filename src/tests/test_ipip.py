@@ -6,10 +6,8 @@ import json
 import unittest
 
 from packeteer.generate import PacketBuilder
-from packeteer.pcap import LINKTYPE_RAW
-from packeteer.parse.core import parse_packet, parse_pcap_file, ParsedPacket
-from packeteer.pcap import write_pcap
-
+from packeteer.parse.core import ParsedPacket, parse_packet, parse_pcap_file
+from packeteer.pcap import LINKTYPE_RAW, write_pcap
 
 # ---------------------------------------------------------------------------
 # Builder tests
@@ -279,11 +277,11 @@ class TestIPIPRoundTrip(unittest.TestCase):
 
     def test_packet_lab_round_trip(self):
         """Build via packet spec → parse → verify inner addresses."""
+        import json
+        import os
         import subprocess
         import sys
-        import json
         import tempfile
-        import os
 
         config = {
             "packets": [{

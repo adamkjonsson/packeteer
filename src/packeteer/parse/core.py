@@ -31,8 +31,8 @@ Example — reading from a pcap file::
 """
 from __future__ import annotations
 
-import os
 import io
+import os
 import socket
 import struct
 import warnings
@@ -40,43 +40,45 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
+from packeteer.filter import PacketFilter
+from packeteer.generate.dhcp import DHCPMessage
+from packeteer.generate.dns import DNSMessage
+from packeteer.generate.etherip import IPPROTO_ETHERIP, EtherIPHeader
 from packeteer.generate.ethernet import (
     ETHERTYPE_IPV4,
     ETHERTYPE_IPV6,
     EthernetHeader,
 )
-from packeteer.generate.ip import IPHeader
-from packeteer.generate.ipv6 import IPv6Header
-from packeteer.generate.etherip import EtherIPHeader, IPPROTO_ETHERIP
-from packeteer.generate.gre import GREHeader, IPPROTO_GRE, GRE_PROTO_TEB
-from packeteer.generate.mpls import MPLSLabel, ETHERTYPE_MPLS_UNICAST, ETHERTYPE_MPLS_MULTICAST
-from packeteer.generate.pseudowire import PseudowireHeader, ETHERTYPE_PW_CW
-from packeteer.generate.pppoe import PPPoEHeader, ETHERTYPE_PPPOE_DISCOVERY, ETHERTYPE_PPPOE_SESSION
-from packeteer.generate.tcp import TCPHeader
-from packeteer.generate.udp import UDPHeader
+from packeteer.generate.gre import GRE_PROTO_TEB, IPPROTO_GRE, GREHeader
+from packeteer.generate.http import HTTPMessage
 from packeteer.generate.icmp import ICMPHeader
 from packeteer.generate.icmpv6 import ICMPv6Header
+from packeteer.generate.ip import IPHeader
+from packeteer.generate.ipv6 import IPv6Header
+from packeteer.generate.mpls import ETHERTYPE_MPLS_MULTICAST, ETHERTYPE_MPLS_UNICAST, MPLSLabel
+from packeteer.generate.pppoe import ETHERTYPE_PPPOE_DISCOVERY, ETHERTYPE_PPPOE_SESSION, PPPoEHeader
+from packeteer.generate.pseudowire import ETHERTYPE_PW_CW, PseudowireHeader
 from packeteer.generate.sctp import SCTPHeader
-from packeteer.generate.dns import DNSMessage
-from packeteer.generate.dhcp import DHCPMessage
-from packeteer.generate.http import HTTPMessage
+from packeteer.generate.tcp import TCPHeader
+from packeteer.generate.udp import UDPHeader
 from packeteer.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW, PcapFileHeader, read_pcap
-from packeteer.filter import PacketFilter
-from .to_config import update_config, to_packet_spec, to_json_string, apply_tunneled
 
-from .ethernet import packet_parser as _ethernet_parser
+from .dns import parse_dns_tcp as _parse_dns_tcp
+from .dns import parse_dns_udp as _parse_dns_udp
 from .etherip import packet_parser as _etherip_parser
+from .ethernet import packet_parser as _ethernet_parser
 from .gre import packet_parser as _gre_parser
-from .mpls import packet_parser as _mpls_parser
-from .pseudowire import packet_parser as _pw_parser
-from .pppoe import packet_parser as _pppoe_parser
-from .ip import packet_parser as _ip_parser
-from .tcp import packet_parser as _tcp_parser
-from .udp import packet_parser as _udp_parser
 from .icmp import packet_parser as _icmp_parser
 from .icmpv6 import packet_parser as _icmpv6_parser
+from .ip import packet_parser as _ip_parser
+from .mpls import packet_parser as _mpls_parser
+from .pppoe import packet_parser as _pppoe_parser
+from .pseudowire import packet_parser as _pw_parser
 from .sctp import packet_parser as _sctp_parser
-from .dns import parse_dns_udp as _parse_dns_udp, parse_dns_tcp as _parse_dns_tcp
+from .tcp import packet_parser as _tcp_parser
+from .to_config import apply_tunneled, to_json_string, to_packet_spec, update_config
+from .udp import packet_parser as _udp_parser
+
 
 class UnsupportedIPProtocolWarning(UserWarning):
     """Emitted when an IP protocol number is not recognised by the parser.

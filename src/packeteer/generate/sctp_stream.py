@@ -71,17 +71,32 @@ import struct
 import time
 from dataclasses import dataclass
 
-from .builder import PacketBuilder
 from ._stream_common import (
-    _alloc_usec, _fragment_ip_raw, _payload_sizes, _pkt_usec, _repeat_payload,
+    _alloc_usec,
+    _fragment_ip_raw,
+    _payload_sizes,
+    _pkt_usec,
+    _repeat_payload,
 )
-from .stream_encap import (EncapSpec, StreamEncap,  # noqa: F401  (StreamEncap needed for Sphinx type resolution)
-                           _apply_encap, _encap_ip_start)
+from .builder import PacketBuilder
 from .sctp import (
-    SCTPDataChunk, SCTPInitChunk, SCTPInitAckChunk,
-    SCTPSackChunk, SCTPShutdownChunk, SCTPShutdownAckChunk,
-    SCTPCookieEchoChunk, SCTPCookieAckChunk, SCTPShutdownCompleteChunk,
-    SCTP_DATA_FLAG_BEGINNING, SCTP_DATA_FLAG_ENDING,
+    SCTP_DATA_FLAG_BEGINNING,
+    SCTP_DATA_FLAG_ENDING,
+    SCTPCookieAckChunk,
+    SCTPCookieEchoChunk,
+    SCTPDataChunk,
+    SCTPInitAckChunk,
+    SCTPInitChunk,
+    SCTPSackChunk,
+    SCTPShutdownAckChunk,
+    SCTPShutdownChunk,
+    SCTPShutdownCompleteChunk,
+)
+from .stream_encap import (  # noqa: F401  (StreamEncap needed for Sphinx type resolution)
+    EncapSpec,
+    StreamEncap,
+    _apply_encap,
+    _encap_ip_start,
 )
 
 _WRAP = 2 ** 32

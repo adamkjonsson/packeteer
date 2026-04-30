@@ -32,55 +32,113 @@ import argparse
 import configparser
 import json
 import sys
-from importlib.metadata import version as _pkg_version, PackageNotFoundError as _PkgNotFoundError
+from importlib.metadata import PackageNotFoundError as _PkgNotFoundError
+from importlib.metadata import version as _pkg_version
 from typing import Callable
+
+from packeteer.filter import PacketFilter
 from packeteer.generate import PacketBuilder
-from packeteer.generate.tcp import TCPOptions
+from packeteer.generate.dhcp import (
+    DHCP_OPT_CLIENT_ID,
+    DHCP_OPT_DNS_SERVER,
+    DHCP_OPT_DOMAIN_NAME,
+    DHCP_OPT_HOSTNAME,
+    DHCP_OPT_LEASE_TIME,
+    DHCP_OPT_MESSAGE_TYPE,
+    DHCP_OPT_PARAM_REQUEST_LIST,
+    DHCP_OPT_REQUESTED_IP,
+    DHCP_OPT_ROUTER,
+    DHCP_OPT_SERVER_ID,
+    DHCP_OPT_SUBNET_MASK,
+    DHCP_OPT_VENDOR_CLASS_ID,
+    DHCPMessage,
+    DHCPOpt,
+    DHCPOptClientID,
+    DHCPOptDNSServer,
+    DHCPOptDomainName,
+    DHCPOptHostname,
+    DHCPOptLeaseTime,
+    DHCPOptMessageType,
+    DHCPOptParamRequestList,
+    DHCPOptRaw,
+    DHCPOptRequestedIP,
+    DHCPOptRouter,
+    DHCPOptServerID,
+    DHCPOptSubnetMask,
+    DHCPOptVendorClassID,
+)
 from packeteer.generate.dns import (
-    DNS_TYPE_A, DNS_TYPE_NS, DNS_TYPE_CNAME, DNS_TYPE_SOA,
-    DNS_TYPE_PTR, DNS_TYPE_MX, DNS_TYPE_TXT, DNS_TYPE_AAAA,
     DNS_CLASS_IN,
-    DNSFlags, DNSMessage, DNSQuestion, DNSResourceRecord,
-    DNSRDataA, DNSRDataAAAA, DNSRDataCNAME, DNSRDataNS, DNSRDataPTR,
-    DNSRDataMX, DNSRDataSOA, DNSRDataTXT, DNSRDataRaw,
+    DNS_TYPE_A,
+    DNS_TYPE_AAAA,
+    DNS_TYPE_CNAME,
+    DNS_TYPE_MX,
+    DNS_TYPE_NS,
+    DNS_TYPE_PTR,
+    DNS_TYPE_SOA,
+    DNS_TYPE_TXT,
+    DNSFlags,
+    DNSMessage,
+    DNSQuestion,
+    DNSRDataA,
+    DNSRDataAAAA,
+    DNSRDataCNAME,
+    DNSRDataMX,
+    DNSRDataNS,
+    DNSRDataPTR,
+    DNSRDataRaw,
+    DNSRDataSOA,
+    DNSRDataTXT,
+    DNSResourceRecord,
 )
 from packeteer.generate.http import HTTPMessage, HTTPRequest, HTTPResponse
-from packeteer.generate.dhcp import (
-    DHCP_OPT_MESSAGE_TYPE, DHCP_OPT_SUBNET_MASK, DHCP_OPT_ROUTER,
-    DHCP_OPT_DNS_SERVER, DHCP_OPT_HOSTNAME, DHCP_OPT_DOMAIN_NAME,
-    DHCP_OPT_REQUESTED_IP, DHCP_OPT_LEASE_TIME, DHCP_OPT_SERVER_ID,
-    DHCP_OPT_PARAM_REQUEST_LIST, DHCP_OPT_VENDOR_CLASS_ID, DHCP_OPT_CLIENT_ID,
-    DHCPMessage,
-    DHCPOptMessageType, DHCPOptSubnetMask, DHCPOptRouter, DHCPOptDNSServer,
-    DHCPOptHostname, DHCPOptDomainName, DHCPOptRequestedIP, DHCPOptLeaseTime,
-    DHCPOptServerID, DHCPOptParamRequestList, DHCPOptVendorClassID,
-    DHCPOptClientID, DHCPOptRaw, DHCPOpt,
+from packeteer.generate.pppoe import PPPOE_CODE_SESSION, PPPoETag
+from packeteer.generate.sctp import (
+    SCTPAbortChunk,
+    SCTPChunk,
+    SCTPCookieAckChunk,
+    SCTPCookieEchoChunk,
+    SCTPDataChunk,
+    SCTPErrorChunk,
+    SCTPGenericChunk,
+    SCTPHeartbeatAckChunk,
+    SCTPHeartbeatChunk,
+    SCTPInitAckChunk,
+    SCTPInitChunk,
+    SCTPSackChunk,
+    SCTPShutdownAckChunk,
+    SCTPShutdownChunk,
+    SCTPShutdownCompleteChunk,
 )
-from packeteer.pcap import (
-    write_pcap, write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW, is_pcap_or_pcapng,
-)
-from packeteer.filter import PacketFilter
-from packeteer.generate.tcp_stream import generate_tcp_stream, TCPStreamConfig
-from packeteer.generate.udp_stream import generate_udp_stream
 from packeteer.generate.sctp_stream import generate_sctp_stream
 from packeteer.generate.stream_encap import (
-    StreamEncap, VLANEncap, QinQEncap, MPLSEncap, PPPoEEncap,
-    GREEncap, EtherIPEncap, IPIPEncap,
+    EtherIPEncap,
+    GREEncap,
+    IPIPEncap,
+    MPLSEncap,
+    PPPoEEncap,
+    QinQEncap,
+    StreamEncap,
+    VLANEncap,
 )
-from packeteer.generate.pppoe import PPPoETag, PPPOE_CODE_SESSION
-from packeteer.generate.sctp import (
-    SCTPDataChunk, SCTPInitChunk, SCTPInitAckChunk, SCTPSackChunk,
-    SCTPHeartbeatChunk, SCTPHeartbeatAckChunk, SCTPAbortChunk,
-    SCTPShutdownChunk, SCTPShutdownAckChunk, SCTPErrorChunk,
-    SCTPCookieEchoChunk, SCTPCookieAckChunk, SCTPShutdownCompleteChunk,
-    SCTPGenericChunk, SCTPChunk,
-)
-from packeteer.parse.core import parse_pcap_file, parse_packet
+from packeteer.generate.tcp import TCPOptions
+from packeteer.generate.tcp_stream import TCPStreamConfig, generate_tcp_stream
+from packeteer.generate.udp_stream import generate_udp_stream
+from packeteer.parse.core import parse_packet, parse_pcap_file
 from packeteer.parse.to_config import (
-    update_config, to_packet_spec, to_json_string, apply_tunneled,
+    apply_tunneled,
+    to_json_string,
+    to_packet_spec,
+    update_config,
+)
+from packeteer.pcap import (
+    LINKTYPE_ETHERNET,
+    LINKTYPE_RAW,
+    is_pcap_or_pcapng,
+    write_pcap,
+    write_pcapng,
 )
 from packeteer.sanitise import SanitiseOptions, sanitise
-
 
 _DNSRData = (
     DNSRDataA | DNSRDataAAAA | DNSRDataCNAME | DNSRDataNS | DNSRDataPTR

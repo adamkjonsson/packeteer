@@ -4,8 +4,14 @@ import struct
 import unittest
 
 from packeteer.generate.tcp import (
-    TCPHeader, TCPOptions, _build_tcp_header,
-    TCP_SYN, TCP_ACK, TCP_FIN, TCP_RST, TCP_PSH,
+    TCP_ACK,
+    TCP_FIN,
+    TCP_PSH,
+    TCP_RST,
+    TCP_SYN,
+    TCPHeader,
+    TCPOptions,
+    _build_tcp_header,
 )
 from packeteer.parse.tcp import packet_parser
 

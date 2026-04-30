@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import struct
 import unittest
+
 from packeteer.generate import PacketBuilder
 
 

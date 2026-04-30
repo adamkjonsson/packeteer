@@ -27,16 +27,24 @@ from __future__ import annotations
 
 import random
 import time
-from dataclasses import dataclass, replace
 from collections.abc import Callable
+from dataclasses import dataclass, replace
 
-from .builder import PacketBuilder
 from ._stream_common import (
-    _alloc_usec, _fragment_ip_raw, _payload_sizes, _pkt_usec, _repeat_payload,
+    _alloc_usec,
+    _fragment_ip_raw,
+    _payload_sizes,
+    _pkt_usec,
+    _repeat_payload,
 )
-from .stream_encap import (EncapSpec, StreamEncap,  # noqa: F401  (StreamEncap needed for Sphinx type resolution)
-                           _apply_encap, _encap_ip_start)
-from .tcp import TCPOptions, TCP_SYN, TCP_ACK, TCP_PSH, TCP_FIN, TCP_RST
+from .builder import PacketBuilder
+from .stream_encap import (  # noqa: F401  (StreamEncap needed for Sphinx type resolution)
+    EncapSpec,
+    StreamEncap,
+    _apply_encap,
+    _encap_ip_start,
+)
+from .tcp import TCP_ACK, TCP_FIN, TCP_PSH, TCP_RST, TCP_SYN, TCPOptions
 
 _WRAP = 2 ** 32
 

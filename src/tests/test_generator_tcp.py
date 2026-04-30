@@ -1,13 +1,23 @@
 from __future__ import annotations
 
-import struct
 import socket
+import struct
 import unittest
-from packeteer.generate.tcp import (
-    TCPHeader, TCPOptions, _build_tcp_header,
-    TCP_FIN, TCP_SYN, TCP_RST, TCP_PSH, TCP_ACK, TCP_URG, TCP_ECE, TCP_CWR,
-)
+
 from packeteer.generate.checksum import ones_complement_checksum
+from packeteer.generate.tcp import (
+    TCP_ACK,
+    TCP_CWR,
+    TCP_ECE,
+    TCP_FIN,
+    TCP_PSH,
+    TCP_RST,
+    TCP_SYN,
+    TCP_URG,
+    TCPHeader,
+    TCPOptions,
+    _build_tcp_header,
+)
 
 
 def _verify_tcp_checksum_v4(src_ip: str, dst_ip: str, tcp_bytes: bytes, payload: bytes) -> int:

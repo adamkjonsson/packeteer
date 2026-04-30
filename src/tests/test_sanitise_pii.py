@@ -7,17 +7,16 @@ import warnings
 from typing import Any
 
 from packeteer.generate import PacketBuilder
-from packeteer.pcap import write_pcap
 from packeteer.parse import parse_pcap_file
+from packeteer.pcap import write_pcap
 from packeteer.sanitise import (
     PersonalDataWarning,
     SanitiseOptions,
-    sanitise,
     _excerpt,
     _scan_emails,
     _scan_names,
+    sanitise,
 )
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

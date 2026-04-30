@@ -4,7 +4,7 @@ import io
 import struct
 import unittest
 
-from packeteer.pcap import write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW
+from packeteer.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW, write_pcapng
 
 _SHB_TYPE = 0x0A0D0D0A
 _IDB_TYPE = 0x00000001

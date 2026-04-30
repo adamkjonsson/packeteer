@@ -32,13 +32,20 @@ import random
 import time
 from dataclasses import dataclass
 
-from .builder import PacketBuilder
 from ._stream_common import (
-    _alloc_usec, _fragment_ip_raw, _payload_sizes, _pkt_usec, _repeat_payload,
+    _alloc_usec,
+    _fragment_ip_raw,
+    _payload_sizes,
+    _pkt_usec,
+    _repeat_payload,
 )
-from .stream_encap import (EncapSpec, StreamEncap,  # noqa: F401  (StreamEncap needed for Sphinx type resolution)
-                           _apply_encap, _encap_ip_start)
-
+from .builder import PacketBuilder
+from .stream_encap import (  # noqa: F401  (StreamEncap needed for Sphinx type resolution)
+    EncapSpec,
+    StreamEncap,
+    _apply_encap,
+    _encap_ip_start,
+)
 
 # ── Data model ────────────────────────────────────────────────────────────────
 

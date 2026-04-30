@@ -3,14 +3,13 @@ from __future__ import annotations
 import unittest
 
 from packeteer.generate.ethernet import (
+    ETHERTYPE_IPV4,
+    ETHERTYPE_IPV6,
     EthernetHeader,
     VLANTag,
     _build_ethernet_header,
-    ETHERTYPE_IPV4,
-    ETHERTYPE_IPV6,
 )
 from packeteer.parse.ethernet import packet_parser
-
 
 DST = "aa:bb:cc:dd:ee:ff"
 SRC = "11:22:33:44:55:66"

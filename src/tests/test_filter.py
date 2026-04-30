@@ -11,9 +11,7 @@ from typing import Any
 
 from packeteer.filter import PacketFilter
 from packeteer.generate import PacketBuilder
-
-from packeteer.pcap import write_pcap, LINKTYPE_ETHERNET
-
+from packeteer.pcap import LINKTYPE_ETHERNET, write_pcap
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 

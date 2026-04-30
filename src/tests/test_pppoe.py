@@ -6,18 +6,24 @@ import unittest
 
 from packeteer.generate import PacketBuilder
 from packeteer.generate.pppoe import (
-    PPPoEHeader, PPPoETag,
-    ETHERTYPE_PPPOE_DISCOVERY, ETHERTYPE_PPPOE_SESSION,
-    PPP_IPV4, PPP_IPV6,
-    PPPOE_CODE_SESSION, PPPOE_CODE_PADI, PPPOE_CODE_PADO,
-    PPPOE_CODE_PADS, PPPOE_CODE_PADT,
-    PPPOE_TAG_SERVICE_NAME, PPPOE_TAG_HOST_UNIQ,
+    ETHERTYPE_PPPOE_DISCOVERY,
+    ETHERTYPE_PPPOE_SESSION,
+    PPP_IPV4,
+    PPP_IPV6,
+    PPPOE_CODE_PADI,
+    PPPOE_CODE_PADO,
+    PPPOE_CODE_PADS,
+    PPPOE_CODE_PADT,
+    PPPOE_CODE_SESSION,
+    PPPOE_TAG_HOST_UNIQ,
+    PPPOE_TAG_SERVICE_NAME,
+    PPPoEHeader,
+    PPPoETag,
     _build_pppoe_header,
 )
-from packeteer.parse.pppoe import packet_parser as pppoe_packet_parser
 from packeteer.parse.core import parse_packet
+from packeteer.parse.pppoe import packet_parser as pppoe_packet_parser
 from packeteer.pcap import LINKTYPE_ETHERNET
-
 
 # ── _build_pppoe_header unit tests ─────────────────────────────────────────────
 

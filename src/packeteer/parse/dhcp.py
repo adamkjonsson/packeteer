@@ -25,6 +25,7 @@ from packeteer.generate.dhcp import (
     DHCP_OPT_SUBNET_MASK,
     DHCP_OPT_VENDOR_CLASS_ID,
     DHCPMessage,
+    DHCPOpt,
     DHCPOptClientID,
     DHCPOptDNSServer,
     DHCPOptDomainName,
@@ -38,7 +39,6 @@ from packeteer.generate.dhcp import (
     DHCPOptServerID,
     DHCPOptSubnetMask,
     DHCPOptVendorClassID,
-    DHCPOpt,
 )
 
 # Minimum valid DHCP message: 236-byte fixed header + 4-byte magic cookie + END.

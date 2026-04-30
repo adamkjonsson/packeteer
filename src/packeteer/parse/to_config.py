@@ -45,23 +45,34 @@ from typing import TYPE_CHECKING, Any, Callable
 if TYPE_CHECKING:
     from .core import ParsedPacket
 
-from packeteer.generate.ethernet import EthernetHeader
-from packeteer.generate.etherip import EtherIPHeader, IPPROTO_ETHERIP
-from packeteer.generate.gre import GREHeader
-from packeteer.generate.pseudowire import PseudowireHeader
-from packeteer.generate.ip import IPHeader
-from packeteer.generate.ipv6 import (
-    IPv6Header,
-    RouterAlertOption,
-    JumboPayloadOption,
-    RawOption,
+from packeteer.generate.dhcp import (
+    DHCP_OPT_CLIENT_ID,
+    DHCP_OPT_DNS_SERVER,
+    DHCP_OPT_DOMAIN_NAME,
+    DHCP_OPT_HOSTNAME,
+    DHCP_OPT_LEASE_TIME,
+    DHCP_OPT_MESSAGE_TYPE,
+    DHCP_OPT_PARAM_REQUEST_LIST,
+    DHCP_OPT_REQUESTED_IP,
+    DHCP_OPT_ROUTER,
+    DHCP_OPT_SERVER_ID,
+    DHCP_OPT_SUBNET_MASK,
+    DHCP_OPT_VENDOR_CLASS_ID,
+    DHCPMessage,
+    DHCPOptClientID,
+    DHCPOptDNSServer,
+    DHCPOptDomainName,
+    DHCPOptHostname,
+    DHCPOptLeaseTime,
+    DHCPOptMessageType,
+    DHCPOptParamRequestList,
+    DHCPOptRaw,
+    DHCPOptRequestedIP,
+    DHCPOptRouter,
+    DHCPOptServerID,
+    DHCPOptSubnetMask,
+    DHCPOptVendorClassID,
 )
-from packeteer.generate.mpls import MPLSLabel
-from packeteer.generate.pppoe import PPPoEHeader, PPPOE_CODE_SESSION
-from packeteer.generate.tcp import TCPHeader, TCPOptions
-from packeteer.generate.udp import UDPHeader
-from packeteer.generate.icmp import ICMPHeader
-from packeteer.generate.icmpv6 import ICMPv6Header
 from packeteer.generate.dns import (
     DNSMessage,
     DNSRDataA,
@@ -74,52 +85,41 @@ from packeteer.generate.dns import (
     DNSRDataSOA,
     DNSRDataTXT,
 )
-from packeteer.generate.sctp import (
-    SCTPHeader,
-    SCTPDataChunk,
-    SCTPInitChunk,
-    SCTPInitAckChunk,
-    SCTPSackChunk,
-    SCTPHeartbeatChunk,
-    SCTPHeartbeatAckChunk,
-    SCTPAbortChunk,
-    SCTPShutdownChunk,
-    SCTPShutdownAckChunk,
-    SCTPErrorChunk,
-    SCTPCookieEchoChunk,
-    SCTPCookieAckChunk,
-    SCTPShutdownCompleteChunk,
-    SCTPChunk,
-)
-from packeteer.generate.dhcp import (
-    DHCPMessage,
-    DHCPOptMessageType,
-    DHCPOptSubnetMask,
-    DHCPOptRouter,
-    DHCPOptDNSServer,
-    DHCPOptHostname,
-    DHCPOptDomainName,
-    DHCPOptRequestedIP,
-    DHCPOptLeaseTime,
-    DHCPOptServerID,
-    DHCPOptParamRequestList,
-    DHCPOptVendorClassID,
-    DHCPOptClientID,
-    DHCPOptRaw,
-    DHCP_OPT_MESSAGE_TYPE,
-    DHCP_OPT_SUBNET_MASK,
-    DHCP_OPT_ROUTER,
-    DHCP_OPT_DNS_SERVER,
-    DHCP_OPT_HOSTNAME,
-    DHCP_OPT_DOMAIN_NAME,
-    DHCP_OPT_REQUESTED_IP,
-    DHCP_OPT_LEASE_TIME,
-    DHCP_OPT_SERVER_ID,
-    DHCP_OPT_PARAM_REQUEST_LIST,
-    DHCP_OPT_VENDOR_CLASS_ID,
-    DHCP_OPT_CLIENT_ID,
-)
+from packeteer.generate.etherip import IPPROTO_ETHERIP, EtherIPHeader
+from packeteer.generate.ethernet import EthernetHeader
+from packeteer.generate.gre import GREHeader
 from packeteer.generate.http import HTTPMessage, HTTPRequest, HTTPResponse
+from packeteer.generate.icmp import ICMPHeader
+from packeteer.generate.icmpv6 import ICMPv6Header
+from packeteer.generate.ip import IPHeader
+from packeteer.generate.ipv6 import (
+    IPv6Header,
+    JumboPayloadOption,
+    RawOption,
+    RouterAlertOption,
+)
+from packeteer.generate.mpls import MPLSLabel
+from packeteer.generate.pppoe import PPPOE_CODE_SESSION, PPPoEHeader
+from packeteer.generate.pseudowire import PseudowireHeader
+from packeteer.generate.sctp import (
+    SCTPAbortChunk,
+    SCTPChunk,
+    SCTPCookieAckChunk,
+    SCTPCookieEchoChunk,
+    SCTPDataChunk,
+    SCTPErrorChunk,
+    SCTPHeader,
+    SCTPHeartbeatAckChunk,
+    SCTPHeartbeatChunk,
+    SCTPInitAckChunk,
+    SCTPInitChunk,
+    SCTPSackChunk,
+    SCTPShutdownAckChunk,
+    SCTPShutdownChunk,
+    SCTPShutdownCompleteChunk,
+)
+from packeteer.generate.tcp import TCPHeader, TCPOptions
+from packeteer.generate.udp import UDPHeader
 
 _PROTO_TO_STR: dict[int, str] = {
     socket.IPPROTO_TCP:      "tcp",       # 6

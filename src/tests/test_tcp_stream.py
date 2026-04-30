@@ -1,16 +1,19 @@
 """Tests for packeteer.generate.tcp_stream — TCP stream generation."""
 from __future__ import annotations
 
+import dataclasses
 import io
 import unittest
 
-import dataclasses
-
+from packeteer.generate.tcp import TCP_ACK, TCP_FIN, TCP_PSH, TCP_SYN, TCPOptions
 from packeteer.generate.tcp_stream import (
-    generate_tcp_stream, TCPStream, TCPStreamConfig, TCPStreamPacket, _pkt_usec,
+    TCPStream,
+    TCPStreamConfig,
+    TCPStreamPacket,
+    _pkt_usec,
+    generate_tcp_stream,
 )
-from packeteer.generate.tcp import TCP_SYN, TCP_ACK, TCP_PSH, TCP_FIN, TCPOptions
-from packeteer.pcap import write_pcap, LINKTYPE_ETHERNET
+from packeteer.pcap import LINKTYPE_ETHERNET, write_pcap
 
 _WRAP = 2 ** 32
 
@@ -648,7 +651,7 @@ class TestServerRst(unittest.TestCase):
         self.assertEqual(rst.direction, "s2c")
 
     def test_rst_flags(self):
-        from packeteer.generate.tcp import TCP_RST, TCP_ACK
+        from packeteer.generate.tcp import TCP_ACK, TCP_RST
         stream = self._rst_stream()
         rst = next(p for p in stream.packets if p.label == "RST")
         self.assertEqual(rst.flags, TCP_RST | TCP_ACK)

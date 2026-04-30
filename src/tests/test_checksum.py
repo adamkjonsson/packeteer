@@ -1,4 +1,5 @@
 import unittest
+
 from packeteer.generate.checksum import ones_complement_checksum
 
 

@@ -557,7 +557,7 @@ class TestSanitiseDHCP(unittest.TestCase):
         self.assertNotEqual(result["packets"][0]["dhcp"]["chaddr"][:12], "aabbccddeeff")
 
     def test_chaddr_not_replaced_with_macs_false(self) -> None:
-        from packeteer.sanitise import sanitise, SanitiseOptions
+        from packeteer.sanitise import SanitiseOptions, sanitise
         result = sanitise(self._spec(), SanitiseOptions(macs=False))
         self.assertEqual(result["packets"][0]["dhcp"]["chaddr"][:12], "aabbccddeeff")
 
@@ -594,7 +594,7 @@ class TestSanitiseDHCP(unittest.TestCase):
         self.assertEqual(result["packets"][0]["dhcp"]["xid"], 0xDEADBEEF)
 
     def test_xid_zeroed_with_dhcp_xids_option(self) -> None:
-        from packeteer.sanitise import sanitise, SanitiseOptions
+        from packeteer.sanitise import SanitiseOptions, sanitise
         result = sanitise(self._spec(), SanitiseOptions(dhcp_xids=True))
         self.assertEqual(result["packets"][0]["dhcp"]["xid"], 0)
 
@@ -615,7 +615,7 @@ class TestSanitiseDHCP(unittest.TestCase):
         self.assertEqual(d["siaddr"], srv_opt["address"])
 
     def test_no_ips_skips_option_ips(self) -> None:
-        from packeteer.sanitise import sanitise, SanitiseOptions
+        from packeteer.sanitise import SanitiseOptions, sanitise
         result = sanitise(self._spec(), SanitiseOptions(ips=False))
         router_opt = next(
             o for o in result["packets"][0]["dhcp"]["options"]
@@ -626,8 +626,9 @@ class TestSanitiseDHCP(unittest.TestCase):
 
 class TestCLIDHCPXids(unittest.TestCase):
     def test_dhcp_xids_flag_zeros_xid(self) -> None:
-        import tempfile
         import os
+        import tempfile
+
         from packeteer.__main__ import _cmd_sanitise
         config = {
             "packets": [{
