@@ -465,8 +465,15 @@ def _apply_pseudowire(
     config["pseudowire"] = inner
 
 
+def _is_printable_ascii(data: bytes) -> bool:
+    return bool(data) and all(0x20 <= b <= 0x7E for b in data)
+
+
 def _apply_payload(config: dict[str, Any], payload: bytes) -> None:
-    config["payload"] = {"data": payload.hex()}
+    if _is_printable_ascii(payload):
+        config["payload"] = {"data": payload.decode("ascii"), "encoding": "utf8"}
+    else:
+        config["payload"] = {"data": payload.hex()}
 
 
 def _serialise_dns_rdata(rdata: object) -> dict[str, Any]:

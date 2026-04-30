@@ -54,7 +54,7 @@ are simply omitted.
 | `ipip` | IP-in-IP tunnel inner spec (`network.protocol = "ipip"`) |
 | `gre` | GRE tunnel inner spec (`network.protocol = "gre"`) |
 | `pseudowire` | RFC 4385 control word + inner frame; placed after `mpls`, no outer `network` key required |
-| `payload` | Raw bytes — `"size"` for random or `"data"` for a hex string |
+| `payload` | Raw bytes — `"size"` for random, or `"data"` with optional `"encoding"` (`"hex"` default or `"utf8"`) |
 
 See {doc}`../packet-spec/format` for the complete field reference for every
 layer.

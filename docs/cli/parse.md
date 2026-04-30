@@ -68,7 +68,7 @@ to the outer layer only.
 | DNS | `dns` | UDP/TCP port 53 and 5353 (mDNS) |
 | DHCP | `dhcp` | UDP ports 67 and 68 |
 | HTTP/1.x | `http` | TCP ports 80 and 8080 |
-| Payload | `payload` | Remaining bytes as a hex string |
+| Payload | `payload` | Remaining bytes — hex string, or a UTF-8 string with `"encoding": "utf8"` for printable ASCII payloads |
 
 Checksums are read from the wire but not stored; they are recomputed on
 rebuild.
@@ -87,7 +87,7 @@ in 'capture.pcap'. Bytes after each IP header are stored in the payload field.
 
 Those packets still appear in the output.  The `network.protocol` field
 contains the raw integer (`"protocol": 89`) instead of a name string, and
-the bytes after the IP header are stored as a hex string in `payload.data`.
+the bytes after the IP header are stored in `payload.data` (hex-encoded, since unsupported-protocol payloads are binary).
 
 ## Output format
 

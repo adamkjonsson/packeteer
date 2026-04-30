@@ -242,13 +242,20 @@ class TestUpdateConfigPayload(unittest.TestCase):
         cfg = update_config({}, b"\xde\xad\xbe\xef")
         self.assertEqual(cfg["payload"]["data"], "deadbeef")
 
-    def test_empty_payload(self):
-        cfg = update_config({}, b"")
-        self.assertEqual(cfg["payload"]["data"], "")
-
-    def test_ascii_payload(self):
+    def test_ascii_payload_uses_utf8_encoding(self):
         cfg = update_config({}, b"Hello")
-        self.assertEqual(cfg["payload"]["data"], "48656c6c6f")
+        self.assertEqual(cfg["payload"]["data"], "Hello")
+        self.assertEqual(cfg["payload"]["encoding"], "utf8")
+
+    def test_non_printable_payload_uses_hex(self):
+        cfg = update_config({}, b"\x00\x01\x02")
+        self.assertEqual(cfg["payload"]["data"], "000102")
+        self.assertNotIn("encoding", cfg["payload"])
+
+    def test_empty_payload_uses_hex(self):
+        # empty bytes are not "printable", so hex encoding is used
+        cfg = update_config({}, b"")
+        self.assertNotIn("encoding", cfg["payload"])
 
 
 class TestUpdateConfigTypeError(unittest.TestCase):

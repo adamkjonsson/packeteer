@@ -18,7 +18,7 @@ in a packet spec dict with synthetic but structurally valid equivalents.
   | IPv6 | `2001:db8::/32` (RFC 3849): allocated as `2001:db8::<n+1>` |
   | MAC | Locally-administered unicast: `02:00:00:<b2>:<b1>:<b0>` |
   | Port | 10 000–59 999 (sequential allocation) |
-  | Payload | Zero-filled hex string of the same byte length |
+  | Payload | Zero-filled hex string of the same byte length; `"encoding"` key removed (zeroed bytes are not printable text) |
   | DNS names | Each label replaced with `label0`, `label1`, … (consistent within a call); A/AAAA RDATA addresses replaced via the IP replacer |
   | DNS id | 16-bit transaction id zeroed (opt-in: `dns_ids=True`) |
   | DHCP XIDs | 32-bit `xid` field zeroed (opt-in: `dhcp_xids=True`); IP fields and IP-valued options replaced via the IP replacer; `chaddr` replaced via the MAC replacer |
@@ -55,7 +55,7 @@ already a deep copy at this point):
 1. Replace MAC addresses in the `"ethernet"` section.
 2. Replace IP addresses in the `"network"` section.
 3. Optionally replace ports in `"transport"`.
-4. Optionally zero out `"payload.data"` (hex string, length preserved).
+4. Optionally zero out `"payload.data"` (byte length preserved; for UTF-8 payloads the byte count is derived from the string, and the `"encoding"` key is removed from the result).
 5. Optionally zero `"packet_metadata"` timestamps.
 6. For each tunnel key (`"ipip"`, `"gre"`, `"etherip"`): call
    `_sanitise_ethernet` on the inner `"ethernet"` section (if present), then

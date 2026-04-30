@@ -50,7 +50,7 @@ from packeteer.sanitise import sanitise, SanitiseOptions
 # Zero port numbers too
 clean = sanitise(spec, SanitiseOptions(ports=True))
 
-# Zero payload bytes (same length preserved)
+# Zero payload bytes (same byte length preserved; encoding field removed)
 clean = sanitise(spec, SanitiseOptions(payload=True))
 
 # Zero all timestamps
