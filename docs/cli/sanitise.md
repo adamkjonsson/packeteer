@@ -45,13 +45,19 @@ Replacements are **consistent within a single run**: the same original value
 always maps to the same synthetic value across all packets and tunnel nesting
 levels.
 
-## Unsupported IP protocol numbers
+## Application-layer sanitisation
 
-When the input is a pcap or pcapng file, `packeteer sanitise` parses it
-the same way as `packeteer parse`.  If any packet carries an IP protocol
-number that is not recognised, the same consolidated warning is printed to
-stderr — one line per unique protocol, with the packet count and file name.
-See {doc}`parse` for details.
+**DNS** — applied automatically when a `dns` section is present.  Domain name
+labels are replaced consistently (`label0`, `label1`, …); A/AAAA RDATA
+addresses use the same replacement pool as IP headers.
+
+**DHCP** — applied automatically when a `dhcp` section is present.  IP fields
+(`ciaddr`, `yiaddr`, `siaddr`, `giaddr`) and `chaddr` (MAC portion) are
+replaced.
+
+**HTTP** — header values are kept by default.  Add `--http-headers` to redact
+the values of `Host`, `Cookie`, `Set-Cookie`, `Authorization`, `Location`,
+`Referer`, and `Origin`.
 
 ## PII scanning
 
@@ -82,19 +88,13 @@ PII scanning is **off by default** and has no effect on the sanitised output.
 Protocol names, TCP flags, window size, sequence numbers, TTL, DSCP, VLAN
 IDs, MPLS labels, GRE keys, packet count and order.
 
-## Application-layer sanitisation
+## Unsupported IP protocol numbers
 
-**DNS** — applied automatically when a `dns` section is present.  Domain name
-labels are replaced consistently (`label0`, `label1`, …); A/AAAA RDATA
-addresses use the same replacement pool as IP headers.
-
-**DHCP** — applied automatically when a `dhcp` section is present.  IP fields
-(`ciaddr`, `yiaddr`, `siaddr`, `giaddr`) and `chaddr` (MAC portion) are
-replaced.
-
-**HTTP** — header values are kept by default.  Add `--http-headers` to redact
-the values of `Host`, `Cookie`, `Set-Cookie`, `Authorization`, `Location`,
-`Referer`, and `Origin`.
+When the input is a pcap or pcapng file, `packeteer sanitise` parses it
+the same way as `packeteer parse`.  If any packet carries an IP protocol
+number that is not recognised, the same consolidated warning is printed to
+stderr — one line per unique protocol, with the packet count and file name.
+See {doc}`parse` for details.
 
 ## Examples
 

@@ -27,10 +27,10 @@ dict; the CLI simply drives them from the command line.
     |  to_config.py       |  | PacketFilter|  |  tcp_stream.py ...   |
     +----------+----------+  +-------------+  +----------+-----------+
                |                                         |
-    +----------v----------+                  +-----------v----------+
-    |  Parsed header      |                  |  Raw packet bytes    |
-    |  dataclasses        |                  |  (to pcap / pcapng)  |
-    +---------------------+                  +----------------------+
+    +----------v----------+                   +-----------v----------+
+    |  Parsed header      |                   |  Raw packet bytes    |
+    |  dataclasses        |                   |  (to pcap / pcapng)  |
+    +---------------------+                   +----------------------+
 ```
 
 **`packeteer.parse`** reads raw bytes and produces `ParsedPacket` objects, which
