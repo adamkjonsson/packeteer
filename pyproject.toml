@@ -10,7 +10,7 @@ description = "Pure-Python library for building, parsing, and sanitising raw net
 authors = [ { name = "Adam Jonsson", email = "adam.jonsson@live.se"} ]
 readme = "README.md"
 classifiers = [ 
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 3 - Beta",
     "Intended Audience :: Developers",
     "Topic :: Software Development :: Network Analysis",
     "Programming Language :: Python :: 3.10" ]

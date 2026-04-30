@@ -66,8 +66,8 @@ All notable changes to packeteer are recorded in this file.
     parsing, round-trips, `PacketBuilder` integration, and config serialisation
     (1529 total).
 
-- **PII scanning in UTF-8 payloads** (`sanitise --scan-pii`) — `sanitise` can
-  now scan every UTF-8 encoded payload for email addresses and personal names
+- **PII scanning in UTF-8 payloads** — `sanitise` now by default
+  scans every UTF-8 encoded payload for email addresses and personal names
   and emit a warning for each unique finding.
 
   - New public class `PersonalDataWarning(UserWarning)` exported from
@@ -87,7 +87,7 @@ All notable changes to packeteer are recorded in this file.
       `contact:`, `full_name:`).
   - `SanitiseOptions` gains a new boolean field `scan_pii` (default `False`).
     Opt-in only — existing calls are unaffected.
-  - New `--scan-pii` flag added to `packeteer sanitise`.  The flag does not
+  - New `--scan-pii` and `--no-scan-pii` flags added to `packeteer sanitise`.  The flags do not
     modify the output; combine with `--payload` to also zero the payloads.
   - Only `"utf8"` encoded payloads are scanned; hex payloads are never
     inspected.
