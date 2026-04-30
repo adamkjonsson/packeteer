@@ -46,9 +46,189 @@ from __future__ import annotations
 
 import copy
 import ipaddress
+import re
+import warnings
 from dataclasses import dataclass, field
+from typing import Any
 
-__all__ = ["sanitise", "SanitiseOptions"]
+__all__ = ["sanitise", "SanitiseOptions", "PersonalDataWarning"]
+
+
+class PersonalDataWarning(UserWarning):
+    """Emitted when a possible personal data item is found in a UTF-8 payload.
+
+    The :attr:`kind`, :attr:`match`, :attr:`text`, and :attr:`packet_num`
+    attributes give machine-readable access to the finding without parsing the
+    message string.
+
+    Attributes:
+        kind: ``"email"`` or ``"name"``.
+        match: The matched text with up to 40 characters of surrounding context.
+        text: The matched text itself, without surrounding context (used for
+            consolidation across packets).
+        packet_num: The 1-based index of the packet in the spec or capture file.
+
+    Example::
+
+        import warnings
+        from packeteer.sanitise import sanitise, SanitiseOptions, PersonalDataWarning
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            sanitise(spec, SanitiseOptions(scan_pii=True))
+
+        for w in caught:
+            if issubclass(w.category, PersonalDataWarning):
+                print(w.message.kind, w.message.text, "in packet", w.message.packet_num)
+
+    """
+
+    kind:       str
+    match:      str
+    text:       str
+    packet_num: int
+
+    def __init__(
+        self, message: str, kind: str, match: str, text: str, packet_num: int,
+    ) -> None:
+        super().__init__(message)
+        self.kind = kind
+        self.match = match
+        self.text = text
+        self.packet_num = packet_num
+
+
+# ── PII detection patterns ────────────────────────────────────────────────────
+
+_EMAIL_RE = re.compile(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}')
+
+# Tier 1: RFC 5322 display names immediately before <email@domain>.
+# Group 1 = quoted name ("Alice Smith"), group 2 = 2-3 unquoted title-case words.
+_RFC5322_NAME_RE = re.compile(
+    r'(?:"([^"]{2,60})"'
+    r'|([A-Z][a-z]{1,20}(?:\s+[A-Z][a-z]{1,20}){1,2}))'
+    r'(?=\s*<[a-zA-Z0-9._%+\-]+@)',
+)
+
+# Tier 2: structured field labels preceding 2-3 title-case words.
+# full_name / full-name before bare "name" so the longer form is preferred.
+_LABEL_NAME_RE = re.compile(
+    r'(?<![a-zA-Z0-9_])'
+    r'(?:full[_\-]?name|name|contact|recipient|sender|from|to)'
+    r'\s*[=:]\s*'
+    r'([A-Z][a-z]{1,20}(?:[ \t]+[A-Z][a-z]{1,20}){1,2})',
+    re.IGNORECASE,
+)
+
+
+def _excerpt(text: str, start: int, end: int, context: int = 40) -> str:
+    """Return the match at ``[start:end]`` with up to *context* surrounding chars."""
+    left_start = max(0, start - context)
+    right_end  = min(len(text), end + context)
+    prefix = "…" if left_start > 0 else ""
+    suffix = "…" if right_end < len(text) else ""
+    return f"{prefix}{text[left_start:right_end]}{suffix}"
+
+
+def _scan_emails(text: str) -> list[tuple[str, int, int]]:
+    """Return ``(email, start, end)`` for each email address found in *text*."""
+    return [(m.group(), m.start(), m.end()) for m in _EMAIL_RE.finditer(text)]
+
+
+def _scan_names(text: str) -> list[tuple[str, int, int]]:
+    """Return ``(name, start, end)`` for potential personal names in *text*.
+
+    Applies two tiers:
+
+    * **Tier 1** — RFC 5322 display names directly before ``<email@domain>``.
+    * **Tier 2** — 2–3 consecutive title-case words after a recognised field
+      label (``name:``, ``from:``, ``recipient:``, etc.).
+
+    """
+    results: list[tuple[str, int, int]] = []
+    for m in _RFC5322_NAME_RE.finditer(text):
+        if m.group(1) is not None:
+            results.append((m.group(1), m.start(1), m.end(1)))
+        else:
+            results.append((m.group(2), m.start(2), m.end(2)))
+    for m in _LABEL_NAME_RE.finditer(text):
+        results.append((m.group(1), m.start(1), m.end(1)))
+    return results
+
+
+def _scan_utf8_payload(pl: dict[str, Any], packet_num: int) -> None:
+    """Emit :class:`PersonalDataWarning` for PII found in *pl* (a utf8 payload dict)."""
+    text = pl.get("data")
+    if not isinstance(text, str):
+        return
+    seen: set[tuple[str, str]] = set()
+    for email, start, end in _scan_emails(text):
+        key: tuple[str, str] = ("email", email.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        excerpt = _excerpt(text, start, end)
+        warnings.warn(
+            PersonalDataWarning(
+                f"Possible email address in packet {packet_num} payload: {excerpt!r}",
+                kind="email",
+                match=excerpt,
+                text=email,
+                packet_num=packet_num,
+            ),
+            stacklevel=2,
+        )
+    for name, start, end in _scan_names(text):
+        key = ("name", name.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        excerpt = _excerpt(text, start, end)
+        warnings.warn(
+            PersonalDataWarning(
+                f"Possible name in packet {packet_num} payload: {excerpt!r}",
+                kind="name",
+                match=excerpt,
+                text=name,
+                packet_num=packet_num,
+            ),
+            stacklevel=2,
+        )
+
+
+def _consolidate_pii_warnings(caught: list, path: str | None = None) -> None:
+    """Re-emit non-PII warnings unchanged; consolidate PII warnings into one per finding."""
+    # groups maps (kind, text) -> [first_excerpt, [packet_num, ...]]
+    groups: dict[tuple[str, str], list] = {}
+    for w in caught:
+        if issubclass(w.category, PersonalDataWarning):
+            assert isinstance(w.message, PersonalDataWarning)
+            key = (w.message.kind, w.message.text)
+            if key not in groups:
+                groups[key] = [w.message.match, []]
+            groups[key][1].append(w.message.packet_num)
+        else:
+            warnings.warn_explicit(
+                w.message, w.category, w.filename, w.lineno, source=w.source,
+            )
+    file_hint = f" in {path!r}" if path is not None else ""
+    for (kind, text), (first_excerpt, packet_nums) in sorted(groups.items()):
+        unique_nums = sorted(set(packet_nums))
+        n = len(unique_nums)
+        pkt_str = ", ".join(str(p) for p in unique_nums)
+        kind_str = "email address" if kind == "email" else "name"
+        count_str = f"{n} packet{'s' if n != 1 else ''}"
+        warnings.warn(
+            PersonalDataWarning(
+                f"Possible {kind_str} found in {count_str}{file_hint} "
+                f"(packet_num {pkt_str}): {first_excerpt!r}",
+                kind=kind,
+                match=first_excerpt,
+                text=text,
+                packet_num=unique_nums[0],
+            ),
+            stacklevel=3,
+        )
 
 # ── RFC 5737 IPv4 documentation blocks ───────────────────────────────────────
 
@@ -124,6 +304,12 @@ class SanitiseOptions:
             ``Location``, ``Referer``, ``Origin``.  Non-sensitive structural
             headers (``Content-Type``, ``Content-Length``, etc.) are left
             unchanged.
+        scan_pii: Scan UTF-8 encoded payloads for potential personal data and
+            emit a :class:`PersonalDataWarning` for each finding.  Only
+            payloads with ``"encoding": "utf8"`` are scanned; hex payloads
+            are not.  Detected items: email addresses (regex) and personal
+            names (RFC 5322 display names and field-label patterns such as
+            ``name: Alice Smith``).  The packet spec is not modified.
 
     """
 
@@ -135,6 +321,7 @@ class SanitiseOptions:
     dns_ids:      bool = False
     dhcp_xids:    bool = False
     http_headers: bool = False
+    scan_pii:     bool = False
 
 
 # ── Internal replacer state ───────────────────────────────────────────────────
@@ -338,8 +525,20 @@ def _sanitise_app_layers(pkt: dict, r: _Replacer, opts: SanitiseOptions) -> None
         _sanitise_http(pkt["http"], opts)
 
 
-def _sanitise_packet(pkt: dict, r: _Replacer, opts: SanitiseOptions) -> None:
+def _maybe_scan_pii(pkt: dict, packet_num: int) -> None:
+    """Scan *pkt*'s UTF-8 payload for PII if present."""
+    pl = pkt.get("payload")
+    if isinstance(pl, dict) and pl.get("encoding") == "utf8":
+        _scan_utf8_payload(pl, packet_num)
+
+
+def _sanitise_packet(
+    pkt: dict, r: _Replacer, opts: SanitiseOptions, packet_num: int = 0,
+) -> None:
     """In-place sanitisation of one packet dict (already deep-copied)."""
+    if opts.scan_pii:
+        _maybe_scan_pii(pkt, packet_num)
+
     if "ethernet" in pkt:
         _sanitise_ethernet(pkt["ethernet"], r, opts)
 
@@ -385,7 +584,7 @@ def _sanitise_packet(pkt: dict, r: _Replacer, opts: SanitiseOptions) -> None:
     for tunnel_key in ("ipip", "gre", "etherip", "pseudowire"):
         if tunnel_key not in pkt:
             continue
-        _sanitise_packet(pkt[tunnel_key], r, opts)
+        _sanitise_packet(pkt[tunnel_key], r, opts, packet_num)
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -433,7 +632,14 @@ def sanitise(
     result = copy.deepcopy(config)
     r = _Replacer()
 
-    for pkt in result["packets"]:
-        _sanitise_packet(pkt, r, options)
+    if options.scan_pii:
+        with warnings.catch_warnings(record=True) as _caught:
+            warnings.filterwarnings("always", category=PersonalDataWarning)
+            for i, pkt in enumerate(result["packets"], 1):
+                _sanitise_packet(pkt, r, options, i)
+        _consolidate_pii_warnings(_caught)
+    else:
+        for pkt in result["packets"]:
+            _sanitise_packet(pkt, r, options)
 
     return result

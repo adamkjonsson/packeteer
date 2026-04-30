@@ -565,7 +565,7 @@ def parse_pcap_file(
 
     with warnings.catch_warnings(record=True) as _caught:
         warnings.filterwarnings("always", category=UnsupportedIPProtocolWarning)
-        for record in pcap.packets:
+        for packet_num, record in enumerate(pcap.packets, 1):
             pkt = parse_pcap_packet(record, pcap.header)
             cfg: dict[str, Any] = {}
             if pkt.ethernet is not None:
@@ -589,7 +589,11 @@ def parse_pcap_file(
                     update_config(cfg, pkt.http)
                 elif pkt.payload:
                     update_config(cfg, pkt.payload)
-            cfg["packet_metadata"] = {"timestamp_s": pkt.ts_sec, ts_frac_key: pkt.ts_frac}
+            cfg["packet_metadata"] = {
+                "packet_num": packet_num,
+                "timestamp_s": pkt.ts_sec,
+                ts_frac_key: pkt.ts_frac,
+            }
             if packet_filter is None or packet_filter.matches(cfg):
                 packet_configs.append(cfg)
 

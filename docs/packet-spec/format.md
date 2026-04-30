@@ -729,6 +729,7 @@ Always present in configs produced by `packeteer parse` and
 | Field | Default | Description |
 |-------|---------|-------------|
 | `mtu` | — | Fragment the packet so each IP datagram is at most this many bytes — see {doc}`../api/fragmentation` |
+| `packet_num` | — | 1-based position of this packet in the capture file.  Written automatically by `packeteer parse`; used in PII warnings to identify which packets contain a finding.  Ignored by `packeteer build`. |
 | `timestamp_s` | `0` | Capture timestamp — whole seconds |
 | `timestamp_us` | `0` | Microsecond fraction (0–999999); used when `metadata.nanoseconds` is `false` |
 | `timestamp_ns` | `0` | Nanosecond fraction (0–999999999); used when `metadata.nanoseconds` is `true` |

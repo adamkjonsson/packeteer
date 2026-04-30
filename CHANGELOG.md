@@ -66,6 +66,38 @@ All notable changes to packeteer are recorded in this file.
     parsing, round-trips, `PacketBuilder` integration, and config serialisation
     (1529 total).
 
+- **PII scanning in UTF-8 payloads** (`sanitise --scan-pii`) — `sanitise` can
+  now scan every UTF-8 encoded payload for email addresses and personal names
+  and emit a warning for each unique finding.
+
+  - New public class `PersonalDataWarning(UserWarning)` exported from
+    `packeteer.sanitise`.  Carries four typed attributes: `kind` (`"email"` or
+    `"name"`), `text` (the matched string), `match` (an excerpt with up to 40
+    characters of surrounding context), and `packet_num` (1-based number of the
+    first packet where the finding appeared).
+  - Findings are consolidated across all packets in a single run: if the same
+    email address appears in multiple packets, one consolidated warning is
+    emitted listing all packet numbers and the first-occurrence context excerpt.
+  - Detection patterns:
+    - **Email addresses** — RFC 5321 local-part + domain regex.
+    - **Display names (tier 1)** — RFC 5322 quoted (`"Alice Smith"`) or
+      unquoted (`Alice Smith`) names immediately followed by `<addr@domain>`.
+    - **Field-label names (tier 2)** — two-or-more title-case words after a
+      recognised label (`name:`, `from:`, `recipient:`, `sender:`, `to:`,
+      `contact:`, `full_name:`).
+  - `SanitiseOptions` gains a new boolean field `scan_pii` (default `False`).
+    Opt-in only — existing calls are unaffected.
+  - New `--scan-pii` flag added to `packeteer sanitise`.  The flag does not
+    modify the output; combine with `--payload` to also zero the payloads.
+  - Only `"utf8"` encoded payloads are scanned; hex payloads are never
+    inspected.
+  - 37 new tests in `test_sanitise_pii.py`.
+
+- **`packet_num` in `packet_metadata`** — `parse_pcap_file` now writes a
+  `packet_num` field (1-based integer) into each packet's `"packet_metadata"`
+  section.  This makes it easy to identify specific packets in PII warnings and
+  other tooling without manually counting positions in the JSON array.
+
 ### Enhancements
 
 - **Informative warning for unsupported IP protocol numbers** — when the
