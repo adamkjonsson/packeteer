@@ -25,7 +25,7 @@ compiled extensions — Python 3.10+ and the standard library only.
 - **pcap and pcapng** file I/O with microsecond or nanosecond timestamps
 - **Stream generation** — complete TCP / UDP / SCTP flows written to pcap, pcapng, or packet spec; all streams can be wrapped in any encapsulation layer (VLAN, QinQ, MPLS, PPPoE, GRE, EtherIP, IP-in-IP), combined as a stack, and fragmented through a simulated low-MTU middlebox
 - **Capture filtering** — `packeteer parse` accepts filter flags (`--proto`, `--port`, `--src`, `--dst`, `--host`, `--app`, …) to keep only the traffic you care about; values can be negated with `!` and addresses accept CIDR notation for both IPv4 and IPv6
-- **PII scanning** — `packeteer sanitise --scan-pii` scans UTF-8 payloads for email addresses and personal names; findings are consolidated across packets and reported as structured `PersonalDataWarning` instances
+- **PII scanning** — `packeteer sanitise` scans UTF-8 payloads for email addresses and personal names by default; findings are consolidated across packets and reported as structured `PersonalDataWarning` instances (`--no-scan-pii` to disable)
 - **CLI** (`packeteer`) — build packets from a packet spec, parse captures to a packet spec, sanitise specs by replacing sensitive fields with synthetic data, or generate synthetic streams with `packeteer stream`
 
 ## Quick start
