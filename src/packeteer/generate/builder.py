@@ -300,7 +300,7 @@ class PacketBuilder:
         *,
         src_mac: str = "00:00:00:00:00:01",
         dst_mac: str = "00:00:00:00:00:02",
-        pad: bool = False,
+        pad: bool = True,
     ) -> "PacketBuilder":
         """Append an Ethernet II header layer.
 

@@ -141,15 +141,15 @@ class TestPacketBuilderPPPoESession(unittest.TestCase):
 
 class TestPacketBuilderPPPoEDiscovery(unittest.TestCase):
     def test_padi_size_no_tags(self):
-        # Eth(14) + PPPoE(6) = 20
+        # Eth(14) + PPPoE(6) = 20, padded to minimum frame size
         pkt = (PacketBuilder()
                .ethernet()
                .pppoe(code=PPPOE_CODE_PADI)
                .build())
-        self.assertEqual(len(pkt), 14 + 6)
+        self.assertEqual(len(pkt), 60)
 
     def test_padi_size_with_service_name_tag(self):
-        # Eth(14) + PPPoE(6) + tag_hdr(4) + tag_data(0) = 24
+        # Eth(14) + PPPoE(6) + tag_hdr(4) + tag_data(0) = 24, padded to minimum frame size
         pkt = (PacketBuilder()
                .ethernet()
                .pppoe(
@@ -157,10 +157,10 @@ class TestPacketBuilderPPPoEDiscovery(unittest.TestCase):
                    tags=[PPPoETag(PPPOE_TAG_SERVICE_NAME, b"")],
                )
                .build())
-        self.assertEqual(len(pkt), 14 + 6 + 4)
+        self.assertEqual(len(pkt), 60)
 
     def test_padi_size_with_host_uniq_tag(self):
-        # Eth(14) + PPPoE(6) + tag_hdr(4) + tag_data(4) = 28
+        # Eth(14) + PPPoE(6) + tag_hdr(4) + tag_data(4) = 28, padded to minimum frame size
         pkt = (PacketBuilder()
                .ethernet()
                .pppoe(
@@ -168,7 +168,7 @@ class TestPacketBuilderPPPoEDiscovery(unittest.TestCase):
                    tags=[PPPoETag(PPPOE_TAG_HOST_UNIQ, b"\xde\xad\xbe\xef")],
                )
                .build())
-        self.assertEqual(len(pkt), 14 + 6 + 4 + 4)
+        self.assertEqual(len(pkt), 60)
 
     def test_discovery_eth_ethertype(self):
         pkt = (PacketBuilder()
@@ -227,8 +227,8 @@ class TestPacketBuilderPPPoEDiscovery(unittest.TestCase):
                    ],
                )
                .build())
-        # Eth(14) + PPPoE(6) + svc-name TLV(4+0) + host-uniq TLV(4+4) = 32
-        self.assertEqual(len(pkt), 14 + 6 + 4 + 4 + 4)
+        # Eth(14) + PPPoE(6) + svc-name TLV(4+0) + host-uniq TLV(4+4) = 32, padded to minimum
+        self.assertEqual(len(pkt), 60)
 
 
 # ── PPPoE parser unit tests ───────────────────────────────────────────────────

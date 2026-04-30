@@ -16,14 +16,14 @@ class TestPacketBuilderSizes(unittest.TestCase):
 
     def test_udp_ipv4_with_ethernet(self):
         pkt = PacketBuilder().ethernet().ip(src="1.2.3.4", dst="5.6.7.8").udp().build()
-        self.assertEqual(len(pkt), 14 + 20 + 8)
+        self.assertEqual(len(pkt), 60)  # 14+20+8=42, padded to minimum frame size
 
     def test_icmp_ipv4_with_ethernet(self):
         pkt = (
             PacketBuilder().ethernet()
             .ip(src="1.2.3.4", dst="5.6.7.8").icmp().payload(size=4).build()
         )
-        self.assertEqual(len(pkt), 14 + 20 + 8 + 4)
+        self.assertEqual(len(pkt), 60)  # 14+20+8+4=46, padded to minimum frame size
 
     def test_tcp_ipv6_with_ethernet(self):
         pkt = PacketBuilder().ethernet().ip(src="::1", dst="::2").tcp().payload(size=10).build()
@@ -94,12 +94,12 @@ class TestPacketBuilderVLAN(unittest.TestCase):
     """Single VLAN tag (802.1Q) and QinQ (double-tag) behaviour."""
 
     def test_single_vlan_size(self):
-        # Eth(14) + VLAN(4) + IPv4(20) + UDP(8) = 46
+        # Eth(14) + VLAN(4) + IPv4(20) + UDP(8) = 46, padded to minimum frame size
         pkt = (
             PacketBuilder().ethernet().vlan(vid=100)
             .ip(src="1.2.3.4", dst="5.6.7.8").udp().build()
         )
-        self.assertEqual(len(pkt), 14 + 4 + 20 + 8)
+        self.assertEqual(len(pkt), 60)
 
     def test_single_vlan_outer_ethertype_is_8021q(self):
         pkt = (
@@ -133,12 +133,12 @@ class TestPacketBuilderVLAN(unittest.TestCase):
         self.assertEqual(tci & 0x0FFF, 300)   # vid
 
     def test_qinq_size(self):
-        # Eth(14) + VLAN(4) + VLAN(4) + IPv4(20) + UDP(8) = 50
+        # Eth(14) + VLAN(4) + VLAN(4) + IPv4(20) + UDP(8) = 50, padded to minimum frame size
         pkt = (
             PacketBuilder().ethernet().vlan(vid=100).vlan(vid=200)
             .ip(src="1.2.3.4", dst="5.6.7.8").udp().build()
         )
-        self.assertEqual(len(pkt), 14 + 4 + 4 + 20 + 8)
+        self.assertEqual(len(pkt), 60)
 
     def test_qinq_ethertypes(self):
         # pkt[12:14] = Eth ethertype (0x8100)

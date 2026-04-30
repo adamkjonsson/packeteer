@@ -632,7 +632,7 @@ def _apply_spec_to_builder(
         b = b.ethernet(
             src_mac=eth.get("src_mac", "00:00:00:00:00:01"),
             dst_mac=eth.get("dst_mac", "00:00:00:00:00:02"),
-            pad=eth.get("pad", False),
+            pad=eth.get("pad", True),
         )
         vlan = eth.get("vlan", {})
         if vlan:

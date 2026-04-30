@@ -56,17 +56,17 @@ class TestPacketBuilderMPLS(unittest.TestCase):
     """Integration tests for PacketBuilder.mpls()."""
 
     def test_single_label_size(self):
-        # Eth(14) + MPLS(4) + IPv4(20) + UDP(8) = 46
+        # Eth(14) + MPLS(4) + IPv4(20) + UDP(8) = 46, padded to minimum frame size
         pkt = (PacketBuilder()
                .ethernet()
                .mpls(label=100)
                .ip(src="10.0.0.1", dst="10.0.0.2")
                .udp()
                .build())
-        self.assertEqual(len(pkt), 14 + 4 + 20 + 8)
+        self.assertEqual(len(pkt), 60)
 
     def test_label_stack_size(self):
-        # Eth(14) + MPLS(4) + MPLS(4) + IPv4(20) + UDP(8) = 50
+        # Eth(14) + MPLS(4) + MPLS(4) + IPv4(20) + UDP(8) = 50, padded to minimum frame size
         pkt = (PacketBuilder()
                .ethernet()
                .mpls(label=100)
@@ -74,7 +74,7 @@ class TestPacketBuilderMPLS(unittest.TestCase):
                .ip(src="10.0.0.1", dst="10.0.0.2")
                .udp()
                .build())
-        self.assertEqual(len(pkt), 14 + 4 + 4 + 20 + 8)
+        self.assertEqual(len(pkt), 60)
 
     def test_eth_ethertype_is_mpls(self):
         pkt = (PacketBuilder()

@@ -285,18 +285,21 @@ class TestTCPStreamWithEncap(unittest.TestCase):
         self.assertGreater(len(s.packets), 0)
 
     def test_vlan_stream_packets_larger(self):
-        plain = self._stream(None)
-        vlan  = self._stream(VLANEncap(vid=100))
-        # Each VLAN packet should be 4 bytes longer
+        # Fixed payload so sizes are deterministic; large enough to exceed the
+        # 60-byte minimum frame size without encapsulation (14+20+20+100=154).
+        plain = self._stream(None, min_payload=100, max_payload=100)
+        vlan  = self._stream(VLANEncap(vid=100), min_payload=100, max_payload=100)
         self.assertEqual(
-            len(vlan.packets[0].raw) - len(plain.packets[0].raw), 4
+            len(vlan.packets[3].raw) - len(plain.packets[3].raw), 4
         )
 
     def test_qinq_stream_packets_8_bytes_larger(self):
-        plain = self._stream(None)
-        qinq  = self._stream(QinQEncap(outer_vid=100, inner_vid=200))
+        plain = self._stream(None, min_payload=100, max_payload=100)
+        qinq  = self._stream(
+            QinQEncap(outer_vid=100, inner_vid=200), min_payload=100, max_payload=100
+        )
         self.assertEqual(
-            len(qinq.packets[0].raw) - len(plain.packets[0].raw), 8
+            len(qinq.packets[3].raw) - len(plain.packets[3].raw), 8
         )
 
     def test_mpls_stream_has_mpls_ethertype(self):
