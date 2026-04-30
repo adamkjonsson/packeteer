@@ -16,7 +16,7 @@ object per packet, and a mandatory top-level `metadata` block.
       "ethernet": { "src_mac": "00:00:00:00:00:01", "dst_mac": "00:00:00:00:00:02" },
       "network":  { "src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "tcp" },
       "transport": { "dst_port": 80 },
-      "packet_metadata": { "timestamp_s": 1000, "timestamp_us": 0 }
+      "packet_metadata": { "packet_num": 1, "timestamp_s": 1000, "timestamp_us": 0 }
     }
   ]
 }
@@ -521,7 +521,7 @@ automatically (RFC 1035 §4.2.2) when the enclosing transport is TCP.
           "rdata": { "address": "205.251.196.1" } }
       ]
     },
-    "packet_metadata": { "timestamp_s": 0, "timestamp_us": 0 }
+    "packet_metadata": { "packet_num": 1, "timestamp_s": 0, "timestamp_us": 0 }
   }]
 }
 ```
@@ -598,7 +598,7 @@ Each entry has a `code` field that selects the option type.
         { "code": 55, "codes": [1, 3, 6, 15] }
       ]
     },
-    "packet_metadata": { "timestamp_s": 0, "timestamp_us": 0 }
+    "packet_metadata": { "packet_num": 1, "timestamp_s": 0, "timestamp_us": 0 }
   }]
 }
 ```

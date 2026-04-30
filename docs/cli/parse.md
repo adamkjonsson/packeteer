@@ -108,7 +108,7 @@ auto-detected from the file header.
       "ethernet":  { "src_mac": "00:11:22:33:44:55", "dst_mac": "66:77:88:99:aa:bb", "enabled": true },
       "network":   { "src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "tcp", "ttl": 64 },
       "transport": { "src_port": 54321, "dst_port": 80, "seq": 1000, "ack": 0, "flags": 2, "window": 65535 },
-      "packet_metadata": { "timestamp_s": 1700000000, "timestamp_us": 123456 }
+      "packet_metadata": { "packet_num": 1, "timestamp_s": 1700000000, "timestamp_us": 123456 }
     }
   ]
 }
