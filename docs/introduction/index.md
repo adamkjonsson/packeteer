@@ -3,6 +3,6 @@
 ```{toctree}
 :maxdepth: 1
 
-../overview
-../installation
+overview
+installation
 ```

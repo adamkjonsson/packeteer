@@ -6,12 +6,22 @@ network traffic without any external dependencies.
 Use it to build hand-crafted packets from a JSON description, parse real
 pcap captures back into that same format, sanitise sensitive fields before
 sharing, or generate complete synthetic network streams — TCP, UDP, or SCTP
-— with realistic protocol state, timestamps, and optional impairments.
+— with realistic protocol state, timestamps, and optional impairments, making
+it useful for fuzz testing decoders.
 
 Everything runs from a CLI or directly from Python. No root, no libpcap, no
 compiled extensions — Python 3.10+ and the standard library only.
 
-## Features and supported protocols
+## Main features
+
+- **CLI** (`packeteer`) — build packets from a packet spec, parse captures to a packet spec, sanitise specs by replacing sensitive fields with synthetic data, generate synthetic streams with `packeteer stream`, or generate adversarial variants with `packeteer fuzz`
+- **Python API** - giving you the flexibility to combine, script, or extend the building blocks however your project needs
+- **Stream generation** — complete TCP / UDP / SCTP flows written to pcap, pcapng, or packet spec; all streams can be wrapped in any encapsulation layer (VLAN, QinQ, MPLS, PPPoE, GRE, EtherIP, IP-in-IP), combined as a stack, and fragmented through a simulated low-MTU middlebox
+- **Capture filtering** — `packeteer parse` accepts filter flags (`--proto`, `--port`, `--src`, `--dst`, `--host`, `--app`, …) to keep only the traffic you care about; values can be negated with `!` and addresses accept CIDR notation for both IPv4 and IPv6
+- **PII scanning** — `packeteer sanitise` scans UTF-8 payloads for email addresses and personal names by default; findings are consolidated across packets and reported as structured `PersonalDataWarning` instances (`--no-scan-pii` to disable)
+- **Fuzzing** — `packeteer fuzz` produces adversarial packet variants for decoder robustness testing: boundary values, reserved-bit settings, pathological TCP flag combinations, truncated/extended payloads, bit flips, wrong checksums, and wrong length fields; full Python API via `packeteer.fuzz`
+
+## Supported protocols
 
 - **Ethernet II**, 802.1Q VLAN (single/QinQ), MPLS label stacks, PPPoE
 - **IPv4** (RFC 791) and **IPv6** (RFC 8200) with automatic checksums; IPv6 Hop-by-Hop Options extension header (RFC 8200 §4.3) including Router Alert and Jumbo Payload
@@ -23,11 +33,6 @@ compiled extensions — Python 3.10+ and the standard library only.
 - **UTF-8 payload encoding** — packet specs use readable strings for text-protocol payloads; `packeteer parse` auto-detects printable ASCII and encodes accordingly
 - **IPv4 and IPv6 fragmentation** in one call
 - **pcap and pcapng** file I/O with microsecond or nanosecond timestamps
-- **Stream generation** — complete TCP / UDP / SCTP flows written to pcap, pcapng, or packet spec; all streams can be wrapped in any encapsulation layer (VLAN, QinQ, MPLS, PPPoE, GRE, EtherIP, IP-in-IP), combined as a stack, and fragmented through a simulated low-MTU middlebox
-- **Capture filtering** — `packeteer parse` accepts filter flags (`--proto`, `--port`, `--src`, `--dst`, `--host`, `--app`, …) to keep only the traffic you care about; values can be negated with `!` and addresses accept CIDR notation for both IPv4 and IPv6
-- **PII scanning** — `packeteer sanitise` scans UTF-8 payloads for email addresses and personal names by default; findings are consolidated across packets and reported as structured `PersonalDataWarning` instances (`--no-scan-pii` to disable)
-- **Fuzzing** — `packeteer fuzz` produces adversarial packet variants for decoder robustness testing: boundary values, reserved-bit settings, pathological TCP flag combinations, truncated/extended payloads, bit flips, wrong checksums, and wrong length fields; full Python API via `packeteer.fuzz`
-- **CLI** (`packeteer`) — build packets from a packet spec, parse captures to a packet spec, sanitise specs by replacing sensitive fields with synthetic data, generate synthetic streams with `packeteer stream`, or generate adversarial variants with `packeteer fuzz`
 
 ## Quick start
 
@@ -263,11 +268,3 @@ Or read the source pages directly.  The documentation is organised in four parts
 | [docs/reference/packet-sizes.md](docs/reference/packet-sizes.md) | Header size tables |
 | [docs/reference/rfc-references.md](docs/reference/rfc-references.md) | RFC index |
 | [docs/internals/](docs/internals/) | Developer internals: architecture, parser pipeline, stream generators, encapsulation, sanitiser |
-
-## Running tests
-
-```bash
-python -m venv .venv
-.venv/bin/pip install -e . -r requirements.txt
-.venv/bin/pytest
-```

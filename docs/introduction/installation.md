@@ -16,7 +16,7 @@ python -m venv .venv
 ```
 
 This creates an isolated virtual environment and installs the package in
-*editable* mode alongside the development dependencies (pytest and the
+*editable* mode alongside the development dependencies (code standard, pytest and the
 documentation tools).  After installation the `packeteer` command is available
 as `.venv/bin/packeteer`.
 
