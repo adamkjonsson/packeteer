@@ -1,9 +1,19 @@
 """Tests for SCTP stream generation."""
 from __future__ import annotations
 
+import dataclasses
 import struct
 
-from packeteer.generate.sctp_stream import SCTPStream, SCTPStreamPacket, generate_sctp_stream
+from packeteer.generate.sctp_stream import (
+    SCTPStream,
+    SCTPStreamConfig,
+    SCTPStreamPacket,
+    generate_sctp_stream,
+)
+
+_CONFIG_FIELDS: frozenset[str] = frozenset(
+    f.name for f in dataclasses.fields(SCTPStreamConfig)
+)
 
 _HANDSHAKE_LABELS = ["INIT", "INIT-ACK", "COOKIE-ECHO", "COOKIE-ACK"]
 _SHUTDOWN_LABELS  = ["SHUTDOWN", "SHUTDOWN-ACK", "SHUTDOWN-COMPLETE"]
@@ -22,7 +32,9 @@ def _make_stream(**kw: object) -> SCTPStream:
         "inter_packet_gap": 0.001,
     }
     defaults.update(kw)
-    return generate_sctp_stream(**defaults)
+    config_kw = {k: defaults.pop(k) for k in list(defaults) if k in _CONFIG_FIELDS}
+    cfg = SCTPStreamConfig(**config_kw) if config_kw else None
+    return generate_sctp_stream(**defaults, config=cfg)
 
 
 def _vtag(raw: bytes, include_ethernet: bool = True) -> int:
@@ -343,3 +355,30 @@ class TestMiddleboxMtu:
         s = _make_stream(num_data_packets=3, min_payload=100, max_payload=100,
                          payload_distribution="fixed", mtu=1500)
         assert len(s.packets) == 2 * 3 + 7
+
+
+# ── Seed reproducibility ──────────────────────────────────────────────────────
+
+class TestSeed:
+    def _seeded(self, seed: int) -> SCTPStream:
+        return generate_sctp_stream(
+            client_ip="10.0.0.1",
+            server_ip="10.0.0.2",
+            server_port=9999,
+            num_data_packets=5,
+            min_payload=20,
+            max_payload=200,
+            payload_distribution="uniform",
+            config=SCTPStreamConfig(gap_jitter=0.0005, base_time=1_000_000, seed=seed),
+        )
+
+    def test_same_seed_identical_output(self):
+        a, b = self._seeded(13), self._seeded(13)
+        assert [p.raw for p in a.packets] == [p.raw for p in b.packets]
+        ts_a = [(p.ts_sec, p.ts_usec) for p in a.packets]
+        ts_b = [(p.ts_sec, p.ts_usec) for p in b.packets]
+        assert ts_a == ts_b
+
+    def test_different_seed_different_output(self):
+        a, b = self._seeded(13), self._seeded(14)
+        assert [p.raw for p in a.packets] != [p.raw for p in b.packets]

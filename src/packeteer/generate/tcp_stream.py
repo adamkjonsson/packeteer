@@ -25,10 +25,10 @@ Typical usage::
 """
 from __future__ import annotations
 
-import random
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from random import Random
 
 from ._stream_common import (
     _alloc_usec,
@@ -137,6 +137,15 @@ class TCPStreamConfig:
             When provided, overrides *min_payload*, *max_payload*, and
             *payload_distribution*.  Must have exactly *num_data_packets*
             entries.
+        base_time: Unix timestamp for the first packet in seconds.  Defaults
+            to the current time when ``None``.
+        gap_jitter: Maximum capture-delay jitter in seconds.  Packet *n* is
+            sent at ``base_time + n * inter_packet_gap`` and assigned a
+            capture timestamp of ``sent_time + uniform(0, gap_jitter)``.
+            Defaults to ``0.0`` (no jitter).
+        seed: Integer seed for the random number generator.  When set, two
+            calls with identical arguments produce byte-identical output.
+            Defaults to ``None`` (non-deterministic).
         psh_probability: Probability (0.0–1.0) that the PSH flag is set on
             each data segment.  Defaults to ``0.5``.
         window: TCP receive-window size advertised by both endpoints.
@@ -144,12 +153,6 @@ class TCPStreamConfig:
         client_options: TCP options encoded on the client SYN only (e.g. MSS,
             window scale, SACK permitted).  ``None`` means no options.
         server_options: TCP options encoded on the server SYN-ACK only.
-        base_time: Unix timestamp for the first packet in seconds.  Defaults
-            to the current time when ``None``.
-        gap_jitter: Maximum capture-delay jitter in seconds.  Packet *n* is
-            sent at ``base_time + n * inter_packet_gap`` and assigned a
-            capture timestamp of ``sent_time + uniform(0, gap_jitter)``.
-            Defaults to ``0.0`` (no jitter).
         packet_loss_probability: Probability (0.0–1.0) that any individual
             packet is silently dropped, simulating packet loss on the wire.
             Defaults to ``0.0`` (no loss).
@@ -187,12 +190,13 @@ class TCPStreamConfig:
     """
 
     payload_sizes: list[int] | None = None
+    base_time: float | None = None
+    gap_jitter: float = 0.0
+    seed: int | None = None
     psh_probability: float = 0.5
     window: int = 65535
     client_options: TCPOptions | None = None
     server_options: TCPOptions | None = None
-    base_time: float | None = None
-    gap_jitter: float = 0.0
     packet_loss_probability: float = 0.0
     retransmission_probability: float = 0.0
     retransmission_timeout: float = 0.2
@@ -308,11 +312,12 @@ def _data_chunks(
     max_p: int,
     distribution: str,
     explicit_sizes: list[int] | None,
+    rng: Random,
 ) -> list[bytes]:
     """Return *num* payload chunks for the data-transfer phase."""
     if payload_fn is not None:
         return [payload_fn(i, "c2s") for i in range(num)]
-    sizes = _payload_sizes(num, min_p, max_p, distribution, explicit_sizes)
+    sizes = _payload_sizes(num, min_p, max_p, distribution, explicit_sizes, rng)
     payload_data = _repeat_payload(sum(sizes))
     offset = 0
     result: list[bytes] = []
@@ -408,8 +413,8 @@ def generate_tcp_stream(
             * :class:`~packeteer.generate.stream_encap.IPIPEncap` — IP-in-IP tunnel
 
         config: Optional :class:`TCPStreamConfig` supplying timing, anomaly
-            injection, and per-packet hook settings.  All fields default to
-            their *TCPStreamConfig* defaults when ``None``.
+            injection, per-packet hook settings, and RNG seed.  All fields
+            default to their *TCPStreamConfig* defaults when ``None``.
 
     Returns:
         A :class:`TCPStream` containing all assembled packets in wire order.
@@ -439,6 +444,7 @@ def generate_tcp_stream(
 
     """
     config = config or TCPStreamConfig()
+    rng = Random(config.seed)
     payload_sizes = config.payload_sizes
     psh_probability = config.psh_probability
     window = config.window
@@ -463,13 +469,13 @@ def generate_tcp_stream(
 
     client = _TCPEndpoint(
         ip=client_ip, port=client_port, mac=client_mac,
-        seq=random.randint(0, _WRAP - 1) if client_isn is None else client_isn,
+        seq=rng.randint(0, _WRAP - 1) if client_isn is None else client_isn,
         ack=0,
         window=window,
     )
     server = _TCPEndpoint(
         ip=server_ip, port=server_port, mac=server_mac,
-        seq=random.randint(0, _WRAP - 1) if server_isn is None else server_isn,
+        seq=rng.randint(0, _WRAP - 1) if server_isn is None else server_isn,
         ack=0,
         window=window,
     )
@@ -496,7 +502,7 @@ def generate_tcp_stream(
         _advance_seq(src, flags, len(payload))
         dst.ack = src.seq
 
-        delay_usec = random.randint(0, jitter_usec) if jitter_usec else 0
+        delay_usec = rng.randint(0, jitter_usec) if jitter_usec else 0
         ts_sec, ts_usec = divmod(base_usec + global_index * gap_usec + delay_usec, 1_000_000)
         pkt: TCPStreamPacket | None = TCPStreamPacket(
             raw=raw,
@@ -510,7 +516,7 @@ def generate_tcp_stream(
             label=label,
         )
 
-        if packet_loss_probability and random.random() < packet_loss_probability:
+        if packet_loss_probability and rng.random() < packet_loss_probability:
             pkt = None
 
         if packet_hooks:
@@ -531,9 +537,9 @@ def generate_tcp_stream(
     # ── Data transfer (client → server, server ACKs each packet) ────────────
     for i, chunk in enumerate(_data_chunks(
         payload_fn, num_data_packets, min_payload, max_payload,
-        payload_distribution, payload_sizes,
+        payload_distribution, payload_sizes, rng,
     )):
-        flags = TCP_ACK | (TCP_PSH if random.random() < psh_probability else 0)
+        flags = TCP_ACK | (TCP_PSH if rng.random() < psh_probability else 0)
         emit(client, server, flags, chunk, "c2s", f"DATA[{i}]")
         emit(server, client, TCP_ACK, b"", "s2c", f"ACK[{i}]")
 
@@ -544,12 +550,12 @@ def generate_tcp_stream(
     emit(client, server, TCP_ACK,           b"", "c2s", "ACK")
 
     # ── Server RST ───────────────────────────────────────────────────────────
-    if server_rst_probability and random.random() < server_rst_probability:
+    if server_rst_probability and rng.random() < server_rst_probability:
         # Choose a split point: the last normally-ACKed data packet index.
         # Need at least one normal exchange, so k is in [0, n-1).
         data_pkts = [p for p in packets if p.label.startswith("DATA[")]
         if len(data_pkts) >= 2:
-            k = random.randint(0, len(data_pkts) - 2)
+            k = rng.randint(0, len(data_pkts) - 2)
             split_label = data_pkts[k].label   # e.g. "DATA[3]"
             split_idx   = split_label[5:-1]    # "3"
 
@@ -622,10 +628,10 @@ def generate_tcp_stream(
         for pkt in packets:
             if not pkt.label.startswith("DATA["):
                 continue
-            if random.random() >= retransmission_probability:
+            if rng.random() >= retransmission_probability:
                 continue
             i = pkt.label[5:-1]  # extract index from "DATA[i]"
-            delay_usec = random.randint(0, jitter_usec) if jitter_usec else 0
+            delay_usec = rng.randint(0, jitter_usec) if jitter_usec else 0
             rt_sec, rt_usec_part = divmod(
                 _alloc_usec(_pkt_usec(pkt) + rto_usec + delay_usec, used_ts),
                 1_000_000,
@@ -643,7 +649,7 @@ def generate_tcp_stream(
         for idx, pkt in enumerate(packets):
             if not pkt.label.startswith("DATA["):
                 continue
-            if random.random() >= payload_corruption_probability:
+            if rng.random() >= payload_corruption_probability:
                 continue
             i = pkt.label[5:-1]  # extract index from "DATA[i]"
 
@@ -653,7 +659,7 @@ def generate_tcp_stream(
             packets[idx] = replace(pkt, raw=bytes(raw_corrupt), label=f"CORRUPT[{i}]")
 
             # 2. Retransmit: clean copy of original, timestamped after RTO
-            delay_usec = random.randint(0, jitter_usec) if jitter_usec else 0
+            delay_usec = rng.randint(0, jitter_usec) if jitter_usec else 0
             rt_usec = _alloc_usec(_pkt_usec(pkt) + rto_usec + delay_usec, used_ts)
             rt_sec, rt_usec_part = divmod(rt_usec, 1_000_000)
             additions.append(replace(pkt, ts_sec=rt_sec, ts_usec=rt_usec_part,
@@ -691,7 +697,7 @@ def generate_tcp_stream(
             strays: list[TCPStreamPacket] = []
             for n in range(stray_packet_count):
                 # Steal seq/ack from a randomly chosen data packet
-                ref = random.choice(data_pkts)
+                ref = rng.choice(data_pkts)
                 stray_src = _TCPEndpoint(
                     ip=client_ip, port=client_port, mac=client_mac,
                     seq=ref.seq, ack=ref.ack, window=window,
@@ -711,11 +717,11 @@ def generate_tcp_stream(
                     ts_lo = default_ts_lo
                     ts_hi = default_ts_hi
 
-                payload = b'x' * random.randint(min_payload, max_payload)
+                payload = b'x' * rng.randint(min_payload, max_payload)
                 raw = _build_packet(stray_src, stray_dst, TCP_ACK | TCP_PSH,
                                     payload, include_ethernet, ip_ttl, None, encap)
                 ts_sec, ts_usec = divmod(
-                    _alloc_usec(random.randint(ts_lo, ts_hi), used_ts), 1_000_000
+                    _alloc_usec(rng.randint(ts_lo, ts_hi), used_ts), 1_000_000
                 )
                 strays.append(TCPStreamPacket(
                     raw=raw,

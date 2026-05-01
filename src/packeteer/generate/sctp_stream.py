@@ -66,10 +66,10 @@ Typical usage::
 """
 from __future__ import annotations
 
-import random
 import struct
 import time
 from dataclasses import dataclass
+from random import Random
 
 from ._stream_common import (
     _alloc_usec,
@@ -152,6 +152,36 @@ class SCTPStream:
         return [p for p in self.packets if p.direction == "s2c"]
 
 
+@dataclass
+class SCTPStreamConfig:
+    """Optional SCTP-stream parameters.
+
+    Pass an instance as the *config* argument to :func:`generate_sctp_stream`
+    to customise timing and payload details without widening the function
+    signature.
+
+    Attributes:
+        payload_sizes: Explicit list of payload sizes, one per DATA chunk.
+            When provided, overrides *min_payload*, *max_payload*, and
+            *payload_distribution*.  Must have exactly *num_data_packets*
+            entries.
+        base_time: Start timestamp in seconds.  Defaults to
+            ``time.time()`` when ``None``.
+        gap_jitter: Maximum additional random delay per inter-packet gap in
+            seconds.  Packets are re-sorted by timestamp after jitter is
+            applied.  Defaults to ``0.0`` (no jitter).
+        seed: Integer seed for the random number generator.  When set, two
+            calls with identical arguments produce byte-identical output.
+            Defaults to ``None`` (non-deterministic).
+
+    """
+
+    payload_sizes: list[int] | None = None
+    base_time: float | None = None
+    gap_jitter: float = 0.0
+    seed: int | None = None
+
+
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
 
@@ -210,12 +240,14 @@ def _fragment_sctp_pkt(
     return result
 
 
-def _next_ts(cursor: int, gap: float, jitter: float, used: set[int]) -> tuple[int, int, int]:
+def _next_ts(
+    cursor: int, gap: float, jitter: float, used: set[int], rng: Random,
+) -> tuple[int, int, int]:
     """Advance *cursor* by one inter-packet gap and allocate a unique µs timestamp.
 
     Returns ``(ts_alloc, ts_sec, ts_usec)``.
     """
-    gap_usec = int((gap + random.uniform(0, jitter)) * 1_000_000)
+    gap_usec = int((gap + rng.uniform(0, jitter)) * 1_000_000)
     cursor += gap_usec
     ts = _alloc_usec(cursor, used)
     return ts, ts // 1_000_000, ts % 1_000_000
@@ -232,17 +264,15 @@ def generate_sctp_stream(
     client_mac: str = "00:00:00:00:00:01",
     server_mac: str = "00:00:00:00:00:02",
     num_data_packets: int = 10,
-    payload_sizes: list[int] | None = None,
     min_payload: int = 20,
     max_payload: int = 512,
     payload_distribution: str = "uniform",
     include_ethernet: bool = True,
     ip_ttl: int = 64,
-    base_time: int | None = None,
     inter_packet_gap: float = 0.001,
-    gap_jitter: float = 0.0,
     mtu: int | None = None,
     encap: EncapSpec = None,
+    config: SCTPStreamConfig | None = None,
 ) -> SCTPStream:
     """Generate a complete SCTP association with data transfer and shutdown.
 
@@ -266,9 +296,6 @@ def generate_sctp_stream(
         server_mac: Server MAC address.  Ignored when *include_ethernet* is
             ``False``.
         num_data_packets: Number of client DATA chunks to generate.
-        payload_sizes: Explicit list of *num_data_packets* payload sizes.
-            When provided, *min_payload*, *max_payload*, and
-            *payload_distribution* are ignored.
         min_payload: Minimum DATA chunk payload in bytes.
         max_payload: Maximum DATA chunk payload in bytes.
         payload_distribution: ``"uniform"`` (default), ``"bimodal"``, or
@@ -276,12 +303,8 @@ def generate_sctp_stream(
         include_ethernet: When ``True`` (default) each packet includes an
             Ethernet II header.
         ip_ttl: IP TTL / IPv6 Hop Limit.  Defaults to ``64``.
-        base_time: Start timestamp (whole seconds).  Defaults to
-            ``int(time.time())``.
         inter_packet_gap: Gap between consecutive packets in seconds.
             Defaults to ``0.001`` (1 ms).
-        gap_jitter: Maximum additional random delay per gap in seconds.
-            Defaults to ``0.0`` (no jitter).
         mtu: When set, fragment packets whose IP-layer size exceeds
             this value, simulating a middlebox with a lower MTU.
         encap: One or more encapsulation layers to wrap every packet in.
@@ -290,6 +313,9 @@ def generate_sctp_stream(
             See :mod:`packeteer.generate.stream_encap` for available types
             (VLANEncap, QinQEncap, MPLSEncap, PPPoEEncap, GREEncap,
             EtherIPEncap, IPIPEncap) and combination rules.
+        config: Optional :class:`SCTPStreamConfig` supplying timing details,
+            explicit payload sizes, and RNG seed.  All fields default to their
+            *SCTPStreamConfig* defaults when ``None``.
 
     Returns:
         A :class:`SCTPStream` whose :attr:`~SCTPStream.packets` list contains
@@ -307,39 +333,42 @@ def generate_sctp_stream(
         write_pcap(stream.to_pcap_tuples(), path="sctp_stream.pcap")
 
     """
-    if base_time is None:
-        base_time = int(time.time())
+    config = config or SCTPStreamConfig()
+    payload_sizes = config.payload_sizes
+    base_time = config.base_time if config.base_time is not None else time.time()
+    gap_jitter = config.gap_jitter
+    rng = Random(config.seed)
 
     # ── Verification tags and initial TSNs (RFC 9260 §5.1) ───────────────────
     # client_vtag: Initiate Tag chosen by the client in INIT
     # server_vtag: Initiate Tag chosen by the server in INIT ACK
     # After association, client→server packets carry server_vtag as their
     # verification tag and vice versa.
-    client_vtag  = random.randint(1, 0xFFFFFFFF)
-    server_vtag  = random.randint(1, 0xFFFFFFFF)
-    client_tsn   = random.randint(0, 0xFFFFFFFF)
-    server_tsn   = random.randint(0, 0xFFFFFFFF)
+    client_vtag  = rng.randint(1, 0xFFFFFFFF)
+    server_vtag  = rng.randint(1, 0xFFFFFFFF)
+    client_tsn   = rng.randint(0, 0xFFFFFFFF)
+    server_tsn   = rng.randint(0, 0xFFFFFFFF)
 
     # State cookie echoed from INIT ACK → COOKIE ECHO (opaque bytes)
-    cookie = bytes(random.getrandbits(8) for _ in range(16))
+    cookie = bytes(rng.getrandbits(8) for _ in range(16))
 
     # ── Payload sizes and continuous payload ──────────────────────────────────
     sizes = _payload_sizes(
         num_data_packets, min_payload, max_payload,
-        payload_distribution, payload_sizes,
+        payload_distribution, payload_sizes, rng,
     )
     payload_data = _repeat_payload(sum(sizes))
     payload_offset = 0
 
     # ── Timestamp state ───────────────────────────────────────────────────────
     used_ts:  set[int] = set()
-    cursor = base_time * 1_000_000
+    cursor = int(base_time * 1_000_000)
 
     packets: list[SCTPStreamPacket] = []
 
     def emit(direction: str, raw: bytes, tsn: int, plen: int, label: str) -> None:
         nonlocal cursor
-        cursor, ts_sec, ts_usec = _next_ts(cursor, inter_packet_gap, gap_jitter, used_ts)
+        cursor, ts_sec, ts_usec = _next_ts(cursor, inter_packet_gap, gap_jitter, used_ts, rng)
         packets.append(SCTPStreamPacket(
             raw=raw, ts_sec=ts_sec, ts_usec=ts_usec,
             direction=direction, tsn=tsn, payload_len=plen, label=label,

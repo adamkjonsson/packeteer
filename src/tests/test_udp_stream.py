@@ -1,9 +1,19 @@
 """Tests for UDP stream generation."""
 from __future__ import annotations
 
+import dataclasses
 import struct
 
-from packeteer.generate.udp_stream import UDPStream, UDPStreamPacket, generate_udp_stream
+from packeteer.generate.udp_stream import (
+    UDPStream,
+    UDPStreamConfig,
+    UDPStreamPacket,
+    generate_udp_stream,
+)
+
+_CONFIG_FIELDS: frozenset[str] = frozenset(
+    f.name for f in dataclasses.fields(UDPStreamConfig)
+)
 
 
 def _make_stream(**kw: object) -> UDPStream:
@@ -19,7 +29,9 @@ def _make_stream(**kw: object) -> UDPStream:
         "inter_packet_gap": 0.001,
     }
     defaults.update(kw)
-    return generate_udp_stream(**defaults)
+    config_kw = {k: defaults.pop(k) for k in list(defaults) if k in _CONFIG_FIELDS}
+    cfg = UDPStreamConfig(**config_kw) if config_kw else None
+    return generate_udp_stream(**defaults, config=cfg)
 
 
 # ── Group 1: basic structure ──────────────────────────────────────────────────
@@ -184,3 +196,30 @@ class TestMiddleboxMtu:
         s = _make_stream(num_data_packets=3, min_payload=100, max_payload=100,
                          payload_distribution="fixed", mtu=1500)
         assert len(s.packets) == 3
+
+
+# ── Seed reproducibility ──────────────────────────────────────────────────────
+
+class TestSeed:
+    def _seeded(self, seed: int) -> UDPStream:
+        return generate_udp_stream(
+            client_ip="10.0.0.1",
+            server_ip="10.0.0.2",
+            server_port=53,
+            num_data_packets=5,
+            min_payload=20,
+            max_payload=200,
+            payload_distribution="uniform",
+            config=UDPStreamConfig(gap_jitter=0.0005, base_time=1_000_000, seed=seed),
+        )
+
+    def test_same_seed_identical_output(self):
+        a, b = self._seeded(7), self._seeded(7)
+        assert [p.raw for p in a.packets] == [p.raw for p in b.packets]
+        ts_a = [(p.ts_sec, p.ts_usec) for p in a.packets]
+        ts_b = [(p.ts_sec, p.ts_usec) for p in b.packets]
+        assert ts_a == ts_b
+
+    def test_different_seed_different_output(self):
+        a, b = self._seeded(7), self._seeded(8)
+        assert [p.raw for p in a.packets] != [p.raw for p in b.packets]

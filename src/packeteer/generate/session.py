@@ -44,6 +44,7 @@ import random
 import struct
 import time
 from collections.abc import Callable
+from random import Random
 
 from ._stream_common import _alloc_usec
 from .sctp import (
@@ -643,12 +644,13 @@ class SCTPSession:
         cursor = int((self.base_time if self.base_time is not None
                       else time.time()) * 1_000_000)
         packets: list[SCTPStreamPacket] = []
+        _rng = Random()
 
         def emit(direction: str, raw: bytes,
                  tsn: int, plen: int, label: str) -> None:
             nonlocal cursor
             cursor, ts_sec, ts_usec = _next_ts(
-                cursor, self.inter_packet_gap, 0.0, used_ts)
+                cursor, self.inter_packet_gap, 0.0, used_ts, _rng)
             packets.append(SCTPStreamPacket(
                 raw=raw, ts_sec=ts_sec, ts_usec=ts_usec,
                 direction=direction, tsn=tsn, payload_len=plen, label=label,

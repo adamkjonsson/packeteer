@@ -159,6 +159,28 @@ All notable changes to packeteer are recorded in this file.
 
 ### Enhancements
 
+- **RNG seed and reproducibility for all stream generators** — passing `seed`
+  to any stream generator produces byte-identical captures across runs.
+
+  - `TCPStreamConfig`, `UDPStreamConfig`, and `SCTPStreamConfig` all expose a
+    `seed: int | None` field (default `None` — non-deterministic).  Setting it
+    to the same integer value on two calls with otherwise identical arguments
+    produces bit-for-bit identical pcap output.
+  - `UDPStreamConfig` and `SCTPStreamConfig` are new dataclasses (previously
+    UDP and SCTP generators had no config object).  Each bundles the same four
+    leading fields as `TCPStreamConfig`: `payload_sizes`, `base_time`,
+    `gap_jitter`, and `seed` — making the three generator APIs consistent.
+  - Each generator call creates a private `random.Random(seed)` instance,
+    keeping the generator's random state fully isolated from the rest of the
+    process.  All randomised decisions within a call (payload sizes, jitter,
+    anomaly injection) draw from the same instance.
+  - The shared `_payload_sizes` helper in `_stream_common.py` now accepts the
+    `rng` instance explicitly so payload-size draws participate in the same
+    deterministic sequence.
+  - `--seed N` flag added to `packeteer stream`; accepted by all three
+    protocols.  The `seed` key is also recognised in INI config files.
+  - `UDPStreamConfig` and `SCTPStreamConfig` exported from `packeteer.generate`.
+
 - **Informative warning for unsupported IP protocol numbers** — when the
   parser encounters an IP protocol number it does not recognise (anything other
   than TCP, UDP, ICMPv4, ICMPv6, SCTP, GRE, EtherIP, and IP-in-IP), it now
@@ -241,6 +263,22 @@ All notable changes to packeteer are recorded in this file.
   - `README.md` updated: fuzzing bullet in the features list, two new CLI
     examples in the quick-start section, a new Python API code block, and three
     new rows in the documentation table.
+
+- **Stream generator documentation updated** for the RNG seed and config class
+  additions:
+  - `docs/internals/stream-generators.md` — new "Config dataclasses" section
+    (common field layout for all three classes) and "RNG and reproducibility"
+    section (per-call `Random(seed)` isolation); UDP and SCTP sections now
+    reference their config classes; payload content description corrected
+    (was `\x00\x01…\xff`, now `default_payload.txt`).
+  - `docs/cli/stream.md` — `--seed N` row added to the General arguments table;
+    `seed = 42` added to the INI example.
+  - `docs/guide/generating.md` — "Reproducible captures" bullet added to the
+    stream-generator feature list.
+  - `docs/api/stream-generators.md` — `autoclass` directives added for
+    `UDPStreamConfig` and `SCTPStreamConfig`.
+  - `src/packeteer/generate/stream.ini.template` — `seed` entry added to the
+    Timing section.
 
 - Sanitiser internals page updated with the full PII scanning pipeline:
   `_maybe_scan_pii`, two-tier name detection, `_excerpt`, and warning

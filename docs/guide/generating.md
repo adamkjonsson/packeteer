@@ -289,6 +289,10 @@ The session builders cover most synthetic-data use cases.  Reach for
 - **Timestamp jitter** — `gap_jitter` models capture delay and produces
   genuine out-of-order timestamps
 - **IP fragmentation** — `mtu` splits packets at a simulated middlebox
+- **Reproducible captures** — pass `seed` in the config object (`TCPStreamConfig`,
+  `UDPStreamConfig`, or `SCTPStreamConfig`) to pin the RNG; two calls with the
+  same seed and parameters produce byte-identical output, useful for regression
+  tests and diff-based workflows
 - **Packet hooks** — `TCPStreamConfig.packet_hooks` applies arbitrary
   transformations or drops during generation
 

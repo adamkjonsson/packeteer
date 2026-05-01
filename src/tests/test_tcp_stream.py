@@ -1279,5 +1279,50 @@ class TestStrayPackets(unittest.TestCase):
         self.assertEqual(strays, [])
 
 
+# ── Seed reproducibility ──────────────────────────────────────────────────────
+
+class TestSeed(unittest.TestCase):
+
+    def _seeded_stream(self, seed: int) -> TCPStream:
+        return generate_tcp_stream(
+            client_ip="10.0.0.1",
+            server_ip="10.0.0.2",
+            num_data_packets=5,
+            payload_distribution="uniform",
+            config=TCPStreamConfig(
+                gap_jitter=0.0005,
+                psh_probability=0.5,
+                base_time=1_000_000.0,
+                seed=seed,
+            ),
+        )
+
+    def test_same_seed_identical_output(self):
+        a = self._seeded_stream(42)
+        b = self._seeded_stream(42)
+        self.assertEqual([p.raw for p in a.packets], [p.raw for p in b.packets])
+        self.assertEqual(
+            [(p.ts_sec, p.ts_usec) for p in a.packets],
+            [(p.ts_sec, p.ts_usec) for p in b.packets],
+        )
+
+    def test_different_seed_different_output(self):
+        a = self._seeded_stream(42)
+        b = self._seeded_stream(99)
+        self.assertNotEqual([p.raw for p in a.packets], [p.raw for p in b.packets])
+
+    def test_none_seed_non_deterministic(self):
+        a = generate_tcp_stream(
+            client_ip="10.0.0.1", server_ip="10.0.0.2", num_data_packets=5,
+        )
+        b = generate_tcp_stream(
+            client_ip="10.0.0.1", server_ip="10.0.0.2", num_data_packets=5,
+        )
+        # ISNs are random; with overwhelming probability the two streams differ
+        self.assertNotEqual(
+            [p.raw for p in a.packets], [p.raw for p in b.packets],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

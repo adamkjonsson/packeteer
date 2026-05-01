@@ -28,9 +28,9 @@ Typical usage::
 """
 from __future__ import annotations
 
-import random
 import time
 from dataclasses import dataclass
+from random import Random
 
 from ._stream_common import (
     _alloc_usec,
@@ -93,6 +93,37 @@ class UDPStream:
     def server_packets(self) -> list[UDPStreamPacket]:
         """Return only server→client packets."""
         return [p for p in self.packets if p.direction == "s2c"]
+
+
+@dataclass
+class UDPStreamConfig:
+    """Optional UDP-stream parameters.
+
+    Pass an instance as the *config* argument to :func:`generate_udp_stream`
+    to customise timing and payload details without widening the function
+    signature.
+
+    Attributes:
+        payload_sizes: Explicit list of payload sizes, one per datagram.
+            When provided, overrides *min_payload*, *max_payload*, and
+            *payload_distribution*.  Must have exactly *num_data_packets*
+            entries.
+        base_time: Start timestamp in seconds.  Defaults to
+            ``time.time()`` when ``None``.
+        gap_jitter: Maximum additional random delay per inter-packet gap in
+            seconds.  Each gap is drawn from
+            ``[inter_packet_gap, inter_packet_gap + gap_jitter]`` and packets
+            are re-sorted by timestamp.  Defaults to ``0.0`` (no jitter).
+        seed: Integer seed for the random number generator.  When set, two
+            calls with identical arguments produce byte-identical output.
+            Defaults to ``None`` (non-deterministic).
+
+    """
+
+    payload_sizes: list[int] | None = None
+    base_time: float | None = None
+    gap_jitter: float = 0.0
+    seed: int | None = None
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -162,17 +193,15 @@ def generate_udp_stream(
     client_mac: str = "00:00:00:00:00:01",
     server_mac: str = "00:00:00:00:00:02",
     num_data_packets: int = 10,
-    payload_sizes: list[int] | None = None,
     min_payload: int = 20,
     max_payload: int = 512,
     payload_distribution: str = "uniform",
     include_ethernet: bool = True,
     ip_ttl: int = 64,
-    base_time: int | None = None,
     inter_packet_gap: float = 0.001,
-    gap_jitter: float = 0.0,
     mtu: int | None = None,
     encap: EncapSpec = None,
+    config: UDPStreamConfig | None = None,
 ) -> UDPStream:
     """Generate a sequence of UDP datagrams from client to server.
 
@@ -186,9 +215,6 @@ def generate_udp_stream(
         server_mac: Server MAC address.  Ignored when *include_ethernet* is
             ``False``.
         num_data_packets: Number of UDP datagrams to generate.
-        payload_sizes: Explicit list of *num_data_packets* payload sizes.
-            When provided, *min_payload*, *max_payload*, and
-            *payload_distribution* are ignored.
         min_payload: Minimum payload size in bytes.  Defaults to ``20``.
         max_payload: Maximum payload size in bytes.  Defaults to ``512``.
         payload_distribution: ``"uniform"`` (default), ``"bimodal"``, or
@@ -196,14 +222,8 @@ def generate_udp_stream(
         include_ethernet: When ``True`` (default) each packet includes an
             Ethernet II header.
         ip_ttl: IP TTL / IPv6 Hop Limit.  Defaults to ``64``.
-        base_time: Start timestamp (whole seconds).  Defaults to
-            ``int(time.time())``.
         inter_packet_gap: Gap between consecutive packets in seconds.
             Defaults to ``0.001`` (1 ms).
-        gap_jitter: Maximum additional random delay per gap in seconds.
-            Each gap is drawn from ``[inter_packet_gap,
-            inter_packet_gap + gap_jitter]`` and packets are re-sorted by
-            timestamp.  Defaults to ``0.0`` (no jitter).
         mtu: When set, fragment packets whose IP-layer size exceeds
             this value, simulating a middlebox with a lower MTU.
         encap: One or more encapsulation layers to wrap every packet in.
@@ -212,6 +232,9 @@ def generate_udp_stream(
             See :mod:`packeteer.generate.stream_encap` for available types
             (VLANEncap, QinQEncap, MPLSEncap, PPPoEEncap, GREEncap,
             EtherIPEncap, IPIPEncap) and combination rules.
+        config: Optional :class:`UDPStreamConfig` supplying timing details,
+            explicit payload sizes, and RNG seed.  All fields default to their
+            *UDPStreamConfig* defaults when ``None``.
 
     Returns:
         A :class:`UDPStream` whose :attr:`~UDPStream.packets` list contains
@@ -228,22 +251,25 @@ def generate_udp_stream(
         write_pcap(stream.to_pcap_tuples(), path="dns_flow.pcap")
 
     """
-    if base_time is None:
-        base_time = int(time.time())
+    config = config or UDPStreamConfig()
+    payload_sizes = config.payload_sizes
+    base_time = config.base_time if config.base_time is not None else time.time()
+    gap_jitter = config.gap_jitter
+    rng = Random(config.seed)
 
     packets: list[UDPStreamPacket] = []
     used_ts: set[int] = set()
-    usec_cursor = base_time * 1_000_000
+    usec_cursor = int(base_time * 1_000_000)
 
     sizes = _payload_sizes(
         num_data_packets, min_payload, max_payload,
-        payload_distribution, payload_sizes,
+        payload_distribution, payload_sizes, rng,
     )
     # Continuous payload: tile default_payload.txt across all datagrams
     payload_data = _repeat_payload(sum(sizes))
     offset = 0
     for i, size in enumerate(sizes):
-        gap_usec = int((inter_packet_gap + random.uniform(0, gap_jitter)) * 1_000_000)
+        gap_usec = int((inter_packet_gap + rng.uniform(0, gap_jitter)) * 1_000_000)
         usec_cursor += gap_usec
         ts = _alloc_usec(usec_cursor, used_ts)
         chunk = payload_data[offset:offset + size]

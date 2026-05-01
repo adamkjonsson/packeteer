@@ -122,7 +122,7 @@ from packeteer.generate.sctp import (
     SCTPShutdownChunk,
     SCTPShutdownCompleteChunk,
 )
-from packeteer.generate.sctp_stream import generate_sctp_stream
+from packeteer.generate.sctp_stream import SCTPStreamConfig, generate_sctp_stream
 from packeteer.generate.stream_encap import (
     EtherIPEncap,
     GREEncap,
@@ -135,7 +135,7 @@ from packeteer.generate.stream_encap import (
 )
 from packeteer.generate.tcp import TCPOptions
 from packeteer.generate.tcp_stream import TCPStreamConfig, generate_tcp_stream
-from packeteer.generate.udp_stream import generate_udp_stream
+from packeteer.generate.udp_stream import UDPStreamConfig, generate_udp_stream
 from packeteer.parse.core import parse_packet, parse_pcap_file
 from packeteer.parse.to_config import (
     apply_tunneled,
@@ -1045,6 +1045,7 @@ _STREAM_PARAMS: dict[str, tuple[str, object, object]] = {
     "stray_packet_count": ("stray_packet_count",              int,   0),
     "stray_timing_window":("stray_timing_window",             int,   None),
     "no_ethernet":        ("no_ethernet",                     bool,  False),
+    "seed":               ("seed",                            int,   None),
     "pcap":               ("pcap",                            str,   None),
     "pcapng":             ("pcapng",                          str,   None),
     "json":               ("json",                            str,   None),
@@ -1325,12 +1326,19 @@ def _cmd_stream(args: argparse.Namespace) -> None:
                     rst_propagation_delay=args.rst_propagation_delay,
                     stray_packet_count=args.stray_packet_count,
                     stray_timing_window=args.stray_timing_window,
+                    seed=args.seed,
                 ),
             )
         elif protocol == "udp":
-            stream = generate_udp_stream(**common, gap_jitter=args.gap_jitter)
+            stream = generate_udp_stream(
+                **common,
+                config=UDPStreamConfig(gap_jitter=args.gap_jitter, seed=args.seed),
+            )
         else:  # sctp
-            stream = generate_sctp_stream(**common, gap_jitter=args.gap_jitter)
+            stream = generate_sctp_stream(
+                **common,
+                config=SCTPStreamConfig(gap_jitter=args.gap_jitter, seed=args.seed),
+            )
     except (ValueError, OSError) as e:
         print(f"Error generating stream: {e}", file=sys.stderr)
         sys.exit(1)
@@ -1847,6 +1855,10 @@ def main() -> None:
             "Write packets as a packet spec file (same format produced by"
             " 'packeteer parse', replayable with 'packeteer build')"
         ),
+    )
+    stream_parser.add_argument(
+        "--seed", type=int, default=None, metavar="N",
+        help="RNG seed for reproducible stream generation (default: non-deterministic)",
     )
     stream_parser.set_defaults(func=_cmd_stream)
 

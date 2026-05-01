@@ -6,6 +6,46 @@ that represent realistic network exchanges.
 
 Shared utilities live in `packeteer/generate/_stream_common.py`.
 
+## Config dataclasses
+
+Every generator accepts an optional *config* dataclass that bundles the
+parameters that are either advanced or infrequently changed:
+
+| Class | Used by |
+|---|---|
+| `TCPStreamConfig` | `generate_tcp_stream` |
+| `UDPStreamConfig` | `generate_udp_stream` |
+| `SCTPStreamConfig` | `generate_sctp_stream` |
+
+All three share the same four leading fields in the same order:
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `payload_sizes` | `list[int] \| None` | `None` | Explicit per-packet sizes; overrides `min_payload`/`max_payload`/`distribution` |
+| `base_time` | `float \| None` | `None` → `time.time()` | Timestamp for the first packet |
+| `gap_jitter` | `float` | `0.0` | Maximum extra random delay per gap (seconds) |
+| `seed` | `int \| None` | `None` | RNG seed; see *RNG and reproducibility* below |
+
+`TCPStreamConfig` adds TCP-specific fields after these four (`psh_probability`,
+`window`, anomaly probabilities, `packet_hooks`, …).
+
+## RNG and reproducibility
+
+Each generator call creates a private `random.Random(seed)` instance.
+Setting `seed` to the same integer value produces byte-identical captures
+across runs, which is useful for regression tests and diff-based workflows.
+Using a per-call instance keeps the generator's random state fully isolated
+from the rest of the process — calling one generator never affects the
+sequence of any other.
+
+All randomised decisions within a single call (payload sizes, jitter delays,
+anomaly injection, stray-packet placement) draw from the same `Random`
+instance, so a fixed seed makes the entire capture reproducible.
+
+The shared `_payload_sizes` helper in `_stream_common.py` also receives the
+`rng` instance so that payload-size draws participate in the same
+deterministic sequence.
+
 ## TCP stream
 
 ### Connection state — `_TCPEndpoint`
@@ -74,10 +114,11 @@ show them.
 
 ### Payload content
 
-Application data is a repeating tile of `b"\x00\x01\x02…\xff\x00\x01…"`.
-`_repeat_payload(size)` from `_stream_common.py` slices the appropriate
-number of bytes.  The same tile is used for retransmissions, so a retransmit
-carries byte-identical content to the original — matching real TCP behaviour.
+Application data is read from `default_payload.txt` (a human-readable text
+file bundled with the package).  `_repeat_payload(size)` in `_stream_common.py`
+tiles the file content as many times as needed and returns the requested number
+of bytes.  The same tile is used for retransmissions, so a retransmit carries
+byte-identical content to the original — matching real TCP behaviour.
 
 ### Fragmentation at the stream level
 
@@ -100,6 +141,12 @@ is removed from `used_ts` and replaced by one unique timestamp per fragment.
 client→server, with no connection state, handshake, or teardown.  Each
 datagram is assembled with `PacketBuilder().ip().udp().payload()`.
 
+Advanced timing and reproducibility options are passed via `UDPStreamConfig`
+(fields: `payload_sizes`, `base_time`, `gap_jitter`, `seed`).  The generator
+creates its own `Random(config.seed)` instance and passes it to
+`_payload_sizes` so all randomised decisions within the call are deterministic
+when a seed is set.
+
 ## SCTP stream
 
 `generate_sctp_stream()` follows the same high-level structure as the TCP
@@ -117,3 +164,7 @@ SACK carries the cumulative TSN acknowledgement.
 
 SCTP checksums (CRC-32c) are computed inside `build_sctp_packet()` and cover
 the entire SCTP header and all chunks.
+
+Advanced timing and reproducibility options are passed via `SCTPStreamConfig`
+(fields: `payload_sizes`, `base_time`, `gap_jitter`, `seed`) — identical in
+structure to `UDPStreamConfig`.

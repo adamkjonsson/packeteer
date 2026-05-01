@@ -318,7 +318,7 @@ from .sctp import (
     SCTPShutdownChunk,
     SCTPShutdownCompleteChunk,
 )
-from .sctp_stream import SCTPStream, SCTPStreamPacket, generate_sctp_stream
+from .sctp_stream import SCTPStream, SCTPStreamConfig, SCTPStreamPacket, generate_sctp_stream
 from .session import (
     SCTPSession,
     TCPSession,
@@ -352,7 +352,7 @@ from .tcp import (
 )
 from .tcp_stream import TCPStream, TCPStreamConfig, TCPStreamPacket, generate_tcp_stream
 from .udp import UDPHeader
-from .udp_stream import UDPStream, UDPStreamPacket, generate_udp_stream
+from .udp_stream import UDPStream, UDPStreamConfig, UDPStreamPacket, generate_udp_stream
 
 __all__ = [
     "PacketBuilder",
@@ -450,9 +450,11 @@ __all__ = [
     "TCPStreamPacket",
     "generate_udp_stream",
     "UDPStream",
+    "UDPStreamConfig",
     "UDPStreamPacket",
     "generate_sctp_stream",
     "SCTPStream",
+    "SCTPStreamConfig",
     "SCTPStreamPacket",
     "TCPSession",
     "UDPSession",

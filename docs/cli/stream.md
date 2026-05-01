@@ -40,6 +40,7 @@ Exactly one output flag is required; they are mutually exclusive.
 | `--ttl N` | `64` | IP TTL / hop limit |
 | `--gap SECONDS` | `0.001` | Base inter-packet gap |
 | `--gap-jitter SECONDS` | `0.0` | Maximum extra delay per packet; output is re-sorted |
+| `--seed N` | off | Integer RNG seed; two runs with the same seed produce byte-identical captures |
 | `--mtu BYTES` | off | Fragment packets exceeding this IP-layer size |
 
 ## TCP-only arguments
@@ -99,6 +100,7 @@ packets      = 50
 distribution = bimodal
 gap          = 0.002
 gap_jitter   = 0.001
+seed         = 42
 psh_probability            = 0.3
 packet_loss                = 0.02
 retransmission_probability = 0.05

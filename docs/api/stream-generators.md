@@ -56,6 +56,12 @@ See {doc}`../guide/generating` for usage examples and encapsulation, and {doc}`.
    :no-index:
 ```
 
+```{eval-rst}
+.. autoclass:: packeteer.generate.udp_stream.UDPStreamConfig
+   :members:
+   :no-index:
+```
+
 ---
 
 ## SCTP
@@ -73,6 +79,12 @@ See {doc}`../guide/generating` for usage examples and encapsulation, and {doc}`.
 
 ```{eval-rst}
 .. autoclass:: packeteer.generate.sctp_stream.SCTPStreamPacket
+   :members:
+   :no-index:
+```
+
+```{eval-rst}
+.. autoclass:: packeteer.generate.sctp_stream.SCTPStreamConfig
    :members:
    :no-index:
 ```
