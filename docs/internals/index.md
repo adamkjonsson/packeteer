@@ -16,6 +16,7 @@ stream-generators
 encapsulation
 sanitiser
 fuzzer
+atheris
 ```
 
 ## Module map

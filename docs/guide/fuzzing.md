@@ -175,8 +175,117 @@ packeteer fuzz capture.pcap --mutations boundary tcp-flags --output fuzzed.json
 
 See {doc}`../cli/fuzz` for the full flag reference.
 
+## Coverage-guided fuzzing with Atheris
+
+packeteer's built-in mutations cover a curated vocabulary of known bad patterns
+and produce them deterministically.  For exhaustive exploration of an
+application protocol's input space, pair packeteer with a coverage-guided
+fuzzer such as [Atheris](https://github.com/google/atheris).
+
+Coverage-guided fuzzers track which branches execute for each input and
+preferentially mutate inputs that reach new code, finding edge cases that no
+predefined mutation table would cover.
+
+Install Atheris with:
+
+```bash
+pip install atheris
+```
+
+### Fuzzing an application-layer protocol
+
+The natural combination is to let Atheris supply the application-layer payload
+while packeteer provides the surrounding network framing.  Your decoder always
+receives a properly-formed Ethernet/IP/UDP frame — exactly what it would
+receive from a real socket or pcap capture — while Atheris concentrates its
+exploration on the application payload where your parsing code lives.
+
+```python
+# fuzz_sensor_protocol.py
+"""Fuzz a custom sensor protocol decoder using Atheris + packeteer."""
+import struct
+import sys
+
+import atheris
+from packeteer.generate import PacketBuilder
+
+
+# ── Decoder under test ────────────────────────────────────────────────────────
+# Wire format (application layer):
+#   2 B version | 2 B sensor_id | 2 B reading_count
+#   | reading_count × 4 B float (big-endian IEEE 754)
+
+def decode_sensor_packet(raw_frame: bytes) -> dict:
+    """Parse a raw Ethernet/IP/UDP sensor packet."""
+    # Ethernet (14 B) + IPv4 (20 B) + UDP (8 B) = 42 B before payload
+    payload = raw_frame[42:]
+    if len(payload) < 6:
+        raise ValueError("payload too short for sensor header")
+    version, sensor_id, count = struct.unpack_from(">HHH", payload)
+    if version not in (1, 2):
+        raise ValueError(f"unsupported version {version}")
+    readings = []
+    offset = 6
+    for _ in range(count):
+        if offset + 4 > len(payload):
+            raise ValueError("reading data truncated")
+        (value,) = struct.unpack_from(">f", payload, offset)
+        readings.append(value)
+        offset += 4
+    return {"sensor_id": sensor_id, "readings": readings}
+
+
+# ── Atheris target ────────────────────────────────────────────────────────────
+
+@atheris.instrument_func
+def TestOneInput(data: bytes) -> None:
+    # Packeteer wraps the fuzz-supplied bytes in a valid Ethernet/IP/UDP frame.
+    # The network headers are always well-formed; only the application payload
+    # — the part Atheris is exploring — varies.
+    raw_frame = (
+        PacketBuilder()
+        .ethernet()
+        .ip(src="10.0.0.2", dst="10.0.0.1")
+        .udp(src_port=5000, dst_port=5001)
+        .payload(data=data)
+        .build()
+    )
+    try:
+        decode_sensor_packet(raw_frame)
+    except ValueError:
+        pass  # expected; any other exception propagates as a crash finding
+
+
+atheris.Setup(sys.argv, TestOneInput)
+atheris.instrument_all()
+atheris.Fuzz()
+```
+
+Seed the corpus with a valid application payload so Atheris reaches the parsing
+branches immediately rather than spending time on the length guard:
+
+```bash
+mkdir corpus/
+python - <<'EOF'
+import struct
+header   = struct.pack(">HHH", 1, 42, 3)           # version=1, id=42, 3 readings
+readings = struct.pack(">fff", 23.5, 18.1, 99.0)
+open("corpus/valid_v1.bin", "wb").write(header + readings)
+EOF
+python fuzz_sensor_protocol.py corpus/ -max_total_time=300
+```
+
+For a TCP-based decoder, substitute `.tcp(src_port=…, dst_port=…)` for
+`.udp(…)`.  For other framing — VLAN tags, GRE tunnels — use the same
+encapsulation options as the stream generators.
+
+For a deeper look at all three fuzzing patterns (pcap reader, packet parser,
+and application-layer decoder) and guidance on building a seed corpus from
+real captures or synthetic streams, see {doc}`../internals/atheris`.
+
 ## Next steps
 
 - {doc}`../api/fuzzer` — complete `FuzzOptions`, `FuzzVariant`, `fuzz`, and `fuzz_bytes` API reference
+- {doc}`../internals/atheris` — coverage-guided fuzzing patterns with Atheris
 - {doc}`generating` — create synthetic captures to use as fuzzing inputs
 - {doc}`sanitising` — strip sensitive fields before sharing fuzzed captures

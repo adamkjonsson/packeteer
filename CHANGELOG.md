@@ -264,6 +264,21 @@ All notable changes to packeteer are recorded in this file.
     examples in the quick-start section, a new Python API code block, and three
     new rows in the documentation table.
 
+- **Atheris integration guide** — documentation on combining packeteer with
+  [Atheris](https://github.com/google/atheris) for coverage-guided fuzzing:
+  - `docs/internals/atheris.md` — new internals chapter covering all three
+    patterns: fuzzing the pcap reader (file-format resilience), fuzzing the
+    packet parser (protocol decoding resilience), and fuzzing application-layer
+    decoders (user's own code under test, with packeteer providing the network
+    framing).  Includes seed corpus construction from live captures, stream
+    generators, and `fuzz_bytes` pre-seeding, and guidance on instrumentation
+    scope.
+  - `docs/guide/fuzzing.md` — new "Coverage-guided fuzzing with Atheris"
+    section with a worked example: Atheris mutates an application-layer sensor
+    protocol payload, packeteer wraps it in Ethernet/IP/UDP, and the user's
+    decoder is the code under test.  "Next steps" updated to link to the new
+    internals chapter.
+
 - **Stream generator documentation updated** for the RNG seed and config class
   additions:
   - `docs/internals/stream-generators.md` — new "Config dataclasses" section
