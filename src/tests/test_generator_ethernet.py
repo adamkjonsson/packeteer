@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import struct
 import unittest
+
 from packeteer.generate.ethernet import (
-    EthernetHeader, VLANTag, _build_ethernet_header,
-    ETHERTYPE_IPV4, ETHERTYPE_IPV6, ETHERTYPE_8021Q,
     ETHERNET_MIN_FRAME_SIZE,
+    ETHERTYPE_8021Q,
+    ETHERTYPE_IPV4,
+    ETHERTYPE_IPV6,
+    EthernetHeader,
+    VLANTag,
+    _build_ethernet_header,
 )
 
 

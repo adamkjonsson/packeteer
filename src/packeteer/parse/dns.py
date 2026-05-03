@@ -14,6 +14,8 @@ import socket
 import struct
 
 from packeteer.generate.dns import (
+    _MDNS_CF_BIT,
+    _MDNS_QU_BIT,
     DNS_TYPE_A,
     DNS_TYPE_AAAA,
     DNS_TYPE_CNAME,
@@ -34,8 +36,6 @@ from packeteer.generate.dns import (
     DNSRDataSOA,
     DNSRDataTXT,
     DNSResourceRecord,
-    _MDNS_CF_BIT,
-    _MDNS_QU_BIT,
     _unpack_flags,
 )
 

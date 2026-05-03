@@ -7,17 +7,16 @@ import warnings
 from typing import Any
 
 from packeteer.generate import PacketBuilder
-from packeteer.pcap import write_pcap
 from packeteer.parse import parse_pcap_file
+from packeteer.pcap import write_pcap
 from packeteer.sanitise import (
     PersonalDataWarning,
     SanitiseOptions,
-    sanitise,
     _excerpt,
     _scan_emails,
     _scan_names,
+    sanitise,
 )
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -170,12 +169,19 @@ class TestScanNames(unittest.TestCase):
 # ── scan_pii=False: no warnings ───────────────────────────────────────────────
 
 class TestScanPiiDisabled(unittest.TestCase):
-    def test_no_warnings_by_default(self) -> None:
+    def test_warnings_by_default(self) -> None:
         spec = _spec("Hello alice@example.com")
-        # scan_pii is True in _pii_warnings — but test the default
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            sanitise(spec)  # default SanitiseOptions — scan_pii=False
+            sanitise(spec)  # default SanitiseOptions — scan_pii=True
+        pii_default = [w for w in caught if issubclass(w.category, PersonalDataWarning)]
+        self.assertEqual(len(pii_default), 1)
+
+    def test_no_warnings_when_disabled(self) -> None:
+        spec = _spec("Hello alice@example.com")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            sanitise(spec, SanitiseOptions(scan_pii=False))
         pii_default = [w for w in caught if issubclass(w.category, PersonalDataWarning)]
         self.assertEqual(pii_default, [])
 

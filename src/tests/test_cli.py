@@ -13,7 +13,6 @@ from unittest.mock import patch
 
 import packeteer.__main__ as cli
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _minimal_build_config() -> dict:
@@ -34,7 +33,7 @@ def _write_json(data: dict) -> str:
 def _write_pcap_with_one_packet() -> str:
     """Write a minimal valid pcap file containing one SYN packet; return path."""
     from packeteer.generate import PacketBuilder
-    from packeteer.pcap import write_pcap, LINKTYPE_ETHERNET
+    from packeteer.pcap import LINKTYPE_ETHERNET, write_pcap
     raw = (PacketBuilder()
            .ethernet()
            .ip(src="10.0.0.1", dst="10.0.0.2")
@@ -726,7 +725,7 @@ class TestParseStreamEncap(unittest.TestCase):
             cli._parse_stream_encap(args)
 
     def test_mpls_and_ipip_combined(self):
-        from packeteer.generate.stream_encap import MPLSEncap, IPIPEncap
+        from packeteer.generate.stream_encap import IPIPEncap, MPLSEncap
         args = self._encap_args(mpls=[100, 200], ipip=["1.2.3.4", "5.6.7.8"])
         result = cli._parse_stream_encap(args)
         self.assertEqual(len(result), 2)
@@ -734,7 +733,7 @@ class TestParseStreamEncap(unittest.TestCase):
         self.assertIsInstance(result[1], IPIPEncap)
 
     def test_vlan_and_gre_combined(self):
-        from packeteer.generate.stream_encap import VLANEncap, GREEncap
+        from packeteer.generate.stream_encap import GREEncap, VLANEncap
         args = self._encap_args(vlan=100, gre=["1.2.3.4", "5.6.7.8"])
         result = cli._parse_stream_encap(args)
         self.assertEqual(len(result), 2)
@@ -742,7 +741,7 @@ class TestParseStreamEncap(unittest.TestCase):
         self.assertIsInstance(result[1], GREEncap)
 
     def test_ordering_vlan_mpls_pppoe_gre(self):
-        from packeteer.generate.stream_encap import VLANEncap, MPLSEncap, PPPoEEncap, GREEncap
+        from packeteer.generate.stream_encap import GREEncap, MPLSEncap, PPPoEEncap, VLANEncap
         args = self._encap_args(
             vlan=10, mpls=[100], pppoe=1,
             gre=["1.2.3.4", "5.6.7.8"],
@@ -937,6 +936,7 @@ class TestLinkTypeMetadata(unittest.TestCase):
 
     def _make_pcap(self, link_type: int, pkt: bytes) -> bytes:
         from io import BytesIO
+
         from packeteer.pcap import write_pcap
         buf = BytesIO()
         write_pcap([(pkt, 0, 0)], file_object=buf, link_type=link_type)
@@ -945,6 +945,7 @@ class TestLinkTypeMetadata(unittest.TestCase):
 
     def test_parse_writes_link_type_ethernet(self) -> None:
         from io import BytesIO
+
         from packeteer.parse.core import parse_pcap_file
         from packeteer.pcap import LINKTYPE_ETHERNET
         pkt = b"\x00" * 14 + b"\x45\x00\x00\x14" + b"\x00" * 16
@@ -954,6 +955,7 @@ class TestLinkTypeMetadata(unittest.TestCase):
 
     def test_parse_writes_link_type_raw(self) -> None:
         from io import BytesIO
+
         from packeteer.parse.core import parse_pcap_file
         from packeteer.pcap import LINKTYPE_RAW
         # Minimal IPv4 header (20 bytes, no payload): TTL=64, proto=6 (TCP)

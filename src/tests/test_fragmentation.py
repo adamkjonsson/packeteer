@@ -6,10 +6,9 @@ import struct
 import unittest
 
 from packeteer.generate import PacketBuilder, fragment_ipv4, fragment_ipv6
+from packeteer.generate.ethernet import ETHERTYPE_IPV4, ETHERTYPE_IPV6, EthernetHeader
 from packeteer.generate.ip import IPHeader
 from packeteer.generate.ipv6 import IPv6Header
-from packeteer.generate.ethernet import EthernetHeader, ETHERTYPE_IPV4, ETHERTYPE_IPV6
-
 
 # ---------------------------------------------------------------------------
 # IPv4 fragmentation

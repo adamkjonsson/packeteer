@@ -8,6 +8,65 @@ All notable changes to packeteer are recorded in this file.
 
 ### New features
 
+- **`packeteer fuzz` — adversarial packet variant generator** — new subcommand
+  and Python API for testing decoder robustness.  Give it a correctly-formed
+  capture or packet spec and it produces a suite of deliberately unusual or
+  malformed variants covering a wide range of protocol-edge and wire-format
+  corner cases.
+
+  Two complementary mutation families are provided:
+
+  *Spec-level* — operate on the packet spec JSON and produce well-formed but
+  unusual packets (suitable for replay through a real encoder):
+
+  | Mutation | What it produces |
+  |----------|-----------------|
+  | `boundary` | Sets numeric header fields to their minimum, near-minimum, near-maximum, and maximum representable values (TTL, TOS, IP identification, fragment offset, TCP window/seq/ack, port numbers, ICMP id/seq, SCTP verification tag) |
+  | `reserved-bits` | Sets the IPv4 "evil bit" (RFC 3514), the DF+MF combination (RFC-invalid), and the TCP reserved nibble |
+  | `tcp-flags` | All classically pathological TCP flag combinations: SYN+FIN, SYN+RST, null scan, XMAS, FIN-only, PSH+URG without ACK, RST+ACK+URG, ECE+CWR |
+  | `truncate` | Removes the payload or cuts it to 1 byte, 25%, or 50% of its original length |
+  | `extend` | Appends extra zero bytes (1, 4, 8, 64, 512) or 16 random bytes after the existing payload |
+
+  *Byte-level* — operate on raw serialised bytes and produce structurally
+  invalid encodings that no spec-based builder can produce:
+
+  | Mutation | What it produces |
+  |----------|-----------------|
+  | `bit-flip` | Flips a single random bit per variant; `--count` controls how many variants are produced per source packet |
+  | `wrong-checksum` | Sets IP, TCP, and UDP checksum fields to `0x0000`, `0xffff`, and the bitwise inverse of the original value |
+  | `wrong-length` | Sets IP total-length and UDP length fields to zero, IHL-only, off-by-one (both directions), and maximum (`0xffff`) |
+
+  Public Python API in `packeteer.fuzz`:
+
+  ```python
+  from packeteer.fuzz import fuzz, fuzz_bytes, FuzzOptions
+
+  # Spec-level variants — returns list[FuzzVariant]
+  variants = fuzz(config, FuzzOptions(mutations=["boundary", "tcp-flags"], seed=42))
+  for v in variants:
+      print(v.source_idx, v.mutation, v.label)
+
+  # Byte-level variants — returns list[(label, bytes)]
+  for label, corrupted in fuzz_bytes(raw_pkt, FuzzOptions(seed=42)):
+      write_to_pcap(corrupted)
+  ```
+
+  - `FuzzOptions` controls which mutations are applied, how many `bit-flip`
+    variants are produced per packet (`count`, default 10), and the RNG seed
+    for reproducibility.  The same `FuzzOptions` instance can be passed to both
+    `fuzz()` and `fuzz_bytes()`; each silently ignores names irrelevant to its
+    domain.
+  - `FuzzVariant` carries `source_idx`, `mutation`, `label`, and `spec` (an
+    independent deep copy of the mutated packet dict, ready for
+    `{"packets": [v.spec]}` replay through `packeteer build`).
+  - `MUTATION_NAMES`, `BYTE_MUTATION_NAMES`, and `ALL_MUTATION_NAMES` are
+    exported constants listing the supported mutation type names.
+  - `packeteer fuzz <FILE>` accepts a pcap, pcapng, or packet spec as input;
+    output can be written to `--pcap`, `--pcapng`, and/or `--output` (JSON
+    packet spec) simultaneously.  `--mutations`, `--count`, and `--seed` flags
+    map directly to `FuzzOptions`.
+  - 104 new tests in `test_fuzz.py` (1792 total).
+
 - **IPv6 Hop-by-Hop Options extension header (RFC 8200 §4.3)** — the
   Hop-by-Hop Options header (next_header=0) is now supported end-to-end across
   the builder, parser, and packet-spec serialisation.
@@ -66,8 +125,8 @@ All notable changes to packeteer are recorded in this file.
     parsing, round-trips, `PacketBuilder` integration, and config serialisation
     (1529 total).
 
-- **PII scanning in UTF-8 payloads** (`sanitise --scan-pii`) — `sanitise` can
-  now scan every UTF-8 encoded payload for email addresses and personal names
+- **PII scanning in UTF-8 payloads** — `sanitise` now by default
+  scans every UTF-8 encoded payload for email addresses and personal names
   and emit a warning for each unique finding.
 
   - New public class `PersonalDataWarning(UserWarning)` exported from
@@ -87,7 +146,7 @@ All notable changes to packeteer are recorded in this file.
       `contact:`, `full_name:`).
   - `SanitiseOptions` gains a new boolean field `scan_pii` (default `False`).
     Opt-in only — existing calls are unaffected.
-  - New `--scan-pii` flag added to `packeteer sanitise`.  The flag does not
+  - New `--scan-pii` and `--no-scan-pii` flags added to `packeteer sanitise`.  The flags do not
     modify the output; combine with `--payload` to also zero the payloads.
   - Only `"utf8"` encoded payloads are scanned; hex payloads are never
     inspected.
@@ -99,6 +158,28 @@ All notable changes to packeteer are recorded in this file.
   other tooling without manually counting positions in the JSON array.
 
 ### Enhancements
+
+- **RNG seed and reproducibility for all stream generators** — passing `seed`
+  to any stream generator produces byte-identical captures across runs.
+
+  - `TCPStreamConfig`, `UDPStreamConfig`, and `SCTPStreamConfig` all expose a
+    `seed: int | None` field (default `None` — non-deterministic).  Setting it
+    to the same integer value on two calls with otherwise identical arguments
+    produces bit-for-bit identical pcap output.
+  - `UDPStreamConfig` and `SCTPStreamConfig` are new dataclasses (previously
+    UDP and SCTP generators had no config object).  Each bundles the same four
+    leading fields as `TCPStreamConfig`: `payload_sizes`, `base_time`,
+    `gap_jitter`, and `seed` — making the three generator APIs consistent.
+  - Each generator call creates a private `random.Random(seed)` instance,
+    keeping the generator's random state fully isolated from the rest of the
+    process.  All randomised decisions within a call (payload sizes, jitter,
+    anomaly injection) draw from the same instance.
+  - The shared `_payload_sizes` helper in `_stream_common.py` now accepts the
+    `rng` instance explicitly so payload-size draws participate in the same
+    deterministic sequence.
+  - `--seed N` flag added to `packeteer stream`; accepted by all three
+    protocols.  The `seed` key is also recognised in INI config files.
+  - `UDPStreamConfig` and `SCTPStreamConfig` exported from `packeteer.generate`.
 
 - **Informative warning for unsupported IP protocol numbers** — when the
   parser encounters an IP protocol number it does not recognise (anything other
@@ -145,8 +226,80 @@ All notable changes to packeteer are recorded in this file.
   the field was silently omitted for unknown protocol numbers, making it
   impossible to tell from the JSON alone why the transport section was absent.
 
+### Breaking changes
+
+- **`ethernet.pad` defaults to `true`** — Ethernet frames are now zero-padded
+  to the IEEE 802.3 minimum of 60 bytes by default in both `PacketBuilder` and
+  `packeteer build`.  Set `pad: false` (or `.ethernet(pad=False)`) to suppress
+  padding explicitly.
+
+- **PII scanning enabled by default** — `SanitiseOptions.scan_pii` now defaults
+  to `True`.  `packeteer sanitise` will emit `PersonalDataWarning` instances for
+  any email addresses or names found in UTF-8 payloads unless `--no-scan-pii`
+  is passed.  Code that calls `sanitise()` directly and does not want PII
+  warnings should pass `SanitiseOptions(scan_pii=False)`.
+
 ### Documentation
 
+- **Fuzzer documentation** — four new pages covering the `fuzz` feature:
+  - `docs/cli/fuzz.md` — CLI reference: usage synopsis, output options, full
+    mutation type tables for both spec-level and byte-level families, flags, and
+    six worked examples.
+  - `docs/guide/fuzzing.md` — task-oriented Python API guide covering quick
+    start, mutation type descriptions, `FuzzOptions` usage, working with
+    `FuzzVariant` objects, byte-level fuzzing with `fuzz_bytes`, reproducibility,
+    and CLI equivalents.
+  - `docs/api/fuzzer.md` — autodoc API reference for `FuzzOptions`,
+    `FuzzVariant`, `fuzz`, `fuzz_bytes`, `MUTATION_NAMES`, `BYTE_MUTATION_NAMES`,
+    and `ALL_MUTATION_NAMES`.
+  - `docs/internals/fuzzer.md` — developer internals: design goals, the
+    `_MUTATIONS` registry pattern, per-mutation implementation details
+    (boundary tables, TCP flag combos, truncate deduplication, extend zero/random
+    sizing), VLAN-aware `_ip_header_offset` algorithm, and `fuzz_bytes` dispatch.
+  - All relevant index pages updated (`docs/cli/index.md`, `docs/guide/index.md`,
+    `docs/api/index.md`, `docs/internals/index.md`).
+  - `docs/internals/architecture.md` updated to include `packeteer/fuzz.py` in
+    the component diagram and module description.
+  - `README.md` updated: fuzzing bullet in the features list, two new CLI
+    examples in the quick-start section, a new Python API code block, and three
+    new rows in the documentation table.
+
+- **Atheris integration guide** — documentation on combining packeteer with
+  [Atheris](https://github.com/google/atheris) for coverage-guided fuzzing:
+  - `docs/internals/atheris.md` — new internals chapter covering all three
+    patterns: fuzzing the pcap reader (file-format resilience), fuzzing the
+    packet parser (protocol decoding resilience), and fuzzing application-layer
+    decoders (user's own code under test, with packeteer providing the network
+    framing).  Includes seed corpus construction from live captures, stream
+    generators, and `fuzz_bytes` pre-seeding, and guidance on instrumentation
+    scope.
+  - `docs/guide/fuzzing.md` — new "Coverage-guided fuzzing with Atheris"
+    section with a worked example: Atheris mutates an application-layer sensor
+    protocol payload, packeteer wraps it in Ethernet/IP/UDP, and the user's
+    decoder is the code under test.  "Next steps" updated to link to the new
+    internals chapter.
+
+- **Stream generator documentation updated** for the RNG seed and config class
+  additions:
+  - `docs/internals/stream-generators.md` — new "Config dataclasses" section
+    (common field layout for all three classes) and "RNG and reproducibility"
+    section (per-call `Random(seed)` isolation); UDP and SCTP sections now
+    reference their config classes; payload content description corrected
+    (was `\x00\x01…\xff`, now `default_payload.txt`).
+  - `docs/cli/stream.md` — `--seed N` row added to the General arguments table;
+    `seed = 42` added to the INI example.
+  - `docs/guide/generating.md` — "Reproducible captures" bullet added to the
+    stream-generator feature list.
+  - `docs/api/stream-generators.md` — `autoclass` directives added for
+    `UDPStreamConfig` and `SCTPStreamConfig`.
+  - `src/packeteer/generate/stream.ini.template` — `seed` entry added to the
+    Timing section.
+
+- Sanitiser internals page updated with the full PII scanning pipeline:
+  `_maybe_scan_pii`, two-tier name detection, `_excerpt`, and warning
+  consolidation.
+- PDF output: raised `\tymin` to 60 pt in the LaTeX preamble so short-label
+  first columns are no longer squeezed in reference tables.
 - Expanded introductions for the CLI (`docs/cli/index.md`) and Reference
   (`docs/reference/index.md`) sections.
 - Generating guide (`docs/guide/generating.md`): reorganised so

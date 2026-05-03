@@ -1,16 +1,19 @@
 """Tests for packeteer.generate.tcp_stream — TCP stream generation."""
 from __future__ import annotations
 
+import dataclasses
 import io
 import unittest
 
-import dataclasses
-
+from packeteer.generate.tcp import TCP_ACK, TCP_FIN, TCP_PSH, TCP_SYN, TCPOptions
 from packeteer.generate.tcp_stream import (
-    generate_tcp_stream, TCPStream, TCPStreamConfig, TCPStreamPacket, _pkt_usec,
+    TCPStream,
+    TCPStreamConfig,
+    TCPStreamPacket,
+    _pkt_usec,
+    generate_tcp_stream,
 )
-from packeteer.generate.tcp import TCP_SYN, TCP_ACK, TCP_PSH, TCP_FIN, TCPOptions
-from packeteer.pcap import write_pcap, LINKTYPE_ETHERNET
+from packeteer.pcap import LINKTYPE_ETHERNET, write_pcap
 
 _WRAP = 2 ** 32
 
@@ -648,7 +651,7 @@ class TestServerRst(unittest.TestCase):
         self.assertEqual(rst.direction, "s2c")
 
     def test_rst_flags(self):
-        from packeteer.generate.tcp import TCP_RST, TCP_ACK
+        from packeteer.generate.tcp import TCP_ACK, TCP_RST
         stream = self._rst_stream()
         rst = next(p for p in stream.packets if p.label == "RST")
         self.assertEqual(rst.flags, TCP_RST | TCP_ACK)
@@ -1274,6 +1277,51 @@ class TestStrayPackets(unittest.TestCase):
         )
         strays = [p for p in stream.packets if p.label.startswith("STRAY[")]
         self.assertEqual(strays, [])
+
+
+# ── Seed reproducibility ──────────────────────────────────────────────────────
+
+class TestSeed(unittest.TestCase):
+
+    def _seeded_stream(self, seed: int) -> TCPStream:
+        return generate_tcp_stream(
+            client_ip="10.0.0.1",
+            server_ip="10.0.0.2",
+            num_data_packets=5,
+            payload_distribution="uniform",
+            config=TCPStreamConfig(
+                gap_jitter=0.0005,
+                psh_probability=0.5,
+                base_time=1_000_000.0,
+                seed=seed,
+            ),
+        )
+
+    def test_same_seed_identical_output(self):
+        a = self._seeded_stream(42)
+        b = self._seeded_stream(42)
+        self.assertEqual([p.raw for p in a.packets], [p.raw for p in b.packets])
+        self.assertEqual(
+            [(p.ts_sec, p.ts_usec) for p in a.packets],
+            [(p.ts_sec, p.ts_usec) for p in b.packets],
+        )
+
+    def test_different_seed_different_output(self):
+        a = self._seeded_stream(42)
+        b = self._seeded_stream(99)
+        self.assertNotEqual([p.raw for p in a.packets], [p.raw for p in b.packets])
+
+    def test_none_seed_non_deterministic(self):
+        a = generate_tcp_stream(
+            client_ip="10.0.0.1", server_ip="10.0.0.2", num_data_packets=5,
+        )
+        b = generate_tcp_stream(
+            client_ip="10.0.0.1", server_ip="10.0.0.2", num_data_packets=5,
+        )
+        # ISNs are random; with overwhelming probability the two streams differ
+        self.assertNotEqual(
+            [p.raw for p in a.packets], [p.raw for p in b.packets],
+        )
 
 
 if __name__ == "__main__":

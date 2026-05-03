@@ -9,9 +9,11 @@ import struct
 
 from packeteer.generate.ethernet import ETHERTYPE_IPV4, ETHERTYPE_IPV6
 from packeteer.generate.pppoe import (
-    PPPoEHeader, PPPoETag,
-    PPP_IPV4, PPP_IPV6,
+    PPP_IPV4,
+    PPP_IPV6,
     PPPOE_CODE_SESSION,
+    PPPoEHeader,
+    PPPoETag,
 )
 
 # Map PPP protocol number -> EtherType so parse_packet can continue to IP

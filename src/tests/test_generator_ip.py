@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import struct
 import unittest
-from packeteer.generate.ip import IPHeader, _build_ip_header
+
 from packeteer.generate.checksum import ones_complement_checksum
+from packeteer.generate.ip import IPHeader, _build_ip_header
 
 
 class TestIPHeader(unittest.TestCase):

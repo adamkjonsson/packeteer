@@ -4,8 +4,14 @@ import io
 import struct
 import unittest
 
-from packeteer.pcap import write_pcap, LINKTYPE_ETHERNET, LINKTYPE_RAW
-from packeteer.pcap import read_pcap, PcapFile, PcapFileHeader
+from packeteer.pcap import (
+    LINKTYPE_ETHERNET,
+    LINKTYPE_RAW,
+    PcapFile,
+    PcapFileHeader,
+    read_pcap,
+    write_pcap,
+)
 
 # Both endiannesses share the same magic value; byte order in the file
 # is determined by how the bytes were packed (endian prefix in struct).

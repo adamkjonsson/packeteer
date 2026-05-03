@@ -129,6 +129,14 @@ gap = 0.001
 #   what a real capture would show.  Set to 0.0 for perfectly uniform spacing.
 gap_jitter = 0.0
 
+# seed  (default: unset — non-deterministic)
+#   Integer seed for the random number generator.  When set, two runs with
+#   identical configuration produce byte-identical captures, which is useful
+#   for regression testing, reproducible examples, and diff-based workflows.
+#   Applies to all protocols (tcp, udp, sctp).  Omit or comment out to let
+#   the generator choose random values on each run.
+# seed = 42
+
 # ── Realism ────────────────────────────────────────────────────────────────────
 
 # psh_probability  (default: 0.5)  [TCP only]

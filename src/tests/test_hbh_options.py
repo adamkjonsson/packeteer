@@ -4,24 +4,23 @@ from __future__ import annotations
 import struct
 import unittest
 
+from packeteer.generate import PacketBuilder
 from packeteer.generate.ipv6 import (
-    IPv6Header,
+    HBH_NEXT_HEADER,
+    HBH_OPT_JUMBO_PAYLOAD,
+    HBH_OPT_ROUTER_ALERT,
     HopByHopOptions,
-    RouterAlertOption,
+    IPv6Header,
     JumboPayloadOption,
     RawOption,
-    HBH_NEXT_HEADER,
-    HBH_OPT_ROUTER_ALERT,
-    HBH_OPT_JUMBO_PAYLOAD,
+    RouterAlertOption,
     _build_hop_by_hop_header,
     _build_ipv6_header,
 )
+from packeteer.parse.core import parse_packet
 from packeteer.parse.ip import packet_parser
 from packeteer.parse.to_config import update_config
-from packeteer.generate import PacketBuilder
-from packeteer.parse.core import parse_packet
 from packeteer.pcap import LINKTYPE_RAW
-
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 

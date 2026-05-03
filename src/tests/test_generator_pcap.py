@@ -3,7 +3,8 @@ from __future__ import annotations
 import io
 import struct
 import unittest
-from packeteer.pcap import write_pcap, LINKTYPE_ETHERNET, LINKTYPE_RAW
+
+from packeteer.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW, write_pcap
 
 _PCAP_MAGIC_NSEC = 0xA1B23C4D
 

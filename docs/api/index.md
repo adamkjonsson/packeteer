@@ -23,6 +23,10 @@ to the packet spec dict format.
 {class}`~packeteer.sanitise.SanitiseOptions` for stripping sensitive data from a config
 before sharing or archiving.
 
+**`packeteer.fuzz`** provides {func}`~packeteer.fuzz.fuzz` and
+{func}`~packeteer.fuzz.fuzz_bytes` for generating adversarial packet variants, controlled
+by {class}`~packeteer.fuzz.FuzzOptions`.
+
 ```{toctree}
 :maxdepth: 1
 
@@ -34,4 +38,5 @@ pcap-io
 parser
 fragmentation
 sanitiser
+fuzzer
 ```

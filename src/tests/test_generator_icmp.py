@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import struct
 import socket
+import struct
 import unittest
-from packeteer.generate.icmpv6 import ICMPv6Header, _build_icmpv6_header
+
 from packeteer.generate.checksum import ones_complement_checksum
+from packeteer.generate.icmpv6 import ICMPv6Header, _build_icmpv6_header
 
 
 def _verify_icmpv6_checksum(src_ip: str, dst_ip: str, icmpv6_bytes: bytes, payload: bytes) -> int:

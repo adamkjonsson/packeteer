@@ -4,16 +4,23 @@ from __future__ import annotations
 import struct
 import unittest
 
-from packeteer.generate.stream_encap import (
-    VLANEncap, QinQEncap, MPLSEncap, PPPoEEncap,
-    GREEncap, EtherIPEncap, IPIPEncap,
-    _as_list, _apply_encap, _encap_ip_start, _fix_encap_prefix,
-)
 from packeteer.generate.builder import PacketBuilder
-from packeteer.generate.tcp_stream import generate_tcp_stream, TCPStream
-from packeteer.generate.udp_stream import generate_udp_stream
 from packeteer.generate.sctp_stream import generate_sctp_stream
-
+from packeteer.generate.stream_encap import (
+    EtherIPEncap,
+    GREEncap,
+    IPIPEncap,
+    MPLSEncap,
+    PPPoEEncap,
+    QinQEncap,
+    VLANEncap,
+    _apply_encap,
+    _as_list,
+    _encap_ip_start,
+    _fix_encap_prefix,
+)
+from packeteer.generate.tcp_stream import TCPStream, generate_tcp_stream
+from packeteer.generate.udp_stream import generate_udp_stream
 
 # ── _as_list ──────────────────────────────────────────────────────────────────
 
@@ -278,18 +285,21 @@ class TestTCPStreamWithEncap(unittest.TestCase):
         self.assertGreater(len(s.packets), 0)
 
     def test_vlan_stream_packets_larger(self):
-        plain = self._stream(None)
-        vlan  = self._stream(VLANEncap(vid=100))
-        # Each VLAN packet should be 4 bytes longer
+        # Fixed payload so sizes are deterministic; large enough to exceed the
+        # 60-byte minimum frame size without encapsulation (14+20+20+100=154).
+        plain = self._stream(None, min_payload=100, max_payload=100)
+        vlan  = self._stream(VLANEncap(vid=100), min_payload=100, max_payload=100)
         self.assertEqual(
-            len(vlan.packets[0].raw) - len(plain.packets[0].raw), 4
+            len(vlan.packets[3].raw) - len(plain.packets[3].raw), 4
         )
 
     def test_qinq_stream_packets_8_bytes_larger(self):
-        plain = self._stream(None)
-        qinq  = self._stream(QinQEncap(outer_vid=100, inner_vid=200))
+        plain = self._stream(None, min_payload=100, max_payload=100)
+        qinq  = self._stream(
+            QinQEncap(outer_vid=100, inner_vid=200), min_payload=100, max_payload=100
+        )
         self.assertEqual(
-            len(qinq.packets[0].raw) - len(plain.packets[0].raw), 8
+            len(qinq.packets[3].raw) - len(plain.packets[3].raw), 8
         )
 
     def test_mpls_stream_has_mpls_ethertype(self):

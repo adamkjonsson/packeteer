@@ -9,9 +9,9 @@ from unittest.mock import patch
 
 # Import the helpers directly
 from packeteer.__main__ import (
-    _load_stream_config,
-    _apply_stream_defaults,
     _STREAM_PARAMS,
+    _apply_stream_defaults,
+    _load_stream_config,
 )
 
 
@@ -26,8 +26,8 @@ def _args(**kwargs: object) -> argparse.Namespace:
 
 def _write_ini(tmp_path: object, content: str) -> str:
     """Write *content* to a temp file and return its path."""
-    import tempfile
     import os
+    import tempfile
     fd, path = tempfile.mkstemp(suffix=".ini")
     with os.fdopen(fd, "w") as f:
         f.write(textwrap.dedent(content))

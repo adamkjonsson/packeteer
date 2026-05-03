@@ -5,7 +5,7 @@ packeteer sanitise <FILE> [--output FILE] [--pcap FILE] [--pcapng FILE]
                           [--no-ips] [--no-macs]
                           [--ports] [--payload] [--timestamps]
                           [--dns-ids] [--dhcp-xids] [--http-headers]
-                          [--scan-pii]
+                          [--no-scan-pii]
 ```
 
 Replaces sensitive field values with synthetic equivalents, producing a
@@ -39,7 +39,7 @@ When none are given, the sanitised packet spec is printed to stdout.
 | DNS transaction IDs | kept | `--dns-ids` to zero |
 | DHCP transaction IDs (`xid`) | kept | `--dhcp-xids` to zero |
 | Sensitive HTTP header values | kept | `--http-headers` to redact |
-| UTF-8 payload PII scan | off | `--scan-pii` to enable |
+| UTF-8 payload PII scan | **on** | `--no-scan-pii` to disable |
 
 Replacements are **consistent within a single run**: the same original value
 always maps to the same synthetic value across all packets and tunnel nesting
@@ -61,13 +61,13 @@ the values of `Host`, `Cookie`, `Set-Cookie`, `Authorization`, `Location`,
 
 ## PII scanning
 
-Add `--scan-pii` to scan every UTF-8 encoded payload for email addresses and
-personal names, and emit a warning for each finding.  Findings are
-consolidated across all packets in the run: if the same email address appears
-in several packets, one warning is issued that lists the packet numbers.
+PII scanning is **enabled by default**.  Every UTF-8 encoded payload is scanned
+for email addresses and personal names, and a warning is emitted for each unique
+finding.  Findings are consolidated across all packets in the run: if the same
+email address appears in several packets, one warning lists all packet numbers.
 
 ```bash
-packeteer sanitise capture.pcap --scan-pii --pcap clean.pcap
+packeteer sanitise capture.pcap --pcap clean.pcap
 ```
 
 Example warning output (on stderr):
@@ -77,11 +77,16 @@ UserWarning: [PII] email 'alice@example.com' found in 2 packets (1, 3).
   Context: 'Contact: alice@example.com — Sales'
 ```
 
-The flag does not modify the output — it only reports findings.  Combine it
-with `--payload` to zero the payloads after inspection.
+Pass `--no-scan-pii` to suppress the scan entirely:
+
+```bash
+packeteer sanitise capture.pcap --no-scan-pii --pcap clean.pcap
+```
+
+The scan does not modify the output — it only reports findings.  Combine with
+`--payload` to zero the payloads after inspection.
 
 Only `"utf8"` encoded payloads are scanned; hex payloads are left untouched.
-PII scanning is **off by default** and has no effect on the sanitised output.
 
 ## What is never changed
 

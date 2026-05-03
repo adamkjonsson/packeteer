@@ -3,14 +3,18 @@ from __future__ import annotations
 
 import unittest
 
+from packeteer.generate.sctp_stream import SCTPStream
 from packeteer.generate.session import (
-    TCPSession, UDPSession, SCTPSession,
-    tcp_handshake, tcp_teardown, sctp_handshake,
+    SCTPSession,
+    TCPSession,
+    UDPSession,
+    sctp_handshake,
+    tcp_handshake,
+    tcp_teardown,
 )
+from packeteer.generate.tcp import TCP_PSH
 from packeteer.generate.tcp_stream import TCPStream, TCPStreamPacket
 from packeteer.generate.udp_stream import UDPStream, UDPStreamPacket
-from packeteer.generate.sctp_stream import SCTPStream
-from packeteer.generate.tcp import TCP_PSH
 
 _C_IP = "10.0.0.1"
 _S_IP = "10.0.0.2"

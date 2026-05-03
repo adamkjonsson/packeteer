@@ -7,7 +7,7 @@ from __future__ import annotations
 import struct
 
 from packeteer.generate.ethernet import ETHERTYPE_IPV4, ETHERTYPE_IPV6
-from packeteer.generate.mpls import MPLSLabel, ETHERTYPE_MPLS_UNICAST
+from packeteer.generate.mpls import ETHERTYPE_MPLS_UNICAST, MPLSLabel
 from packeteer.generate.pseudowire import ETHERTYPE_PW_CW
 
 

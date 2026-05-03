@@ -1,18 +1,17 @@
 """Shared helpers used by all three stream generators (TCP, UDP, SCTP)."""
 from __future__ import annotations
 
-import random
 import socket
 import struct
 from pathlib import Path
+from random import Random
 
-from .fragmentation import fragment_ipv4
-from .fragmentation import fragment_ipv6
+from .fragmentation import fragment_ipv4, fragment_ipv6
 from .ip import IPHeader
 from .ipv6 import IPv6Header
+
 #from .stream_encap import EncapSpec, _encap_ip_start, _fix_encap_prefix
-from .stream_encap import EncapSpec
-from .stream_encap import _fix_encap_prefix
+from .stream_encap import EncapSpec, _fix_encap_prefix
 
 _DEFAULT_PAYLOAD = Path(__file__).with_name("default_payload.txt").read_bytes()
 
@@ -45,6 +44,7 @@ def _payload_sizes(
     max_payload: int,
     distribution: str,
     explicit: list[int] | None,
+    rng: Random,
 ) -> list[int]:
     """Return a list of *n* payload sizes according to the requested strategy."""
     if explicit is not None:
@@ -59,7 +59,7 @@ def _payload_sizes(
         return [max_payload] * n
 
     if distribution == "uniform":
-        return [random.randint(min_payload, max_payload) for _ in range(n)]
+        return [rng.randint(min_payload, max_payload) for _ in range(n)]
 
     if distribution == "bimodal":
         # 70% small (near min), 30% large (near max) — approximates mixed
@@ -68,10 +68,10 @@ def _payload_sizes(
         large_lo = max(max_payload - 100, min_payload)
         sizes = []
         for _ in range(n):
-            if random.random() < 0.7:
-                sizes.append(random.randint(min_payload, small_hi))
+            if rng.random() < 0.7:
+                sizes.append(rng.randint(min_payload, small_hi))
             else:
-                sizes.append(random.randint(large_lo, max_payload))
+                sizes.append(rng.randint(large_lo, max_payload))
         return sizes
 
     raise ValueError(

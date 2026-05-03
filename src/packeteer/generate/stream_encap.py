@@ -46,7 +46,6 @@ from typing import Union
 
 from .builder import PacketBuilder
 
-
 # ── Encap descriptor dataclasses ──────────────────────────────────────────────
 
 @dataclass

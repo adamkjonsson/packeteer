@@ -5,8 +5,14 @@ import io
 import struct
 import unittest
 
-from packeteer.pcap import write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW
-from packeteer.pcap import read_pcap, PcapFile, PcapFileHeader
+from packeteer.pcap import (
+    LINKTYPE_ETHERNET,
+    LINKTYPE_RAW,
+    PcapFile,
+    PcapFileHeader,
+    read_pcap,
+    write_pcapng,
+)
 
 
 def _write(packets: list, **kwargs: object) -> io.BytesIO:

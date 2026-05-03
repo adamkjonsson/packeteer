@@ -6,6 +6,7 @@ Subcommands:
   parse     Parse a pcap or pcapng file and produce a packet spec
   sanitise  Replace sensitive fields in a packet spec with synthetic data
   stream    Generate a synthetic TCP/UDP/SCTP stream and write to a pcap or pcapng file
+  fuzz      Generate adversarial packet variants for decoder robustness testing
 
 Examples:
   packeteer build packets.json --pcap out.pcap
@@ -24,6 +25,9 @@ Examples:
   packeteer stream --protocol sctp --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
       --server-port 9999 --packets 20 --pcap sctp.pcap
   packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 --packets 10 --json stream.json
+  packeteer fuzz capture.pcap --pcap fuzzed.pcap
+  packeteer fuzz capture.json --mutations boundary tcp-flags --pcap fuzzed.pcap
+  packeteer fuzz capture.json --mutations boundary --output variants.json
 
 """
 # This module is the entry point for the `packeteer` CLI command.
@@ -32,55 +36,121 @@ import argparse
 import configparser
 import json
 import sys
-from importlib.metadata import version as _pkg_version, PackageNotFoundError as _PkgNotFoundError
+from importlib.metadata import PackageNotFoundError as _PkgNotFoundError
+from importlib.metadata import version as _pkg_version
 from typing import Callable
+
+from packeteer.filter import PacketFilter
+from packeteer.fuzz import (
+    ALL_MUTATION_NAMES,
+    BYTE_MUTATION_NAMES,
+    FuzzOptions,
+    FuzzVariant,
+    fuzz,
+    fuzz_bytes,
+)
 from packeteer.generate import PacketBuilder
-from packeteer.generate.tcp import TCPOptions
+from packeteer.generate.dhcp import (
+    DHCP_OPT_CLIENT_ID,
+    DHCP_OPT_DNS_SERVER,
+    DHCP_OPT_DOMAIN_NAME,
+    DHCP_OPT_HOSTNAME,
+    DHCP_OPT_LEASE_TIME,
+    DHCP_OPT_MESSAGE_TYPE,
+    DHCP_OPT_PARAM_REQUEST_LIST,
+    DHCP_OPT_REQUESTED_IP,
+    DHCP_OPT_ROUTER,
+    DHCP_OPT_SERVER_ID,
+    DHCP_OPT_SUBNET_MASK,
+    DHCP_OPT_VENDOR_CLASS_ID,
+    DHCPMessage,
+    DHCPOpt,
+    DHCPOptClientID,
+    DHCPOptDNSServer,
+    DHCPOptDomainName,
+    DHCPOptHostname,
+    DHCPOptLeaseTime,
+    DHCPOptMessageType,
+    DHCPOptParamRequestList,
+    DHCPOptRaw,
+    DHCPOptRequestedIP,
+    DHCPOptRouter,
+    DHCPOptServerID,
+    DHCPOptSubnetMask,
+    DHCPOptVendorClassID,
+)
 from packeteer.generate.dns import (
-    DNS_TYPE_A, DNS_TYPE_NS, DNS_TYPE_CNAME, DNS_TYPE_SOA,
-    DNS_TYPE_PTR, DNS_TYPE_MX, DNS_TYPE_TXT, DNS_TYPE_AAAA,
     DNS_CLASS_IN,
-    DNSFlags, DNSMessage, DNSQuestion, DNSResourceRecord,
-    DNSRDataA, DNSRDataAAAA, DNSRDataCNAME, DNSRDataNS, DNSRDataPTR,
-    DNSRDataMX, DNSRDataSOA, DNSRDataTXT, DNSRDataRaw,
+    DNS_TYPE_A,
+    DNS_TYPE_AAAA,
+    DNS_TYPE_CNAME,
+    DNS_TYPE_MX,
+    DNS_TYPE_NS,
+    DNS_TYPE_PTR,
+    DNS_TYPE_SOA,
+    DNS_TYPE_TXT,
+    DNSFlags,
+    DNSMessage,
+    DNSQuestion,
+    DNSRDataA,
+    DNSRDataAAAA,
+    DNSRDataCNAME,
+    DNSRDataMX,
+    DNSRDataNS,
+    DNSRDataPTR,
+    DNSRDataRaw,
+    DNSRDataSOA,
+    DNSRDataTXT,
+    DNSResourceRecord,
 )
 from packeteer.generate.http import HTTPMessage, HTTPRequest, HTTPResponse
-from packeteer.generate.dhcp import (
-    DHCP_OPT_MESSAGE_TYPE, DHCP_OPT_SUBNET_MASK, DHCP_OPT_ROUTER,
-    DHCP_OPT_DNS_SERVER, DHCP_OPT_HOSTNAME, DHCP_OPT_DOMAIN_NAME,
-    DHCP_OPT_REQUESTED_IP, DHCP_OPT_LEASE_TIME, DHCP_OPT_SERVER_ID,
-    DHCP_OPT_PARAM_REQUEST_LIST, DHCP_OPT_VENDOR_CLASS_ID, DHCP_OPT_CLIENT_ID,
-    DHCPMessage,
-    DHCPOptMessageType, DHCPOptSubnetMask, DHCPOptRouter, DHCPOptDNSServer,
-    DHCPOptHostname, DHCPOptDomainName, DHCPOptRequestedIP, DHCPOptLeaseTime,
-    DHCPOptServerID, DHCPOptParamRequestList, DHCPOptVendorClassID,
-    DHCPOptClientID, DHCPOptRaw, DHCPOpt,
+from packeteer.generate.pppoe import PPPOE_CODE_SESSION, PPPoETag
+from packeteer.generate.sctp import (
+    SCTPAbortChunk,
+    SCTPChunk,
+    SCTPCookieAckChunk,
+    SCTPCookieEchoChunk,
+    SCTPDataChunk,
+    SCTPErrorChunk,
+    SCTPGenericChunk,
+    SCTPHeartbeatAckChunk,
+    SCTPHeartbeatChunk,
+    SCTPInitAckChunk,
+    SCTPInitChunk,
+    SCTPSackChunk,
+    SCTPShutdownAckChunk,
+    SCTPShutdownChunk,
+    SCTPShutdownCompleteChunk,
+)
+from packeteer.generate.sctp_stream import SCTPStreamConfig, generate_sctp_stream
+from packeteer.generate.stream_encap import (
+    EtherIPEncap,
+    GREEncap,
+    IPIPEncap,
+    MPLSEncap,
+    PPPoEEncap,
+    QinQEncap,
+    StreamEncap,
+    VLANEncap,
+)
+from packeteer.generate.tcp import TCPOptions
+from packeteer.generate.tcp_stream import TCPStreamConfig, generate_tcp_stream
+from packeteer.generate.udp_stream import UDPStreamConfig, generate_udp_stream
+from packeteer.parse.core import parse_packet, parse_pcap_file
+from packeteer.parse.to_config import (
+    apply_tunneled,
+    to_json_string,
+    to_packet_spec,
+    update_config,
 )
 from packeteer.pcap import (
-    write_pcap, write_pcapng, LINKTYPE_ETHERNET, LINKTYPE_RAW, is_pcap_or_pcapng,
-)
-from packeteer.filter import PacketFilter
-from packeteer.generate.tcp_stream import generate_tcp_stream, TCPStreamConfig
-from packeteer.generate.udp_stream import generate_udp_stream
-from packeteer.generate.sctp_stream import generate_sctp_stream
-from packeteer.generate.stream_encap import (
-    StreamEncap, VLANEncap, QinQEncap, MPLSEncap, PPPoEEncap,
-    GREEncap, EtherIPEncap, IPIPEncap,
-)
-from packeteer.generate.pppoe import PPPoETag, PPPOE_CODE_SESSION
-from packeteer.generate.sctp import (
-    SCTPDataChunk, SCTPInitChunk, SCTPInitAckChunk, SCTPSackChunk,
-    SCTPHeartbeatChunk, SCTPHeartbeatAckChunk, SCTPAbortChunk,
-    SCTPShutdownChunk, SCTPShutdownAckChunk, SCTPErrorChunk,
-    SCTPCookieEchoChunk, SCTPCookieAckChunk, SCTPShutdownCompleteChunk,
-    SCTPGenericChunk, SCTPChunk,
-)
-from packeteer.parse.core import parse_pcap_file, parse_packet
-from packeteer.parse.to_config import (
-    update_config, to_packet_spec, to_json_string, apply_tunneled,
+    LINKTYPE_ETHERNET,
+    LINKTYPE_RAW,
+    is_pcap_or_pcapng,
+    write_pcap,
+    write_pcapng,
 )
 from packeteer.sanitise import SanitiseOptions, sanitise
-
 
 _DNSRData = (
     DNSRDataA | DNSRDataAAAA | DNSRDataCNAME | DNSRDataNS | DNSRDataPTR
@@ -574,7 +644,7 @@ def _apply_spec_to_builder(
         b = b.ethernet(
             src_mac=eth.get("src_mac", "00:00:00:00:00:01"),
             dst_mac=eth.get("dst_mac", "00:00:00:00:00:02"),
-            pad=eth.get("pad", False),
+            pad=eth.get("pad", True),
         )
         vlan = eth.get("vlan", {})
         if vlan:
@@ -790,7 +860,7 @@ def _cmd_sanitise(args: argparse.Namespace) -> None:
         dns_ids=getattr(args, "dns_ids", False),
         dhcp_xids=getattr(args, "dhcp_xids", False),
         http_headers=getattr(args, "http_headers", False),
-        scan_pii=getattr(args, "scan_pii", False),
+        scan_pii=getattr(args, "scan_pii", True),
     )
 
     try:
@@ -817,6 +887,128 @@ def _cmd_sanitise(args: argparse.Namespace) -> None:
         print(f"Wrote sanitised packet spec to {args.output}")
     elif not pcap_out and not pcapng_out:
         print(json.dumps(result, indent=2))
+
+
+# ── fuzz subcommand ───────────────────────────────────────────────────────────
+
+
+def _fuzz_json_str(variants: list[FuzzVariant], source_config: dict) -> str:
+    """Serialise spec-level *variants* as a packet spec JSON string."""
+    top_meta = source_config.get("metadata", {})
+    packets = []
+    for var in variants:
+        meta = {
+            **var.spec.get("packet_metadata", {}),
+            "fuzz_mutation": var.mutation,
+            "fuzz_label":    var.label,
+            "fuzz_source":   var.source_idx,
+        }
+        packets.append({**var.spec, "packet_metadata": meta})
+    return json.dumps({"metadata": {**top_meta, "fuzz": True}, "packets": packets}, indent=2)
+
+
+def _write_fuzz_json(variants: list[FuzzVariant], source_config: dict, path: str) -> None:
+    """Write spec-level *variants* as a packet spec JSON file to *path*."""
+    try:
+        with open(path, "w") as f:
+            f.write(_fuzz_json_str(variants, source_config))
+            f.write("\n")
+    except OSError as e:
+        print(f"Error writing '{path}': {e}", file=sys.stderr)
+        sys.exit(1)
+    print(f"Wrote {len(variants)} fuzz variant(s) to {path}")
+
+
+def _cmd_fuzz(args: argparse.Namespace) -> None:
+    is_pcap_input = is_pcap_or_pcapng(args.input)
+    if is_pcap_input:
+        try:
+            config = json.loads(parse_pcap_file(path=args.input))
+        except (OSError, ValueError) as e:
+            print(f"Error parsing '{args.input}': {e}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        try:
+            with open(args.input) as f:
+                config = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"Error reading '{args.input}': {e}", file=sys.stderr)
+            sys.exit(1)
+
+    requested: list[str] = args.mutations or list(ALL_MUTATION_NAMES)
+    opts = FuzzOptions(mutations=requested, count=args.count, seed=args.seed)
+    try:
+        variants = fuzz(config, opts)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    pcap_out   = getattr(args, "pcap",   None)
+    pcapng_out = getattr(args, "pcapng", None)
+
+    if pcap_out or pcapng_out:
+        top_meta = config.get("metadata", {})
+        nanoseconds: bool = top_meta.get("nanoseconds", False)
+        ts_key = "timestamp_ns" if nanoseconds else "timestamp_us"
+        src_ts = [
+            (p.get("packet_metadata", {}).get("timestamp_s", 0),
+             p.get("packet_metadata", {}).get(ts_key, 0))
+            for p in config["packets"]
+        ]
+        all_no_eth = all(
+            not spec.get("ethernet", {}).get("enabled", True) for spec in config["packets"]
+        )
+        link_type  = LINKTYPE_RAW if all_no_eth else LINKTYPE_ETHERNET
+        collected: list[tuple[bytes, int, int]] = []
+
+        # Build source packets once for byte-level mutations
+        src_raw: list[bytes] = []
+        for i, spec in enumerate(config["packets"], 1):
+            try:
+                b_bld, _ = _apply_spec_to_builder(PacketBuilder(), spec, i)
+                src_raw.append(b_bld.build())
+            except (OSError, ValueError):
+                src_raw.append(b"")
+
+        # Spec-level variants
+        for var in variants:
+            ts_sec, ts_frac = src_ts[var.source_idx]
+            try:
+                b_bld, _ = _apply_spec_to_builder(PacketBuilder(), var.spec, 0)
+                collected.append((b_bld.build(), ts_sec, ts_frac))
+            except (OSError, ValueError):
+                pass  # skip variants that cannot be serialised
+
+        # Byte-level variants
+        for raw, (ts_sec, ts_frac) in zip(src_raw, src_ts, strict=True):
+            if raw:
+                for _, corrupted in fuzz_bytes(raw, opts):
+                    collected.append((corrupted, ts_sec, ts_frac))
+
+        try:
+            if pcap_out:
+                write_pcap(collected, path=pcap_out, link_type=link_type, nanoseconds=nanoseconds)
+                print(f"Wrote {len(collected)} variant packet(s) to {pcap_out}")
+            else:
+                write_pcapng(
+                    collected, path=pcapng_out, link_type=link_type, nanoseconds=nanoseconds,
+                )
+                print(f"Wrote {len(collected)} variant packet(s) to {pcapng_out}")
+        except OSError as e:
+            print(f"Error writing output: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    if not pcap_out and not pcapng_out and any(m in set(BYTE_MUTATION_NAMES) for m in requested):
+        print(
+            "Warning: byte-level mutations (bit-flip, wrong-checksum, wrong-length) "
+            "are omitted from JSON output; use --pcap or --pcapng to include them.",
+            file=sys.stderr,
+        )
+
+    if args.output:
+        _write_fuzz_json(variants, config, args.output)
+    elif not pcap_out and not pcapng_out:
+        print(_fuzz_json_str(variants, config))
 
 
 # ── stream config-file support ────────────────────────────────────────────────
@@ -853,6 +1045,7 @@ _STREAM_PARAMS: dict[str, tuple[str, object, object]] = {
     "stray_packet_count": ("stray_packet_count",              int,   0),
     "stray_timing_window":("stray_timing_window",             int,   None),
     "no_ethernet":        ("no_ethernet",                     bool,  False),
+    "seed":               ("seed",                            int,   None),
     "pcap":               ("pcap",                            str,   None),
     "pcapng":             ("pcapng",                          str,   None),
     "json":               ("json",                            str,   None),
@@ -1133,12 +1326,19 @@ def _cmd_stream(args: argparse.Namespace) -> None:
                     rst_propagation_delay=args.rst_propagation_delay,
                     stray_packet_count=args.stray_packet_count,
                     stray_timing_window=args.stray_timing_window,
+                    seed=args.seed,
                 ),
             )
         elif protocol == "udp":
-            stream = generate_udp_stream(**common, gap_jitter=args.gap_jitter)
+            stream = generate_udp_stream(
+                **common,
+                config=UDPStreamConfig(gap_jitter=args.gap_jitter, seed=args.seed),
+            )
         else:  # sctp
-            stream = generate_sctp_stream(**common, gap_jitter=args.gap_jitter)
+            stream = generate_sctp_stream(
+                **common,
+                config=SCTPStreamConfig(gap_jitter=args.gap_jitter, seed=args.seed),
+            )
     except (ValueError, OSError) as e:
         print(f"Error generating stream: {e}", file=sys.stderr)
         sys.exit(1)
@@ -1327,11 +1527,65 @@ def main() -> None:
              "Authorization, Location, Referer, Origin (default: kept)",
     )
     san_parser.add_argument(
-        "--scan-pii", action="store_true", dest="scan_pii",
+        "--scan-pii", action=argparse.BooleanOptionalAction, default=True, dest="scan_pii",
         help="Scan UTF-8 payloads for email addresses and names; "
-             "warn on findings (does not modify data)",
+             "warn on findings (does not modify data) (default: enabled)",
     )
     san_parser.set_defaults(func=_cmd_sanitise)
+
+    # ── fuzz subcommand ───────────────────────────────────────────────────────
+    _mut_help = ", ".join(ALL_MUTATION_NAMES)
+    fuzz_parser = subparsers.add_parser(
+        "fuzz",
+        help="Generate adversarial packet variants for decoder robustness testing",
+        description=(
+            "Read packets from a JSON spec or pcap/pcapng file and produce a set of\n"
+            "deliberately broken variants for testing how decoders handle edge cases.\n\n"
+            "Spec-level mutations (included in JSON and pcap output):\n"
+            "  boundary      — numeric fields at min/near-min/near-max/max values\n"
+            "  reserved-bits — reserved IPv4/TCP flag bits set\n"
+            "  tcp-flags     — pathological TCP flag combinations\n"
+            "  truncate      — payload shortened or removed\n"
+            "  extend        — extra zero or random bytes appended\n\n"
+            "Byte-level mutations (pcap/pcapng output only):\n"
+            "  bit-flip      — one random bit flipped per variant\n"
+            "  wrong-checksum — IP/TCP/UDP checksums set to 0x0000, 0xffff, inverted\n"
+            "  wrong-length  — IP total-length and UDP length fields corrupted"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    fuzz_parser.add_argument(
+        "input", metavar="FILE",
+        help="Input packet spec (.json) or capture file (.pcap/.pcapng)",
+    )
+    fuzz_parser.add_argument(
+        "--output", "-o", metavar="FILE",
+        help=(
+            "Write fuzz variant spec (JSON) to FILE instead of stdout.  "
+            "Only spec-level mutations are included; use --pcap/--pcapng for byte-level."
+        ),
+    )
+    fuzz_parser.add_argument(
+        "--pcap", metavar="FILE",
+        help="Write all variants (including byte-level) to a libpcap (.pcap) file",
+    )
+    fuzz_parser.add_argument(
+        "--pcapng", metavar="FILE",
+        help="Write all variants (including byte-level) to a pcapng (.pcapng) file",
+    )
+    fuzz_parser.add_argument(
+        "--mutations", metavar="MUTATION", nargs="+",
+        help=f"Mutation types to apply (default: all). Available: {_mut_help}",
+    )
+    fuzz_parser.add_argument(
+        "--count", type=int, default=10, metavar="N",
+        help="Number of bit-flip variants per source packet (default: 10)",
+    )
+    fuzz_parser.add_argument(
+        "--seed", type=int, default=None, metavar="N",
+        help="RNG seed for reproducible random variants (default: non-deterministic)",
+    )
+    fuzz_parser.set_defaults(func=_cmd_fuzz)
 
     # ── stream subcommand ─────────────────────────────────────────────────────
     stream_parser = subparsers.add_parser(
@@ -1601,6 +1855,10 @@ def main() -> None:
             "Write packets as a packet spec file (same format produced by"
             " 'packeteer parse', replayable with 'packeteer build')"
         ),
+    )
+    stream_parser.add_argument(
+        "--seed", type=int, default=None, metavar="N",
+        help="RNG seed for reproducible stream generation (default: non-deterministic)",
     )
     stream_parser.set_defaults(func=_cmd_stream)
 

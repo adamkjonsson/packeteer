@@ -17,6 +17,8 @@ from packeteer.generate.dns import (
     DNS_TYPE_PTR,
     DNS_TYPE_SOA,
     DNS_TYPE_TXT,
+    MDNS_ADDR_IPV4,
+    MDNS_PORT,
     DNSFlags,
     DNSMessage,
     DNSQuestion,
@@ -30,8 +32,6 @@ from packeteer.generate.dns import (
     DNSRDataSOA,
     DNSRDataTXT,
     DNSResourceRecord,
-    MDNS_ADDR_IPV4,
-    MDNS_PORT,
     _build_dns_message,
     _build_dns_message_tcp,
     _encode_name,
@@ -405,7 +405,7 @@ class TestSanitiseDNS(unittest.TestCase):
         self.assertEqual(result["packets"][0]["dns"]["id"], 0x1234)
 
     def test_id_zeroed_with_dns_ids_option(self) -> None:
-        from packeteer.sanitise import sanitise, SanitiseOptions
+        from packeteer.sanitise import SanitiseOptions, sanitise
         config = self._make_dns_packet_spec()
         result = sanitise(config, SanitiseOptions(dns_ids=True))
         self.assertEqual(result["packets"][0]["dns"]["id"], 0)
@@ -457,7 +457,7 @@ class TestSanitiseDNS(unittest.TestCase):
         self.assertNotIn("admin", rdata["rname"])
 
     def test_no_ips_skips_a_rdata(self) -> None:
-        from packeteer.sanitise import sanitise, SanitiseOptions
+        from packeteer.sanitise import SanitiseOptions, sanitise
         config = self._make_dns_packet_spec()
         result = sanitise(config, SanitiseOptions(ips=False))
         addr = result["packets"][0]["dns"]["answers"][0]["rdata"]["address"]
@@ -496,8 +496,9 @@ class TestBuilderDNSMethod(unittest.TestCase):
 
 class TestCLISanitiseDnsIds(unittest.TestCase):
     def test_dns_ids_flag_zeros_id(self) -> None:
-        import tempfile
         import os
+        import tempfile
+
         from packeteer.__main__ import _cmd_sanitise
         config = {
             "packets": [{
@@ -719,7 +720,7 @@ class TestMDNS(unittest.TestCase):
     # ── Constants ─────────────────────────────────────────────────────────────
 
     def test_mdns_constants_exported(self) -> None:
-        from packeteer.generate import MDNS_PORT, MDNS_ADDR_IPV4, MDNS_ADDR_IPV6
+        from packeteer.generate import MDNS_ADDR_IPV4, MDNS_ADDR_IPV6, MDNS_PORT
         self.assertEqual(MDNS_PORT, 5353)
         self.assertEqual(MDNS_ADDR_IPV4, "224.0.0.251")
         self.assertEqual(MDNS_ADDR_IPV6, "ff02::fb")

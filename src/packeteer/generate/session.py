@@ -44,22 +44,36 @@ import random
 import struct
 import time
 from collections.abc import Callable
+from random import Random
 
 from ._stream_common import _alloc_usec
-from .stream_encap import EncapSpec, StreamEncap  # noqa: F401  (StreamEncap needed for Sphinx type resolution)
-from .tcp import TCP_SYN, TCP_ACK, TCP_PSH, TCP_FIN
-from .tcp_stream import (
-    _TCPEndpoint, _advance_seq, _build_packet,
-    TCPStream, TCPStreamPacket,
-)
-from .udp_stream import _build_udp_packet, UDPStream, UDPStreamPacket
-from .sctp_stream import _build_sctp, _next_ts, SCTPStream, SCTPStreamPacket
 from .sctp import (
-    SCTPDataChunk, SCTPInitChunk, SCTPInitAckChunk, SCTPSackChunk,
-    SCTPShutdownChunk, SCTPShutdownAckChunk, SCTPCookieEchoChunk,
-    SCTPCookieAckChunk, SCTPShutdownCompleteChunk,
-    SCTP_DATA_FLAG_BEGINNING, SCTP_DATA_FLAG_ENDING,
+    SCTP_DATA_FLAG_BEGINNING,
+    SCTP_DATA_FLAG_ENDING,
+    SCTPCookieAckChunk,
+    SCTPCookieEchoChunk,
+    SCTPDataChunk,
+    SCTPInitAckChunk,
+    SCTPInitChunk,
+    SCTPSackChunk,
+    SCTPShutdownAckChunk,
+    SCTPShutdownChunk,
+    SCTPShutdownCompleteChunk,
 )
+from .sctp_stream import SCTPStream, SCTPStreamPacket, _build_sctp, _next_ts
+from .stream_encap import (  # noqa: F401  (StreamEncap needed for Sphinx type resolution)
+    EncapSpec,
+    StreamEncap,
+)
+from .tcp import TCP_ACK, TCP_FIN, TCP_PSH, TCP_SYN
+from .tcp_stream import (
+    TCPStream,
+    TCPStreamPacket,
+    _advance_seq,
+    _build_packet,
+    _TCPEndpoint,
+)
+from .udp_stream import UDPStream, UDPStreamPacket, _build_udp_packet
 
 _WRAP = 2 ** 32
 
@@ -630,12 +644,13 @@ class SCTPSession:
         cursor = int((self.base_time if self.base_time is not None
                       else time.time()) * 1_000_000)
         packets: list[SCTPStreamPacket] = []
+        _rng = Random()
 
         def emit(direction: str, raw: bytes,
                  tsn: int, plen: int, label: str) -> None:
             nonlocal cursor
             cursor, ts_sec, ts_usec = _next_ts(
-                cursor, self.inter_packet_gap, 0.0, used_ts)
+                cursor, self.inter_packet_gap, 0.0, used_ts, _rng)
             packets.append(SCTPStreamPacket(
                 raw=raw, ts_sec=ts_sec, ts_usec=ts_usec,
                 direction=direction, tsn=tsn, payload_len=plen, label=label,

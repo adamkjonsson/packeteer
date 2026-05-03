@@ -1,39 +1,38 @@
 """Tests for SCTP support: builder, parser, to_config, and CLI round-trips."""
 from __future__ import annotations
 
-import struct
 import json
+import struct
 
 from packeteer.generate import PacketBuilder
 from packeteer.generate.checksum import crc32c
 from packeteer.generate.sctp import (
-    SCTPHeader,
-    SCTPDataChunk,
-    SCTPInitChunk,
-    SCTPInitAckChunk,
-    SCTPSackChunk,
-    SCTPHeartbeatChunk,
-    SCTPHeartbeatAckChunk,
-    SCTPAbortChunk,
-    SCTPShutdownChunk,
-    SCTPShutdownAckChunk,
-    SCTPErrorChunk,
-    SCTPCookieEchoChunk,
-    SCTPCookieAckChunk,
-    SCTPShutdownCompleteChunk,
-    SCTPGenericChunk,
-    _build_sctp_packet,
     IPPROTO_SCTP,
     SCTP_DATA_FLAG_BEGINNING,
     SCTP_DATA_FLAG_ENDING,
     SCTP_DATA_FLAG_UNORDERED,
+    SCTPAbortChunk,
+    SCTPCookieAckChunk,
+    SCTPCookieEchoChunk,
+    SCTPDataChunk,
+    SCTPErrorChunk,
+    SCTPGenericChunk,
+    SCTPHeader,
+    SCTPHeartbeatAckChunk,
+    SCTPHeartbeatChunk,
+    SCTPInitAckChunk,
+    SCTPInitChunk,
+    SCTPSackChunk,
+    SCTPShutdownAckChunk,
+    SCTPShutdownChunk,
+    SCTPShutdownCompleteChunk,
+    _build_sctp_packet,
     _pad4,
 )
-from packeteer.parse.sctp import packet_parser as sctp_parser
 from packeteer.parse.core import parse_packet
+from packeteer.parse.sctp import packet_parser as sctp_parser
 from packeteer.parse.to_config import update_config
 from packeteer.pcap import LINKTYPE_RAW
-
 
 # ── Group 1: crc32c ───────────────────────────────────────────────────────────
 

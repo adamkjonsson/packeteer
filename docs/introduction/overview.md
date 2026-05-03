@@ -87,6 +87,25 @@ Streams can be written directly to pcap or pcapng, or exported as a JSON
 config so they can be edited and rebuilt with `packeteer build`, or sanitised
 with `packeteer sanitise` before sharing.
 
+### Fuzzing decoders
+
+`packeteer fuzz` takes a correctly-formed capture or packet spec and produces a
+suite of adversarial variants for testing how a parser or decoder handles unusual
+and malformed input.  Two mutation families are available: *spec-level* mutations
+(boundary values, reserved flag bits, pathological TCP flag combinations,
+truncated or extended payloads) produce well-formed but unusual packets;
+*byte-level* mutations (bit flips, corrupted checksums, wrong length fields)
+produce structurally invalid encodings that cannot be expressed in a spec at all.
+
+```bash
+packeteer fuzz capture.pcap --pcap fuzzed.pcap
+```
+
+The same capability is available through `packeteer.fuzz` in Python, where
+`fuzz()` returns a list of `FuzzVariant` objects — each carrying the mutated
+packet spec and a human-readable label — and `fuzz_bytes()` operates directly on
+raw bytes.
+
 ### Sanitising captured traffic
 
 Real captures often contain sensitive data — credentials, personal information,

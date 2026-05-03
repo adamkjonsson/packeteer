@@ -8,6 +8,10 @@ sphinx-autodoc-typehints>=2.0
 pytest>=8.0
 pytest-cov>=4.0
 
+# Code standard
+isort>=7.0.0
+ruff
+
 # Build / packaging
 build>=1.0
 setuptools>=68

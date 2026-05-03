@@ -34,7 +34,6 @@ ignore = [
     "D107",    # missing docstring in __init__
     "PLR0914", # too many locals
     "PLR0916", # too many boolean expressions
-    "I001",    # unsorted imports
     "PLR2004", # magic value comparison
 ]
 

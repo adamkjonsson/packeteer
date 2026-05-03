@@ -7,11 +7,14 @@ import struct
 import unittest
 
 from packeteer.generate import (
-    PacketBuilder, GREHeader, GRE_PROTO_IPV4, GRE_PROTO_IPV6, GRE_PROTO_TEB,
+    GRE_PROTO_IPV4,
+    GRE_PROTO_IPV6,
+    GRE_PROTO_TEB,
+    GREHeader,
+    PacketBuilder,
 )
+from packeteer.parse.core import ParsedPacket, parse_packet, parse_pcap_file
 from packeteer.pcap import LINKTYPE_RAW, write_pcap
-from packeteer.parse.core import parse_packet, parse_pcap_file, ParsedPacket
-
 
 # ---------------------------------------------------------------------------
 # Builder tests
@@ -565,11 +568,11 @@ class TestGRERoundTrip(unittest.TestCase):
 
     def test_packet_lab_round_trip(self):
         """Build via packet spec → parse → verify inner addresses."""
+        import json
+        import os
         import subprocess
         import sys
-        import json
         import tempfile
-        import os
 
         config = {
             "packets": [{

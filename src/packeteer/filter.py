@@ -22,7 +22,6 @@ import ipaddress
 from dataclasses import dataclass, field
 from typing import Any
 
-
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _is_neg(val: str) -> bool:
