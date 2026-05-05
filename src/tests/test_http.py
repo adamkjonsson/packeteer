@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from typing import Any
 
+from packeteer.generate import TCP_ACK, TCP_PSH
 from packeteer.generate.http import (
     HTTP_ALT_PORT,
     HTTP_PORT,
@@ -197,7 +198,7 @@ class TestBuilderHTTPMethod(unittest.TestCase):
         raw = (PacketBuilder()
             .ethernet()
             .ip(src="10.0.0.1", dst="10.0.0.2")
-            .tcp(src_port=54321, dst_port=HTTP_PORT, flags=0x018)
+            .tcp(src_port=54321, dst_port=HTTP_PORT, flags=TCP_PSH | TCP_ACK)
             .http(req)
             .build()
         )
@@ -219,7 +220,7 @@ class TestBuilderHTTPMethod(unittest.TestCase):
         raw = (PacketBuilder()
             .ethernet()
             .ip(src="10.0.0.2", dst="10.0.0.1")
-            .tcp(src_port=HTTP_PORT, dst_port=54321, flags=0x018)
+            .tcp(src_port=HTTP_PORT, dst_port=54321, flags=TCP_PSH | TCP_ACK)
             .http(rsp)
             .build()
         )
@@ -236,7 +237,7 @@ class TestBuilderHTTPMethod(unittest.TestCase):
         raw = (PacketBuilder()
             .ethernet()
             .ip(src="10.0.0.1", dst="10.0.0.2")
-            .tcp(src_port=54321, dst_port=HTTP_ALT_PORT, flags=0x018)
+            .tcp(src_port=54321, dst_port=HTTP_ALT_PORT, flags=TCP_PSH | TCP_ACK)
             .http(HTTPRequest(headers={"Host": "example.com"}))
             .build()
         )
@@ -258,7 +259,7 @@ class TestParsePacketHTTPDispatch(unittest.TestCase):
         if use_udp:
             b = b.udp(src_port=54321, dst_port=dst_port)
             return b.payload(data=_build_http_message(msg)).build()
-        b = b.tcp(src_port=54321, dst_port=dst_port, flags=0x018)
+        b = b.tcp(src_port=54321, dst_port=dst_port, flags=TCP_PSH | TCP_ACK)
         return b.http(msg).build()
 
     def test_dispatch_on_port_80(self):
@@ -277,7 +278,7 @@ class TestParsePacketHTTPDispatch(unittest.TestCase):
         raw = (PacketBuilder()
             .ethernet()
             .ip(src="10.0.0.2", dst="10.0.0.1")
-            .tcp(src_port=HTTP_PORT, dst_port=54321, flags=0x018)
+            .tcp(src_port=HTTP_PORT, dst_port=54321, flags=TCP_PSH | TCP_ACK)
             .http(HTTPResponse(status_code=200, reason="OK"))
             .build()
         )

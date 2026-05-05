@@ -81,14 +81,14 @@ and returns a {class}`~packeteer.parse.core.ParsedPacket` dataclass with one
 typed field per protocol layer:
 
 ```python
-from packeteer.generate import PacketBuilder
+from packeteer.generate import PacketBuilder, TCP_SYN
 from packeteer.pcap import LINKTYPE_ETHERNET
 from packeteer.parse import parse_packet
 
 raw = (PacketBuilder()
     .ethernet(src_mac="00:00:00:00:00:01", dst_mac="00:00:00:00:00:02")
     .ip(src="10.0.0.1", dst="10.0.0.2")
-    .tcp(dst_port=443, flags=0x002)
+    .tcp(dst_port=443, flags=TCP_SYN)
     .payload(size=32)
     .build()
 )

@@ -103,7 +103,7 @@ fragments, rare protocol combinations) without having to capture live traffic.
 The Python API gives full control when scripting is more convenient than JSON:
 
 ```python
-from packeteer.generate import PacketBuilder
+from packeteer.generate import PacketBuilder, TCP_SYN
 from packeteer.pcap import write_pcap
 
 packets = []
@@ -111,7 +111,7 @@ for dst_port in [80, 443, 8080]:
     pkt = (PacketBuilder()
         .ethernet()
         .ip(src="10.0.0.1", dst="10.0.0.2")
-        .tcp(dst_port=dst_port, flags=0x02)   # SYN
+        .tcp(dst_port=dst_port, flags=TCP_SYN)
         .build()
     )
     packets.append((pkt, 0, 0))

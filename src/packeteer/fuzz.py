@@ -79,6 +79,17 @@ import struct
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from .generate.tcp import (
+    TCP_ACK,
+    TCP_CWR,
+    TCP_ECE,
+    TCP_FIN,
+    TCP_PSH,
+    TCP_RST,
+    TCP_SYN,
+    TCP_URG,
+)
+
 __all__ = [
     "fuzz",
     "fuzz_bytes",
@@ -88,17 +99,6 @@ __all__ = [
     "BYTE_MUTATION_NAMES",
     "ALL_MUTATION_NAMES",
 ]
-
-# ── TCP flag bit masks ────────────────────────────────────────────────────────
-
-_TCP_FIN: int = 0x01
-_TCP_SYN: int = 0x02
-_TCP_RST: int = 0x04
-_TCP_PSH: int = 0x08
-_TCP_ACK: int = 0x10
-_TCP_URG: int = 0x20
-_TCP_ECE: int = 0x40
-_TCP_CWR: int = 0x80
 
 # ── Internal callable type ────────────────────────────────────────────────────
 
@@ -199,16 +199,16 @@ _SCTP_BOUNDARY: list[tuple[str, list[int]]] = [
 # ── TCP flag combos ───────────────────────────────────────────────────────────
 
 _TCP_FLAG_COMBOS: list[tuple[str, int]] = [
-    ("SYN+FIN",         _TCP_SYN | _TCP_FIN),
-    ("SYN+RST",         _TCP_SYN | _TCP_RST),
-    ("FIN+RST",         _TCP_FIN | _TCP_RST),
-    ("SYN+FIN+PSH",     _TCP_SYN | _TCP_FIN | _TCP_PSH),
+    ("SYN+FIN",         TCP_SYN | TCP_FIN),
+    ("SYN+RST",         TCP_SYN | TCP_RST),
+    ("FIN+RST",         TCP_FIN | TCP_RST),
+    ("SYN+FIN+PSH",     TCP_SYN | TCP_FIN | TCP_PSH),
     ("null (no flags)", 0x00),
-    ("FIN only",        _TCP_FIN),
+    ("FIN only",        TCP_FIN),
     ("all flags",       0xFF),
-    ("PSH+URG no ACK",  _TCP_PSH | _TCP_URG),
-    ("RST+ACK+URG",     _TCP_RST | _TCP_ACK | _TCP_URG),
-    ("ECE+CWR",         _TCP_ECE | _TCP_CWR),
+    ("PSH+URG no ACK",  TCP_PSH | TCP_URG),
+    ("RST+ACK+URG",     TCP_RST | TCP_ACK | TCP_URG),
+    ("ECE+CWR",         TCP_ECE | TCP_CWR),
 ]
 
 # ── Zero-append sizes for the extend mutation ─────────────────────────────────
