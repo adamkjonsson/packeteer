@@ -14,7 +14,17 @@ combine, script, or extend those building blocks however your project needs.
 ## The core workflow
 
 ```
-pcap file  --parse--→  packet spec  --build--→  pcap file
++-----------+              +-------------+              +-------------+
+| pcap file | -- parse --> | packet spec | -- clean --> | packet spec |
++-----------+              | (JSON file) |              | (JSON file) |
+                           +-------------+              +------+------+
+                                                               |
+                                                             build
+                                                               |
+                                                               v
+                                                        +-----------+
+                                                        | pcap file |
+                                                        +-----------+
 ```
 
 **Parsing** (`packeteer parse`) reads a `.pcap` or `.pcapng` capture and
@@ -27,7 +37,60 @@ packets back into a new pcap.  All checksums (IP, TCP, UDP, SCTP CRC-32c,
 ICMP, GRE, …) are recomputed from scratch, so edits to any field
 automatically produce a byte-perfect result without manual recalculation.
 
+**Streaming** (`packeteer stream`) generates a complete, realistic network
+stream from scratch — full TCP connections, UDP flows, or SCTP associations —
+without any live traffic or capture setup.  Common impairments such as packet
+loss, retransmissions, payload corruption, and server resets can be injected to
+simulate real-world network conditions.  It writes the result directly to a
+pcap or exports it as a packet spec for further editing.
+
+**Fuzzing** (`packeteer fuzz`) takes a correctly-formed capture or packet spec
+and produces a suite of adversarial variants.  Spec-level mutations introduce
+boundary values, unusual flag combinations, and pathological payloads;
+byte-level mutations corrupt checksums, lengths, and raw bytes in ways that
+cannot be expressed in a spec at all.
+
+## Supported protocols
+
+packeteer can parse, build, sanitise and (where applicable) stream the following
+protocols:
+
+| Layer | Protocols |
+|-------|-----------|
+| Data link | Ethernet, VLAN (802.1Q), QinQ (stacked VLANs), PPPoE |
+| Tunnelling / encapsulation | MPLS, GRE, EtherIP, IP-in-IP, pseudowire |
+| Network | IPv4, IPv6 |
+| Transport | TCP, UDP, SCTP, ICMP, ICMPv6 |
+| Application | HTTP, DNS, DHCP |
+
+Stream generation (`packeteer stream`) supports TCP, UDP, and SCTP as the
+primary transport.  Any supported encapsulation layer can be stacked on top of
+a stream.  Fragmentation is available for IPv4 and IPv6 packets that exceed a
+configured MTU.
+
 ## Use cases
+
+### Sanitising captured traffic
+
+Real captures often contain sensitive data — credentials, personal information,
+internal hostnames or addresses — that cannot leave a controlled environment.
+Parse the capture to JSON, edit or replace the sensitive fields, then rebuild
+a clean pcap that preserves the original timing, structure, and protocol
+behaviour but contains only the data you choose.
+
+For HTTP captures, add `--http-headers` to redact sensitive header values
+(Host, Cookie, Authorization, and others) while preserving the message
+structure.
+
+Common sanitisation tasks in the packet spec:
+
+- Replace IP addresses with RFC 1918 or documentation-range addresses
+- Zero out or randomise payload bytes (`"size"` instead of `"data"`)
+- Replace MAC addresses with locally-administered addresses
+- Strip or overwrite VLAN IDs, MPLS labels, GRE keys, or pseudowire sequence numbers
+
+The rebuilt pcap can then be shared, stored in a test fixture, or loaded into
+a traffic replay tool such as `tcpreplay`.
 
 ### Synthetic test data
 
@@ -105,25 +168,3 @@ The same capability is available through `packeteer.fuzz` in Python, where
 `fuzz()` returns a list of `FuzzVariant` objects — each carrying the mutated
 packet spec and a human-readable label — and `fuzz_bytes()` operates directly on
 raw bytes.
-
-### Sanitising captured traffic
-
-Real captures often contain sensitive data — credentials, personal information,
-internal hostnames or addresses — that cannot leave a controlled environment.
-Parse the capture to JSON, edit or replace the sensitive fields, then rebuild
-a clean pcap that preserves the original timing, structure, and protocol
-behaviour but contains only the data you choose.
-
-For HTTP captures, add `--http-headers` to redact sensitive header values
-(Host, Cookie, Authorization, and others) while preserving the message
-structure.
-
-Common sanitisation tasks in the packet spec:
-
-- Replace IP addresses with RFC 1918 or documentation-range addresses
-- Zero out or randomise payload bytes (`"size"` instead of `"data"`)
-- Replace MAC addresses with locally-administered addresses
-- Strip or overwrite VLAN IDs, MPLS labels, GRE keys, or pseudowire sequence numbers
-
-The rebuilt pcap can then be shared, stored in a test fixture, or loaded into
-a traffic replay tool such as `tcpreplay`.
