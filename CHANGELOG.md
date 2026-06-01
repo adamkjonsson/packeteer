@@ -159,6 +159,18 @@ All notable changes to packeteer are recorded in this file.
 
 ### Enhancements
 
+- **TCP flag constants used consistently throughout the codebase** — raw
+  numeric literals (`0x002`, `0x018`, …) have been replaced with the named
+  constants already exported from `packeteer.generate` (`TCP_SYN`,
+  `TCP_PSH | TCP_ACK`, etc.).
+
+  - `packeteer.fuzz` no longer defines its own private `_TCP_*` duplicates;
+    it now imports the canonical constants from `packeteer.generate.tcp`.
+  - `packeteer.__main__` uses `TCP_SYN` as the default flags value when
+    building a TCP packet from a spec that omits the field.
+  - All test files (`test_cli.py`, `test_filter.py`, `test_http.py`) import
+    and use the named constants.
+
 - **RNG seed and reproducibility for all stream generators** — passing `seed`
   to any stream generator produces byte-identical captures across runs.
 
@@ -263,6 +275,11 @@ All notable changes to packeteer are recorded in this file.
   - `README.md` updated: fuzzing bullet in the features list, two new CLI
     examples in the quick-start section, a new Python API code block, and three
     new rows in the documentation table.
+
+- **TCP flag constants in code examples** — all Python snippets in the
+  documentation (`docs/introduction/overview.md`, `docs/guide/generating.md`,
+  `docs/guide/parsing.md`, `docs/guide/pcap.md`) now use `TCP_SYN` instead of
+  the bare hex literal `0x002`, and import it from `packeteer.generate`.
 
 - **Atheris integration guide** — documentation on combining packeteer with
   [Atheris](https://github.com/google/atheris) for coverage-guided fuzzing:

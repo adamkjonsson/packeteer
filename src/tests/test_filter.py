@@ -10,7 +10,7 @@ import unittest
 from typing import Any
 
 from packeteer.filter import PacketFilter
-from packeteer.generate import PacketBuilder
+from packeteer.generate import TCP_ACK, TCP_PSH, PacketBuilder
 from packeteer.pcap import LINKTYPE_ETHERNET, write_pcap
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -253,7 +253,7 @@ class TestParseWithFilter(unittest.TestCase):
     ) -> bytes:
         b = PacketBuilder().ethernet().ip(src=src, dst="10.0.0.2")
         if proto == "tcp":
-            b = b.tcp(src_port=54321, dst_port=dst_port, flags=0x018)
+            b = b.tcp(src_port=54321, dst_port=dst_port, flags=TCP_PSH | TCP_ACK)
         else:
             b = b.udp(src_port=54321, dst_port=dst_port)
         return b.build()
@@ -323,7 +323,7 @@ class TestFilterCLI(unittest.TestCase):
 
     def setUp(self) -> None:
         tcp80 = PacketBuilder().ethernet().ip(src="10.0.0.1", dst="10.0.0.2") \
-                               .tcp(src_port=54321, dst_port=80, flags=0x018).build()
+                               .tcp(src_port=54321, dst_port=80, flags=TCP_PSH | TCP_ACK).build()
         udp53 = PacketBuilder().ethernet().ip(src="10.0.0.1", dst="8.8.8.8") \
                                .udp(src_port=54321, dst_port=53).build()
         self.pcap_path = self._write_pcap([tcp80, udp53])

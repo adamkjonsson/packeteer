@@ -133,7 +133,7 @@ from packeteer.generate.stream_encap import (
     StreamEncap,
     VLANEncap,
 )
-from packeteer.generate.tcp import TCPOptions
+from packeteer.generate.tcp import TCP_SYN, TCPOptions
 from packeteer.generate.tcp_stream import TCPStreamConfig, generate_tcp_stream
 from packeteer.generate.udp_stream import UDPStreamConfig, generate_udp_stream
 from packeteer.parse.core import parse_packet, parse_pcap_file
@@ -419,7 +419,7 @@ def _dispatch_transport(
             dst_port=transport.get("dst_port", 80),
             seq=transport.get("seq", 0),
             ack=transport.get("ack", 0),
-            flags=transport.get("flags", 0x002),
+            flags=transport.get("flags", TCP_SYN),
             window=transport.get("window", 65535),
             urgent_ptr=transport.get("urgent_ptr", 0),
             reserved=transport.get("reserved", 0),

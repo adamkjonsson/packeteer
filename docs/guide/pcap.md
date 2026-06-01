@@ -40,12 +40,12 @@ You can also write a list of raw `bytes` objects directly — supply timestamps
 of `(0, 0)` if they don't matter:
 
 ```python
-from packeteer.generate import PacketBuilder
+from packeteer.generate import PacketBuilder, TCP_SYN
 from packeteer.pcap import write_pcap
 
 pkts = [
     (PacketBuilder().ethernet().ip(src="10.0.0.1", dst="10.0.0.2")
-        .tcp(dst_port=80, flags=0x002).build(),
+        .tcp(dst_port=80, flags=TCP_SYN).build(),
      0, 0),
 ]
 write_pcap(pkts, path="syn.pcap")

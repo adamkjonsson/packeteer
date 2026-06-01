@@ -156,25 +156,6 @@ assert [v.label for v in variants_a] == [v.label for v in variants_b]
 Without a seed, the RNG is initialised from the system entropy source and each
 run produces a different order of bit-flip target bytes.
 
-## Using the CLI
-
-All mutations are also accessible via `packeteer fuzz`.  The CLI applies both
-spec-level and byte-level mutations and writes the result to pcap, pcapng, or
-packet spec in one step:
-
-```bash
-# All mutations → pcap
-packeteer fuzz capture.pcap --pcap fuzzed.pcap
-
-# Only boundary values and bit flips, reproducibly
-packeteer fuzz capture.pcap --mutations boundary bit-flip --seed 42 --pcap fuzzed.pcap
-
-# Write a packet spec for inspection
-packeteer fuzz capture.pcap --mutations boundary tcp-flags --output fuzzed.json
-```
-
-See {doc}`../cli/fuzz` for the full flag reference.
-
 ## Coverage-guided fuzzing with Atheris
 
 packeteer's built-in mutations cover a curated vocabulary of known bad patterns

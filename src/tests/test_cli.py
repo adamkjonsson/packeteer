@@ -32,12 +32,12 @@ def _write_json(data: dict) -> str:
 
 def _write_pcap_with_one_packet() -> str:
     """Write a minimal valid pcap file containing one SYN packet; return path."""
-    from packeteer.generate import PacketBuilder
+    from packeteer.generate import TCP_SYN, PacketBuilder
     from packeteer.pcap import LINKTYPE_ETHERNET, write_pcap
     raw = (PacketBuilder()
            .ethernet()
            .ip(src="10.0.0.1", dst="10.0.0.2")
-           .tcp(src_port=1234, dst_port=80, flags=0x002)
+           .tcp(src_port=1234, dst_port=80, flags=TCP_SYN)
            .build())
     fd, path = tempfile.mkstemp(suffix=".pcap")
     os.close(fd)
