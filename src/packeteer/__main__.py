@@ -137,6 +137,7 @@ from packeteer.generate.tcp import TCP_SYN, TCPOptions
 from packeteer.generate.tcp_stream import TCPStreamConfig, generate_tcp_stream
 from packeteer.generate.udp_stream import UDPStreamConfig, generate_udp_stream
 from packeteer.parse.core import parse_packet, parse_pcap_file
+from packeteer.parse.info import format_pcap_info, pcap_info
 from packeteer.parse.to_config import (
     apply_tunneled,
     to_json_string,
@@ -851,6 +852,23 @@ def _cmd_parse(args: argparse.Namespace) -> None:
         print(json_str)
 
 
+def _cmd_file_info(args: argparse.Namespace) -> None:
+    try:
+        info = pcap_info(
+            path=args.pcap,
+            link_type=getattr(args, "link_type", None),
+            auto_link_type=not args.no_auto_link_type,
+        )
+    except (OSError, ValueError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if args.json:
+        print(json.dumps(info.to_dict(), indent=2))
+    else:
+        print(format_pcap_info(info))
+
+
 def _cmd_sanitise(args: argparse.Namespace) -> None:
     is_pcap_input = is_pcap_or_pcapng(args.input)
 
@@ -1495,6 +1513,48 @@ def main() -> None:
     )
 
     parse_parser.set_defaults(func=_cmd_parse)
+
+    # ── file-info subcommand ──────────────────────────────────────────────────
+    info_parser = subparsers.add_parser(
+        "file-info",
+        help="Summarise a pcap/pcapng file: packets, sessions, and layer stats",
+        description=(
+            "Report on a pcap or pcapng capture: packet count, number of "
+            "directional sessions (unique 5-tuples), and per-protocol-layer "
+            "statistics.\n\n"
+            "When the link-layer type recorded in the file header would produce "
+            "garbage, the cleanest-parsing type is detected and used "
+            "automatically.  Pass --link-type to force a type, or "
+            "--no-auto-link-type to always trust the header."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    info_parser.add_argument(
+        "pcap",
+        metavar="FILE",
+        help="Input .pcap or .pcapng file to inspect",
+    )
+    info_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the report as JSON instead of human-readable text",
+    )
+    info_parser.add_argument(
+        "--link-type",
+        metavar="TYPE",
+        type=_link_type,
+        default=None,
+        help=(
+            "Force the link-layer type (disables auto-detection).  Accepts "
+            "'ethernet', 'raw', or an integer (e.g. 1, 101)."
+        ),
+    )
+    info_parser.add_argument(
+        "--no-auto-link-type",
+        action="store_true",
+        help="Trust the file header's link-layer type instead of auto-detecting",
+    )
+    info_parser.set_defaults(func=_cmd_file_info)
 
     # ── sanitise subcommand ───────────────────────────────────────────────────
     san_parser = subparsers.add_parser(

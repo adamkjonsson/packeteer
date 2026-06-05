@@ -8,6 +8,38 @@ All notable changes to packeteer are recorded in this file.
 
 ### New features
 
+- **`packeteer file-info` — capture summary report** — new subcommand and
+  Python API for getting a quick overview of a pcap or pcapng file without
+  fully decoding it to a packet spec.
+
+  Reports the packet count, the number of **directional** sessions (unique
+  ordered 5-tuples `(src, dst, src_port, dst_port, protocol)`), the capture
+  duration, and per-protocol-layer statistics (how many packets contain each of
+  `ethernet`, `vlan`, `mpls`, `pppoe`, `ipv4`, `ipv6`, `tcp`, `udp`, `icmp`,
+  `dns`, `http`, and so on).
+
+  The command auto-corrects a wrong link-layer type: it scores the type
+  declared in the file header against the supported alternatives (`ethernet`
+  and `raw`) by how many packets parse to a valid IP header, and uses whichever
+  is cleanest.  The heuristic is conservative — it only overrides when the
+  declared type clearly produces garbage — and is disabled by passing an
+  explicit `--link-type` or `--no-auto-link-type`.
+
+  Output is a human-readable text report by default, or JSON with `--json`.
+
+  Public Python API in `packeteer.parse`:
+
+  ```python
+  from packeteer.parse import pcap_info, format_pcap_info
+
+  info = pcap_info(path="capture.pcap")   # -> PcapInfo
+  print(info.packet_count, info.session_count, info.layer_counts)
+  print(format_pcap_info(info))           # the text report the CLI prints
+  ```
+
+  `pcap_info` accepts the same `link_type` override as `read_pcap` /
+  `parse_pcap_file`, plus `auto_link_type` to toggle the detection heuristic.
+
 - **Link-layer type override when parsing captures** — captures sometimes
   declare the wrong link-layer type in their header, which drives incorrect
   parsing.  The recorded value can now be overridden at every level:

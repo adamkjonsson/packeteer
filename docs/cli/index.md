@@ -5,12 +5,13 @@ Running `python -m packeteer` is exactly equivalent — useful in environments
 where the entry-point script is not on the PATH or when you need to target a
 specific Python interpreter.
 
-packeteer provides five subcommands, each covering one stage of the
+packeteer provides six subcommands, each covering one stage of the
 capture-edit-replay workflow:
 
 | Subcommand | Input | Output | Purpose |
 |------------|-------|--------|---------|
 | `parse` | pcap / pcapng | packet spec (JSON) | Decode a capture into a structured, human-readable description |
+| `file-info` | pcap / pcapng | text or JSON report | Summarise a capture: packet count, sessions, and per-layer statistics |
 | `sanitise` | packet spec or pcap | packet spec and/or pcap | Replace sensitive addresses, ports, and payloads with synthetic equivalents |
 | `build` | packet spec | pcap / pcapng | Reconstruct a capture from a packet spec, recomputing all checksums |
 | `stream` | flags / INI file | pcap / pcapng / packet spec | Generate a synthetic multi-packet TCP, UDP, or SCTP flow from scratch |
@@ -40,6 +41,7 @@ packeteer stream --client 10.0.0.1 --server 10.0.0.2 --pcap out.pcap
 :maxdepth: 1
 
 parse
+file-info
 sanitise
 build
 stream
