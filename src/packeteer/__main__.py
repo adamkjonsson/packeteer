@@ -2,17 +2,21 @@
 r"""packeteer — build, parse, sanitise, and generate raw network packets.
 
 Subcommands:
-  build     Build packets from a packet spec file and write to a pcap or pcapng file
-  parse     Parse a pcap or pcapng file and produce a packet spec
-  sanitise  Replace sensitive fields in a packet spec with synthetic data
-  stream    Generate a synthetic TCP/UDP/SCTP stream and write to a pcap or pcapng file
-  fuzz      Generate adversarial packet variants for decoder robustness testing
+  build      Build packets from a packet spec file and write to a pcap or pcapng file
+  parse      Parse a pcap or pcapng file and produce a packet spec
+  file-info  Summarise a pcap or pcapng file: packets, sessions, and layer stats
+  sanitise   Replace sensitive fields in a packet spec with synthetic data
+  stream     Generate a synthetic TCP/UDP/SCTP stream and write to a pcap or pcapng file
+  fuzz       Generate adversarial packet variants for decoder robustness testing
 
 Examples:
   packeteer build packets.json --pcap out.pcap
   packeteer build packets.json --pcapng out.pcapng
   packeteer parse capture.pcap
   packeteer parse capture.pcap --output replay.json
+  packeteer file-info capture.pcap
+  packeteer file-info capture.pcap --json
+  packeteer file-info capture.pcap --link-type raw
   packeteer sanitise capture.json --output clean.json
   packeteer sanitise capture.json --ports --payload --output clean.json
   packeteer sanitise capture.pcap --output clean.json
