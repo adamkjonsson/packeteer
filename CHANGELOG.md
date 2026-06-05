@@ -8,6 +8,20 @@ All notable changes to packeteer are recorded in this file.
 
 ### New features
 
+- **Link-layer type override when parsing captures** — captures sometimes
+  declare the wrong link-layer type in their header, which drives incorrect
+  parsing.  The recorded value can now be overridden at every level:
+
+  - `read_pcap(..., link_type=...)` replaces the link type in the returned
+    `PcapFile.header` after reading, so all downstream consumers see the
+    corrected value.
+  - `parse_pcap_file(..., link_type=...)` forwards the override to `read_pcap`;
+    the corrected value also flows into the emitted `metadata.link_type` so the
+    resulting spec replays with the right type.
+  - `packeteer parse` and `packeteer sanitise` gain a `--link-type TYPE` flag
+    accepting `ethernet`, `raw`, or an integer (e.g. `1`, `101`).  For
+    `sanitise`, the flag is ignored when the input is a JSON packet spec.
+
 - **`packeteer fuzz` — adversarial packet variant generator** — new subcommand
   and Python API for testing decoder robustness.  Give it a correctly-formed
   capture or packet spec and it produces a suite of deliberately unusual or

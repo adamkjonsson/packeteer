@@ -31,6 +31,17 @@ The returned string is valid JSON with a top-level `"packets"` array and a
 `"metadata"` block — file type, timestamp precision, and link type are all
 auto-detected from the file header.
 
+If a capture declares the wrong link-layer type in its header — which would
+otherwise garble the output — pass `link_type` to override it.  The override
+also flows into `metadata.link_type`, so the resulting spec rebuilds with the
+corrected type:
+
+```python
+from packeteer.pcap import LINKTYPE_RAW
+
+json_str = parse_pcap_file(path="capture.pcap", link_type=LINKTYPE_RAW)
+```
+
 ## Filtering during parse
 
 Pass a {class}`packeteer.filter.PacketFilter` to keep only the packets you

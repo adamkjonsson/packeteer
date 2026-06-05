@@ -522,6 +522,7 @@ def parse_pcap_file(
     file_object: io.RawIOBase | io.BufferedIOBase | None = None,
     output: dict[str, Any] | None = None,
     packet_filter: PacketFilter | None = None,
+    link_type: int | None = None,
 ) -> str:
     """Parse every packet in a pcap file and return a packet spec string.
 
@@ -548,6 +549,11 @@ def parse_pcap_file(
             When supplied, only packets whose spec dict satisfies
             :meth:`~packeteer.filter.PacketFilter.matches` are included in
             the output.
+        link_type: When given, override the link-layer type recorded in the
+            file header (e.g. :data:`~packeteer.pcap.LINKTYPE_ETHERNET` or
+            :data:`~packeteer.pcap.LINKTYPE_RAW`).  Use this when a capture
+            declares the wrong link type and the recorded value would
+            otherwise drive incorrect parsing.
 
     Returns:
         A JSON string whose top-level structure matches the format accepted by
@@ -559,7 +565,7 @@ def parse_pcap_file(
         OSError: If *path* cannot be opened for reading.
 
     """
-    pcap = read_pcap(path=path, file_object=file_object)
+    pcap = read_pcap(path=path, file_object=file_object, link_type=link_type)
     ts_frac_key = "timestamp_ns" if pcap.header.nanoseconds else "timestamp_us"
 
     packet_configs: list[dict[str, Any]] = []

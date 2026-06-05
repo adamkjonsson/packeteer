@@ -432,6 +432,7 @@ def read_pcap(
     *,
     path: str | os.PathLike | None = None,
     file_object: io.RawIOBase | io.BufferedIOBase | None = None,
+    link_type: int | None = None,
 ) -> PcapFile:
     """Read packets and capture timestamps from a ``.pcap`` or ``.pcapng`` file.
 
@@ -444,6 +445,11 @@ def read_pcap(
         path: Path to the file to read.
         file_object: Readable binary file-like object positioned at the
             start of the data (e.g. ``io.BytesIO``).
+        link_type: When given, override the link-layer type recorded in the
+            file header (e.g. :data:`LINKTYPE_ETHERNET` or :data:`LINKTYPE_RAW`).
+            Use this when a capture declares the wrong link type and the
+            recorded value would otherwise drive incorrect parsing.  The
+            returned :attr:`PcapFile.header` reflects the override.
 
     Returns:
         A :class:`PcapFile` whose ``header`` attribute contains global
@@ -470,10 +476,13 @@ def read_pcap(
         raise ValueError("Provide exactly one of 'path' or 'file_object'.")
     if path is not None:
         with open(path, "rb") as f:
-            return _detect_and_read(f)
+            result = _detect_and_read(f)
     else:
         assert file_object is not None
-        return _detect_and_read(file_object)
+        result = _detect_and_read(file_object)
+    if link_type is not None:
+        result.header.link_type = link_type
+    return result
 
 
 def write_pcap(
