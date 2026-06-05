@@ -19,7 +19,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e . -r requirements.txt
       - name: Lint with ruff
-        run: ruff check src/
+        run: ruff check src/ docs/
 
   test:
     name: pytest (py${{ matrix.python-version }})

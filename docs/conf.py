@@ -1,7 +1,8 @@
 """Sphinx configuration for packeteer documentation."""
 import os
 import sys
-from importlib.metadata import version as _pkg_version, PackageNotFoundError
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 
 # Make packeteer importable without pip install
 sys.path.insert(0, os.path.abspath("../src"))
