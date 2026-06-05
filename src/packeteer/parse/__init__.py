@@ -14,6 +14,7 @@ from .ethernet import packet_parser as ethernet_packet_parser
 from .gre import packet_parser as gre_packet_parser
 from .icmp import packet_parser as icmp_packet_parser
 from .icmpv6 import packet_parser as icmpv6_packet_parser
+from .info import PcapInfo, format_pcap_info, pcap_info
 from .ip import packet_parser as ip_packet_parser
 from .mpls import packet_parser as mpls_packet_parser
 from .pppoe import packet_parser as pppoe_packet_parser
@@ -26,6 +27,9 @@ __all__ = [
     "parse_packet",
     "parse_pcap_packet",
     "parse_pcap_file",
+    "pcap_info",
+    "PcapInfo",
+    "format_pcap_info",
     "ParsedPacket",
     "UnsupportedIPProtocolWarning",
     "update_config",

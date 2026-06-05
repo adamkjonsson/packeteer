@@ -30,6 +30,29 @@ by {doc}`../api/header-dataclasses`.  The high-level entry points are
 
 ---
 
+## Capture summary
+
+{func}`~packeteer.parse.info.pcap_info` reports on a whole capture — packet
+count, the number of directional sessions (unique 5-tuples), and per-layer
+statistics — and auto-corrects a wrong link-layer type.  It powers the
+`packeteer file-info` command.  {func}`~packeteer.parse.info.format_pcap_info`
+renders the same human-readable report the CLI prints.
+
+```{eval-rst}
+.. autofunction:: packeteer.parse.info.pcap_info
+```
+
+```{eval-rst}
+.. autoclass:: packeteer.parse.info.PcapInfo
+   :members:
+```
+
+```{eval-rst}
+.. autofunction:: packeteer.parse.info.format_pcap_info
+```
+
+---
+
 ## Unsupported IP protocol numbers
 
 packeteer recognises the following IP protocol numbers at the transport layer:
