@@ -2,6 +2,7 @@
 
 ```
 packeteer sanitise <FILE> [--output FILE] [--pcap FILE] [--pcapng FILE]
+                          [--link-type TYPE]
                           [--no-ips] [--no-macs]
                           [--ports] [--payload] [--timestamps]
                           [--dns-ids] [--dhcp-xids] [--http-headers]
@@ -100,6 +101,18 @@ the same way as `packeteer parse`.  If any packet carries an IP protocol
 number that is not recognised, the same consolidated warning is printed to
 stderr — one line per unique protocol, with the packet count and file name.
 See {doc}`parse` for details.
+
+## Overriding the link-layer type
+
+When the input is a capture file, `--link-type TYPE` overrides the link-layer
+type recorded in the header — use it when a capture declares the wrong type and
+would otherwise parse incorrectly.  `TYPE` accepts `ethernet`, `raw`, or an
+integer (e.g. `1`, `101`).  The flag is ignored when the input is a JSON packet
+spec, since no parsing happens in that case.  See {doc}`parse` for details.
+
+```bash
+packeteer sanitise capture.pcap --link-type raw --pcap clean.pcap
+```
 
 ## Examples
 

@@ -804,6 +804,24 @@ def _build_packet_filter(args: argparse.Namespace) -> PacketFilter | None:
     return None if f.is_empty() else f
 
 
+def _link_type(value: str) -> int:
+    """Convert a ``--link-type`` argument to a link-layer type integer.
+
+    Accepts the names ``ethernet`` and ``raw`` (case-insensitive) or any
+    integer literal (e.g. ``1``, ``101``).
+    """
+    names = {"ethernet": LINKTYPE_ETHERNET, "raw": LINKTYPE_RAW}
+    key = value.strip().lower()
+    if key in names:
+        return names[key]
+    try:
+        return int(value, 0)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"invalid link type {value!r}: use 'ethernet', 'raw', or an integer"
+        ) from None
+
+
 def _cmd_parse(args: argparse.Namespace) -> None:
     try:
         pf = _build_packet_filter(args)
@@ -812,7 +830,10 @@ def _cmd_parse(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     try:
-        json_str = parse_pcap_file(path=args.pcap, packet_filter=pf)
+        json_str = parse_pcap_file(
+            path=args.pcap, packet_filter=pf,
+            link_type=getattr(args, "link_type", None),
+        )
     except (OSError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -835,7 +856,9 @@ def _cmd_sanitise(args: argparse.Namespace) -> None:
 
     if is_pcap_input:
         try:
-            json_str = parse_pcap_file(path=args.input)
+            json_str = parse_pcap_file(
+                path=args.input, link_type=getattr(args, "link_type", None),
+            )
             config = json.loads(json_str)
         except (OSError, ValueError) as e:
             print(f"Error parsing '{args.input}': {e}", file=sys.stderr)
@@ -1422,6 +1445,16 @@ def main() -> None:
         metavar="FILE",
         help="Write packet spec to FILE instead of stdout",
     )
+    parse_parser.add_argument(
+        "--link-type",
+        metavar="TYPE",
+        type=_link_type,
+        default=None,
+        help=(
+            "Override the link-layer type in the file header when it is wrong. "
+            "Accepts 'ethernet', 'raw', or an integer (e.g. 1, 101)."
+        ),
+    )
     filter_group = parse_parser.add_argument_group(
         "filtering",
         "Keep only packets that match ALL of the given criteria.  Prefix a value "
@@ -1484,6 +1517,17 @@ def main() -> None:
     san_parser.add_argument(
         "--output", "-o", metavar="FILE",
         help="Write sanitised packet spec (JSON) to FILE instead of stdout",
+    )
+    san_parser.add_argument(
+        "--link-type",
+        metavar="TYPE",
+        type=_link_type,
+        default=None,
+        help=(
+            "Override the link-layer type when parsing a capture file whose "
+            "header is wrong.  Accepts 'ethernet', 'raw', or an integer "
+            "(e.g. 1, 101).  Ignored for JSON input."
+        ),
     )
     san_parser.add_argument(
         "--pcap", metavar="FILE",

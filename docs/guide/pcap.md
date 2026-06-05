@@ -106,6 +106,23 @@ pcap = read_pcap(path="capture.pcap")
 print(pcap.header.link_type)   # 1 for Ethernet, 101 for raw IP
 ```
 
+### Overriding a wrong link-layer type
+
+Some captures declare the wrong link type in their header, which drives
+incorrect parsing.  Pass `link_type` to `read_pcap` to override the recorded
+value — the returned `PcapFileHeader` reflects the override, so everything
+downstream parses with the corrected type:
+
+```python
+from packeteer.pcap import read_pcap, LINKTYPE_RAW
+
+pcap = read_pcap(path="capture.pcap", link_type=LINKTYPE_RAW)
+print(pcap.header.link_type)   # 101, regardless of what the header said
+```
+
+{func}`packeteer.parse.core.parse_pcap_file` accepts the same `link_type`
+keyword and forwards it to `read_pcap`.
+
 ## Next steps
 
 - {doc}`parsing` — decode packets into typed dataclasses

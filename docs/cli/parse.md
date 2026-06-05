@@ -1,7 +1,7 @@
 # packeteer parse
 
 ```
-packeteer parse <capture> [--output FILE]
+packeteer parse <capture> [--output FILE] [--link-type TYPE]
                           [--proto PROTO] [--port PORTS] [--src-port PORTS] [--dst-port PORTS]
                           [--src ADDR] [--dst ADDR] [--host ADDR] [--app APP]
 ```
@@ -20,6 +20,23 @@ by hand or programmatically before rebuilding.
 |----------|-------------|
 | `capture` | *(required)* Path to a `.pcap` or `.pcapng` file |
 | `--output FILE` / `-o FILE` | Write packet spec to FILE instead of stdout |
+| `--link-type TYPE` | Override the link-layer type in the file header (see below) |
+
+### Overriding the link-layer type
+
+The link-layer type recorded in a capture's header drives layer selection —
+`ethernet` (`1`) parses an Ethernet header first, `raw` (`101`) treats the
+packet as raw IP with no Ethernet header.  Some captures declare the wrong
+value, which produces garbled output.  Pass `--link-type` to ignore the
+header's value and parse with the type you specify:
+
+```bash
+packeteer parse capture.pcap --link-type raw
+```
+
+`TYPE` accepts the names `ethernet` and `raw`, or any integer (e.g. `1`,
+`101`).  The override also replaces `metadata.link_type` in the output, so the
+resulting spec rebuilds with the corrected type.
 
 ## Filtering
 
