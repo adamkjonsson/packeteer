@@ -55,6 +55,22 @@ Link-type: raw (101)  [auto-corrected from ethernet (1)]
 Pass `--link-type` to force a specific type (which disables auto-detection), or
 `--no-auto-link-type` to always trust the file header.
 
+## Malformed captures
+
+A file that cannot be read as pcap/pcapng — bad magic number, short header, or a
+truncated packet record — produces an error on stderr and a non-zero exit code.
+
+A structurally valid file whose individual packets are garbage does not error:
+undecodable packets are skipped, and the report reflects only what could be
+parsed.  When none of the packets contain an IP layer, the text report ends with
+a note, since that usually means the capture is corrupt or the link-type is
+wrong:
+
+```
+Note: no packets contained an IP layer — the capture may be malformed or the
+link-type wrong (try --link-type).
+```
+
 ## Examples
 
 **Print a text summary:**

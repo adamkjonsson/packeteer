@@ -26,6 +26,10 @@ All notable changes to packeteer are recorded in this file.
   explicit `--link-type` or `--no-auto-link-type`.
 
   Output is a human-readable text report by default, or JSON with `--json`.
+  Malformed files (bad magic, short header, truncated records) fail with a
+  readable error; structurally valid files with garbage packet contents are
+  reported best-effort, and the text report flags captures where no packet
+  contained an IP layer (a strong "corrupt or wrong link-type" signal).
 
   Public Python API in `packeteer.parse`:
 

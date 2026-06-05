@@ -350,4 +350,11 @@ def format_pcap_info(info: PcapInfo) -> str:
     else:
         lines.append("  (none)")
 
+    ip_packets = info.layer_counts.get("ipv4", 0) + info.layer_counts.get("ipv6", 0)
+    if info.packet_count and ip_packets == 0:
+        lines.append(
+            "Note: no packets contained an IP layer — the capture may be "
+            "malformed or the link-type wrong (try --link-type)."
+        )
+
     return "\n".join(lines)

@@ -231,6 +231,30 @@ class TestFormat(unittest.TestCase):
         )
         self.assertIn("(none)", format_pcap_info(info))
 
+    def test_no_ip_note_when_no_ip_layer(self) -> None:
+        info = PcapInfo(
+            path=None, file_type="pcap",
+            declared_link_type=1, link_type=1, link_type_overridden=False,
+            nanoseconds=False, packet_count=5, session_count=0,
+            layer_counts={"ethernet": 5, "payload": 5},
+        )
+        text = format_pcap_info(info)
+        self.assertIn("no packets contained an IP layer", text)
+
+    def test_no_ip_note_absent_for_normal_capture(self) -> None:
+        path = _write_pcap([_eth("10.0.0.1", "10.0.0.2", 1, 80)])
+        text = format_pcap_info(pcap_info(path=path))
+        self.assertNotIn("no packets contained an IP layer", text)
+        os.remove(path)
+
+    def test_no_ip_note_absent_for_empty_capture(self) -> None:
+        info = PcapInfo(
+            path=None, file_type="pcap",
+            declared_link_type=1, link_type=1, link_type_overridden=False,
+            nanoseconds=False, packet_count=0, session_count=0,
+        )
+        self.assertNotIn("no packets contained an IP layer", format_pcap_info(info))
+
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
