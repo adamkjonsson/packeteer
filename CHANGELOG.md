@@ -31,6 +31,12 @@ All notable changes to packeteer are recorded in this file.
   reported best-effort, and the text report flags captures where no packet
   contained an IP layer (a strong "corrupt or wrong link-type" signal).
 
+  `--num N` (`-n`) analyses only the first `N` packets, stopping the read early
+  so the rest of the file is never loaded.  This makes link-type detection fast
+  on very large captures — the true type can usually be determined from a small
+  sample.  The supporting `packeteer.pcap.read_pcap` gained a `max_packets`
+  argument that drives this early-stopping, streaming read.
+
   Public Python API in `packeteer.parse`:
 
   ```python

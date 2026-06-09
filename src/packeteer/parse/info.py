@@ -66,7 +66,8 @@ class PcapInfo:
         link_type_overridden: ``True`` when *link_type* differs from
             *declared_link_type*.
         nanoseconds: ``True`` when timestamps are in nanoseconds.
-        packet_count: Total number of packet records in the file.
+        packet_count: Number of packet records analysed.  Equal to the total in
+            the file unless *packet_limit* capped it.
         session_count: Number of unique directional 5-tuples
             ``(src, dst, src_port, dst_port, protocol)``.  Only packets with an
             IP layer contribute; ``A->B`` and ``B->A`` count separately.
@@ -74,6 +75,9 @@ class PcapInfo:
             in which that layer was seen.
         capture_duration_s: Wall-clock span between the first and last packet
             timestamp in seconds, or ``None`` for fewer than two packets.
+        packet_limit: The cap requested via ``num`` / ``--num``, or ``None`` for
+            an unlimited scan.  When set, only the first *packet_limit* packets
+            were read and every other field reflects that subset.
 
     """
 
@@ -87,6 +91,7 @@ class PcapInfo:
     session_count: int
     layer_counts: dict[str, int] = field(default_factory=dict)
     capture_duration_s: float | None = None
+    packet_limit: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serialisable dict of every field.
@@ -107,6 +112,7 @@ class PcapInfo:
             "session_count": self.session_count,
             "layer_counts": dict(self.layer_counts),
             "capture_duration_s": self.capture_duration_s,
+            "packet_limit": self.packet_limit,
         }
 
 
@@ -232,6 +238,7 @@ def pcap_info(
     file_object: io.RawIOBase | io.BufferedIOBase | None = None,
     link_type: int | None = None,
     auto_link_type: bool = True,
+    num: int | None = None,
 ) -> PcapInfo:
     """Summarise a pcap or pcapng capture.
 
@@ -253,17 +260,21 @@ def pcap_info(
             score the declared link type against the supported alternatives and
             parse with whichever is cleanest.  Set ``False`` to always trust the
             file header.
+        num: When given, analyse only the first *num* packets.  Reading stops
+            early without loading the rest of the file, so this makes link-type
+            detection fast on very large captures.  Every field in the result
+            reflects the analysed subset.
 
     Returns:
         A :class:`PcapInfo` describing the capture.
 
     Raises:
-        ValueError: If neither or both of *path* / *file_object* are given, or
-            if the capture data is malformed.
+        ValueError: If neither or both of *path* / *file_object* are given, if
+            *num* is negative, or if the capture data is malformed.
         OSError: If *path* cannot be opened for reading.
 
     """
-    pcap = read_pcap(path=path, file_object=file_object)
+    pcap = read_pcap(path=path, file_object=file_object, max_packets=num)
     declared = pcap.header.link_type
     records = pcap.packets
 
@@ -303,6 +314,7 @@ def pcap_info(
         session_count=len(sessions),
         layer_counts=layer_counts,
         capture_duration_s=_capture_duration(records, pcap.header.nanoseconds),
+        packet_limit=num,
     )
 
 
@@ -332,7 +344,9 @@ def format_pcap_info(info: PcapInfo) -> str:
         )
     else:
         lines.append(f"Link-type: {_link_type_label(info.link_type)}")
-    lines.append(f"Packets:   {info.packet_count}")
+    limited = info.packet_limit is not None and info.packet_count >= info.packet_limit
+    pkt_suffix = f"  (limited to first {info.packet_limit})" if limited else ""
+    lines.append(f"Packets:   {info.packet_count}{pkt_suffix}")
     lines.append(f"Sessions:  {info.session_count}  (directional 5-tuples)")
     if info.capture_duration_s is not None:
         lines.append(f"Duration:  {info.capture_duration_s:.6f} s")

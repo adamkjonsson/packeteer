@@ -256,13 +256,62 @@ class TestFormat(unittest.TestCase):
         self.assertNotIn("no packets contained an IP layer", format_pcap_info(info))
 
 
+# ── Packet limit (num) ────────────────────────────────────────────────────────
+
+class TestNum(unittest.TestCase):
+
+    def test_num_caps_packet_count(self) -> None:
+        path = _write_pcap([_eth("10.0.0.1", "10.0.0.2", i, 80) for i in range(50)])
+        info = pcap_info(path=path, num=10)
+        self.assertEqual(info.packet_count, 10)
+        self.assertEqual(info.packet_limit, 10)
+        os.remove(path)
+
+    def test_num_larger_than_file(self) -> None:
+        path = _write_pcap([_eth("10.0.0.1", "10.0.0.2", i, 80) for i in range(5)])
+        info = pcap_info(path=path, num=100)
+        self.assertEqual(info.packet_count, 5)
+        os.remove(path)
+
+    def test_num_unset_reads_all(self) -> None:
+        path = _write_pcap([_eth("10.0.0.1", "10.0.0.2", i, 80) for i in range(8)])
+        info = pcap_info(path=path)
+        self.assertEqual(info.packet_count, 8)
+        self.assertIsNone(info.packet_limit)
+        os.remove(path)
+
+    def test_num_detects_link_type_on_subset(self) -> None:
+        # mislabeled raw-as-ethernet; only the first few packets are needed
+        path = _write_pcap(
+            [_raw_ip("10.0.0.1", "10.0.0.2", i % 60000, 80) for i in range(1000)],
+            link_type=LINKTYPE_ETHERNET,
+        )
+        info = pcap_info(path=path, num=20)
+        self.assertEqual(info.packet_count, 20)
+        self.assertEqual(info.link_type, LINKTYPE_RAW)
+        self.assertTrue(info.link_type_overridden)
+        os.remove(path)
+
+    def test_limit_note_in_report(self) -> None:
+        path = _write_pcap([_eth("10.0.0.1", "10.0.0.2", i, 80) for i in range(50)])
+        text = format_pcap_info(pcap_info(path=path, num=10))
+        self.assertIn("limited to first 10", text)
+        os.remove(path)
+
+    def test_no_limit_note_when_file_smaller(self) -> None:
+        path = _write_pcap([_eth("10.0.0.1", "10.0.0.2", i, 80) for i in range(3)])
+        text = format_pcap_info(pcap_info(path=path, num=10))
+        self.assertNotIn("limited to first", text)
+        os.remove(path)
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 class TestCmdFileInfo(unittest.TestCase):
 
     def _args(self, **over: object) -> argparse.Namespace:
         ns = argparse.Namespace(
-            pcap="", json=False, link_type=None, no_auto_link_type=False,
+            pcap="", json=False, link_type=None, no_auto_link_type=False, num=None,
         )
         for k, v in over.items():
             setattr(ns, k, v)
@@ -287,6 +336,13 @@ class TestCmdFileInfo(unittest.TestCase):
         with patch("sys.stderr", new=StringIO()), \
                 self.assertRaises(SystemExit):
             cli._cmd_file_info(self._args(pcap="/no/such/file.pcap"))
+
+    def test_cli_num_limits_output(self) -> None:
+        path = _write_pcap([_eth("10.0.0.1", "10.0.0.2", i, 80) for i in range(30)])
+        with patch("sys.stdout", new=StringIO()) as out:
+            cli._cmd_file_info(self._args(pcap=path, json=True, num=5))
+        self.assertEqual(json.loads(out.getvalue())["packet_count"], 5)
+        os.remove(path)
 
 
 if __name__ == "__main__":
