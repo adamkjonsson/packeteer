@@ -20,6 +20,7 @@ All public names are importable from six top-level packages:
 :maxdepth: 1
 
 parsing
+summarising
 sanitising
 generating
 pcap
