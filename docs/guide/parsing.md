@@ -123,11 +123,12 @@ pkt = parse_packet(raw, link_type=LINKTYPE_RAW)
 ## Reading a pcap file packet-by-packet
 
 When you need the capture timestamp alongside each parsed packet, read the
-file with {func}`packeteer.parse.core.read_pcap` and call
+file with {func}`packeteer.pcap.read_pcap` and call
 {func}`packeteer.parse.core.parse_pcap_packet` on each record:
 
 ```python
-from packeteer.parse import read_pcap, parse_pcap_packet
+from packeteer.parse import parse_pcap_packet
+from packeteer.pcap import read_pcap
 
 pcap = read_pcap(path="capture.pcap")
 for record in pcap.packets:

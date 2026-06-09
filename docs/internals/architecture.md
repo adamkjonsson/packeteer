@@ -18,7 +18,7 @@ dict; the CLI simply drives them from the command line.
 ```
 +--------------------------------------------------------------------+
 |  packeteer_cli.py                                                  |
-|  (parse / build / sanitise / stream / fuzz subcommands)            |
+|  (parse / file-info / build / sanitise / stream / fuzz subcommands)|
 +--------------+--------------------+--------------------+-----------+
                |                    |                    |
     +----------v----------+  +------v------+  +----------v-----------+
