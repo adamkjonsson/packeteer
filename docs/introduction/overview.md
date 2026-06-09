@@ -4,8 +4,9 @@ packeteer is a pure-Python toolkit for crafting, capturing, and generating
 network traffic.  It comes with a **command-line interface** for common
 tasks and a **Python API** for everything else.
 
-The CLI (`packeteer parse`, `packeteer sanitise`, `packeteer build`,
-`packeteer stream`) solves well-defined problems with a single command.
+The CLI (`packeteer parse`, `packeteer file-info`, `packeteer sanitise`,
+`packeteer build`, `packeteer stream`, `packeteer fuzz`) solves well-defined
+problems with a single command.
 The Python API exposes the same machinery through
 `packeteer.parse`, `packeteer.generate`, `packeteer.filter`,
 `packeteer.sanitise`, and `packeteer.pcap`, giving you the flexibility to
@@ -31,6 +32,11 @@ combine, script, or extend those building blocks however your project needs.
 writes a JSON file that describes every packet as a set of named fields — MAC
 addresses, IP addresses, ports, flags, payload size, and so on.  Each protocol
 layer has its own JSON key so the structure mirrors the actual packet layout.
+
+**Summarising** (`packeteer file-info`) reports on a capture without fully
+decoding it — packet count, number of sessions, and per-protocol-layer
+statistics.  It auto-detects a wrong link-layer type, and `--num` limits the
+scan to the first N packets so even very large files are summarised quickly.
 
 **Building** (`packeteer build`) reads that JSON file and assembles the
 packets back into a new pcap.  All checksums (IP, TCP, UDP, SCTP CRC-32c,

@@ -166,7 +166,33 @@ def _parse_idb_tsresol(body: bytes, offset: int, endian: str) -> int:
     return 1_000_000  # default: microseconds
 
 
-def _read_pcapng(file_obj: io.RawIOBase | io.BufferedIOBase) -> PcapFile:
+def _read_pcapng_packet(
+    block_type: int, body: bytes, endian: str, interfaces: list[tuple[int, int]],
+) -> tuple[bytes, int, int]:
+    """Decode an Enhanced or Simple Packet Block body into a packet tuple."""
+    if block_type == _PCAPNG_EPB_TYPE:
+        if len(body) < 20:
+            raise ValueError("EPB body too short")
+        iface_id, ts_hi, ts_lo, cap_len, _ = struct.unpack_from(endian + "IIIII", body)
+        offset = 20
+    else:  # _PCAPNG_OPB_TYPE
+        if len(body) < 16:
+            raise ValueError("OPB body too short")
+        iface_id, _, ts_hi, ts_lo, cap_len, _ = struct.unpack_from(endian + "HHIIII", body)
+        offset = 16
+    pkt_data = body[offset : offset + cap_len]
+    if len(pkt_data) < cap_len:
+        raise ValueError("Packet block data truncated")
+    ts64 = (ts_hi << 32) | ts_lo
+    resolution = interfaces[iface_id][1] if iface_id < len(interfaces) else 1_000_000
+    ts_sec, ts_frac = divmod(ts64, resolution)
+    return (pkt_data, ts_sec, ts_frac)
+
+
+def _read_pcapng(
+    file_obj: io.RawIOBase | io.BufferedIOBase | _ChainedReader,
+    max_packets: int | None = None,
+) -> PcapFile:
     """Read a pcapng file.  *file_obj* must be positioned at the start."""
     type_raw      = file_obj.read(4)
     total_len_raw = file_obj.read(4)
@@ -194,6 +220,8 @@ def _read_pcapng(file_obj: io.RawIOBase | io.BufferedIOBase) -> PcapFile:
     packets: list[tuple[bytes, int, int]] = []
 
     while True:
+        if max_packets is not None and len(packets) >= max_packets:
+            break
         block_hdr = file_obj.read(8)
         if not block_hdr:
             break
@@ -221,29 +249,8 @@ def _read_pcapng(file_obj: io.RawIOBase | io.BufferedIOBase) -> PcapFile:
                 snaplen     = idb_snaplen
                 nanoseconds = (resolution == 1_000_000_000)
 
-        elif block_type == _PCAPNG_EPB_TYPE:
-            if len(body) < 20:
-                raise ValueError("EPB body too short")
-            iface_id, ts_hi, ts_lo, cap_len, _ = struct.unpack_from(endian + "IIIII", body)
-            pkt_data = body[20 : 20 + cap_len]
-            if len(pkt_data) < cap_len:
-                raise ValueError("EPB packet data truncated")
-            ts64 = (ts_hi << 32) | ts_lo
-            resolution = interfaces[iface_id][1] if iface_id < len(interfaces) else 1_000_000
-            ts_sec, ts_frac = divmod(ts64, resolution)
-            packets.append((pkt_data, ts_sec, ts_frac))
-
-        elif block_type == _PCAPNG_OPB_TYPE:
-            if len(body) < 16:
-                raise ValueError("OPB body too short")
-            iface_id_16, _, ts_hi, ts_lo, cap_len, _ = struct.unpack_from(endian + "HHIIII", body)
-            pkt_data = body[16 : 16 + cap_len]
-            if len(pkt_data) < cap_len:
-                raise ValueError("OPB packet data truncated")
-            ts64 = (ts_hi << 32) | ts_lo
-            resolution = interfaces[iface_id_16][1] if iface_id_16 < len(interfaces) else 1_000_000
-            ts_sec, ts_frac = divmod(ts64, resolution)
-            packets.append((pkt_data, ts_sec, ts_frac))
+        elif block_type in (_PCAPNG_EPB_TYPE, _PCAPNG_OPB_TYPE):
+            packets.append(_read_pcapng_packet(block_type, body, endian, interfaces))
 
     file_header = PcapFileHeader(
         link_type=link_type,
@@ -255,7 +262,10 @@ def _read_pcapng(file_obj: io.RawIOBase | io.BufferedIOBase) -> PcapFile:
     return PcapFile(header=file_header, packets=packets)
 
 
-def _read_pcap(file_obj: io.RawIOBase | io.BufferedIOBase) -> PcapFile:
+def _read_pcap(
+    file_obj: io.RawIOBase | io.BufferedIOBase | _ChainedReader,
+    max_packets: int | None = None,
+) -> PcapFile:
     global_hdr = file_obj.read(_GLOBAL_HDR_SIZE)
     if len(global_hdr) < _GLOBAL_HDR_SIZE:
         raise ValueError(
@@ -289,6 +299,8 @@ def _read_pcap(file_obj: io.RawIOBase | io.BufferedIOBase) -> PcapFile:
     pkt_fmt = endian + "IIII"
 
     while True:
+        if max_packets is not None and len(packets) >= max_packets:
+            break
         pkt_hdr_raw = file_obj.read(_PKT_HDR_SIZE)
         if not pkt_hdr_raw:
             break
@@ -308,17 +320,54 @@ def _read_pcap(file_obj: io.RawIOBase | io.BufferedIOBase) -> PcapFile:
     return PcapFile(header=file_header, packets=packets)
 
 
-def _detect_and_read(file_obj: io.RawIOBase | io.BufferedIOBase) -> PcapFile:
+class _ChainedReader:
+    """Serve a small byte prefix, then delegate further reads to a stream.
+
+    Lets :func:`_detect_and_read` peek the 4-byte magic number and then keep
+    reading without buffering the whole file — so an early-stopping reader
+    (``max_packets``) can avoid loading a large capture into memory.
+    """
+
+    def __init__(self, prefix: bytes, rest: io.RawIOBase | io.BufferedIOBase) -> None:
+        self._prefix = prefix
+        self._pos = 0
+        self._rest = rest
+
+    def read(self, size: int = -1) -> bytes:
+        if size is None or size < 0:
+            out = self._prefix[self._pos:] + self._rest.read()
+            self._pos = len(self._prefix)
+            return out
+        out = b""
+        if self._pos < len(self._prefix):
+            chunk = self._prefix[self._pos : self._pos + size]
+            self._pos += len(chunk)
+            out += chunk
+            size -= len(chunk)
+        if size > 0:
+            out += self._rest.read(size)
+        return out
+
+
+def _detect_and_read(
+    file_obj: io.RawIOBase | io.BufferedIOBase, max_packets: int | None = None,
+) -> PcapFile:
     """Detect pcap vs pcapng from the first 4 bytes and dispatch."""
     header4 = file_obj.read(4)
     if len(header4) < 4:
         raise ValueError(f"File too short: got {len(header4)} bytes, need at least 4")
-    rest = file_obj.read()
-    buf = io.BytesIO(header4 + rest)
     (magic,) = struct.unpack_from("<I", header4)
+    if max_packets is None:
+        # Buffer the whole file — the simple, well-trodden path.
+        buf: io.RawIOBase | io.BufferedIOBase | _ChainedReader = io.BytesIO(
+            header4 + file_obj.read()
+        )
+    else:
+        # Stream from the original object so we can stop without reading it all.
+        buf = _ChainedReader(header4, file_obj)
     if magic == _PCAPNG_SHB_TYPE:
-        return _read_pcapng(buf)
-    return _read_pcap(buf)
+        return _read_pcapng(buf, max_packets)
+    return _read_pcap(buf, max_packets)
 
 
 # ── Write helpers ─────────────────────────────────────────────────────────────
@@ -433,6 +482,7 @@ def read_pcap(
     path: str | os.PathLike | None = None,
     file_object: io.RawIOBase | io.BufferedIOBase | None = None,
     link_type: int | None = None,
+    max_packets: int | None = None,
 ) -> PcapFile:
     """Read packets and capture timestamps from a ``.pcap`` or ``.pcapng`` file.
 
@@ -450,6 +500,10 @@ def read_pcap(
             Use this when a capture declares the wrong link type and the
             recorded value would otherwise drive incorrect parsing.  The
             returned :attr:`PcapFile.header` reflects the override.
+        max_packets: When given, stop after reading this many packet records.
+            Reading streams from the source and stops early, so the rest of a
+            large file is never loaded.  The file header is always read first,
+            so :attr:`PcapFile.header` is populated regardless.
 
     Returns:
         A :class:`PcapFile` whose ``header`` attribute contains global
@@ -474,12 +528,14 @@ def read_pcap(
     """
     if (path is None) == (file_object is None):
         raise ValueError("Provide exactly one of 'path' or 'file_object'.")
+    if max_packets is not None and max_packets < 0:
+        raise ValueError(f"max_packets must be non-negative, got {max_packets}")
     if path is not None:
         with open(path, "rb") as f:
-            result = _detect_and_read(f)
+            result = _detect_and_read(f, max_packets)
     else:
         assert file_object is not None
-        result = _detect_and_read(file_object)
+        result = _detect_and_read(file_object, max_packets)
     if link_type is not None:
         result.header.link_type = link_type
     return result

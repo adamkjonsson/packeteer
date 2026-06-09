@@ -1,7 +1,8 @@
 # packeteer file-info
 
 ```
-packeteer file-info <capture> [--json] [--link-type TYPE] [--no-auto-link-type]
+packeteer file-info <capture> [--json] [--num N]
+                              [--link-type TYPE] [--no-auto-link-type]
 ```
 
 Reads a pcap or pcapng file and prints a summary of its contents: the packet
@@ -17,6 +18,7 @@ This is a read-only reporting command — it never modifies the capture.
 |----------|-------------|
 | `capture` | *(required)* Path to a `.pcap` or `.pcapng` file |
 | `--json` | Emit the report as JSON instead of human-readable text |
+| `--num N` / `-n N` | Analyse only the first `N` packets (reading stops early) |
 | `--link-type TYPE` | Force the link-layer type, disabling auto-detection (`ethernet`, `raw`, or an integer) |
 | `--no-auto-link-type` | Trust the file header's link-layer type instead of auto-detecting |
 
@@ -54,6 +56,30 @@ Link-type: raw (101)  [auto-corrected from ethernet (1)]
 
 Pass `--link-type` to force a specific type (which disables auto-detection), or
 `--no-auto-link-type` to always trust the file header.
+
+## Limiting to the first N packets
+
+`--num N` analyses only the first `N` packets.  Reading stops as soon as `N`
+records have been collected, so the rest of the file is never loaded — this
+makes the command fast even on multi-gigabyte captures.
+
+This pairs naturally with link-type auto-correction: the true link-type can
+usually be determined from a small sample, so a quick `--num` scan tells you
+how to parse a large file without reading all of it.
+
+```bash
+packeteer file-info huge.pcap --num 100
+```
+
+Every figure in the report (packet count, sessions, layer stats, duration)
+then reflects just that sample, and the packet line notes the cap:
+
+```
+Packets:   100  (limited to first 100)
+```
+
+(If the file holds fewer than `N` packets, the whole file is read and no cap
+note is shown.)
 
 ## Malformed captures
 
@@ -101,6 +127,12 @@ Layers:
 packeteer file-info capture.pcap --json
 ```
 
+**Quickly determine the link-type of a huge capture from a small sample:**
+
+```bash
+packeteer file-info huge.pcap --num 100
+```
+
 **Inspect a capture with a wrong link-type, forcing raw IP:**
 
 ```bash
@@ -121,4 +153,10 @@ print(info.layer_counts)
 
 # Render the same text report the CLI prints:
 print(format_pcap_info(info))
+
+# Analyse only the first 100 packets (reading stops early):
+info = pcap_info(path="huge.pcap", num=100)
 ```
+
+The underlying {func}`packeteer.pcap.read_pcap` also accepts a `max_packets`
+argument, which stops reading after that many packet records.

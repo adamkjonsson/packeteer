@@ -134,6 +134,38 @@ class TestReadPcapPackets(unittest.TestCase):
         self.assertEqual(result.packets[0][0], payload)
 
 
+class TestReadPcapMaxPackets(unittest.TestCase):
+    def test_stops_at_max_packets(self):
+        pkts = [(bytes([i] * 8), 0, i) for i in range(20)]
+        result = read_pcap(file_object=_write(pkts), max_packets=5)
+        self.assertEqual(len(result.packets), 5)
+
+    def test_max_packets_preserves_order(self):
+        pkts = [(bytes([i] * 8), 0, i) for i in range(20)]
+        result = read_pcap(file_object=_write(pkts), max_packets=3)
+        self.assertEqual([d for d, _, _ in result.packets],
+                         [bytes([i] * 8) for i in range(3)])
+
+    def test_max_packets_larger_than_file(self):
+        pkts = [(bytes([i] * 8), 0, i) for i in range(4)]
+        result = read_pcap(file_object=_write(pkts), max_packets=100)
+        self.assertEqual(len(result.packets), 4)
+
+    def test_max_packets_zero(self):
+        pkts = [(bytes([i] * 8), 0, i) for i in range(4)]
+        result = read_pcap(file_object=_write(pkts), max_packets=0)
+        self.assertEqual(result.packets, [])
+        self.assertEqual(result.header.link_type, LINKTYPE_ETHERNET)
+
+    def test_negative_max_packets_raises(self):
+        with self.assertRaises(ValueError):
+            read_pcap(file_object=_write([(b"\x00" * 8, 0, 0)]), max_packets=-1)
+
+    def test_header_read_with_max_packets(self):
+        result = read_pcap(file_object=_write([], link_type=LINKTYPE_RAW), max_packets=10)
+        self.assertEqual(result.header.link_type, LINKTYPE_RAW)
+
+
 # ---------------------------------------------------------------------------
 # Endianness and magic variants
 # ---------------------------------------------------------------------------

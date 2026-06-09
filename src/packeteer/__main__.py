@@ -827,6 +827,17 @@ def _link_type(value: str) -> int:
         ) from None
 
 
+def _positive_int(value: str) -> int:
+    """Convert an argument to an integer of at least 1."""
+    try:
+        n = int(value, 0)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid integer: {value!r}") from None
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"must be 1 or greater, got {n}")
+    return n
+
+
 def _cmd_parse(args: argparse.Namespace) -> None:
     try:
         pf = _build_packet_filter(args)
@@ -862,6 +873,7 @@ def _cmd_file_info(args: argparse.Namespace) -> None:
             path=args.pcap,
             link_type=getattr(args, "link_type", None),
             auto_link_type=not args.no_auto_link_type,
+            num=getattr(args, "num", None),
         )
     except (OSError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -1542,6 +1554,16 @@ def main() -> None:
         "--json",
         action="store_true",
         help="Emit the report as JSON instead of human-readable text",
+    )
+    info_parser.add_argument(
+        "--num", "-n",
+        type=_positive_int,
+        default=None,
+        metavar="N",
+        help=(
+            "Analyse only the first N packets.  Reading stops early, so this "
+            "is fast even on very large files (e.g. to detect the link-type)."
+        ),
     )
     info_parser.add_argument(
         "--link-type",

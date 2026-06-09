@@ -133,6 +133,19 @@ class TestReadPcapngPackets(unittest.TestCase):
         for (orig, _, _), (parsed, _, _) in zip(pkts, result.packets, strict=False):
             self.assertEqual(parsed, orig)
 
+    def test_max_packets_stops_early(self):
+        pkts = [(bytes([i] * 8), 0, i) for i in range(20)]
+        result = read_pcap(file_object=_write(pkts), max_packets=5)
+        self.assertEqual(len(result.packets), 5)
+        self.assertEqual([d for d, _, _ in result.packets],
+                         [bytes([i] * 8) for i in range(5)])
+
+    def test_max_packets_reads_header(self):
+        pkts = [(bytes([i] * 8), 0, i) for i in range(20)]
+        result = read_pcap(file_object=_write(pkts), max_packets=3)
+        # link_type comes from the IDB, which precedes the packet blocks
+        self.assertEqual(result.header.link_type, LINKTYPE_ETHERNET)
+
 
 # ---------------------------------------------------------------------------
 # Roundtrip: write_pcapng → read_pcap
