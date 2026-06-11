@@ -33,6 +33,8 @@ Exactly one output flag is required; they are mutually exclusive.
 | `--client-mac MAC` | `00:00:00:00:00:01` | Client Ethernet MAC |
 | `--server-mac MAC` | `00:00:00:00:00:02` | Server Ethernet MAC |
 | `--no-ethernet` | off | Omit Ethernet headers |
+| `--sessions N` | `1` | Number of independent sessions (IP pairs) to generate (see below) |
+| `--session-stagger SECONDS` | `1.0` | Window over which session start times are spread when `--sessions > 1` |
 | `--packets N` | `10` | Number of data packets sent by the client |
 | `--min-payload BYTES` | `40` | Minimum payload size |
 | `--max-payload BYTES` | `1460` | Maximum payload size |
@@ -59,6 +61,32 @@ Silently ignored for `--protocol udp` and `--protocol sctp`.
 | `--rst-propagation-delay SECONDS` | `0.0` | Seconds for the RST to reach the client |
 | `--stray-packets N` | `0` | Number of forged TCP hijack packets to inject |
 | `--stray-timing-window N` | off | Constrain stray timestamps to within N packets of target |
+
+## Multiple sessions
+
+`--sessions N` generates `N` independent conversations in one capture instead of
+one.  Each session is a complete stream of the chosen protocol with its own IP
+pair: session `i` uses `client-ip + i` and `server-ip + i`.  The sessions are
+**interleaved** — each starts at a random offset within `--session-stagger`
+seconds and the packets are merged in timestamp order, so the output looks like
+concurrent traffic rather than one flow after another.
+
+Clients and servers are kept in **clearly separated address ranges**: the client
+IPs occupy `client-ip .. client-ip + (N-1)` and the server IPs occupy
+`server-ip .. server-ip + (N-1)`.  If those two ranges would overlap, the
+command fails with an error rather than emitting traffic where one session's
+client address is another session's server.  Pick base addresses at least `N`
+apart — typically different subnets, e.g. `--client-ip 10.0.0.1 --server-ip
+10.1.0.1`.
+
+MAC addresses are shared across all sessions, modelling traffic that crosses a
+common layer-2 next-hop.  With `--seed`, the whole multi-session mix is
+reproducible.
+
+```bash
+packeteer stream --client-ip 10.0.0.1 --server-ip 10.1.0.1 \
+    --sessions 20 --packets 5 --seed 42 --pcap busy.pcap
+```
 
 ## Encapsulation flags
 

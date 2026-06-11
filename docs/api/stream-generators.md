@@ -91,6 +91,33 @@ See {doc}`../guide/generating` for usage examples and encapsulation, and {doc}`.
 
 ---
 
+## Multiple sessions
+
+{func}`~packeteer.generate.session_mix.generate_session_mix` produces several
+independent sessions — each its own IP pair, start-time offset, and seed — and
+interleaves them into one timestamp-sorted :class:`~packeteer.generate.session_mix.CombinedStream`.
+The protocol is chosen by the type of the supplied config.
+{func}`~packeteer.generate.session_mix.merge_streams` is the underlying
+primitive for combining streams you have built yourself.
+
+```{eval-rst}
+.. autofunction:: packeteer.generate.session_mix.generate_session_mix
+   :no-index:
+```
+
+```{eval-rst}
+.. autofunction:: packeteer.generate.session_mix.merge_streams
+   :no-index:
+```
+
+```{eval-rst}
+.. autoclass:: packeteer.generate.session_mix.CombinedStream
+   :members:
+   :no-index:
+```
+
+---
+
 ## Session builders
 
 See {doc}`../guide/generating` for usage examples and workflows.

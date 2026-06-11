@@ -327,6 +327,7 @@ from .session import (
     tcp_handshake,
     tcp_teardown,
 )
+from .session_mix import CombinedStream, generate_session_mix, merge_streams
 from .stream_encap import (
     EncapSpec,
     EtherIPEncap,
@@ -456,6 +457,9 @@ __all__ = [
     "SCTPStream",
     "SCTPStreamConfig",
     "SCTPStreamPacket",
+    "generate_session_mix",
+    "merge_streams",
+    "CombinedStream",
     "TCPSession",
     "UDPSession",
     "SCTPSession",
