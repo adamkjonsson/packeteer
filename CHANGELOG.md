@@ -8,6 +8,34 @@ All notable changes to packeteer are recorded in this file.
 
 ### New features
 
+- **Multiple sessions in `packeteer stream`** — `--sessions N` generates `N`
+  independent conversations (distinct IP pairs) in a single capture instead of
+  one.  Session `i` uses `client-ip + i` and `server-ip + i`, and the sessions
+  are **interleaved**: each starts at a random offset within `--session-stagger`
+  seconds (default 1.0) and the packets are merged in timestamp order, so the
+  output looks like concurrent traffic.
+
+  Clients and servers are kept in clearly separated address ranges — if the two
+  ranges would overlap the command errors out rather than emitting traffic where
+  one session's client address is another session's server.  MAC addresses are
+  shared across sessions (a common L2 next-hop), and `--seed` makes the whole
+  mix reproducible.
+
+  New Python API in `packeteer.generate`:
+
+  ```python
+  from packeteer.generate import generate_session_mix, merge_streams, TCPStreamConfig
+
+  mix = generate_session_mix(
+      sessions=20, client_ip="10.0.0.1", server_ip="10.1.0.1",
+      config=TCPStreamConfig(seed=42),
+  )                                    # -> CombinedStream
+  ```
+
+  `generate_session_mix` selects the protocol from the config type
+  (`TCPStreamConfig` / `UDPStreamConfig` / `SCTPStreamConfig`); `merge_streams`
+  combines and timestamp-sorts streams you build yourself.
+
 - **`packeteer file-info` — capture summary report** — new subcommand and
   Python API for getting a quick overview of a pcap or pcapng file without
   fully decoding it to a packet spec.

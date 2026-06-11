@@ -113,6 +113,33 @@ stream = (TCPSession(client_ip="10.0.0.1", server_ip="10.0.0.2", server_port=900
 )
 ```
 
+## Generating many sessions at once
+
+{func}`~packeteer.generate.session_mix.generate_session_mix` produces several
+independent conversations and interleaves them into one capture.  Session `i`
+uses `client_ip + i` and `server_ip + i`; the client and server IP ranges must
+not overlap, so pick base addresses in separate subnets.  The protocol is
+selected by the config type, and a `seed` makes the whole mix reproducible.
+
+```python
+from packeteer.generate import generate_session_mix, TCPStreamConfig
+from packeteer.pcap import write_pcap
+
+mix = generate_session_mix(
+    sessions=20,
+    client_ip="10.0.0.1",          # clients 10.0.0.1 .. 10.0.0.20
+    server_ip="10.1.0.1",          # servers 10.1.0.1 .. 10.1.0.20
+    num_data_packets=5,
+    session_stagger=2.0,           # start times spread over 2 seconds
+    config=TCPStreamConfig(seed=42),
+)
+write_pcap(mix.to_pcap_tuples(), path="busy.pcap")
+```
+
+To combine streams you have generated yourself, use
+{func}`~packeteer.generate.session_mix.merge_streams`, which concatenates and
+timestamp-sorts their packets.
+
 ## Writing to pcap or pcapng
 
 All session builders return a stream object with a `.to_pcap_tuples()` method:

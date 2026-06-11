@@ -127,6 +127,7 @@ from packeteer.generate.sctp import (
     SCTPShutdownCompleteChunk,
 )
 from packeteer.generate.sctp_stream import SCTPStreamConfig, generate_sctp_stream
+from packeteer.generate.session_mix import generate_session_mix
 from packeteer.generate.stream_encap import (
     EtherIPEncap,
     GREEncap,
@@ -1083,6 +1084,8 @@ _STREAM_PARAMS: dict[str, tuple[str, object, object]] = {
     "server_port":        ("server_port",                     int,   80),
     "client_mac":         ("client_mac",                      str,   "00:00:00:00:00:01"),
     "server_mac":         ("server_mac",                      str,   "00:00:00:00:00:02"),
+    "sessions":           ("sessions",                        int,   1),
+    "session_stagger":    ("session_stagger",                 float, 1.0),
     "packets":            ("packets",                         int,   10),
     "min_payload":        ("min_payload",                     int,   40),
     "max_payload":        ("max_payload",                     int,   1460),
@@ -1339,7 +1342,34 @@ def _validate_stream_args(args: argparse.Namespace) -> str:
         print(f"Error: --protocol must be 'tcp', 'udp', or 'sctp', got '{args.protocol}'",
               file=sys.stderr)
         sys.exit(1)
+    if args.sessions < 1:
+        print(f"Error: --sessions must be at least 1, got {args.sessions}", file=sys.stderr)
+        sys.exit(1)
     return protocol
+
+
+def _build_stream_config(
+    protocol: str, args: argparse.Namespace,
+) -> TCPStreamConfig | UDPStreamConfig | SCTPStreamConfig:
+    """Build the protocol-specific stream config from parsed CLI args."""
+    if protocol == "tcp":
+        return TCPStreamConfig(
+            gap_jitter=args.gap_jitter,
+            window=args.window,
+            psh_probability=args.psh_probability,
+            packet_loss_probability=args.packet_loss_probability,
+            retransmission_probability=args.retransmission_probability,
+            retransmission_timeout=args.retransmission_timeout,
+            payload_corruption_probability=args.payload_corruption_probability,
+            server_rst_probability=args.server_rst_probability,
+            rst_propagation_delay=args.rst_propagation_delay,
+            stray_packet_count=args.stray_packet_count,
+            stray_timing_window=args.stray_timing_window,
+            seed=args.seed,
+        )
+    if protocol == "udp":
+        return UDPStreamConfig(gap_jitter=args.gap_jitter, seed=args.seed)
+    return SCTPStreamConfig(gap_jitter=args.gap_jitter, seed=args.seed)
 
 
 def _cmd_stream(args: argparse.Namespace) -> None:
@@ -1367,41 +1397,29 @@ def _cmd_stream(args: argparse.Namespace) -> None:
         "encap": encap,
     }
 
+    config = _build_stream_config(protocol, args)
+
     try:
-        if protocol == "tcp":
-            stream = generate_tcp_stream(
+        if args.sessions > 1:
+            stream = generate_session_mix(
                 **common,
-                config=TCPStreamConfig(
-                    gap_jitter=args.gap_jitter,
-                    window=args.window,
-                    psh_probability=args.psh_probability,
-                    packet_loss_probability=args.packet_loss_probability,
-                    retransmission_probability=args.retransmission_probability,
-                    retransmission_timeout=args.retransmission_timeout,
-                    payload_corruption_probability=args.payload_corruption_probability,
-                    server_rst_probability=args.server_rst_probability,
-                    rst_propagation_delay=args.rst_propagation_delay,
-                    stray_packet_count=args.stray_packet_count,
-                    stray_timing_window=args.stray_timing_window,
-                    seed=args.seed,
-                ),
+                sessions=args.sessions,
+                session_stagger=args.session_stagger,
+                config=config,
             )
+        elif protocol == "tcp":
+            stream = generate_tcp_stream(**common, config=config)
         elif protocol == "udp":
-            stream = generate_udp_stream(
-                **common,
-                config=UDPStreamConfig(gap_jitter=args.gap_jitter, seed=args.seed),
-            )
+            stream = generate_udp_stream(**common, config=config)
         else:  # sctp
-            stream = generate_sctp_stream(
-                **common,
-                config=SCTPStreamConfig(gap_jitter=args.gap_jitter, seed=args.seed),
-            )
+            stream = generate_sctp_stream(**common, config=config)
     except (ValueError, OSError) as e:
         print(f"Error generating stream: {e}", file=sys.stderr)
         sys.exit(1)
 
     include_ethernet = not args.no_ethernet
     link_type = LINKTYPE_ETHERNET if include_ethernet else LINKTYPE_RAW
+    sessions_note = f", {args.sessions} sessions" if args.sessions > 1 else ""
 
     if args.json:
         json_str = _stream_to_json(stream.packets, include_ethernet)
@@ -1412,16 +1430,19 @@ def _cmd_stream(args: argparse.Namespace) -> None:
         except OSError as e:
             print(f"Error writing '{args.json}': {e}", file=sys.stderr)
             sys.exit(1)
-        print(f"Wrote {len(stream.packets)} packet(s) to {args.json} (packet spec)")
+        print(f"Wrote {len(stream.packets)} packet(s) to {args.json} "
+              f"(packet spec{sessions_note})")
     else:
         tuples = stream.to_pcap_tuples()
         try:
             if args.pcap:
                 write_pcap(tuples, path=args.pcap, link_type=link_type)
-                print(f"Wrote {len(tuples)} packet(s) to {args.pcap} (link type: {link_type})")
+                print(f"Wrote {len(tuples)} packet(s) to {args.pcap} "
+                      f"(link type: {link_type}{sessions_note})")
             else:
                 write_pcapng(tuples, path=args.pcapng, link_type=link_type)
-                print(f"Wrote {len(tuples)} packet(s) to {args.pcapng} (link type: {link_type})")
+                print(f"Wrote {len(tuples)} packet(s) to {args.pcapng} "
+                      f"(link type: {link_type}{sessions_note})")
         except OSError as e:
             print(f"Error writing output: {e}", file=sys.stderr)
             sys.exit(1)
@@ -1767,6 +1788,21 @@ def main() -> None:
         help="Server MAC address (default: 00:00:00:00:00:02)",
     )
     # Stream shape
+    stream_parser.add_argument(
+        "--sessions", type=int, default=None, metavar="N",
+        help=(
+            "Number of independent sessions (IP pairs) to generate (default: 1). "
+            "Session i uses client-ip+i and server-ip+i; the two ranges must not "
+            "overlap."
+        ),
+    )
+    stream_parser.add_argument(
+        "--session-stagger", type=float, default=None, metavar="SECONDS",
+        help=(
+            "Window over which session start times are spread when --sessions > 1"
+            " (default: 1.0); sessions interleave in the output"
+        ),
+    )
     stream_parser.add_argument(
         "--packets", type=int, default=None, metavar="N",
         help="Number of data packets sent by the client (default: 10)",
