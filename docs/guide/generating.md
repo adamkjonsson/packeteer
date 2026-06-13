@@ -164,6 +164,28 @@ write_pcap(mix.to_pcap_tuples(), path="rest.pcap")
 It composes with `sessions` (distinct client/server IP pairs, each running the
 full workload), and is exposed on the CLI as `packeteer stream --payload http`.
 
+## Simulating a fictive VPN
+
+{func}`~packeteer.generate.payloads.vpn.generate_vpn_stream` generates a small
+binary VPN protocol over two UDP ports: a key-exchange channel (a three-message
+handshake per epoch) and a CTR-mode data channel whose packets carry a counter.
+`epochs` key negotiations each precede `packets_per_epoch` bidirectional data
+packets (a rekey every `packets_per_epoch` packets), with per-direction counters
+that reset each epoch.
+
+```python
+from packeteer.generate import generate_vpn_stream
+from packeteer.pcap import write_pcap
+
+mix = generate_vpn_stream(
+    client_ip="10.0.0.1", server_ip="10.1.0.1",
+    epochs=4, packets_per_epoch=20, seed=42,
+)
+write_pcap(mix.to_pcap_tuples(), path="vpn.pcap")
+```
+
+Exposed on the CLI as `packeteer stream --payload vpn`.
+
 ## Writing to pcap or pcapng
 
 All session builders return a stream object with a `.to_pcap_tuples()` method:

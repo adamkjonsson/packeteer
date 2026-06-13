@@ -8,6 +8,24 @@ All notable changes to packeteer are recorded in this file.
 
 ### New features
 
+- **Fictive VPN payload type for `packeteer stream`** — `--payload vpn`
+  generates a small binary VPN protocol over two UDP channels: a key-exchange
+  channel (`--vpn-key-port`, default 51821) doing a three-message handshake
+  (INIT → RESPONSE → CONFIRM, each carrying a random value) at the start of
+  every key epoch, and a CTR-mode data channel (`--vpn-data-port`, default
+  51820) whose packets each carry a 64-bit counter followed by random
+  "ciphertext".
+
+  `--vpn-epochs E` sets the number of key negotiations; `--packets N` data
+  packets flow after each handshake, so a rekey happens every `N` packets.
+  Data is bidirectional with an independent per-direction counter that resets at
+  each rekey.  Composes with `--sessions`; `--seed` makes it reproducible.  In
+  `--json` output, labels read e.g. `KEY-INIT[epoch=0]`, `DATA c2s ctr=3 epoch=0`.
+
+  New Python API in `packeteer.generate`: `generate_vpn_stream` and `VPNConfig`,
+  plus `render_udp_session` (a UDP analogue of `render_tcp_session`).
+  `UDPSession.send`/`recv` now also accept an optional `label`.
+
 - **HTTP REST payload generation for `packeteer stream`** — `--payload http`
   replaces random byte payloads with a simulated REST client.  It generates
   random but plausible HTTP/1.1 traffic — varied methods (GET/POST/PUT/DELETE/

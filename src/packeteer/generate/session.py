@@ -397,32 +397,36 @@ class UDPSession:
         self.inter_packet_gap = inter_packet_gap
         self.base_time = base_time
         self.encap = encap
-        self._exchanges: list[tuple[str, bytes]] = []
+        self._exchanges: list[tuple[str, bytes, str | None]] = []
 
-    def send(self, data: bytes) -> UDPSession:
+    def send(self, data: bytes, label: str | None = None) -> UDPSession:
         """Queue *data* as a client→server datagram.
 
         Args:
             data: Payload bytes to send from client to server.
+            label: Optional human-readable label for the datagram; a generic
+                ``"DATA[i]"`` label is used when omitted.
 
         Returns:
             ``self``, for chaining.
 
         """
-        self._exchanges.append(("c2s", data))
+        self._exchanges.append(("c2s", data, label))
         return self
 
-    def recv(self, data: bytes) -> UDPSession:
+    def recv(self, data: bytes, label: str | None = None) -> UDPSession:
         """Queue *data* as a server→client datagram.
 
         Args:
             data: Payload bytes to send from server to client.
+            label: Optional human-readable label for the datagram; a generic
+                ``"DATA[i]"`` label is used when omitted.
 
         Returns:
             ``self``, for chaining.
 
         """
-        self._exchanges.append(("s2c", data))
+        self._exchanges.append(("s2c", data, label))
         return self
 
     def send_many(self, n: int, payload_fn: Callable[[int], bytes]) -> UDPSession:
@@ -437,7 +441,7 @@ class UDPSession:
 
         """
         for i in range(n):
-            self._exchanges.append(("c2s", payload_fn(i)))
+            self._exchanges.append(("c2s", payload_fn(i), None))
         return self
 
     def recv_many(self, n: int, payload_fn: Callable[[int], bytes]) -> UDPSession:
@@ -452,7 +456,7 @@ class UDPSession:
 
         """
         for i in range(n):
-            self._exchanges.append(("s2c", payload_fn(i)))
+            self._exchanges.append(("s2c", payload_fn(i), None))
         return self
 
     def build(self) -> UDPStream:
@@ -468,7 +472,7 @@ class UDPSession:
         used_ts: set[int] = set()
         packets: list[UDPStreamPacket] = []
 
-        for i, (direction, payload) in enumerate(self._exchanges):
+        for i, (direction, payload, label) in enumerate(self._exchanges):
             usec_cursor += gap_usec
             ts = _alloc_usec(usec_cursor, used_ts)
 
@@ -496,7 +500,7 @@ class UDPSession:
                 ts_usec=ts % 1_000_000,
                 direction=direction,
                 payload_len=len(payload),
-                label=f"DATA[{i}]",
+                label=label if label is not None else f"DATA[{i}]",
             ))
 
         return UDPStream(packets=packets)

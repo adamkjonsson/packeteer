@@ -109,6 +109,7 @@ from packeteer.generate.dns import (
 )
 from packeteer.generate.http import HTTPMessage, HTTPRequest, HTTPResponse
 from packeteer.generate.payloads.http import HTTPRestConfig, generate_http_stream
+from packeteer.generate.payloads.vpn import VPNConfig, generate_vpn_stream
 from packeteer.generate.pppoe import PPPOE_CODE_SESSION, PPPoETag
 from packeteer.generate.sctp import (
     SCTPAbortChunk,
@@ -1088,6 +1089,9 @@ _STREAM_PARAMS: dict[str, tuple[str, object, object]] = {
     "payload":            ("payload",                         str,   None),
     "requests":           ("requests",                        int,   10),
     "requests_per_connection": ("requests_per_connection",    int,   None),
+    "vpn_epochs":         ("vpn_epochs",                      int,   4),
+    "vpn_data_port":      ("vpn_data_port",                   int,   51820),
+    "vpn_key_port":       ("vpn_key_port",                    int,   51821),
     "sessions":           ("sessions",                        int,   1),
     "session_stagger":    ("session_stagger",                 float, 1.0),
     "packets":            ("packets",                         int,   10),
@@ -1421,6 +1425,41 @@ def _generate_http_payload_stream(
         sys.exit(1)
 
 
+def _generate_vpn_payload_stream(
+    args: argparse.Namespace, encap: object,
+) -> CombinedStream:
+    """Generate a fictive-VPN payload stream from parsed CLI args."""
+    if any(getattr(args, flag, None) for flag in _HTTP_ANOMALY_FLAGS):
+        print(
+            "Warning: TCP anomaly options are not applied with --payload vpn; "
+            "ignoring them.",
+            file=sys.stderr,
+        )
+    try:
+        return generate_vpn_stream(
+            client_ip=args.client_ip,
+            server_ip=args.server_ip,
+            epochs=args.vpn_epochs,
+            packets_per_epoch=args.packets,
+            client_port=args.client_port,
+            client_mac=args.client_mac,
+            server_mac=args.server_mac,
+            sessions=args.sessions,
+            session_stagger=args.session_stagger,
+            include_ethernet=not args.no_ethernet,
+            ip_ttl=args.ttl,
+            inter_packet_gap=args.gap,
+            min_payload=args.min_payload,
+            max_payload=args.max_payload,
+            encap=encap,
+            seed=args.seed,
+            config=VPNConfig(data_port=args.vpn_data_port, key_port=args.vpn_key_port),
+        )
+    except (ValueError, OSError) as e:
+        print(f"Error generating stream: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 def _cmd_stream(args: argparse.Namespace) -> None:
     _apply_stream_defaults(args)
     protocol = _validate_stream_args(args)
@@ -1429,6 +1468,10 @@ def _cmd_stream(args: argparse.Namespace) -> None:
 
     if args.payload == "http":
         stream = _generate_http_payload_stream(args, protocol, encap)
+        _write_stream_output(args, stream)
+        return
+    if args.payload == "vpn":
+        stream = _generate_vpn_payload_stream(args, encap)
         _write_stream_output(args, stream)
         return
 
@@ -1848,11 +1891,12 @@ def main() -> None:
     )
     # Payload type
     stream_parser.add_argument(
-        "--payload", default=None, choices=["http"],
+        "--payload", default=None, choices=["http", "vpn"],
         help=(
             "Application-layer payload to generate instead of random bytes. "
-            "'http' simulates a REST client (random methods, paths, headers, "
-            "and JSON bodies).  TCP only."
+            "'http' simulates a REST client (TCP); 'vpn' simulates a fictive "
+            "binary VPN with a key-exchange channel and a CTR-mode data channel "
+            "(UDP)."
         ),
     )
     stream_parser.add_argument(
@@ -1865,6 +1909,18 @@ def main() -> None:
             "HTTP only: transactions per TCP connection (default: all in one "
             "keep-alive connection; 1 = a new connection per request)"
         ),
+    )
+    stream_parser.add_argument(
+        "--vpn-epochs", type=int, default=None, metavar="E",
+        help="VPN only: number of key negotiations; data rekeys every --packets (default: 4)",
+    )
+    stream_parser.add_argument(
+        "--vpn-data-port", type=int, default=None, metavar="PORT",
+        help="VPN only: UDP port of the data channel (default: 51820)",
+    )
+    stream_parser.add_argument(
+        "--vpn-key-port", type=int, default=None, metavar="PORT",
+        help="VPN only: UDP port of the key-exchange channel (default: 51821)",
     )
     # Stream shape
     stream_parser.add_argument(

@@ -143,8 +143,23 @@ onto one or more TCP connections — returning a
    :no-index:
 ```
 
-The conversation model and the TCP renderer are reusable for future payload
-types:
+{func}`~packeteer.generate.payloads.vpn.generate_vpn_stream` simulates a fictive
+binary VPN: a key-exchange channel (three-message handshake per epoch) and a
+CTR-mode data channel, each on its own UDP port.
+
+```{eval-rst}
+.. autofunction:: packeteer.generate.payloads.vpn.generate_vpn_stream
+   :no-index:
+```
+
+```{eval-rst}
+.. autoclass:: packeteer.generate.payloads.vpn.VPNConfig
+   :members:
+   :no-index:
+```
+
+The conversation model and the TCP/UDP renderers are reusable for future
+payload types:
 
 ```{eval-rst}
 .. autoclass:: packeteer.generate.payloads.base.AppMessage
@@ -154,6 +169,11 @@ types:
 
 ```{eval-rst}
 .. autofunction:: packeteer.generate.payloads.base.render_tcp_session
+   :no-index:
+```
+
+```{eval-rst}
+.. autofunction:: packeteer.generate.payloads.base.render_udp_session
    :no-index:
 ```
 
