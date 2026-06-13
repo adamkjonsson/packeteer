@@ -140,6 +140,30 @@ To combine streams you have generated yourself, use
 {func}`~packeteer.generate.session_mix.merge_streams`, which concatenates and
 timestamp-sorts their packets.
 
+## Simulating an HTTP REST client
+
+{func}`~packeteer.generate.payloads.http.generate_http_stream` fabricates random
+HTTP/1.1 request/response traffic — varied methods, REST paths, query strings,
+headers, and JSON bodies — and renders it onto TCP connection(s).  `requests`
+sets the number of transactions and `requests_per_connection` controls
+connection reuse (`None` = one keep-alive connection; `1` = a connection per
+request).  The result round-trips through `packeteer parse`.
+
+```python
+from packeteer.generate import generate_http_stream
+from packeteer.pcap import write_pcap
+
+mix = generate_http_stream(
+    client_ip="10.0.0.1", server_ip="10.1.0.1",
+    requests=50, requests_per_connection=1,   # 50 short connections
+    seed=42,
+)
+write_pcap(mix.to_pcap_tuples(), path="rest.pcap")
+```
+
+It composes with `sessions` (distinct client/server IP pairs, each running the
+full workload), and is exposed on the CLI as `packeteer stream --payload http`.
+
 ## Writing to pcap or pcapng
 
 All session builders return a stream object with a `.to_pcap_tuples()` method:

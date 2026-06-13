@@ -264,6 +264,14 @@ from .ipv6 import (
     RouterAlertOption,
 )
 from .mpls import ETHERTYPE_MPLS_MULTICAST, ETHERTYPE_MPLS_UNICAST, MPLSLabel
+from .payloads import (
+    PAYLOAD_TYPES,
+    AppMessage,
+    HTTPRestConfig,
+    generate_http_conversation,
+    generate_http_stream,
+    render_tcp_session,
+)
 from .pppoe import (
     ETHERTYPE_PPPOE_DISCOVERY,
     ETHERTYPE_PPPOE_SESSION,
@@ -460,6 +468,12 @@ __all__ = [
     "generate_session_mix",
     "merge_streams",
     "CombinedStream",
+    "generate_http_stream",
+    "generate_http_conversation",
+    "HTTPRestConfig",
+    "AppMessage",
+    "render_tcp_session",
+    "PAYLOAD_TYPES",
     "TCPSession",
     "UDPSession",
     "SCTPSession",

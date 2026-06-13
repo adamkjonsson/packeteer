@@ -108,6 +108,7 @@ from packeteer.generate.dns import (
     DNSResourceRecord,
 )
 from packeteer.generate.http import HTTPMessage, HTTPRequest, HTTPResponse
+from packeteer.generate.payloads.http import HTTPRestConfig, generate_http_stream
 from packeteer.generate.pppoe import PPPOE_CODE_SESSION, PPPoETag
 from packeteer.generate.sctp import (
     SCTPAbortChunk,
@@ -127,7 +128,7 @@ from packeteer.generate.sctp import (
     SCTPShutdownCompleteChunk,
 )
 from packeteer.generate.sctp_stream import SCTPStreamConfig, generate_sctp_stream
-from packeteer.generate.session_mix import generate_session_mix
+from packeteer.generate.session_mix import CombinedStream, generate_session_mix
 from packeteer.generate.stream_encap import (
     EtherIPEncap,
     GREEncap,
@@ -1084,6 +1085,9 @@ _STREAM_PARAMS: dict[str, tuple[str, object, object]] = {
     "server_port":        ("server_port",                     int,   80),
     "client_mac":         ("client_mac",                      str,   "00:00:00:00:00:01"),
     "server_mac":         ("server_mac",                      str,   "00:00:00:00:00:02"),
+    "payload":            ("payload",                         str,   None),
+    "requests":           ("requests",                        int,   10),
+    "requests_per_connection": ("requests_per_connection",    int,   None),
     "sessions":           ("sessions",                        int,   1),
     "session_stagger":    ("session_stagger",                 float, 1.0),
     "packets":            ("packets",                         int,   10),
@@ -1372,11 +1376,61 @@ def _build_stream_config(
     return SCTPStreamConfig(gap_jitter=args.gap_jitter, seed=args.seed)
 
 
+_HTTP_ANOMALY_FLAGS = (
+    "packet_loss_probability", "retransmission_probability",
+    "payload_corruption_probability", "server_rst_probability",
+    "stray_packet_count",
+)
+
+
+def _generate_http_payload_stream(
+    args: argparse.Namespace, protocol: str, encap: object,
+) -> CombinedStream:
+    """Generate an HTTP REST payload stream from parsed CLI args."""
+    if protocol != "tcp":
+        print("Error: --payload http requires --protocol tcp.", file=sys.stderr)
+        sys.exit(1)
+    if any(getattr(args, flag, None) for flag in _HTTP_ANOMALY_FLAGS):
+        print(
+            "Warning: TCP anomaly options (--packet-loss, --retransmission-*, "
+            "--payload-corruption, --server-rst, --stray-packets) are not "
+            "applied with --payload http; ignoring them.",
+            file=sys.stderr,
+        )
+    try:
+        return generate_http_stream(
+            client_ip=args.client_ip,
+            server_ip=args.server_ip,
+            requests=args.requests,
+            requests_per_connection=args.requests_per_connection,
+            server_port=args.server_port,
+            client_port=args.client_port,
+            client_mac=args.client_mac,
+            server_mac=args.server_mac,
+            sessions=args.sessions,
+            session_stagger=args.session_stagger,
+            include_ethernet=not args.no_ethernet,
+            ip_ttl=args.ttl,
+            inter_packet_gap=args.gap,
+            encap=encap,
+            seed=args.seed,
+            config=HTTPRestConfig(),
+        )
+    except (ValueError, OSError) as e:
+        print(f"Error generating stream: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 def _cmd_stream(args: argparse.Namespace) -> None:
     _apply_stream_defaults(args)
     protocol = _validate_stream_args(args)
 
     encap = _parse_stream_encap(args)
+
+    if args.payload == "http":
+        stream = _generate_http_payload_stream(args, protocol, encap)
+        _write_stream_output(args, stream)
+        return
 
     # Common keyword arguments shared by all protocol generators
     common = {
@@ -1417,6 +1471,11 @@ def _cmd_stream(args: argparse.Namespace) -> None:
         print(f"Error generating stream: {e}", file=sys.stderr)
         sys.exit(1)
 
+    _write_stream_output(args, stream)
+
+
+def _write_stream_output(args: argparse.Namespace, stream: object) -> None:
+    """Write a generated stream to pcap, pcapng, or JSON per the CLI args."""
     include_ethernet = not args.no_ethernet
     link_type = LINKTYPE_ETHERNET if include_ethernet else LINKTYPE_RAW
     sessions_note = f", {args.sessions} sessions" if args.sessions > 1 else ""
@@ -1786,6 +1845,26 @@ def main() -> None:
     stream_parser.add_argument(
         "--server-mac", default=None, metavar="MAC",
         help="Server MAC address (default: 00:00:00:00:00:02)",
+    )
+    # Payload type
+    stream_parser.add_argument(
+        "--payload", default=None, choices=["http"],
+        help=(
+            "Application-layer payload to generate instead of random bytes. "
+            "'http' simulates a REST client (random methods, paths, headers, "
+            "and JSON bodies).  TCP only."
+        ),
+    )
+    stream_parser.add_argument(
+        "--requests", type=int, default=None, metavar="N",
+        help="HTTP only: total request/response transactions (default: 10)",
+    )
+    stream_parser.add_argument(
+        "--requests-per-connection", type=int, default=None, metavar="K",
+        help=(
+            "HTTP only: transactions per TCP connection (default: all in one "
+            "keep-alive connection; 1 = a new connection per request)"
+        ),
     )
     # Stream shape
     stream_parser.add_argument(

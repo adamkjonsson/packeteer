@@ -8,6 +8,38 @@ All notable changes to packeteer are recorded in this file.
 
 ### New features
 
+- **HTTP REST payload generation for `packeteer stream`** — `--payload http`
+  replaces random byte payloads with a simulated REST client.  It generates
+  random but plausible HTTP/1.1 traffic — varied methods (GET/POST/PUT/DELETE/
+  PATCH), REST paths with resource IDs, query strings, realistic headers, and
+  JSON request/response bodies — as a genuine **bidirectional** request/response
+  exchange.  Server responses carry status codes correlated to the method
+  (e.g. POST→201, DELETE→204) with occasional 4xx/5xx.  The traffic is valid
+  HTTP that round-trips through `packeteer parse`.
+
+  `--requests N` sets the number of transactions; `--requests-per-connection K`
+  groups them onto connections (omitted = one keep-alive connection; `1` = a
+  new connection per request).  It composes with `--sessions`, and `--seed`
+  makes the whole capture reproducible.  In `--json` output each data segment's
+  label carries the HTTP semantics (e.g. `GET /api/v1/orders/4821`,
+  `201 Created`).
+
+  New Python API in `packeteer.generate`:
+
+  ```python
+  from packeteer.generate import generate_http_stream
+
+  mix = generate_http_stream(
+      client_ip="10.0.0.1", server_ip="10.1.0.1",
+      requests=50, requests_per_connection=1, seed=42,
+  )                                    # -> CombinedStream
+  ```
+
+  Built on a small payload abstraction (`AppMessage`, `render_tcp_session`,
+  `generate_http_conversation`, `HTTPRestConfig`) that future payload types plug
+  into.  `packeteer.generate.http.encode_http_message` is now public, and
+  `TCPSession.send`/`recv` accept an optional `label`.
+
 - **Multiple sessions in `packeteer stream`** — `--sessions N` generates `N`
   independent conversations (distinct IP pairs) in a single capture instead of
   one.  Session `i` uses `client-ip + i` and `server-ip + i`, and the sessions

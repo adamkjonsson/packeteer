@@ -118,6 +118,47 @@ primitive for combining streams you have built yourself.
 
 ---
 
+## Application-layer payloads
+
+Payload generators produce realistic application traffic instead of random
+bytes.  {func}`~packeteer.generate.payloads.http.generate_http_stream`
+simulates a REST client — random HTTP/1.1 request/response exchanges rendered
+onto one or more TCP connections — returning a
+:class:`~packeteer.generate.session_mix.CombinedStream`.  This powers
+`packeteer stream --payload http`.
+
+```{eval-rst}
+.. autofunction:: packeteer.generate.payloads.http.generate_http_stream
+   :no-index:
+```
+
+```{eval-rst}
+.. autoclass:: packeteer.generate.payloads.http.HTTPRestConfig
+   :members:
+   :no-index:
+```
+
+```{eval-rst}
+.. autofunction:: packeteer.generate.payloads.http.generate_http_conversation
+   :no-index:
+```
+
+The conversation model and the TCP renderer are reusable for future payload
+types:
+
+```{eval-rst}
+.. autoclass:: packeteer.generate.payloads.base.AppMessage
+   :members:
+   :no-index:
+```
+
+```{eval-rst}
+.. autofunction:: packeteer.generate.payloads.base.render_tcp_session
+   :no-index:
+```
+
+---
+
 ## Session builders
 
 See {doc}`../guide/generating` for usage examples and workflows.

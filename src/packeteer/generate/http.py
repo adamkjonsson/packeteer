@@ -135,3 +135,19 @@ def _build_http_message(msg: HTTPMessage) -> bytes:  # type: ignore[valid-type]
     header_block = "".join(f"{k}: {v}\r\n" for k, v in headers.items())
     head = (start_line + header_block + "\r\n").encode("latin-1")
     return head + msg.body
+
+
+def encode_http_message(msg: HTTPMessage) -> bytes:  # type: ignore[valid-type]
+    """Encode an :class:`HTTPRequest` or :class:`HTTPResponse` to wire bytes.
+
+    ``Content-Length`` is added automatically when the body is non-empty and
+    the caller has not already set it.
+
+    Args:
+        msg: The HTTP message to encode.
+
+    Returns:
+        Wire-format bytes suitable for use as a TCP payload.
+
+    """
+    return _build_http_message(msg)
