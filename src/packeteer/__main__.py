@@ -108,6 +108,8 @@ from packeteer.generate.dns import (
     DNSResourceRecord,
 )
 from packeteer.generate.http import HTTPMessage, HTTPRequest, HTTPResponse
+from packeteer.generate.payloads.http import HTTPRestConfig, generate_http_stream
+from packeteer.generate.payloads.vpn import VPNConfig, generate_vpn_stream
 from packeteer.generate.pppoe import PPPOE_CODE_SESSION, PPPoETag
 from packeteer.generate.sctp import (
     SCTPAbortChunk,
@@ -127,7 +129,7 @@ from packeteer.generate.sctp import (
     SCTPShutdownCompleteChunk,
 )
 from packeteer.generate.sctp_stream import SCTPStreamConfig, generate_sctp_stream
-from packeteer.generate.session_mix import generate_session_mix
+from packeteer.generate.session_mix import CombinedStream, generate_session_mix
 from packeteer.generate.stream_encap import (
     EtherIPEncap,
     GREEncap,
@@ -1084,6 +1086,12 @@ _STREAM_PARAMS: dict[str, tuple[str, object, object]] = {
     "server_port":        ("server_port",                     int,   80),
     "client_mac":         ("client_mac",                      str,   "00:00:00:00:00:01"),
     "server_mac":         ("server_mac",                      str,   "00:00:00:00:00:02"),
+    "payload":            ("payload",                         str,   None),
+    "requests":           ("requests",                        int,   10),
+    "requests_per_connection": ("requests_per_connection",    int,   None),
+    "vpn_epochs":         ("vpn_epochs",                      int,   4),
+    "vpn_data_port":      ("vpn_data_port",                   int,   51820),
+    "vpn_key_port":       ("vpn_key_port",                    int,   51821),
     "sessions":           ("sessions",                        int,   1),
     "session_stagger":    ("session_stagger",                 float, 1.0),
     "packets":            ("packets",                         int,   10),
@@ -1372,11 +1380,100 @@ def _build_stream_config(
     return SCTPStreamConfig(gap_jitter=args.gap_jitter, seed=args.seed)
 
 
+_HTTP_ANOMALY_FLAGS = (
+    "packet_loss_probability", "retransmission_probability",
+    "payload_corruption_probability", "server_rst_probability",
+    "stray_packet_count",
+)
+
+
+def _generate_http_payload_stream(
+    args: argparse.Namespace, protocol: str, encap: object,
+) -> CombinedStream:
+    """Generate an HTTP REST payload stream from parsed CLI args."""
+    if protocol != "tcp":
+        print("Error: --payload http requires --protocol tcp.", file=sys.stderr)
+        sys.exit(1)
+    if any(getattr(args, flag, None) for flag in _HTTP_ANOMALY_FLAGS):
+        print(
+            "Warning: TCP anomaly options (--packet-loss, --retransmission-*, "
+            "--payload-corruption, --server-rst, --stray-packets) are not "
+            "applied with --payload http; ignoring them.",
+            file=sys.stderr,
+        )
+    try:
+        return generate_http_stream(
+            client_ip=args.client_ip,
+            server_ip=args.server_ip,
+            requests=args.requests,
+            requests_per_connection=args.requests_per_connection,
+            server_port=args.server_port,
+            client_port=args.client_port,
+            client_mac=args.client_mac,
+            server_mac=args.server_mac,
+            sessions=args.sessions,
+            session_stagger=args.session_stagger,
+            include_ethernet=not args.no_ethernet,
+            ip_ttl=args.ttl,
+            inter_packet_gap=args.gap,
+            encap=encap,
+            seed=args.seed,
+            config=HTTPRestConfig(),
+        )
+    except (ValueError, OSError) as e:
+        print(f"Error generating stream: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _generate_vpn_payload_stream(
+    args: argparse.Namespace, encap: object,
+) -> CombinedStream:
+    """Generate a fictive-VPN payload stream from parsed CLI args."""
+    if any(getattr(args, flag, None) for flag in _HTTP_ANOMALY_FLAGS):
+        print(
+            "Warning: TCP anomaly options are not applied with --payload vpn; "
+            "ignoring them.",
+            file=sys.stderr,
+        )
+    try:
+        return generate_vpn_stream(
+            client_ip=args.client_ip,
+            server_ip=args.server_ip,
+            epochs=args.vpn_epochs,
+            packets_per_epoch=args.packets,
+            client_port=args.client_port,
+            client_mac=args.client_mac,
+            server_mac=args.server_mac,
+            sessions=args.sessions,
+            session_stagger=args.session_stagger,
+            include_ethernet=not args.no_ethernet,
+            ip_ttl=args.ttl,
+            inter_packet_gap=args.gap,
+            min_payload=args.min_payload,
+            max_payload=args.max_payload,
+            encap=encap,
+            seed=args.seed,
+            config=VPNConfig(data_port=args.vpn_data_port, key_port=args.vpn_key_port),
+        )
+    except (ValueError, OSError) as e:
+        print(f"Error generating stream: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 def _cmd_stream(args: argparse.Namespace) -> None:
     _apply_stream_defaults(args)
     protocol = _validate_stream_args(args)
 
     encap = _parse_stream_encap(args)
+
+    if args.payload == "http":
+        stream = _generate_http_payload_stream(args, protocol, encap)
+        _write_stream_output(args, stream)
+        return
+    if args.payload == "vpn":
+        stream = _generate_vpn_payload_stream(args, encap)
+        _write_stream_output(args, stream)
+        return
 
     # Common keyword arguments shared by all protocol generators
     common = {
@@ -1417,6 +1514,11 @@ def _cmd_stream(args: argparse.Namespace) -> None:
         print(f"Error generating stream: {e}", file=sys.stderr)
         sys.exit(1)
 
+    _write_stream_output(args, stream)
+
+
+def _write_stream_output(args: argparse.Namespace, stream: object) -> None:
+    """Write a generated stream to pcap, pcapng, or JSON per the CLI args."""
     include_ethernet = not args.no_ethernet
     link_type = LINKTYPE_ETHERNET if include_ethernet else LINKTYPE_RAW
     sessions_note = f", {args.sessions} sessions" if args.sessions > 1 else ""
@@ -1786,6 +1888,39 @@ def main() -> None:
     stream_parser.add_argument(
         "--server-mac", default=None, metavar="MAC",
         help="Server MAC address (default: 00:00:00:00:00:02)",
+    )
+    # Payload type
+    stream_parser.add_argument(
+        "--payload", default=None, choices=["http", "vpn"],
+        help=(
+            "Application-layer payload to generate instead of random bytes. "
+            "'http' simulates a REST client (TCP); 'vpn' simulates a fictive "
+            "binary VPN with a key-exchange channel and a CTR-mode data channel "
+            "(UDP)."
+        ),
+    )
+    stream_parser.add_argument(
+        "--requests", type=int, default=None, metavar="N",
+        help="HTTP only: total request/response transactions (default: 10)",
+    )
+    stream_parser.add_argument(
+        "--requests-per-connection", type=int, default=None, metavar="K",
+        help=(
+            "HTTP only: transactions per TCP connection (default: all in one "
+            "keep-alive connection; 1 = a new connection per request)"
+        ),
+    )
+    stream_parser.add_argument(
+        "--vpn-epochs", type=int, default=None, metavar="E",
+        help="VPN only: number of key negotiations; data rekeys every --packets (default: 4)",
+    )
+    stream_parser.add_argument(
+        "--vpn-data-port", type=int, default=None, metavar="PORT",
+        help="VPN only: UDP port of the data channel (default: 51820)",
+    )
+    stream_parser.add_argument(
+        "--vpn-key-port", type=int, default=None, metavar="PORT",
+        help="VPN only: UDP port of the key-exchange channel (default: 51821)",
     )
     # Stream shape
     stream_parser.add_argument(

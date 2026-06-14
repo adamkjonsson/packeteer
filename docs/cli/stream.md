@@ -35,6 +35,12 @@ Exactly one output flag is required; they are mutually exclusive.
 | `--no-ethernet` | off | Omit Ethernet headers |
 | `--sessions N` | `1` | Number of independent sessions (IP pairs) to generate (see below) |
 | `--session-stagger SECONDS` | `1.0` | Window over which session start times are spread when `--sessions > 1` |
+| `--payload TYPE` | off | Application-layer payload to generate instead of random bytes; `http` or `vpn` (see below) |
+| `--requests N` | `10` | HTTP only: total request/response transactions |
+| `--requests-per-connection K` | all | HTTP only: transactions per connection (`1` = a new connection per request) |
+| `--vpn-epochs E` | `4` | VPN only: number of key negotiations (data rekeys every `--packets`) |
+| `--vpn-data-port PORT` | `51820` | VPN only: UDP port of the data channel |
+| `--vpn-key-port PORT` | `51821` | VPN only: UDP port of the key-exchange channel |
 | `--packets N` | `10` | Number of data packets sent by the client |
 | `--min-payload BYTES` | `40` | Minimum payload size |
 | `--max-payload BYTES` | `1460` | Maximum payload size |
@@ -86,6 +92,76 @@ reproducible.
 ```bash
 packeteer stream --client-ip 10.0.0.1 --server-ip 10.1.0.1 \
     --sessions 20 --packets 5 --seed 42 --pcap busy.pcap
+```
+
+## HTTP REST payloads
+
+`--payload http` replaces the random byte payloads with a simulated REST client:
+the client issues realistic, randomly generated HTTP/1.1 requests (varied
+methods, resource paths with IDs, query strings, headers, and JSON request
+bodies) and the server replies with correlated responses (status codes matched
+to the method, plus JSON response bodies).  Unlike the default unidirectional
+data flow, this produces a genuine **bidirectional** request/response exchange,
+and the generated traffic is valid HTTP that round-trips through
+`packeteer parse`.
+
+`--requests N` sets the total number of request/response transactions.
+`--requests-per-connection K` controls how they are grouped onto TCP
+connections:
+
+- omitted (default) — all `N` transactions share **one keep-alive connection**;
+- `K` — keep-alive connections of `K` transactions each (⌈N/K⌉ connections);
+- `1` — a **new connection per request** (each opens, exchanges once, closes).
+
+Connections within a run use successive client ports and staggered start times,
+and combine with `--sessions` (each IP pair runs the full request workload).
+`--seed` makes the whole capture reproducible.
+
+`--payload http` requires `--protocol tcp` (the default).  The TCP anomaly
+options (`--server-rst`, `--retransmission-*`, `--packet-loss`,
+`--payload-corruption`, `--stray-packets`) do not apply and are ignored with a
+warning.  In `--json` output, each data segment's `label` carries the HTTP
+semantics (e.g. `GET /api/v1/orders/4821`, `201 Created`).
+
+```bash
+# 50 REST calls over one keep-alive connection
+packeteer stream --client-ip 10.0.0.1 --server-ip 10.1.0.1 \
+    --payload http --requests 50 --seed 42 --pcap rest.pcap
+
+# 50 short connections (one request each), 10 concurrent clients
+packeteer stream --client-ip 10.0.0.1 --server-ip 10.1.0.1 \
+    --payload http --requests 50 --requests-per-connection 1 \
+    --sessions 10 --pcap rest-many.pcap
+```
+
+## VPN payloads
+
+`--payload vpn` generates traffic for a small, fictive binary VPN protocol over
+two UDP channels:
+
+- a **key-exchange channel** (`--vpn-key-port`, default 51821) that performs a
+  three-message handshake — INIT (client random) → RESPONSE (server random) →
+  CONFIRM — at the start of every key *epoch*;
+- a **data channel** (`--vpn-data-port`, default 51820) carrying packets
+  "encrypted" with a block cipher in counter (CTR) mode; each packet includes a
+  counter.  The ciphertext is random bytes (nothing is actually encrypted).
+
+`--vpn-epochs E` sets the number of key negotiations; after each handshake,
+`--packets N` data packets flow (so a rekey happens every `N` packets).  Data is
+**bidirectional** with an independent per-direction counter that resets to zero
+at each rekey.  Each message begins with an 8-byte header
+(`magic | version | type | key_epoch`); data packets add a 64-bit counter before
+the ciphertext.  Ciphertext sizes are drawn from `--min-payload`/`--max-payload`.
+
+It composes with `--sessions` (each IP pair runs the full workload) and `--seed`
+makes the capture reproducible.  `--payload vpn` is UDP-based, so the TCP-only
+options are ignored.  In `--json` output, labels read e.g. `KEY-INIT[epoch=0]`,
+`KEY-RESPONSE[epoch=0]`, `DATA c2s ctr=3 epoch=0`.
+
+```bash
+# 4 key epochs, 20 data packets each, on the default UDP ports
+packeteer stream --client-ip 10.0.0.1 --server-ip 10.1.0.1 \
+    --payload vpn --vpn-epochs 4 --packets 20 --seed 42 --pcap vpn.pcap
 ```
 
 ## Encapsulation flags
