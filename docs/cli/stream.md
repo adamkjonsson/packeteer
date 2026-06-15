@@ -110,7 +110,7 @@ and the generated traffic is valid HTTP that round-trips through
 connections:
 
 - omitted (default) — all `N` transactions share **one keep-alive connection**;
-- `K` — keep-alive connections of `K` transactions each (⌈N/K⌉ connections);
+- `K` — keep-alive connections of `K` transactions each (ceil(N/K) connections);
 - `1` — a **new connection per request** (each opens, exchanges once, closes).
 
 Connections within a run use successive client ports and staggered start times,
@@ -152,6 +152,10 @@ two UDP channels:
 at each rekey.  Each message begins with an 8-byte header
 (`magic | version | type | key_epoch`); data packets add a 64-bit counter before
 the ciphertext.  Ciphertext sizes are drawn from `--min-payload`/`--max-payload`.
+
+The complete binary wire format — message headers, the key-exchange handshake,
+and the data record layout — is specified RFC-style, with packet diagrams, under
+[Application-layer payloads](../api/stream-generators.md#application-layer-payloads).
 
 It composes with `--sessions` (each IP pair runs the full workload) and `--seed`
 makes the capture reproducible.  `--payload vpn` is UDP-based, so the TCP-only
