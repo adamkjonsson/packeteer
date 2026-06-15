@@ -1,25 +1,161 @@
-"""Generate traffic for a fictive, deliberately simple binary VPN protocol.
+r"""Generate traffic for a fictive, deliberately simple binary VPN protocol.
 
-The protocol has two UDP channels:
+This module both implements a traffic generator for the protocol and serves as
+its specification.  The protocol is fictional and performs no real
+cryptography: all "random values" and "ciphertext" are simply random bytes.
 
-* a **key-exchange channel** (its own UDP port) that performs a three-message
-  handshake — INIT (client random) → RESPONSE (server random) → CONFIRM — at
-  the start of every key *epoch*;
-* a **data channel** (a separate UDP port) carrying packets encrypted with a
-  block cipher in counter (CTR) mode; each packet therefore carries a counter.
+The complete wire format is specified below, in the style of an RFC with
+packet diagrams::
 
-A run consists of *epochs* key negotiations, each followed by *packets_per_epoch*
-data packets (so a rekey happens every *packets_per_epoch* packets).  Data flows
-in both directions with an independent per-direction counter that resets to zero
-at each rekey.  All "ciphertext" and random values are random bytes — nothing is
-actually encrypted.
+                     The Simple Fictive VPN (SFVPN) Protocol
 
-Wire format (big-endian).  Common 8-byte header::
+   Abstract
 
-    magic(4) | version(1) | msg_type(1) | key_epoch(2)
+      SFVPN is a minimal, illustrative VPN-like protocol used to synthesise
+      packet captures.  It separates traffic into two UDP channels: a
+      key-exchange channel that periodically negotiates a fresh key epoch, and
+      a data channel that carries counter-mode records.  This document defines
+      the on-the-wire message formats and the rules governing their emission.
 
-* key-exchange message: header followed by a random value;
-* data message: header followed by counter(8) and the random ciphertext.
+
+   1.  Requirements Notation
+
+      The key words "MUST", "MUST NOT", "SHOULD", and "MAY" in this document
+      are to be interpreted as described in RFC 2119.
+
+      All multi-octet integer fields are carried in network byte order
+      (big-endian).
+
+
+   2.  Transport
+
+      SFVPN runs over UDP and uses two distinct destination ports:
+
+         o  the key-exchange channel, on the key port (default 51821); and
+
+         o  the data channel, on the data port (default 51820).
+
+      Each SFVPN message occupies exactly one UDP datagram.  A peer MUST
+      classify a received datagram by the UDP port on which it arrives and by
+      the Type field of the common header (Section 3).
+
+
+   3.  Common Message Header
+
+      Every SFVPN message, on either channel, begins with the following
+      8-octet header:
+
+        0                   1                   2                   3
+        0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+       +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+       |                            Magic                              |
+       +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+       |    Version    |     Type      |           Key Epoch           |
+       +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+      Magic (32 bits):    A constant protocol identifier.  The default value
+                          is the ASCII string "VPNX" (0x5650 4E58).  A receiver
+                          MUST discard any datagram whose Magic does not match.
+
+      Version (8 bits):   The protocol version.  This document defines
+                          version 1.
+
+      Type (8 bits):      The message type, identifying both the channel and
+                          the role of the message:
+
+                             1  KEY_INIT      (key-exchange channel)
+                             2  KEY_RESPONSE  (key-exchange channel)
+                             3  KEY_CONFIRM   (key-exchange channel)
+                             4  DATA          (data channel)
+
+                          Values 0 and 5-255 are reserved.
+
+      Key Epoch (16 bits):  The key epoch this message belongs to.  The first
+                          epoch is 0 and the value increments by one at each
+                          renegotiation (Section 6).
+
+
+   4.  Key-Exchange Channel
+
+      A key-exchange message consists of the common header followed by a
+      Random Value:
+
+        0                   1                   2                   3
+        0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+       +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+       |                       Common Header (8 octets)                |
+       +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+       |                                                               |
+       ~                    Random Value (default 32 octets)           ~
+       |                                                               |
+       +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+      Random Value (variable):  Opaque random octets contributed by the
+                          sender toward the shared symmetric key.  Its length
+                          is fixed for a given session (default 32 octets).
+
+      A key negotiation is a three-message handshake:
+
+         o  KEY_INIT (client -> server): the client's Random Value.
+
+         o  KEY_RESPONSE (server -> client): the server's Random Value.
+
+         o  KEY_CONFIRM (client -> server): a final confirmation value.
+
+      Both peers combine the two exchanged Random Values to derive the
+      symmetric key for the epoch.  (This derivation is out of scope; the
+      generator does not compute a real key.)
+
+
+   5.  Data Channel
+
+      A data message consists of the common header, a 64-bit Counter, and the
+      ciphertext:
+
+        0                   1                   2                   3
+        0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+       +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+       |                       Common Header (8 octets)                |
+       +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+       |                     Counter (high 32 bits)                    |
+       +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+       |                     Counter (low 32 bits)                     |
+       +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+       |                                                               |
+       ~                     Ciphertext (variable)                     ~
+       |                                                               |
+       +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+      Counter (64 bits):  The counter-mode block index for this record.  Each
+                          direction of the data channel maintains its own
+                          Counter.  Within an epoch the Counter MUST start at 0
+                          and increment by one for each record sent in that
+                          direction; it MUST reset to 0 at each renegotiation
+                          (so the (Key Epoch, Counter) pair is unique per
+                          direction).
+
+      Ciphertext (variable):  The encrypted payload.  In this fictive protocol
+                          it is random octets of an arbitrary length.
+
+
+   6.  Protocol Operation
+
+      A session proceeds in one or more key epochs.  Each epoch begins with a
+      three-message key-exchange handshake (Section 4) on the key port,
+      carrying the epoch's Key Epoch value.  Data records (Section 5) then flow
+      in both directions on the data port until the next renegotiation.
+
+      An implementation renegotiates at regular intervals; this generator
+      triggers a renegotiation after a fixed number of data records, bumping
+      the Key Epoch and resetting both directional Counters.
+
+
+   7.  Security Considerations
+
+      SFVPN is a fictional protocol intended solely for generating sample
+      traffic.  It provides no confidentiality, integrity, or authentication:
+      no key is actually derived and no data is actually encrypted.  It MUST
+      NOT be used to protect real traffic.
 """
 from __future__ import annotations
 

@@ -153,6 +153,10 @@ at each rekey.  Each message begins with an 8-byte header
 (`magic | version | type | key_epoch`); data packets add a 64-bit counter before
 the ciphertext.  Ciphertext sizes are drawn from `--min-payload`/`--max-payload`.
 
+The complete binary wire format — message headers, the key-exchange handshake,
+and the data record layout — is specified RFC-style, with packet diagrams, under
+the VPN payload section of {doc}`../api/stream-generators`.
+
 It composes with `--sessions` (each IP pair runs the full workload) and `--seed`
 makes the capture reproducible.  `--payload vpn` is UDP-based, so the TCP-only
 options are ignored.  In `--json` output, labels read e.g. `KEY-INIT[epoch=0]`,

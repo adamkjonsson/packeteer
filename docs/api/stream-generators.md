@@ -145,7 +145,14 @@ onto one or more TCP connections — returning a
 
 {func}`~packeteer.generate.payloads.vpn.generate_vpn_stream` simulates a fictive
 binary VPN: a key-exchange channel (three-message handshake per epoch) and a
-CTR-mode data channel, each on its own UDP port.
+CTR-mode data channel, each on its own UDP port.  The complete wire format is
+specified, RFC-style with packet diagrams, in the
+{mod}`packeteer.generate.payloads.vpn` module documentation below.
+
+```{eval-rst}
+.. automodule:: packeteer.generate.payloads.vpn
+   :no-index:
+```
 
 ```{eval-rst}
 .. autofunction:: packeteer.generate.payloads.vpn.generate_vpn_stream
