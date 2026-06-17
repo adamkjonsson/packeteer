@@ -22,6 +22,7 @@ from .tcp import packet_parser as tcp_packet_parser
 from .to_config import apply_tunneled, to_json_string, to_packet_spec, update_config
 from .udp import packet_parser as udp_packet_parser
 from .vlan import packet_parser as vlan_packet_parser
+from .vxlan import packet_parser as vxlan_packet_parser
 
 __all__ = [
     "parse_packet",
@@ -47,5 +48,6 @@ __all__ = [
     "icmpv6_packet_parser",
     "udp_packet_parser",
     "tcp_packet_parser",
+    "vxlan_packet_parser",
     "PacketFilter",
 ]

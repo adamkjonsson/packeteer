@@ -19,6 +19,7 @@ PPPoEEncap     PPPoE session frame (RFC 2516); requires Ethernet.
 GREEncap       GRE tunnel; stream IP becomes inner; outer IP is supplied.
 EtherIPEncap   EtherIP tunnel (RFC 3378); stream traffic becomes inner.
 IPIPEncap      IP-in-IP tunnel (RFC 2003 / RFC 4213).
+VXLANEncap     VXLAN tunnel (RFC 7348) over UDP:4789; stream becomes inner.
 =============  ============================================================
 
 Example::
@@ -45,6 +46,7 @@ from dataclasses import dataclass, field
 from typing import Union
 
 from .builder import PacketBuilder
+from .vxlan import VXLAN_PORT
 
 # ── Encap descriptor dataclasses ──────────────────────────────────────────────
 
@@ -177,9 +179,35 @@ class IPIPEncap:
     ttl: int = 64
 
 
+@dataclass
+class VXLANEncap:
+    """VXLAN tunnel (RFC 7348) over UDP.
+
+    The generated stream traffic is wrapped inside an inner Ethernet frame
+    which is carried inside a VXLAN datagram on outer UDP destination port
+    4789.  The outer IP header uses *src_ip* / *dst_ip*.
+
+    Attributes:
+        vni: 24-bit VXLAN Network Identifier.
+        src_ip: Outer IP source address (tunnel ingress / source VTEP).
+        dst_ip: Outer IP destination address (tunnel egress / destination VTEP).
+        ttl: Outer IP TTL.  Defaults to ``64``.
+        udp_src_port: Outer UDP source port.  In real deployments this carries
+            per-flow entropy; here it defaults to a fixed, reproducible value
+            (:data:`~packeteer.generate.vxlan.VXLAN_PORT`).
+
+    """
+
+    vni:          int
+    src_ip:       str
+    dst_ip:       str
+    ttl:          int = 64
+    udp_src_port: int = VXLAN_PORT
+
+
 #: One encapsulation layer.
 StreamEncap = Union[VLANEncap, QinQEncap, MPLSEncap, PPPoEEncap,
-                    GREEncap, EtherIPEncap, IPIPEncap]
+                    GREEncap, EtherIPEncap, IPIPEncap, VXLANEncap]
 
 #: One or more encapsulation layers to stack (outermost first).
 #: Using a list allows combining tag-based and tunnel encapsulations,
@@ -230,6 +258,13 @@ def _apply_single(
         )
     if isinstance(encap, IPIPEncap):
         return b.ip(src=encap.src_ip, dst=encap.dst_ip, ttl=encap.ttl)
+    if isinstance(encap, VXLANEncap):
+        return (b
+            .ip(src=encap.src_ip, dst=encap.dst_ip, ttl=encap.ttl)
+            .udp(src_port=encap.udp_src_port, dst_port=VXLAN_PORT)
+            .vxlan(vni=encap.vni)
+            .ethernet(src_mac=src_mac, dst_mac=dst_mac)
+        )
     return b  # unreachable — all union members handled
 
 
@@ -255,9 +290,11 @@ def _apply_encap(
     For **tag-based** encapsulations (VLAN, QinQ, MPLS, PPPoE) layers are
     inserted between the Ethernet header and the next layer.
 
-    For **tunnel** encapsulations (GRE, EtherIP, IPIP) an outer IP header
-    plus tunnel header is inserted.  :class:`EtherIPEncap` also inserts an
-    inner Ethernet header (using *src_mac* / *dst_mac*) before the inner IP.
+    For **tunnel** encapsulations (GRE, EtherIP, IPIP, VXLAN) an outer IP
+    header plus tunnel header is inserted.  :class:`EtherIPEncap` and
+    :class:`VXLANEncap` also insert an inner Ethernet header (using
+    *src_mac* / *dst_mac*) before the inner IP; :class:`VXLANEncap`
+    additionally inserts an outer UDP header on port 4789.
 
     The caller is responsible for adding the inner IP and transport layers
     after this function returns.
@@ -283,7 +320,7 @@ def _encap_ip_start(encap: EncapSpec, include_ethernet: bool) -> int:
 
     Walks through the encap list accumulating the byte sizes of tag-based
     layers (VLAN, QinQ, MPLS, PPPoE).  Stops at the first tunnel layer
-    (GRE, EtherIP, IPIP) because the **outer** IP header at that position
+    (GRE, EtherIP, IPIP, VXLAN) because the **outer** IP header at that position
     is the correct fragmentation point — fragmenting the outer datagram keeps
     the tunnel headers intact.
 

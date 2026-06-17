@@ -125,6 +125,20 @@ EtherType and PPP protocol constants:
 
 ---
 
+## Tunnels — VXLAN
+
+```{eval-rst}
+.. autoclass:: packeteer.generate.vxlan.VXLANHeader
+   :members:
+```
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `VXLAN_PORT` | `4789` | IANA UDP destination port for VXLAN (RFC 7348) |
+| `VXLAN_FLAG_VALID_VNI` | `0x08` | Flags byte with the I (VNI valid) bit set |
+
+---
+
 ## Layer 3 — IPv4
 
 ```{eval-rst}

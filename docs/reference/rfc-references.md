@@ -93,6 +93,9 @@ RFCs implemented or referenced by this library.
 * - [RFC 7323](https://datatracker.ietf.org/doc/html/rfc7323)
   - TCP Extensions for High Performance
   - `TCPOptions.window_scale`, `TCPOptions.timestamps`
+* - [RFC 7348](https://datatracker.ietf.org/doc/html/rfc7348)
+  - Virtual eXtensible Local Area Network (VXLAN)
+  - `VXLANHeader`, `VXLANEncap`, `.vxlan()`, `VXLAN_PORT`, `packeteer.parse.vxlan`
 * - [RFC 8200](https://datatracker.ietf.org/doc/html/rfc8200)
   - Internet Protocol Version 6 (IPv6, obsoletes 2460)
   - `IPv6Header`, `fragment_ipv6`; Hop-by-Hop Options extension header §4.3 (`HopByHopOptions`, `.hop_by_hop_options()`)

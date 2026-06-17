@@ -120,6 +120,7 @@ from packeteer.generate.sctp import (
 )
 from packeteer.generate.tcp import TCPHeader, TCPOptions
 from packeteer.generate.udp import UDPHeader
+from packeteer.generate.vxlan import VXLAN_FLAG_VALID_VNI, VXLANHeader
 
 _PROTO_TO_STR: dict[int, str] = {
     socket.IPPROTO_TCP:      "tcp",       # 6
@@ -386,6 +387,28 @@ def _apply_etherip(config: dict[str, Any], hdr: EtherIPHeader, tunneled: ParsedP
     else:
         _apply_inner_tail(inner, tunneled)
     config["etherip"] = inner
+
+
+def _apply_vxlan(config: dict[str, Any], hdr: VXLANHeader, tunneled: ParsedPacket) -> None:
+    """Serialise *hdr* and the inner Ethernet frame *tunneled* into ``config["vxlan"]``.
+
+    The outer UDP transport (port 4789) is recorded separately by the caller via
+    :func:`_apply_transport`; this helper writes only the VNI, the optional
+    non-default flags byte, and the inner frame layers.
+    """
+    inner: dict[str, Any] = {"vni": hdr.vni}
+    if hdr.flags != VXLAN_FLAG_VALID_VNI:
+        inner["flags"] = hdr.flags
+    if tunneled.ethernet is not None:
+        _apply_ethernet(inner, tunneled.ethernet)
+    for label in tunneled.mpls:
+        _apply_mpls(inner, label)
+    if tunneled.pppoe is not None:
+        _apply_pppoe(inner, tunneled.pppoe)
+    if tunneled.ip is not None:
+        _apply_ip(inner, tunneled.ip)
+    _apply_inner_tail(inner, tunneled)
+    config["vxlan"] = inner
 
 
 def _apply_ipip(config: dict[str, Any], tunneled: "ParsedPacket") -> None:
@@ -686,12 +709,14 @@ def update_config(
 def apply_tunneled(config: dict[str, Any], pkt: "ParsedPacket") -> None:
     """Serialise the tunnel layers of *pkt* into *config*.
 
-    Handles all three tunnel types — IP-in-IP, GRE, and EtherIP — by
-    dispatching to the appropriate private helper.  Call this after the
-    outer IP layer has been written via :func:`update_config` whenever
-    :attr:`~packeteer.parse.core.ParsedPacket.ipip`,
-    :attr:`~packeteer.parse.core.ParsedPacket.gre`, or
-    :attr:`~packeteer.parse.core.ParsedPacket.etherip` is set on *pkt*.
+    Handles every tunnel type — IP-in-IP, GRE, EtherIP, pseudowire, and
+    VXLAN — by dispatching to the appropriate private helper.  Call this
+    after the outer IP layer has been written via :func:`update_config`
+    whenever :attr:`~packeteer.parse.core.ParsedPacket.ipip`,
+    :attr:`~packeteer.parse.core.ParsedPacket.gre`,
+    :attr:`~packeteer.parse.core.ParsedPacket.etherip`,
+    :attr:`~packeteer.parse.core.ParsedPacket.pseudowire`, or
+    :attr:`~packeteer.parse.core.ParsedPacket.vxlan` is set on *pkt*.
 
     Modifies *config* in place.  Does nothing when *pkt* carries no tunnel.
 
@@ -709,6 +734,11 @@ def apply_tunneled(config: dict[str, Any], pkt: "ParsedPacket") -> None:
         _apply_etherip(config, pkt.etherip, pkt.tunneled)
     elif pkt.pseudowire is not None and pkt.tunneled is not None:
         _apply_pseudowire(config, pkt.pseudowire, pkt.tunneled)
+    elif pkt.vxlan is not None and pkt.tunneled is not None:
+        # VXLAN rides on UDP: record the outer UDP ports, then the VXLAN block.
+        if pkt.transport is not None:
+            _apply_transport(config, pkt.transport)
+        _apply_vxlan(config, pkt.vxlan, pkt.tunneled)
 
 
 def to_packet_spec(

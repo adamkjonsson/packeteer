@@ -239,8 +239,8 @@ stream = (TCPSession(
 ```
 
 Available encapsulation types: `VLANEncap`, `QinQEncap`, `MPLSEncap`,
-`PPPoEEncap`, `GREEncap`, `EtherIPEncap`, `IPIPEncap`.  See the Reference
-section for stacking rules and full parameter lists.
+`PPPoEEncap`, `GREEncap`, `EtherIPEncap`, `IPIPEncap`, `VXLANEncap`.  See the
+Reference section for stacking rules and full parameter lists.
 
 For pseudowire traffic (MPLS + RFC 4385 control word + inner Ethernet/IP)
 and other layer combinations not covered by the `encap` keyword, use
