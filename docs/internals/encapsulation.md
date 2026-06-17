@@ -18,6 +18,7 @@ Encapsulation in packeteer is split into two concerns:
 | `GREEncap` | tunnel | outer IP + GRE header; stream IPs become inner |
 | `EtherIPEncap` | tunnel | outer IP + 2-byte EtherIP header + inner Ethernet |
 | `IPIPEncap` | tunnel | outer IP only; stream IPs become inner |
+| `VXLANEncap` | tunnel | outer IP + UDP:4789 + 8-byte VXLAN header + inner Ethernet |
 
 Tag-based encapsulations are transparent to IP: they sit between the Ethernet
 header and the first IP header and do not introduce a second IP layer.
@@ -46,6 +47,12 @@ b.gre(key=encap.key)   # key omitted when None
 b.ip(src=encap.src_ip, dst=encap.dst_ip, ttl=encap.ttl)
 b.etherip()
 b.ethernet(src_mac=src_mac, dst_mac=dst_mac)
+
+# VXLAN  (outer IP + UDP:4789 + VXLAN + inner Ethernet; caller adds inner IP next)
+b.ip(src=encap.src_ip, dst=encap.dst_ip, ttl=encap.ttl)
+b.udp(src_port=encap.udp_src_port, dst_port=VXLAN_PORT)
+b.vxlan(vni=encap.vni)
+b.ethernet(src_mac=src_mac, dst_mac=dst_mac)
 ```
 
 After `_apply_encap` returns, the caller appends the inner IP and transport
@@ -68,7 +75,7 @@ QinQEncap   →  + 8
 MPLSEncap   →  + 4 × number of labels
 PPPoEEncap  →  + 8  (6-byte PPPoE header + 2-byte PPP protocol field)
 
-GRE / EtherIP / IPIP  →  stop (outer IP is at current offset)
+GRE / EtherIP / IPIP / VXLAN  →  stop (outer IP is at current offset)
 ```
 
 For example, `[VLANEncap(100), GREEncap(...)]` with Ethernet gives offset

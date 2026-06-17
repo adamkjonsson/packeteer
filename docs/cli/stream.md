@@ -190,6 +190,10 @@ At most one of `--vlan` / `--qinq` may be given; at most one tunnel type.
 | `--etherip-ttl N` | Outer IP TTL (default 64) |
 | `--ipip SRC_IP DST_IP` | IP-in-IP tunnel (RFC 2003 / 4213) |
 | `--ipip-ttl N` | Outer IP TTL (default 64) |
+| `--vxlan SRC_IP DST_IP` | VXLAN tunnel (RFC 7348) over UDP:4789 |
+| `--vxlan-vni N` | 24-bit VXLAN Network Identifier (default 0) |
+| `--vxlan-ttl N` | Outer IP TTL (default 64) |
+| `--vxlan-src-port N` | Outer UDP source port (default 4789) |
 
 ## INI config file
 
@@ -261,6 +265,13 @@ packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
 ```bash
 packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
     --gre 203.0.113.1 203.0.113.2 --pcap gre.pcap
+```
+
+**VXLAN tunnel:**
+
+```bash
+packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
+    --vxlan 203.0.113.1 203.0.113.2 --vxlan-vni 5000 --pcap vxlan.pcap
 ```
 
 **Generate packet spec for downstream editing:**

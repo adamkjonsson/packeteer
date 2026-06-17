@@ -14,6 +14,7 @@ from packeteer.generate.stream_encap import (
     PPPoEEncap,
     QinQEncap,
     VLANEncap,
+    VXLANEncap,
     _apply_encap,
     _as_list,
     _encap_ip_start,
@@ -21,6 +22,7 @@ from packeteer.generate.stream_encap import (
 )
 from packeteer.generate.tcp_stream import TCPStream, generate_tcp_stream
 from packeteer.generate.udp_stream import generate_udp_stream
+from packeteer.generate.vxlan import VXLAN_PORT
 
 # ── _as_list ──────────────────────────────────────────────────────────────────
 
@@ -88,6 +90,9 @@ class TestEncapIpStart(unittest.TestCase):
 
     def test_ipip_tunnel_stops_at_ethernet(self):
         self.assertEqual(_encap_ip_start(IPIPEncap("1.2.3.4", "5.6.7.8"), True), 14)
+
+    def test_vxlan_tunnel_stops_at_ethernet(self):
+        self.assertEqual(_encap_ip_start(VXLANEncap(5000, "1.2.3.4", "5.6.7.8"), True), 14)
 
     def test_vlan_then_gre_stops_after_vlan(self):
         # 14 (eth) + 4 (vlan) = 18; GRE stops accumulation
@@ -246,6 +251,21 @@ class TestApplyEncap(unittest.TestCase):
         # Outer IP protocol = 4 (IP-in-IP)
         self.assertEqual(pkt[23], 4)
 
+    def test_vxlan_outer_udp_and_header(self):
+        pkt = _build_with_encap(VXLANEncap(
+            vni=5000, src_ip="203.0.113.1", dst_ip="203.0.113.2"))
+        # Outer IP protocol = 17 (UDP) at byte 23
+        self.assertEqual(pkt[23], 17)
+        # Outer UDP dst port at eth(14)+ip(20)+2 = 36
+        self.assertEqual(struct.unpack_from("!H", pkt, 36)[0], VXLAN_PORT)
+        # VXLAN header at eth(14)+ip(20)+udp(8) = 42; I-bit flag set
+        self.assertEqual(pkt[42], 0x08)
+        # VNI in high 24 bits of the second VXLAN word (offset 46)
+        vni = struct.unpack_from("!I", pkt, 46)[0] >> 8
+        self.assertEqual(vni, 5000)
+        # Inner Ethernet starts at 42+8 = 50
+        self.assertEqual(struct.unpack_from("!H", pkt, 50 + 12)[0], 0x0800)
+
     def test_combined_vlan_then_gre(self):
         layers = [VLANEncap(vid=100), GREEncap("203.0.113.1", "203.0.113.2")]
         pkt = _build_with_encap(layers)
@@ -326,6 +346,12 @@ class TestTCPStreamWithEncap(unittest.TestCase):
         s = self._stream(IPIPEncap(src_ip="192.168.1.1", dst_ip="192.168.1.2"))
         pkt = s.packets[0].raw
         self.assertEqual(pkt[23], 4)  # IP-in-IP
+
+    def test_vxlan_stream(self):
+        s = self._stream(VXLANEncap(vni=42, src_ip="192.168.1.1", dst_ip="192.168.1.2"))
+        pkt = s.packets[0].raw
+        self.assertEqual(pkt[23], 17)  # outer UDP
+        self.assertEqual(struct.unpack_from("!H", pkt, 36)[0], VXLAN_PORT)
 
     def test_combined_mpls_ipip_stream(self):
         layers = [MPLSEncap(labels=[100]), IPIPEncap("192.168.1.1", "192.168.1.2")]

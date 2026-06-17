@@ -9,7 +9,8 @@ This package constructs byte-accurate network packets at all layers:
 * **Layer 3** — IPv4 (:class:`IPHeader`) and IPv6 (:class:`IPv6Header`);
   IP-in-IP tunnels (RFC 2003 / RFC 4213);
   EtherIP tunnels (:class:`EtherIPHeader`, RFC 3378);
-  GRE tunnels (:class:`GREHeader`, RFC 2784 / RFC 2890)
+  GRE tunnels (:class:`GREHeader`, RFC 2784 / RFC 2890);
+  VXLAN tunnels (:class:`VXLANHeader`, RFC 7348)
 * **Layer 4** — TCP (:class:`TCPHeader`), UDP (:class:`UDPHeader`),
   SCTP (:class:`SCTPHeader`, RFC 9260), ICMPv4 (:class:`ICMPHeader`),
   ICMPv6 (:class:`ICMPv6Header`)
@@ -114,6 +115,18 @@ multiple times to produce advanced encapsulations.
         .build()
     )
 
+    # VXLAN tunnel (RFC 7348) — outer UDP:4789 + VXLAN + inner Ethernet frame
+    pkt = (PacketBuilder()
+        .ethernet()
+        .ip(src="10.0.0.1", dst="10.0.0.2")
+        .udp(dst_port=4789)
+        .vxlan(vni=5000)
+        .ethernet(src_mac="aa:bb:cc:dd:ee:01", dst_mac="aa:bb:cc:dd:ee:02")
+        .ip(src="192.168.1.1", dst="192.168.1.2")
+        .tcp(dst_port=80)
+        .build()
+    )
+
     # PPPoE PADI discovery frame
     from packeteer.generate import PPPOE_CODE_PADI, PPPoETag, PPPOE_TAG_SERVICE_NAME
     pkt = (PacketBuilder()
@@ -134,6 +147,9 @@ Public API:
     GRE_PROTO_IPV4: GRE Protocol Type 0x0800 — IPv4 payload.
     GRE_PROTO_IPV6: GRE Protocol Type 0x86DD — IPv6 payload.
     GRE_PROTO_TEB: GRE Protocol Type 0x6558 — Transparent Ethernet Bridging (inner Ethernet frame).
+    VXLANHeader: Dataclass for the VXLAN tunnel header (RFC 7348). Fields: vni, flags.
+    VXLAN_PORT: IANA UDP destination port 4789 — VXLAN (RFC 7348).
+    VXLAN_FLAG_VALID_VNI: VXLAN flags byte 0x08 — the I (VNI valid) bit.
     VLANTag: Dataclass for IEEE 802.1Q VLAN tag fields.
     MPLSLabel: Dataclass for one MPLS label stack entry (RFC 3032).
     ETHERTYPE_MPLS_UNICAST: EtherType 0x8847 — MPLS unicast.
@@ -349,6 +365,7 @@ from .stream_encap import (
     QinQEncap,
     StreamEncap,
     VLANEncap,
+    VXLANEncap,
 )
 from .tcp import (
     TCP_ACK,
@@ -365,6 +382,7 @@ from .tcp import (
 from .tcp_stream import TCPStream, TCPStreamConfig, TCPStreamPacket, generate_tcp_stream
 from .udp import UDPHeader
 from .udp_stream import UDPStream, UDPStreamConfig, UDPStreamPacket, generate_udp_stream
+from .vxlan import VXLAN_FLAG_VALID_VNI, VXLAN_PORT, VXLANHeader
 
 __all__ = [
     "PacketBuilder",
@@ -381,6 +399,9 @@ __all__ = [
     "GRE_PROTO_IPV4",
     "GRE_PROTO_IPV6",
     "GRE_PROTO_TEB",
+    "VXLANHeader",
+    "VXLAN_PORT",
+    "VXLAN_FLAG_VALID_VNI",
     "IPHeader",
     "IPv6Header",
     "HopByHopOptions",
@@ -495,6 +516,7 @@ __all__ = [
     "GREEncap",
     "EtherIPEncap",
     "IPIPEncap",
+    "VXLANEncap",
     "fragment_ipv4",
     "fragment_ipv6",
     "DNSFlags",

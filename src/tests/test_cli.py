@@ -599,6 +599,8 @@ class TestParseStreamEncap(unittest.TestCase):
             "gre": None, "gre_key": None, "gre_ttl": None,
             "etherip": None, "etherip_ttl": None,
             "ipip": None, "ipip_ttl": None,
+            "vxlan": None, "vxlan_vni": None, "vxlan_ttl": None,
+            "vxlan_src_port": None,
         }
         defaults.update(kwargs)
         return argparse.Namespace(**defaults)
@@ -708,6 +710,30 @@ class TestParseStreamEncap(unittest.TestCase):
         result = cli._parse_stream_encap(args)
         self.assertEqual(result[0].ttl, 32)
 
+    def test_vxlan_basic(self):
+        from packeteer.generate.stream_encap import VXLANEncap
+        args = self._encap_args(vxlan=["10.0.0.1", "10.0.0.2"], vxlan_vni=5000)
+        result = cli._parse_stream_encap(args)
+        self.assertIsInstance(result[0], VXLANEncap)
+        self.assertEqual(result[0].vni, 5000)
+        self.assertEqual(result[0].src_ip, "10.0.0.1")
+
+    def test_vxlan_with_ttl_and_src_port(self):
+        args = self._encap_args(
+            vxlan=["10.0.0.1", "10.0.0.2"], vxlan_ttl=32, vxlan_src_port=12345,
+        )
+        result = cli._parse_stream_encap(args)
+        self.assertEqual(result[0].ttl, 32)
+        self.assertEqual(result[0].udp_src_port, 12345)
+
+    def test_vxlan_and_gre_mutually_exclusive(self):
+        args = self._encap_args(
+            vxlan=["1.2.3.4", "5.6.7.8"],
+            gre=["9.0.0.1", "9.0.0.2"],
+        )
+        with self.assertRaises(SystemExit):
+            cli._parse_stream_encap(args)
+
     def test_multiple_tunnels_exits(self):
         args = self._encap_args(
             gre=["1.2.3.4", "5.6.7.8"],
@@ -788,6 +814,8 @@ class TestCmdStreamWithEncap(unittest.TestCase):
             "gre": None, "gre_key": None, "gre_ttl": None,
             "etherip": None, "etherip_ttl": None,
             "ipip": None, "ipip_ttl": None,
+            "vxlan": None, "vxlan_vni": None, "vxlan_ttl": None,
+            "vxlan_src_port": None,
         }
         defaults.update(kwargs)
         return argparse.Namespace(**defaults)
@@ -811,6 +839,17 @@ class TestCmdStreamWithEncap(unittest.TestCase):
         pkt_start = 24 + 16
         ethertype = struct.unpack_from("!H", data, pkt_start + 12)[0]
         self.assertEqual(ethertype, 0x8847)
+
+    def test_stream_with_vxlan(self):
+        out = _tmpfile(".pcap")
+        args = self._base_args(pcap=out, vxlan=["192.168.1.1", "192.168.1.2"], vxlan_vni=42)
+        cli._cmd_stream(args)
+        data = Path(out).read_bytes()
+        pkt_start = 24 + 16
+        # outer IP protocol = UDP (17) at eth+9 = pkt_start+23
+        self.assertEqual(data[pkt_start + 23], 17)
+        # outer UDP dst port at eth(14)+ip(20)+2 = 36
+        self.assertEqual(struct.unpack_from("!H", data, pkt_start + 36)[0], 4789)
 
     def test_stream_with_gre(self):
         out = _tmpfile(".pcap")

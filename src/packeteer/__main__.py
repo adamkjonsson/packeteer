@@ -139,10 +139,12 @@ from packeteer.generate.stream_encap import (
     QinQEncap,
     StreamEncap,
     VLANEncap,
+    VXLANEncap,
 )
 from packeteer.generate.tcp import TCP_SYN, TCPOptions
 from packeteer.generate.tcp_stream import TCPStreamConfig, generate_tcp_stream
 from packeteer.generate.udp_stream import UDPStreamConfig, generate_udp_stream
+from packeteer.generate.vxlan import VXLAN_FLAG_VALID_VNI, VXLAN_PORT
 from packeteer.parse.core import parse_packet, parse_pcap_file
 from packeteer.parse.info import format_pcap_info, pcap_info
 from packeteer.parse.to_config import (
@@ -589,6 +591,60 @@ def _apply_ip_chain(
     return _apply_payload_spec(b, spec.get("payload", {}), packet_num, "ipip inner ")
 
 
+def _apply_tunnel_protocol(
+    b: "PacketBuilder",
+    proto_lower: str,
+    spec: dict,
+    packet_num: int,
+) -> tuple["PacketBuilder", bool]:
+    """Apply a tunnel protocol that wraps an inner frame.
+
+    Handles EtherIP, IP-in-IP, GRE, and VXLAN.  Returns ``(b, handled)`` where
+    *handled* is ``True`` when *proto_lower* named a tunnel and the inner frame
+    has been appended (the caller should then stop), or ``False`` when no tunnel
+    applied and normal transport dispatch should continue.
+    """
+    if proto_lower == "etherip":
+        b = b.etherip()
+        b, _ = _apply_spec_to_builder(b, spec["etherip"], packet_num)
+        return b, True
+
+    if proto_lower == "ipip":
+        return _apply_ip_chain(b, spec["ipip"], packet_num), True
+
+    if proto_lower == "gre":
+        gre_spec = spec["gre"]
+        b = b.gre(
+            key=gre_spec.get("key"),
+            seq=gre_spec.get("seq"),
+            checksum=gre_spec.get("checksum", False),
+        )
+        if "ethernet" in gre_spec:
+            # TEB: inner spec includes an Ethernet layer
+            b, _ = _apply_spec_to_builder(b, gre_spec, packet_num)
+        else:
+            # IP-in-GRE or nested GRE: no inner Ethernet
+            b = _apply_ip_chain(b, gre_spec, packet_num)
+        return b, True
+
+    # VXLAN rides on UDP (port 4789); the inner frame is a full Ethernet frame.
+    if proto_lower == "udp" and "vxlan" in spec:
+        vxlan_spec = spec["vxlan"]
+        transport = spec.get("transport", {})
+        b = b.udp(
+            src_port=transport.get("src_port", VXLAN_PORT),
+            dst_port=transport.get("dst_port", VXLAN_PORT),
+        )
+        b = b.vxlan(
+            vni=vxlan_spec.get("vni", 0),
+            flags=vxlan_spec.get("flags", VXLAN_FLAG_VALID_VNI),
+        )
+        b, _ = _apply_spec_to_builder(b, vxlan_spec, packet_num)
+        return b, True
+
+    return b, False
+
+
 def _apply_spec_to_builder(
     b: "PacketBuilder",
     spec: dict,
@@ -696,28 +752,8 @@ def _apply_spec_to_builder(
     # ── Protocol dispatch ────────────────────────────────────────────────────
     proto_lower = protocol_str.lower()
 
-    if proto_lower == "etherip":
-        b = b.etherip()
-        b, _ = _apply_spec_to_builder(b, spec["etherip"], packet_num)
-        return b, False
-
-    if proto_lower == "ipip":
-        b = _apply_ip_chain(b, spec["ipip"], packet_num)
-        return b, False
-
-    if proto_lower == "gre":
-        gre_spec = spec["gre"]
-        b = b.gre(
-            key=gre_spec.get("key"),
-            seq=gre_spec.get("seq"),
-            checksum=gre_spec.get("checksum", False),
-        )
-        if "ethernet" in gre_spec:
-            # TEB: inner spec includes an Ethernet layer
-            b, _ = _apply_spec_to_builder(b, gre_spec, packet_num)
-        else:
-            # IP-in-GRE or nested GRE: no inner Ethernet
-            b = _apply_ip_chain(b, gre_spec, packet_num)
+    b, handled = _apply_tunnel_protocol(b, proto_lower, spec, packet_num)
+    if handled:
         return b, False
 
     b = _dispatch_transport(b, proto_lower, spec.get("transport", {}), packet_num)
@@ -1137,6 +1173,10 @@ _STREAM_PARAMS: dict[str, tuple[str, object, object]] = {
     "etherip_ttl":    ("etherip_ttl",    int,                                    None),
     "ipip":           ("ipip",           lambda s: s.split(),                    None),
     "ipip_ttl":       ("ipip_ttl",       int,                                    None),
+    "vxlan":          ("vxlan",          lambda s: s.split(),                    None),
+    "vxlan_vni":      ("vxlan_vni",      int,                                    None),
+    "vxlan_ttl":      ("vxlan_ttl",      int,                                    None),
+    "vxlan_src_port": ("vxlan_src_port", int,                                    None),
 }
 
 
@@ -1202,11 +1242,11 @@ def _parse_stream_encap(args: argparse.Namespace) -> "list[StreamEncap] | None":
     Multiple encapsulations may be combined (e.g. ``--mpls 100 --ipip ...``
     produces MPLS labels followed by an IP-in-IP tunnel).  The order of layers
     in the returned list is fixed: tag-based layers first (VLAN/QinQ → MPLS →
-    PPPoE), then at most one tunnel layer (GRE / EtherIP / IPIP).
+    PPPoE), then at most one tunnel layer (GRE / EtherIP / IPIP / VXLAN).
 
     Constraints enforced:
     - ``--vlan`` and ``--qinq`` are mutually exclusive (both are VLAN tags).
-    - At most one tunnel type (``--gre``, ``--etherip``, ``--ipip``).
+    - At most one tunnel type (``--gre``, ``--etherip``, ``--ipip``, ``--vxlan``).
 
     Returns ``None`` when no encapsulation was requested.
     """
@@ -1249,7 +1289,7 @@ def _parse_stream_encap(args: argparse.Namespace) -> "list[StreamEncap] | None":
         layers.append(PPPoEEncap(session_id=int(args.pppoe)))
 
     # ── Tunnel encap (at most one) ─────────────────────────────────────────────
-    tunnel_names = [n for n in ("gre", "etherip", "ipip")
+    tunnel_names = [n for n in ("gre", "etherip", "ipip", "vxlan")
                     if getattr(args, n, None) is not None]
     if len(tunnel_names) > 1:
         print(
@@ -1273,6 +1313,14 @@ def _parse_stream_encap(args: argparse.Namespace) -> "list[StreamEncap] | None":
     elif "ipip" in tunnel_names:
         src, dst = args.ipip
         layers.append(IPIPEncap(src_ip=src, dst_ip=dst, ttl=_int("ipip_ttl", 64)))
+    elif "vxlan" in tunnel_names:
+        src, dst = args.vxlan
+        layers.append(VXLANEncap(
+            vni=_int("vxlan_vni", 0),
+            src_ip=src, dst_ip=dst,
+            ttl=_int("vxlan_ttl", 64),
+            udp_src_port=_int("vxlan_src_port", VXLAN_PORT),
+        ))
 
     return layers if layers else None
 
@@ -1301,7 +1349,8 @@ def _stream_to_json(packets: list, include_ethernet: bool) -> str:
             update_config(cfg, pkt.pppoe)
         if pkt.ip is not None:
             update_config(cfg, pkt.ip)
-        if pkt.ipip or pkt.gre is not None or pkt.etherip is not None or pkt.pseudowire is not None:
+        if (pkt.ipip or pkt.gre is not None or pkt.etherip is not None
+                or pkt.pseudowire is not None or pkt.vxlan is not None):
             apply_tunneled(cfg, pkt)
         elif pkt.transport is not None:
             update_config(cfg, pkt.transport)
@@ -2144,6 +2193,26 @@ def main() -> None:
         "--ipip-ttl", type=int, default=None, metavar="N",
         dest="ipip_ttl",
         help="Outer IP TTL for IP-in-IP tunnel (default 64)",
+    )
+    encap_group.add_argument(
+        "--vxlan", nargs=2, default=None,
+        metavar=("OUTER_SRC", "OUTER_DST"),
+        help="VXLAN tunnel (RFC 7348) over UDP:4789; specify outer IP source and destination",
+    )
+    encap_group.add_argument(
+        "--vxlan-vni", type=int, default=None, metavar="VNI",
+        dest="vxlan_vni",
+        help="24-bit VXLAN Network Identifier; used with --vxlan (default 0)",
+    )
+    encap_group.add_argument(
+        "--vxlan-ttl", type=int, default=None, metavar="N",
+        dest="vxlan_ttl",
+        help="Outer IP TTL for VXLAN tunnel (default 64)",
+    )
+    encap_group.add_argument(
+        "--vxlan-src-port", type=int, default=None, metavar="PORT",
+        dest="vxlan_src_port",
+        help="Outer UDP source port for VXLAN tunnel (default 4789)",
     )
     # Output (may also be provided via --config; mutual exclusivity enforced in _cmd_stream)
     stream_parser.add_argument("--pcap", default=None, metavar="FILE",

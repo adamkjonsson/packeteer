@@ -57,6 +57,11 @@ See {doc}`../guide/generating` for usage examples and combination rules.
    :members:
 ```
 
+```{eval-rst}
+.. autoclass:: packeteer.generate.stream_encap.VXLANEncap
+   :members:
+```
+
 ---
 
 ## Type aliases

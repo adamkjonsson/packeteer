@@ -100,6 +100,18 @@ Typical usage::
         .tcp(dst_port=80)
         .build()
     )
+
+    # VXLAN tunnel (RFC 7348) — outer UDP:4789 + VXLAN + inner Ethernet frame
+    pkt = (PacketBuilder()
+        .ethernet()
+        .ip(src="10.0.0.1", dst="10.0.0.2")
+        .udp(dst_port=4789)
+        .vxlan(vni=5000)
+        .ethernet(src_mac="aa:bb:cc:dd:ee:01", dst_mac="aa:bb:cc:dd:ee:02")
+        .ip(src="192.168.1.1", dst="192.168.1.2")
+        .tcp(dst_port=80)
+        .build()
+    )
 """
 from __future__ import annotations
 
@@ -156,6 +168,7 @@ from .pseudowire import PseudowireHeader, _build_pseudowire_header
 from .sctp import IPPROTO_SCTP, SCTPChunk, SCTPHeader, _build_sctp_packet
 from .tcp import TCP_ACK, TCPHeader, TCPOptions, _build_tcp_header
 from .udp import UDPHeader, _build_udp_header
+from .vxlan import VXLAN_FLAG_VALID_VNI, VXLAN_PORT, VXLANHeader, _build_vxlan_header
 
 # ── protocol-number helpers ───────────────────────────────────────────────────
 
@@ -192,6 +205,10 @@ _PPP_PROTO_MAP: dict[type, int] = {
     IPHeader:   PPP_IPV4,
     IPv6Header: PPP_IPV6,
 }
+
+#: Default UDP destination port used by :meth:`PacketBuilder.udp`.  Also serves
+#: as the sentinel that :meth:`PacketBuilder.vxlan` treats as "no port chosen".
+_DEFAULT_UDP_DST_PORT: int = 80
 
 
 def _ethertype_for(layer: object) -> int:
@@ -263,6 +280,8 @@ class PacketBuilder:
       followed by an inner :meth:`ethernet` + :meth:`ip` + transport chain.
     * Calling :meth:`gre` inserts a GRE tunnel header (RFC 2784 / RFC 2890).
       The GRE Protocol Type is set automatically from the layer that follows.
+    * Calling :meth:`vxlan` inserts a VXLAN tunnel header (RFC 7348) after the
+      outer :meth:`udp`, followed by an inner :meth:`ethernet` frame.
 
     The layer list stores the same public dataclasses exported by
     ``packeteer.generate`` (``EthernetHeader``, ``VLANTag``, ``MPLSLabel``,
@@ -446,6 +465,52 @@ class PacketBuilder:
         self._layers.append(GREHeader(key=key, seq=seq, checksum=checksum))
         return self
 
+    def vxlan(
+        self,
+        *,
+        vni: int = 0,
+        flags: int = VXLAN_FLAG_VALID_VNI,
+    ) -> "PacketBuilder":
+        """Append a VXLAN tunnel header (RFC 7348).
+
+        Call after the outer :meth:`udp` and before the inner :meth:`ethernet`
+        layer.  VXLAN is identified purely by the outer UDP destination port, so
+        no enclosing protocol-number field is set; the 8-byte header is inserted
+        at build time.
+
+        As a convenience, when the immediately preceding layer is a
+        :meth:`udp` header left on its default destination port, this method
+        rewrites that port to the standard VXLAN port (4789) so the resulting
+        packet is recognised as VXLAN.  An explicitly chosen UDP destination
+        port (anything other than the default) is left untouched, allowing
+        VXLAN on a non-standard port.
+
+        Args:
+            vni: 24-bit VXLAN Network Identifier (0–16777215).
+            flags: 8-bit flags field.  Defaults to ``0x08`` (the I bit set,
+                marking the VNI as valid).
+
+        Example — outer Ethernet + outer IP + UDP + VXLAN + inner Ethernet + inner IP + TCP::
+
+            pkt = (PacketBuilder()
+                .ethernet()
+                .ip(src="10.0.0.1", dst="10.0.0.2")
+                .udp()              # destination port defaults to 4789 before .vxlan()
+                .vxlan(vni=5000)
+                .ethernet(src_mac="aa:bb:cc:dd:ee:01", dst_mac="aa:bb:cc:dd:ee:02")
+                .ip(src="192.168.1.1", dst="192.168.1.2")
+                .tcp(dst_port=80)
+                .build()
+            )
+
+        """
+        if (self._layers
+                and isinstance(self._layers[-1], UDPHeader)
+                and self._layers[-1].dst_port == _DEFAULT_UDP_DST_PORT):
+            self._layers[-1].dst_port = VXLAN_PORT
+        self._layers.append(VXLANHeader(vni=vni, flags=flags))
+        return self
+
     def pseudowire(
         self,
         *,
@@ -599,7 +664,9 @@ class PacketBuilder:
         ))
         return self
 
-    def udp(self, *, src_port: int = 12345, dst_port: int = 80) -> "PacketBuilder":
+    def udp(
+        self, *, src_port: int = 12345, dst_port: int = _DEFAULT_UDP_DST_PORT,
+    ) -> "PacketBuilder":
         """Append a UDP transport header layer."""
         self._layers.append(UDPHeader(src_port, dst_port))
         return self
@@ -855,6 +922,9 @@ class PacketBuilder:
 
             elif isinstance(layer, EtherIPHeader):
                 data = _build_etherip_header() + data
+
+            elif isinstance(layer, VXLANHeader):
+                data = _build_vxlan_header(layer) + data
 
             elif isinstance(layer, GREHeader):
                 proto_type = _GRE_PROTO_MAP.get(type(next_layer), 0)

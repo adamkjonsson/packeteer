@@ -61,6 +61,7 @@ from packeteer.generate.pseudowire import ETHERTYPE_PW_CW, PseudowireHeader
 from packeteer.generate.sctp import SCTPHeader
 from packeteer.generate.tcp import TCPHeader
 from packeteer.generate.udp import UDPHeader
+from packeteer.generate.vxlan import VXLAN_PORT, VXLANHeader
 from packeteer.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW, PcapFileHeader, read_pcap
 
 from .dns import parse_dns_tcp as _parse_dns_tcp
@@ -78,6 +79,7 @@ from .sctp import packet_parser as _sctp_parser
 from .tcp import packet_parser as _tcp_parser
 from .to_config import apply_tunneled, to_json_string, to_packet_spec, update_config
 from .udp import packet_parser as _udp_parser
+from .vxlan import packet_parser as _vxlan_parser
 
 
 class UnsupportedIPProtocolWarning(UserWarning):
@@ -154,11 +156,16 @@ class ParsedPacket:
         pseudowire: Parsed RFC 4385 pseudowire control word, or ``None``
             when absent.  Found after the bottom-of-stack MPLS label.
             When set, :attr:`tunneled` contains the inner frame.
+        vxlan: Parsed VXLAN tunnel header (RFC 7348), or ``None`` when absent.
+            Recognised by the outer UDP destination port (4789), so unlike the
+            IP-protocol tunnels :attr:`transport` remains the outer
+            :class:`~packeteer.generate.udp.UDPHeader` when this is set.
+            :attr:`tunneled` contains the inner Ethernet frame.
         tunneled: Inner packet parsed recursively when :attr:`ipip` is
-            ``True``, :attr:`gre` is set, :attr:`etherip` is set, or
-            :attr:`pseudowire` is set, otherwise ``None``.  May itself
-            have a non-``None`` :attr:`gre`, :attr:`ipip`, or
-            :attr:`etherip` for double-nested tunnels.
+            ``True``, :attr:`gre` is set, :attr:`etherip` is set,
+            :attr:`pseudowire` is set, or :attr:`vxlan` is set, otherwise
+            ``None``.  May itself have a non-``None`` :attr:`gre`,
+            :attr:`ipip`, or :attr:`etherip` for double-nested tunnels.
         transport: Parsed TCP, UDP, ICMPv4, or ICMPv6 header.
         dns: Parsed DNS or mDNS message when the transport port is 53 or
             5353, otherwise ``None``.  Populated from the payload bytes; on
@@ -185,6 +192,7 @@ class ParsedPacket:
     gre:         GREHeader | None = None
     etherip:     EtherIPHeader | None = None
     pseudowire:  PseudowireHeader | None = None
+    vxlan:       VXLANHeader | None = None
     tunneled:    "ParsedPacket | None" = None
     transport: TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | SCTPHeader | None = None
     dns:       DNSMessage | None = None
@@ -356,6 +364,26 @@ def _try_parse_http(pkt: ParsedPacket, payload: bytes) -> bytes:
         return payload
 
 
+def _try_parse_vxlan(pkt: ParsedPacket, payload: bytes) -> bool:
+    """Attempt to decode *payload* as VXLAN if the transport is UDP on port 4789.
+
+    On success, sets ``pkt.vxlan`` and ``pkt.tunneled`` (the inner Ethernet
+    frame parsed recursively) and returns ``True``.  Returns ``False`` (leaving
+    *pkt* untouched) on wrong port/protocol or when the header is too short.
+    """
+    t = pkt.transport
+    if not isinstance(t, UDPHeader):
+        return False
+    if VXLAN_PORT not in (t.dst_port, t.src_port):
+        return False
+    v_size, _, v_hdr = _vxlan_parser(payload)
+    if v_size == 0 or v_hdr is None:
+        return False
+    pkt.vxlan = v_hdr
+    pkt.tunneled = parse_packet(payload[v_size:], link_type=LINKTYPE_ETHERNET)
+    return True
+
+
 def _parse_ip_protocol(
     pkt: ParsedPacket, remaining: bytes, ip_proto: int | None,
 ) -> bytes:
@@ -379,6 +407,8 @@ def _parse_ip_protocol(
         if t_size > 0:
             pkt.transport = t_hdr
             remaining = remaining[t_size:]
+            if _try_parse_vxlan(pkt, remaining):
+                return b""
             remaining = _try_parse_dns(pkt, remaining)
             remaining = _try_parse_dhcp(pkt, remaining)
             remaining = _try_parse_http(pkt, remaining)
@@ -447,6 +477,12 @@ def parse_packet(data: bytes, *, link_type: int = LINKTYPE_ETHERNET) -> ParsedPa
       into :attr:`ParsedPacket.etherip` and ``parse_packet`` is called
       recursively on the inner Ethernet frame.  The result is stored in
       :attr:`ParsedPacket.tunneled`.  Arbitrary nesting is supported.
+    - **VXLAN** (UDP destination port ``4789``, RFC 7348): After the UDP header
+      is parsed, the 8-byte VXLAN header is decoded into
+      :attr:`ParsedPacket.vxlan` and ``parse_packet`` is called recursively
+      with ``LINKTYPE_ETHERNET`` on the inner Ethernet frame, stored in
+      :attr:`ParsedPacket.tunneled`.  The outer :attr:`ParsedPacket.transport`
+      remains the UDP header.
     - **Transport**: TCP, UDP, ICMPv4, or ICMPv6.
     - **Payload**: Any bytes after the last parsed header.
 
@@ -585,7 +621,8 @@ def parse_pcap_file(
             if pkt.ip is not None:
                 update_config(cfg, pkt.ip)
             if (pkt.ipip or pkt.gre is not None
-                    or pkt.etherip is not None or pkt.pseudowire is not None):
+                    or pkt.etherip is not None or pkt.pseudowire is not None
+                    or pkt.vxlan is not None):
                 apply_tunneled(cfg, pkt)
             elif pkt.transport is not None:
                 update_config(cfg, pkt.transport)
