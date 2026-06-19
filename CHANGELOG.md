@@ -392,6 +392,16 @@ All notable changes to packeteer are recorded in this file.
 
 ### Enhancements
 
+- **`packeteer file-info` reports the full tunnelled stack** — the layer
+  statistics now recurse into tunnelled packets so the report is a comprehensive
+  view of a capture's protocol content.  Previously only the outermost layers
+  were counted, and the UDP-based overlays (VXLAN, GENEVE, GTP-U) were not
+  recognised at all — a VXLAN-over-UDP capture showed only `ethernet` / `ipv4` /
+  `udp`.  Now the outer layers, the tunnel type (`gre`, `etherip`, `ipip`,
+  `pseudowire`, `vxlan`, `geneve`, `gtpu`), and the inner frame's layers all
+  contribute.  A layer present at multiple depths in one packet counts that
+  packet once (the counts remain "number of packets containing this layer").
+
 - **`datetime` ↔ pcap timestamp converters** — two helpers in `packeteer.pcap`
   simplify the common case of working with `datetime.datetime` capture times,
   which `write_pcap` / `write_pcapng` / `read_pcap` otherwise express as a

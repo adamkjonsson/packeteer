@@ -31,9 +31,16 @@ This is a read-only reporting command — it never modifies the capture.
 | Duration | Wall-clock span between the first and last packet timestamp (omitted for fewer than two packets) |
 | Layers | For each protocol layer seen, the number of packets containing it and the percentage of all packets |
 
-Layer statistics cover the outermost layers of each packet: `ethernet`, `vlan`,
-`mpls`, `pppoe`, `ipv4`, `ipv6`, `ipip`, `gre`, `etherip`, `pseudowire`, `tcp`,
-`udp`, `icmp`, `icmpv6`, `sctp`, `dns`, `dhcp`, `http`, and `payload`.
+Layer statistics cover the full protocol stack of each packet: `ethernet`,
+`vlan`, `mpls`, `pppoe`, `ipv4`, `ipv6`, `ipip`, `gre`, `etherip`, `pseudowire`,
+`vxlan`, `geneve`, `gtpu`, `tcp`, `udp`, `icmp`, `icmpv6`, `sctp`, `dns`, `dhcp`,
+`http`, and `payload`.
+
+Tunnelled packets are reported comprehensively: the outer layers, the tunnel
+type (`gre`, `etherip`, `ipip`, `pseudowire`, `vxlan`, `geneve`, `gtpu`), **and**
+the inner frame's layers all contribute.  A layer that appears at more than one
+depth in a single packet (for example the inner and outer IPv4 of a GTP-U
+packet) counts that packet once.
 
 ## Link-type auto-correction
 

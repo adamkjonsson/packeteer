@@ -112,6 +112,28 @@ class TestLayerStats(unittest.TestCase):
         self.assertNotIn("ipv4", info.layer_counts)
         os.remove(path)
 
+    def test_tunnel_layers_counted_with_inner_stack(self) -> None:
+        # GTP-U (UDP:2152) carrying an inner IPv4/TCP packet, and a VXLAN
+        # (UDP:4789) carrying an inner Ethernet/IPv4/UDP frame.
+        gtpu = (PacketBuilder().ethernet().ip(src="10.0.0.1", dst="10.0.0.2")
+                .udp().gtpu(teid=5)
+                .ip(src="192.168.1.1", dst="192.168.1.2").tcp(dst_port=80).build())
+        vxlan = (PacketBuilder().ethernet().ip(src="10.0.0.1", dst="10.0.0.2")
+                 .udp().vxlan(vni=9).ethernet()
+                 .ip(src="192.168.1.1", dst="192.168.1.2").udp(dst_port=53).build())
+        path = _write_pcap([(gtpu, 0, 0), (vxlan, 0, 0)])
+        info = pcap_info(path=path)
+        # Tunnel-type labels recognised.
+        self.assertEqual(info.layer_counts.get("gtpu"), 1)
+        self.assertEqual(info.layer_counts.get("vxlan"), 1)
+        # Outer + inner layers both contribute: both packets carry an outer UDP,
+        # and the GTP-U packet's inner TCP is reported.
+        self.assertEqual(info.layer_counts.get("udp"), 2)
+        self.assertEqual(info.layer_counts.get("tcp"), 1)
+        # IPv4 appears at two depths in each packet but counts each packet once.
+        self.assertEqual(info.layer_counts.get("ipv4"), 2)
+        os.remove(path)
+
 
 # ── Link-type auto-correction ─────────────────────────────────────────────────
 

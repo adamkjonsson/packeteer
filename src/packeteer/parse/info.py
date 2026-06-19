@@ -41,9 +41,24 @@ _LT_SCORE_THRESHOLD: float = 0.5
 # Ordered layer labels — controls the order rows appear in the text report.
 _LAYER_ORDER: tuple[str, ...] = (
     "ethernet", "vlan", "mpls", "pppoe",
-    "ipv4", "ipv6", "ipip", "gre", "etherip", "pseudowire",
+    "ipv4", "ipv6", "ipip", "gre", "etherip", "pseudowire", "vxlan", "geneve", "gtpu",
     "tcp", "udp", "icmp", "icmpv6", "sctp",
     "dns", "dhcp", "http", "payload",
+)
+
+# Transport header type → layer label.
+_TRANSPORT_LABELS: dict[type, str] = {
+    TCPHeader:    "tcp",
+    UDPHeader:    "udp",
+    ICMPHeader:   "icmp",
+    ICMPv6Header: "icmpv6",
+    SCTPHeader:   "sctp",
+}
+
+# ParsedPacket attributes whose presence (not None) implies a tunnel layer of
+# the same label.
+_TUNNEL_ATTRS: tuple[str, ...] = (
+    "gre", "etherip", "pseudowire", "vxlan", "geneve", "gtpu",
 )
 
 _LINKTYPE_NAMES: dict[int, str] = {
@@ -72,7 +87,11 @@ class PcapInfo:
             ``(src, dst, src_port, dst_port, protocol)``.  Only packets with an
             IP layer contribute; ``A->B`` and ``B->A`` count separately.
         layer_counts: Mapping of protocol-layer label to the number of packets
-            in which that layer was seen.
+            in which that layer was seen, counted at any depth — for tunnelled
+            packets the outer layers, the tunnel type (``gre``, ``etherip``,
+            ``ipip``, ``pseudowire``, ``vxlan``, ``geneve``, ``gtpu``), and the
+            inner frame's layers all contribute.  A layer present at multiple
+            depths in one packet counts that packet once.
         capture_duration_s: Wall-clock span between the first and last packet
             timestamp in seconds, or ``None`` for fewer than two packets.
         packet_limit: The cap requested via ``num`` / ``--num``, or ``None`` for
@@ -117,7 +136,14 @@ class PcapInfo:
 
 
 def _packet_layers(pkt: ParsedPacket) -> list[str]:
-    """Return the protocol-layer labels present in *pkt* (outermost layers)."""
+    """Return the protocol-layer labels present in *pkt*, recursing into tunnels.
+
+    The full stack is reported: a tunnelled packet contributes its outer layers,
+    the tunnel-type label, **and** the inner frame's layers (parsed recursively
+    from :attr:`~packeteer.parse.core.ParsedPacket.tunneled`).  The caller
+    de-duplicates per packet, so each label counts the *number of packets* in
+    which that protocol appears at any depth.
+    """
     labels: list[str] = []
     if pkt.ethernet is not None:
         labels.append("ethernet")
@@ -133,31 +159,17 @@ def _packet_layers(pkt: ParsedPacket) -> list[str]:
         labels.append("ipv6")
     if pkt.ipip:
         labels.append("ipip")
-    if pkt.gre is not None:
-        labels.append("gre")
-    if pkt.etherip is not None:
-        labels.append("etherip")
-    if pkt.pseudowire is not None:
-        labels.append("pseudowire")
-    transport = pkt.transport
-    if isinstance(transport, TCPHeader):
-        labels.append("tcp")
-    elif isinstance(transport, UDPHeader):
-        labels.append("udp")
-    elif isinstance(transport, ICMPHeader):
-        labels.append("icmp")
-    elif isinstance(transport, ICMPv6Header):
-        labels.append("icmpv6")
-    elif isinstance(transport, SCTPHeader):
-        labels.append("sctp")
-    if pkt.dns is not None:
-        labels.append("dns")
-    if pkt.dhcp is not None:
-        labels.append("dhcp")
-    if pkt.http is not None:
-        labels.append("http")
+    labels.extend(attr for attr in _TUNNEL_ATTRS if getattr(pkt, attr) is not None)
+    transport_label = _TRANSPORT_LABELS.get(type(pkt.transport))
+    if transport_label is not None:
+        labels.append(transport_label)
+    for attr in ("dns", "dhcp", "http"):
+        if getattr(pkt, attr) is not None:
+            labels.append(attr)
     if pkt.payload:
         labels.append("payload")
+    if pkt.tunneled is not None:
+        labels.extend(_packet_layers(pkt.tunneled))
     return labels
 
 
@@ -295,7 +307,9 @@ def pcap_info(
                 pkt = parse_packet(data, link_type=used_link_type)
             except (ValueError, IndexError, _StructError):
                 continue
-            for label in _packet_layers(pkt):
+            # De-duplicate per packet: a layer present at multiple depths
+            # (e.g. inner and outer IPv4) still counts the packet once.
+            for label in dict.fromkeys(_packet_layers(pkt)):
                 layer_counts[label] += 1
             key = _session_key(pkt)
             if key is not None:
