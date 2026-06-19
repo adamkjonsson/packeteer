@@ -17,6 +17,7 @@ multiple times to produce advanced encapsulations:
 - `.gre()` → GRE tunnel header (RFC 2784 / RFC 2890)
 - `.etherip()` → EtherIP tunnel header (RFC 3378)
 - `.udp()` + `.vxlan()` → VXLAN tunnel header (RFC 7348)
+- `.udp()` + `.geneve()` → GENEVE tunnel header (RFC 8926)
 
 ## Layer method reference
 
@@ -30,6 +31,7 @@ multiple times to produce advanced encapsulations:
 | `.etherip()` | EtherIP tunnel header (RFC 3378).  Call after the outer `.ip()` and before the inner `.ethernet()`. |
 | `.gre(key=None, seq=None, checksum=False)` | GRE tunnel header (RFC 2784 / RFC 2890).  Protocol Type and outer IP protocol (47) are set automatically from the next layer. |
 | `.vxlan(vni=0, flags=0x08)` | VXLAN tunnel header (RFC 7348).  Call after the outer `.udp()` and before the inner `.ethernet()`.  When the preceding `.udp()` is left on its default port, the destination port is set to 4789 automatically; an explicit non-default port is preserved. |
+| `.geneve(vni=0, options=None, oam=False)` | GENEVE tunnel header (RFC 8926).  Call after the outer `.udp()`.  Protocol Type is set automatically from the next layer (inner `.ethernet()` or `.ip()`); the default UDP port is rewritten to 6081 like `.vxlan()`.  `options` is a list of `GeneveOption` TLVs. |
 | `.ip(src, dst, ttl=64, …)` | IPv4 or IPv6 header — auto-detected from `src`.  Call twice for IP-in-IP. |
 | `.hop_by_hop_options(options=None)` | IPv6 Hop-by-Hop Options extension header (RFC 8200 §4.3).  Call immediately after `.ip()` for an IPv6 address and before the transport method.  `options` is a list of `RouterAlertOption`, `JumboPayloadOption`, or `RawOption` objects; padding is added automatically. |
 | `.tcp(src_port=12345, dst_port=80, …)` | TCP transport header. |

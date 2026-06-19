@@ -8,6 +8,40 @@ All notable changes to packeteer are recorded in this file.
 
 ### New features
 
+- **GENEVE encapsulation (RFC 8926)** — Generic Network Virtualization
+  Encapsulation is now supported end-to-end across the builder, stream
+  encapsulation, parser, packet-spec serialisation, and CLI.  GENEVE is VXLAN's
+  successor: it also rides on UDP (destination port 6081) but adds a Protocol
+  Type field (so it can carry an inner Ethernet frame *or* IPv4/IPv6 directly)
+  and a list of variable-length TLV options.
+
+  - `PacketBuilder.geneve(vni=…, options=…, oam=…)` inserts the GENEVE header
+    after the outer UDP layer.  The Protocol Type is set automatically from the
+    next layer (inner Ethernet → `0x6558`, IPv4 → `0x0800`, IPv6 → `0x86DD`),
+    the Opt Len and C (critical) flag are computed from the options, and — as
+    with `.vxlan()` — a preceding `.udp()` left on its default port is rewritten
+    to 6081.
+  - New `GeneveEncap(vni, src_ip, dst_ip, ttl=64, udp_src_port=6081, options=[])`
+    stream encapsulation descriptor wraps any TCP/UDP/SCTP stream as inner
+    traffic.
+  - `GeneveOption(option_class, type, critical, data)` models one TLV option;
+    option data is carried as raw bytes (a multiple of 4 bytes).
+  - The parser recognises GENEVE by the outer UDP destination port 6081, retains
+    the outer UDP header in `ParsedPacket.transport`, stores the decoded
+    `GeneveHeader` (including options) in the new `ParsedPacket.geneve` field,
+    and recurses into the inner frame — `LINKTYPE_ETHERNET` for TEB, otherwise
+    raw IP — under `tunneled`.
+  - `packeteer parse` serialises GENEVE packets with a top-level `"geneve"` key
+    (VNI, `options`, and the nested inner-frame spec); `packeteer build`
+    reconstructs them.  `packeteer stream` gains `--geneve SRC DST`,
+    `--geneve-vni`, `--geneve-ttl`, and `--geneve-src-port` flags (options are
+    set via the Python API / packet spec, not the CLI).
+  - New `GeneveHeader` / `GeneveOption` dataclasses, `GENEVE_PORT` (6081), and
+    `GENEVE_PROTO_*` constants exported from `packeteer.generate`; new
+    `packeteer.parse.geneve` parser module.
+  - New tests in `test_geneve.py`, plus GENEVE cases in `test_stream_encap.py`
+    and `test_cli.py`.
+
 - **VXLAN encapsulation (RFC 7348)** — Virtual eXtensible LAN tunnelling is now
   supported end-to-end across the builder, stream encapsulation, parser,
   packet-spec serialisation, and CLI.

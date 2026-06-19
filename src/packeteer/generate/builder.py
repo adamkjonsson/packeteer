@@ -112,6 +112,18 @@ Typical usage::
         .tcp(dst_port=80)
         .build()
     )
+
+    # GENEVE tunnel (RFC 8926) — outer UDP:6081 + GENEVE + inner Ethernet frame
+    pkt = (PacketBuilder()
+        .ethernet()
+        .ip(src="10.0.0.1", dst="10.0.0.2")
+        .udp()
+        .geneve(vni=5000)
+        .ethernet(src_mac="aa:bb:cc:dd:ee:01", dst_mac="aa:bb:cc:dd:ee:02")
+        .ip(src="192.168.1.1", dst="192.168.1.2")
+        .tcp(dst_port=80)
+        .build()
+    )
 """
 from __future__ import annotations
 
@@ -130,6 +142,15 @@ from .ethernet import (
     EthernetHeader,
     VLANTag,
     _build_ethernet_header,
+)
+from .geneve import (
+    GENEVE_PORT,
+    GENEVE_PROTO_IPV4,
+    GENEVE_PROTO_IPV6,
+    GENEVE_PROTO_TEB,
+    GeneveHeader,
+    GeneveOption,
+    _build_geneve_header,
 )
 from .gre import (
     GRE_PROTO_IPV4,
@@ -198,6 +219,13 @@ _GRE_PROTO_MAP: dict[type, int] = {
     IPHeader:       GRE_PROTO_IPV4,
     IPv6Header:     GRE_PROTO_IPV6,
     EthernetHeader: GRE_PROTO_TEB,
+}
+
+# Protocol Type that a GENEVE header should advertise based on the next layer type
+_GENEVE_PROTO_MAP: dict[type, int] = {
+    IPHeader:       GENEVE_PROTO_IPV4,
+    IPv6Header:     GENEVE_PROTO_IPV6,
+    EthernetHeader: GENEVE_PROTO_TEB,
 }
 
 # PPP protocol numbers for the 2-byte PPP header in PPPoE session frames
@@ -282,6 +310,9 @@ class PacketBuilder:
       The GRE Protocol Type is set automatically from the layer that follows.
     * Calling :meth:`vxlan` inserts a VXLAN tunnel header (RFC 7348) after the
       outer :meth:`udp`, followed by an inner :meth:`ethernet` frame.
+    * Calling :meth:`geneve` inserts a GENEVE tunnel header (RFC 8926) after the
+      outer :meth:`udp`.  The Protocol Type is set automatically from the layer
+      that follows (inner :meth:`ethernet`, or :meth:`ip` directly).
 
     The layer list stores the same public dataclasses exported by
     ``packeteer.generate`` (``EthernetHeader``, ``VLANTag``, ``MPLSLabel``,
@@ -509,6 +540,57 @@ class PacketBuilder:
                 and self._layers[-1].dst_port == _DEFAULT_UDP_DST_PORT):
             self._layers[-1].dst_port = VXLAN_PORT
         self._layers.append(VXLANHeader(vni=vni, flags=flags))
+        return self
+
+    def geneve(
+        self,
+        *,
+        vni: int = 0,
+        options: list[GeneveOption] | None = None,
+        oam: bool = False,
+    ) -> "PacketBuilder":
+        """Append a GENEVE tunnel header (RFC 8926).
+
+        Call after the outer :meth:`udp` and before the inner layer (an inner
+        :meth:`ethernet` frame for the common overlay case, or :meth:`ip`
+        directly).  GENEVE is identified by the outer UDP destination port; the
+        Protocol Type is set automatically at build time from the layer that
+        follows:
+
+        * :meth:`ethernet` → ``0x6558`` (Transparent Ethernet Bridging)
+        * :meth:`ip` with an IPv4 address → ``0x0800``
+        * :meth:`ip` with an IPv6 address → ``0x86DD``
+
+        As with :meth:`vxlan`, when the immediately preceding :meth:`udp` header
+        is left on its default destination port, it is rewritten to the standard
+        GENEVE port (6081); an explicit non-default port is preserved.
+
+        Args:
+            vni: 24-bit Virtual Network Identifier (0–16777215).
+            options: List of :class:`~packeteer.generate.geneve.GeneveOption`
+                TLVs.  The Opt Len field and the C (critical) flag are computed
+                automatically.  Defaults to no options.
+            oam: Whether the O (OAM) flag is set.  Defaults to ``False``.
+
+        Example — outer Ethernet + outer IP + UDP + GENEVE + inner Ethernet + inner IP + TCP::
+
+            pkt = (PacketBuilder()
+                .ethernet()
+                .ip(src="10.0.0.1", dst="10.0.0.2")
+                .udp()
+                .geneve(vni=5000)
+                .ethernet(src_mac="aa:bb:cc:dd:ee:01", dst_mac="aa:bb:cc:dd:ee:02")
+                .ip(src="192.168.1.1", dst="192.168.1.2")
+                .tcp(dst_port=80)
+                .build()
+            )
+
+        """
+        if (self._layers
+                and isinstance(self._layers[-1], UDPHeader)
+                and self._layers[-1].dst_port == _DEFAULT_UDP_DST_PORT):
+            self._layers[-1].dst_port = GENEVE_PORT
+        self._layers.append(GeneveHeader(vni=vni, options=list(options or []), oam=oam))
         return self
 
     def pseudowire(
@@ -925,6 +1007,14 @@ class PacketBuilder:
 
             elif isinstance(layer, VXLANHeader):
                 data = _build_vxlan_header(layer) + data
+
+            elif isinstance(layer, GeneveHeader):
+                proto_type = _GENEVE_PROTO_MAP.get(type(next_layer), 0)
+                hdr = GeneveHeader(
+                    vni=layer.vni, protocol_type=proto_type,
+                    options=layer.options, oam=layer.oam, version=layer.version,
+                )
+                data = _build_geneve_header(hdr) + data
 
             elif isinstance(layer, GREHeader):
                 proto_type = _GRE_PROTO_MAP.get(type(next_layer), 0)

@@ -194,6 +194,10 @@ At most one of `--vlan` / `--qinq` may be given; at most one tunnel type.
 | `--vxlan-vni N` | 24-bit VXLAN Network Identifier (default 0) |
 | `--vxlan-ttl N` | Outer IP TTL (default 64) |
 | `--vxlan-src-port N` | Outer UDP source port (default 4789) |
+| `--geneve SRC_IP DST_IP` | GENEVE tunnel (RFC 8926) over UDP:6081 |
+| `--geneve-vni N` | 24-bit GENEVE Virtual Network Identifier (default 0) |
+| `--geneve-ttl N` | Outer IP TTL (default 64) |
+| `--geneve-src-port N` | Outer UDP source port (default 6081) |
 
 ## INI config file
 
@@ -272,6 +276,13 @@ packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
 ```bash
 packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
     --vxlan 203.0.113.1 203.0.113.2 --vxlan-vni 5000 --pcap vxlan.pcap
+```
+
+**GENEVE tunnel:**
+
+```bash
+packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
+    --geneve 203.0.113.1 203.0.113.2 --geneve-vni 5000 --pcap geneve.pcap
 ```
 
 **Generate packet spec for downstream editing:**

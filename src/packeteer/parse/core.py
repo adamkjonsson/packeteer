@@ -49,6 +49,7 @@ from packeteer.generate.ethernet import (
     ETHERTYPE_IPV6,
     EthernetHeader,
 )
+from packeteer.generate.geneve import GENEVE_PORT, GENEVE_PROTO_TEB, GeneveHeader
 from packeteer.generate.gre import GRE_PROTO_TEB, IPPROTO_GRE, GREHeader
 from packeteer.generate.http import HTTPMessage
 from packeteer.generate.icmp import ICMPHeader
@@ -68,6 +69,7 @@ from .dns import parse_dns_tcp as _parse_dns_tcp
 from .dns import parse_dns_udp as _parse_dns_udp
 from .etherip import packet_parser as _etherip_parser
 from .ethernet import packet_parser as _ethernet_parser
+from .geneve import packet_parser as _geneve_parser
 from .gre import packet_parser as _gre_parser
 from .icmp import packet_parser as _icmp_parser
 from .icmpv6 import packet_parser as _icmpv6_parser
@@ -161,6 +163,11 @@ class ParsedPacket:
             IP-protocol tunnels :attr:`transport` remains the outer
             :class:`~packeteer.generate.udp.UDPHeader` when this is set.
             :attr:`tunneled` contains the inner Ethernet frame.
+        geneve: Parsed GENEVE tunnel header (RFC 8926), or ``None`` when absent.
+            Like :attr:`vxlan`, recognised by the outer UDP destination port
+            (6081), so :attr:`transport` remains the outer UDP header.  The
+            GENEVE Protocol Type selects the inner payload, so :attr:`tunneled`
+            holds an inner Ethernet frame (TEB) or a raw IP packet.
         tunneled: Inner packet parsed recursively when :attr:`ipip` is
             ``True``, :attr:`gre` is set, :attr:`etherip` is set,
             :attr:`pseudowire` is set, or :attr:`vxlan` is set, otherwise
@@ -193,6 +200,7 @@ class ParsedPacket:
     etherip:     EtherIPHeader | None = None
     pseudowire:  PseudowireHeader | None = None
     vxlan:       VXLANHeader | None = None
+    geneve:      GeneveHeader | None = None
     tunneled:    "ParsedPacket | None" = None
     transport: TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | SCTPHeader | None = None
     dns:       DNSMessage | None = None
@@ -384,6 +392,28 @@ def _try_parse_vxlan(pkt: ParsedPacket, payload: bytes) -> bool:
     return True
 
 
+def _try_parse_geneve(pkt: ParsedPacket, payload: bytes) -> bool:
+    """Attempt to decode *payload* as GENEVE if the transport is UDP on port 6081.
+
+    On success, sets ``pkt.geneve`` and ``pkt.tunneled`` (the inner frame parsed
+    recursively — Ethernet for TEB, raw IP otherwise) and returns ``True``.
+    Returns ``False`` (leaving *pkt* untouched) on wrong port/protocol or when
+    the header is malformed.
+    """
+    t = pkt.transport
+    if not isinstance(t, UDPHeader):
+        return False
+    if GENEVE_PORT not in (t.dst_port, t.src_port):
+        return False
+    g_size, proto_type, g_hdr = _geneve_parser(payload)
+    if g_size == 0 or g_hdr is None:
+        return False
+    pkt.geneve = g_hdr
+    inner_lt = LINKTYPE_ETHERNET if proto_type == GENEVE_PROTO_TEB else LINKTYPE_RAW
+    pkt.tunneled = parse_packet(payload[g_size:], link_type=inner_lt)
+    return True
+
+
 def _parse_ip_protocol(
     pkt: ParsedPacket, remaining: bytes, ip_proto: int | None,
 ) -> bytes:
@@ -408,6 +438,8 @@ def _parse_ip_protocol(
             pkt.transport = t_hdr
             remaining = remaining[t_size:]
             if _try_parse_vxlan(pkt, remaining):
+                return b""
+            if _try_parse_geneve(pkt, remaining):
                 return b""
             remaining = _try_parse_dns(pkt, remaining)
             remaining = _try_parse_dhcp(pkt, remaining)
@@ -483,6 +515,12 @@ def parse_packet(data: bytes, *, link_type: int = LINKTYPE_ETHERNET) -> ParsedPa
       with ``LINKTYPE_ETHERNET`` on the inner Ethernet frame, stored in
       :attr:`ParsedPacket.tunneled`.  The outer :attr:`ParsedPacket.transport`
       remains the UDP header.
+    - **GENEVE** (UDP destination port ``6081``, RFC 8926): After the UDP
+      header is parsed, the GENEVE header (8 bytes plus TLV options) is decoded
+      into :attr:`ParsedPacket.geneve`.  Its Protocol Type selects the inner
+      parse: ``0x6558`` (TEB) recurses with ``LINKTYPE_ETHERNET``, otherwise
+      ``LINKTYPE_RAW``.  The result is stored in :attr:`ParsedPacket.tunneled`
+      and the outer :attr:`ParsedPacket.transport` remains the UDP header.
     - **Transport**: TCP, UDP, ICMPv4, or ICMPv6.
     - **Payload**: Any bytes after the last parsed header.
 
@@ -622,7 +660,7 @@ def parse_pcap_file(
                 update_config(cfg, pkt.ip)
             if (pkt.ipip or pkt.gre is not None
                     or pkt.etherip is not None or pkt.pseudowire is not None
-                    or pkt.vxlan is not None):
+                    or pkt.vxlan is not None or pkt.geneve is not None):
                 apply_tunneled(cfg, pkt)
             elif pkt.transport is not None:
                 update_config(cfg, pkt.transport)
