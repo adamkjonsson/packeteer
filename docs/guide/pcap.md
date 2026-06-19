@@ -51,6 +51,33 @@ pkts = [
 write_pcap(pkts, path="syn.pcap")
 ```
 
+### Timestamps from `datetime` objects
+
+pcap records store time as a `(ts_sec, ts_frac)` pair, but you will often have
+timestamps as {class}`datetime.datetime` objects.  Use
+{func}`packeteer.pcap.datetime_to_pcap_ts` to convert — unpack its result
+straight into the tuple:
+
+```python
+from datetime import datetime, timezone
+from packeteer.pcap import write_pcap, datetime_to_pcap_ts
+
+when = datetime(2024, 1, 1, 12, 0, 0, 500_000, tzinfo=timezone.utc)
+write_pcap([(raw, *datetime_to_pcap_ts(when))], path="out.pcap")
+```
+
+A naive datetime (no `tzinfo`) is assumed to be UTC, matching the pcap
+convention.  Pass `nanoseconds=True` to both the converter and the writer for a
+nanosecond-resolution file — though note `datetime` only has microsecond
+resolution, so the nanosecond part is always a multiple of 1000:
+
+```python
+write_pcap(
+    [(raw, *datetime_to_pcap_ts(when, nanoseconds=True))],
+    path="out.pcap", nanoseconds=True,
+)
+```
+
 ## Reading a pcap file
 
 {func}`packeteer.pcap.read_pcap` reads a libpcap or pcapng file and returns a
@@ -75,6 +102,19 @@ for record in pcap.packets:
     pkt = parse_pcap_packet(record, pcap.header)
     if pkt.ip is not None:
         print(pkt.ip.src, "->", pkt.ip.dst)
+```
+
+To turn a record's timestamp back into a {class}`datetime.datetime`, use
+{func}`packeteer.pcap.pcap_ts_to_datetime` (the inverse of
+`datetime_to_pcap_ts`).  It returns a timezone-aware UTC datetime; pass
+`nanoseconds=` from the file header so the fraction is interpreted correctly:
+
+```python
+from packeteer.pcap import pcap_ts_to_datetime
+
+for data, ts_sec, ts_frac in pcap.packets:
+    when = pcap_ts_to_datetime(ts_sec, ts_frac, nanoseconds=pcap.header.nanoseconds)
+    print(when.isoformat())
 ```
 
 ## Link-layer type constants
