@@ -139,6 +139,27 @@ EtherType and PPP protocol constants:
 
 ---
 
+## Tunnels — GENEVE
+
+```{eval-rst}
+.. autoclass:: packeteer.generate.geneve.GeneveHeader
+   :members:
+```
+
+```{eval-rst}
+.. autoclass:: packeteer.generate.geneve.GeneveOption
+   :members:
+```
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `GENEVE_PORT` | `6081` | IANA UDP destination port for GENEVE (RFC 8926) |
+| `GENEVE_PROTO_IPV4` | `0x0800` | Protocol Type for an inner IPv4 payload |
+| `GENEVE_PROTO_IPV6` | `0x86DD` | Protocol Type for an inner IPv6 payload |
+| `GENEVE_PROTO_TEB` | `0x6558` | Protocol Type for an inner Ethernet frame |
+
+---
+
 ## Layer 3 — IPv4
 
 ```{eval-rst}

@@ -10,7 +10,8 @@ This package constructs byte-accurate network packets at all layers:
   IP-in-IP tunnels (RFC 2003 / RFC 4213);
   EtherIP tunnels (:class:`EtherIPHeader`, RFC 3378);
   GRE tunnels (:class:`GREHeader`, RFC 2784 / RFC 2890);
-  VXLAN tunnels (:class:`VXLANHeader`, RFC 7348)
+  VXLAN tunnels (:class:`VXLANHeader`, RFC 7348);
+  GENEVE tunnels (:class:`GeneveHeader`, RFC 8926)
 * **Layer 4** — TCP (:class:`TCPHeader`), UDP (:class:`UDPHeader`),
   SCTP (:class:`SCTPHeader`, RFC 9260), ICMPv4 (:class:`ICMPHeader`),
   ICMPv6 (:class:`ICMPv6Header`)
@@ -127,6 +128,18 @@ multiple times to produce advanced encapsulations.
         .build()
     )
 
+    # GENEVE tunnel (RFC 8926) — outer UDP:6081 + GENEVE + inner Ethernet frame
+    pkt = (PacketBuilder()
+        .ethernet()
+        .ip(src="10.0.0.1", dst="10.0.0.2")
+        .udp()
+        .geneve(vni=5000)
+        .ethernet(src_mac="aa:bb:cc:dd:ee:01", dst_mac="aa:bb:cc:dd:ee:02")
+        .ip(src="192.168.1.1", dst="192.168.1.2")
+        .tcp(dst_port=80)
+        .build()
+    )
+
     # PPPoE PADI discovery frame
     from packeteer.generate import PPPOE_CODE_PADI, PPPoETag, PPPOE_TAG_SERVICE_NAME
     pkt = (PacketBuilder()
@@ -150,6 +163,13 @@ Public API:
     VXLANHeader: Dataclass for the VXLAN tunnel header (RFC 7348). Fields: vni, flags.
     VXLAN_PORT: IANA UDP destination port 4789 — VXLAN (RFC 7348).
     VXLAN_FLAG_VALID_VNI: VXLAN flags byte 0x08 — the I (VNI valid) bit.
+    GeneveHeader: Dataclass for the GENEVE tunnel header (RFC 8926).
+        Fields: vni, protocol_type, options, oam, version.
+    GeneveOption: Dataclass for one GENEVE TLV option (option_class, type, critical, data).
+    GENEVE_PORT: IANA UDP destination port 6081 — GENEVE (RFC 8926).
+    GENEVE_PROTO_IPV4: GENEVE Protocol Type 0x0800 — IPv4 payload.
+    GENEVE_PROTO_IPV6: GENEVE Protocol Type 0x86DD — IPv6 payload.
+    GENEVE_PROTO_TEB: GENEVE Protocol Type 0x6558 — inner Ethernet frame.
     VLANTag: Dataclass for IEEE 802.1Q VLAN tag fields.
     MPLSLabel: Dataclass for one MPLS label stack entry (RFC 3032).
     ETHERTYPE_MPLS_UNICAST: EtherType 0x8847 — MPLS unicast.
@@ -264,6 +284,14 @@ from .ethernet import (
     VLANTag,
 )
 from .fragmentation import fragment_ipv4, fragment_ipv6
+from .geneve import (
+    GENEVE_PORT,
+    GENEVE_PROTO_IPV4,
+    GENEVE_PROTO_IPV6,
+    GENEVE_PROTO_TEB,
+    GeneveHeader,
+    GeneveOption,
+)
 from .gre import GRE_PROTO_IPV4, GRE_PROTO_IPV6, GRE_PROTO_TEB, IPPROTO_GRE, GREHeader
 from .http import HTTP_ALT_PORT, HTTP_PORT, HTTPRequest, HTTPResponse
 from .icmp import ICMPHeader
@@ -358,6 +386,7 @@ from .session_mix import CombinedStream, generate_session_mix, merge_streams
 from .stream_encap import (
     EncapSpec,
     EtherIPEncap,
+    GeneveEncap,
     GREEncap,
     IPIPEncap,
     MPLSEncap,
@@ -402,6 +431,12 @@ __all__ = [
     "VXLANHeader",
     "VXLAN_PORT",
     "VXLAN_FLAG_VALID_VNI",
+    "GeneveHeader",
+    "GeneveOption",
+    "GENEVE_PORT",
+    "GENEVE_PROTO_IPV4",
+    "GENEVE_PROTO_IPV6",
+    "GENEVE_PROTO_TEB",
     "IPHeader",
     "IPv6Header",
     "HopByHopOptions",
@@ -517,6 +552,7 @@ __all__ = [
     "EtherIPEncap",
     "IPIPEncap",
     "VXLANEncap",
+    "GeneveEncap",
     "fragment_ipv4",
     "fragment_ipv6",
     "DNSFlags",

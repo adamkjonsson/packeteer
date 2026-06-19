@@ -87,6 +87,7 @@ from packeteer.generate.dns import (
 )
 from packeteer.generate.etherip import IPPROTO_ETHERIP, EtherIPHeader
 from packeteer.generate.ethernet import EthernetHeader
+from packeteer.generate.geneve import GeneveHeader
 from packeteer.generate.gre import GREHeader
 from packeteer.generate.http import HTTPMessage, HTTPRequest, HTTPResponse
 from packeteer.generate.icmp import ICMPHeader
@@ -411,6 +412,38 @@ def _apply_vxlan(config: dict[str, Any], hdr: VXLANHeader, tunneled: ParsedPacke
     config["vxlan"] = inner
 
 
+def _apply_geneve(config: dict[str, Any], hdr: GeneveHeader, tunneled: ParsedPacket) -> None:
+    """Serialise *hdr* and the inner frame *tunneled* into ``config["geneve"]``.
+
+    The outer UDP transport (port 6081) is recorded separately by the caller via
+    :func:`_apply_transport`.  The inner frame may be a full Ethernet frame
+    (TEB) or a raw IP packet, handled like :func:`_apply_gre`.
+    """
+    inner: dict[str, Any] = {"vni": hdr.vni}
+    if hdr.oam:
+        inner["oam"] = True
+    if hdr.options:
+        inner["options"] = [
+            {
+                "class":    o.option_class,
+                "type":     o.type,
+                **({"critical": True} if o.critical else {}),
+                "data":     o.data.hex(),
+            }
+            for o in hdr.options
+        ]
+    if tunneled.ethernet is not None:
+        _apply_ethernet(inner, tunneled.ethernet)
+    for label in tunneled.mpls:
+        _apply_mpls(inner, label)
+    if tunneled.pppoe is not None:
+        _apply_pppoe(inner, tunneled.pppoe)
+    if tunneled.ip is not None:
+        _apply_ip(inner, tunneled.ip)
+    _apply_inner_tail(inner, tunneled)
+    config["geneve"] = inner
+
+
 def _apply_ipip(config: dict[str, Any], tunneled: "ParsedPacket") -> None:
     """Serialise inner IP-in-IP frame into ``config["ipip"]`` (no ethernet)."""
     inner: dict[str, Any] = {}
@@ -709,14 +742,15 @@ def update_config(
 def apply_tunneled(config: dict[str, Any], pkt: "ParsedPacket") -> None:
     """Serialise the tunnel layers of *pkt* into *config*.
 
-    Handles every tunnel type — IP-in-IP, GRE, EtherIP, pseudowire, and
-    VXLAN — by dispatching to the appropriate private helper.  Call this
+    Handles every tunnel type — IP-in-IP, GRE, EtherIP, pseudowire, VXLAN,
+    and GENEVE — by dispatching to the appropriate private helper.  Call this
     after the outer IP layer has been written via :func:`update_config`
     whenever :attr:`~packeteer.parse.core.ParsedPacket.ipip`,
     :attr:`~packeteer.parse.core.ParsedPacket.gre`,
     :attr:`~packeteer.parse.core.ParsedPacket.etherip`,
-    :attr:`~packeteer.parse.core.ParsedPacket.pseudowire`, or
-    :attr:`~packeteer.parse.core.ParsedPacket.vxlan` is set on *pkt*.
+    :attr:`~packeteer.parse.core.ParsedPacket.pseudowire`,
+    :attr:`~packeteer.parse.core.ParsedPacket.vxlan`, or
+    :attr:`~packeteer.parse.core.ParsedPacket.geneve` is set on *pkt*.
 
     Modifies *config* in place.  Does nothing when *pkt* carries no tunnel.
 
@@ -739,6 +773,11 @@ def apply_tunneled(config: dict[str, Any], pkt: "ParsedPacket") -> None:
         if pkt.transport is not None:
             _apply_transport(config, pkt.transport)
         _apply_vxlan(config, pkt.vxlan, pkt.tunneled)
+    elif pkt.geneve is not None and pkt.tunneled is not None:
+        # GENEVE rides on UDP: record the outer UDP ports, then the GENEVE block.
+        if pkt.transport is not None:
+            _apply_transport(config, pkt.transport)
+        _apply_geneve(config, pkt.geneve, pkt.tunneled)
 
 
 def to_packet_spec(

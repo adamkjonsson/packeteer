@@ -11,6 +11,7 @@ from .core import (
 )
 from .etherip import packet_parser as etherip_packet_parser
 from .ethernet import packet_parser as ethernet_packet_parser
+from .geneve import packet_parser as geneve_packet_parser
 from .gre import packet_parser as gre_packet_parser
 from .icmp import packet_parser as icmp_packet_parser
 from .icmpv6 import packet_parser as icmpv6_packet_parser
@@ -39,6 +40,7 @@ __all__ = [
     "to_json_string",
     "ethernet_packet_parser",
     "etherip_packet_parser",
+    "geneve_packet_parser",
     "gre_packet_parser",
     "vlan_packet_parser",
     "mpls_packet_parser",

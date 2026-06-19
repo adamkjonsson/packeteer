@@ -107,6 +107,7 @@ from packeteer.generate.dns import (
     DNSRDataTXT,
     DNSResourceRecord,
 )
+from packeteer.generate.geneve import GENEVE_PORT, GeneveOption
 from packeteer.generate.http import HTTPMessage, HTTPRequest, HTTPResponse
 from packeteer.generate.payloads.http import HTTPRestConfig, generate_http_stream
 from packeteer.generate.payloads.vpn import VPNConfig, generate_vpn_stream
@@ -132,6 +133,7 @@ from packeteer.generate.sctp_stream import SCTPStreamConfig, generate_sctp_strea
 from packeteer.generate.session_mix import CombinedStream, generate_session_mix
 from packeteer.generate.stream_encap import (
     EtherIPEncap,
+    GeneveEncap,
     GREEncap,
     IPIPEncap,
     MPLSEncap,
@@ -591,6 +593,19 @@ def _apply_ip_chain(
     return _apply_payload_spec(b, spec.get("payload", {}), packet_num, "ipip inner ")
 
 
+def _geneve_options_from_spec(options: list) -> list[GeneveOption]:
+    """Build a list of :class:`GeneveOption` from a packet-spec ``options`` list."""
+    return [
+        GeneveOption(
+            option_class=o["class"],
+            type=o.get("type", 0),
+            critical=o.get("critical", False),
+            data=bytes.fromhex(o.get("data", "")),
+        )
+        for o in options
+    ]
+
+
 def _apply_tunnel_protocol(
     b: "PacketBuilder",
     proto_lower: str,
@@ -640,6 +655,27 @@ def _apply_tunnel_protocol(
             flags=vxlan_spec.get("flags", VXLAN_FLAG_VALID_VNI),
         )
         b, _ = _apply_spec_to_builder(b, vxlan_spec, packet_num)
+        return b, True
+
+    # GENEVE rides on UDP (port 6081); the inner frame may be Ethernet or IP.
+    if proto_lower == "udp" and "geneve" in spec:
+        geneve_spec = spec["geneve"]
+        transport = spec.get("transport", {})
+        b = b.udp(
+            src_port=transport.get("src_port", GENEVE_PORT),
+            dst_port=transport.get("dst_port", GENEVE_PORT),
+        )
+        b = b.geneve(
+            vni=geneve_spec.get("vni", 0),
+            options=_geneve_options_from_spec(geneve_spec.get("options", [])),
+            oam=geneve_spec.get("oam", False),
+        )
+        if "ethernet" in geneve_spec:
+            # TEB: inner spec includes an Ethernet layer
+            b, _ = _apply_spec_to_builder(b, geneve_spec, packet_num)
+        else:
+            # IP-in-GENEVE: no inner Ethernet
+            b = _apply_ip_chain(b, geneve_spec, packet_num)
         return b, True
 
     return b, False
@@ -1177,6 +1213,10 @@ _STREAM_PARAMS: dict[str, tuple[str, object, object]] = {
     "vxlan_vni":      ("vxlan_vni",      int,                                    None),
     "vxlan_ttl":      ("vxlan_ttl",      int,                                    None),
     "vxlan_src_port": ("vxlan_src_port", int,                                    None),
+    "geneve":          ("geneve",          lambda s: s.split(),                  None),
+    "geneve_vni":      ("geneve_vni",      int,                                  None),
+    "geneve_ttl":      ("geneve_ttl",      int,                                  None),
+    "geneve_src_port": ("geneve_src_port", int,                                  None),
 }
 
 
@@ -1242,11 +1282,12 @@ def _parse_stream_encap(args: argparse.Namespace) -> "list[StreamEncap] | None":
     Multiple encapsulations may be combined (e.g. ``--mpls 100 --ipip ...``
     produces MPLS labels followed by an IP-in-IP tunnel).  The order of layers
     in the returned list is fixed: tag-based layers first (VLAN/QinQ → MPLS →
-    PPPoE), then at most one tunnel layer (GRE / EtherIP / IPIP / VXLAN).
+    PPPoE), then at most one tunnel layer (GRE / EtherIP / IPIP / VXLAN / GENEVE).
 
     Constraints enforced:
     - ``--vlan`` and ``--qinq`` are mutually exclusive (both are VLAN tags).
-    - At most one tunnel type (``--gre``, ``--etherip``, ``--ipip``, ``--vxlan``).
+    - At most one tunnel type (``--gre``, ``--etherip``, ``--ipip``, ``--vxlan``,
+      ``--geneve``).
 
     Returns ``None`` when no encapsulation was requested.
     """
@@ -1289,7 +1330,7 @@ def _parse_stream_encap(args: argparse.Namespace) -> "list[StreamEncap] | None":
         layers.append(PPPoEEncap(session_id=int(args.pppoe)))
 
     # ── Tunnel encap (at most one) ─────────────────────────────────────────────
-    tunnel_names = [n for n in ("gre", "etherip", "ipip", "vxlan")
+    tunnel_names = [n for n in ("gre", "etherip", "ipip", "vxlan", "geneve")
                     if getattr(args, n, None) is not None]
     if len(tunnel_names) > 1:
         print(
@@ -1321,6 +1362,14 @@ def _parse_stream_encap(args: argparse.Namespace) -> "list[StreamEncap] | None":
             ttl=_int("vxlan_ttl", 64),
             udp_src_port=_int("vxlan_src_port", VXLAN_PORT),
         ))
+    elif "geneve" in tunnel_names:
+        src, dst = args.geneve
+        layers.append(GeneveEncap(
+            vni=_int("geneve_vni", 0),
+            src_ip=src, dst_ip=dst,
+            ttl=_int("geneve_ttl", 64),
+            udp_src_port=_int("geneve_src_port", GENEVE_PORT),
+        ))
 
     return layers if layers else None
 
@@ -1350,7 +1399,8 @@ def _stream_to_json(packets: list, include_ethernet: bool) -> str:
         if pkt.ip is not None:
             update_config(cfg, pkt.ip)
         if (pkt.ipip or pkt.gre is not None or pkt.etherip is not None
-                or pkt.pseudowire is not None or pkt.vxlan is not None):
+                or pkt.pseudowire is not None or pkt.vxlan is not None
+                or pkt.geneve is not None):
             apply_tunneled(cfg, pkt)
         elif pkt.transport is not None:
             update_config(cfg, pkt.transport)
@@ -2213,6 +2263,26 @@ def main() -> None:
         "--vxlan-src-port", type=int, default=None, metavar="PORT",
         dest="vxlan_src_port",
         help="Outer UDP source port for VXLAN tunnel (default 4789)",
+    )
+    encap_group.add_argument(
+        "--geneve", nargs=2, default=None,
+        metavar=("OUTER_SRC", "OUTER_DST"),
+        help="GENEVE tunnel (RFC 8926) over UDP:6081; specify outer IP source and destination",
+    )
+    encap_group.add_argument(
+        "--geneve-vni", type=int, default=None, metavar="VNI",
+        dest="geneve_vni",
+        help="24-bit GENEVE Virtual Network Identifier; used with --geneve (default 0)",
+    )
+    encap_group.add_argument(
+        "--geneve-ttl", type=int, default=None, metavar="N",
+        dest="geneve_ttl",
+        help="Outer IP TTL for GENEVE tunnel (default 64)",
+    )
+    encap_group.add_argument(
+        "--geneve-src-port", type=int, default=None, metavar="PORT",
+        dest="geneve_src_port",
+        help="Outer UDP source port for GENEVE tunnel (default 6081)",
     )
     # Output (may also be provided via --config; mutual exclusivity enforced in _cmd_stream)
     stream_parser.add_argument("--pcap", default=None, metavar="FILE",

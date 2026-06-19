@@ -421,6 +421,9 @@ def generate_tcp_stream(
             * :class:`~packeteer.generate.stream_encap.VXLANEncap` — VXLAN tunnel;
               the outer transport is always UDP on port 4789 regardless of the
               inner stream protocol
+            * :class:`~packeteer.generate.stream_encap.GeneveEncap` — GENEVE
+              tunnel; like VXLAN, always UDP (port 6081) regardless of the inner
+              stream protocol
 
         config: Optional :class:`TCPStreamConfig` supplying timing, anomaly
             injection, per-packet hook settings, and RNG seed.  All fields

@@ -99,6 +99,9 @@ RFCs implemented or referenced by this library.
 * - [RFC 8200](https://datatracker.ietf.org/doc/html/rfc8200)
   - Internet Protocol Version 6 (IPv6, obsoletes 2460)
   - `IPv6Header`, `fragment_ipv6`; Hop-by-Hop Options extension header §4.3 (`HopByHopOptions`, `.hop_by_hop_options()`)
+* - [RFC 8926](https://datatracker.ietf.org/doc/html/rfc8926)
+  - Geneve: Generic Network Virtualization Encapsulation
+  - `GeneveHeader`, `GeneveOption`, `GeneveEncap`, `.geneve()`, `GENEVE_PORT`, `packeteer.parse.geneve`
 * - [RFC 9260](https://datatracker.ietf.org/doc/html/rfc9260)
   - Stream Control Transmission Protocol (SCTP)
   - `SCTPHeader` and all chunk dataclasses; `IPPROTO_SCTP`; CRC-32c checksum (§6.8)

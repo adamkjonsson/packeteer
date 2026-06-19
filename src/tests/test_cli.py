@@ -601,6 +601,8 @@ class TestParseStreamEncap(unittest.TestCase):
             "ipip": None, "ipip_ttl": None,
             "vxlan": None, "vxlan_vni": None, "vxlan_ttl": None,
             "vxlan_src_port": None,
+            "geneve": None, "geneve_vni": None, "geneve_ttl": None,
+            "geneve_src_port": None,
         }
         defaults.update(kwargs)
         return argparse.Namespace(**defaults)
@@ -734,6 +736,30 @@ class TestParseStreamEncap(unittest.TestCase):
         with self.assertRaises(SystemExit):
             cli._parse_stream_encap(args)
 
+    def test_geneve_basic(self):
+        from packeteer.generate.stream_encap import GeneveEncap
+        args = self._encap_args(geneve=["10.0.0.1", "10.0.0.2"], geneve_vni=5000)
+        result = cli._parse_stream_encap(args)
+        self.assertIsInstance(result[0], GeneveEncap)
+        self.assertEqual(result[0].vni, 5000)
+        self.assertEqual(result[0].src_ip, "10.0.0.1")
+
+    def test_geneve_with_ttl_and_src_port(self):
+        args = self._encap_args(
+            geneve=["10.0.0.1", "10.0.0.2"], geneve_ttl=32, geneve_src_port=12345,
+        )
+        result = cli._parse_stream_encap(args)
+        self.assertEqual(result[0].ttl, 32)
+        self.assertEqual(result[0].udp_src_port, 12345)
+
+    def test_geneve_and_vxlan_mutually_exclusive(self):
+        args = self._encap_args(
+            geneve=["1.2.3.4", "5.6.7.8"],
+            vxlan=["9.0.0.1", "9.0.0.2"],
+        )
+        with self.assertRaises(SystemExit):
+            cli._parse_stream_encap(args)
+
     def test_multiple_tunnels_exits(self):
         args = self._encap_args(
             gre=["1.2.3.4", "5.6.7.8"],
@@ -816,6 +842,8 @@ class TestCmdStreamWithEncap(unittest.TestCase):
             "ipip": None, "ipip_ttl": None,
             "vxlan": None, "vxlan_vni": None, "vxlan_ttl": None,
             "vxlan_src_port": None,
+            "geneve": None, "geneve_vni": None, "geneve_ttl": None,
+            "geneve_src_port": None,
         }
         defaults.update(kwargs)
         return argparse.Namespace(**defaults)
@@ -850,6 +878,15 @@ class TestCmdStreamWithEncap(unittest.TestCase):
         self.assertEqual(data[pkt_start + 23], 17)
         # outer UDP dst port at eth(14)+ip(20)+2 = 36
         self.assertEqual(struct.unpack_from("!H", data, pkt_start + 36)[0], 4789)
+
+    def test_stream_with_geneve(self):
+        out = _tmpfile(".pcap")
+        args = self._base_args(pcap=out, geneve=["192.168.1.1", "192.168.1.2"], geneve_vni=42)
+        cli._cmd_stream(args)
+        data = Path(out).read_bytes()
+        pkt_start = 24 + 16
+        self.assertEqual(data[pkt_start + 23], 17)  # outer UDP
+        self.assertEqual(struct.unpack_from("!H", data, pkt_start + 36)[0], 6081)
 
     def test_stream_with_gre(self):
         out = _tmpfile(".pcap")

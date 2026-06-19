@@ -280,6 +280,50 @@ present.
 
 ---
 
+(packet-spec-geneve)=
+## `geneve`
+
+An optional GENEVE tunnel (RFC 8926).  Like VXLAN, GENEVE rides on UDP, so the
+enclosing packet keeps `network.protocol` set to `"udp"` and carries the outer
+UDP ports in its `transport` block (destination port `6081`).  The `"geneve"`
+key holds the VNI, optional TLV options, and the inner frame — which may be a
+full Ethernet frame (the `"ethernet"` key is present) or a raw IP packet (no
+`"ethernet"` key), exactly like the `"gre"` section.
+
+```json
+"network":   { "src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "udp", "ttl": 64 },
+"transport": { "src_port": 6081, "dst_port": 6081 },
+"geneve": {
+  "vni": 5000,
+  "options": [
+    { "class": 259, "type": 1, "critical": true, "data": "deadbeef" }
+  ],
+  "ethernet":  { "src_mac": "aa:bb:cc:dd:ee:01", "dst_mac": "aa:bb:cc:dd:ee:02" },
+  "network":   { "src": "192.168.1.1", "dst": "192.168.1.2", "protocol": "tcp" },
+  "transport": { "dst_port": 80 }
+}
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `vni` | `0` | 24-bit Virtual Network Identifier |
+| `oam` | `false` | Sets the O (OAM) flag when `true` |
+| `options` | `[]` | List of TLV options (see below) |
+
+Each entry in `options` is an object:
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `class` | — | 16-bit Option Class |
+| `type` | `0` | 7-bit option type |
+| `critical` | `false` | Sets the option's critical bit (and the header C flag) |
+| `data` | `""` | Option data as a hex string; must be a whole number of 4-byte words |
+
+The Protocol Type, Opt Len, and C flag are computed automatically.  The outer
+UDP destination port defaults to `6081` when no `transport` block is present.
+
+---
+
 (packet-spec-network)=
 ## `network`
 
