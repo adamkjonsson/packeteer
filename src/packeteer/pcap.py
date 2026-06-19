@@ -81,6 +81,12 @@ import io
 import os
 import struct
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+#: Largest value the 32-bit pcap ``ts_sec`` field can hold (year 2106).
+_MAX_TS_SEC: int = 0xFFFFFFFF
 
 LINKTYPE_ETHERNET: int = 1    # Ethernet II
 LINKTYPE_RAW: int = 101       # Raw IP (no Ethernet header)
@@ -541,6 +547,85 @@ def read_pcap(
     return result
 
 
+def datetime_to_pcap_ts(
+    dt: datetime, *, nanoseconds: bool = False,
+) -> tuple[int, int]:
+    """Convert a :class:`~datetime.datetime` to a pcap ``(ts_sec, ts_frac)`` pair.
+
+    Use this to build the timestamp portion of the tuples passed to
+    :func:`write_pcap` / :func:`write_pcapng` when your timestamps are
+    :class:`~datetime.datetime` objects::
+
+        write_pcap([(raw, *datetime_to_pcap_ts(dt))], path="out.pcap")
+
+    A **naive** *dt* (no ``tzinfo``) is assumed to already be UTC, matching the
+    pcap convention that timestamps are UTC.  A timezone-aware *dt* is converted
+    to UTC via its offset.  Conversion uses integer arithmetic, so it is exact
+    to the microsecond.
+
+    Note that :class:`~datetime.datetime` only has microsecond resolution: when
+    *nanoseconds* is ``True`` the returned fraction is a whole number of
+    microseconds scaled to nanoseconds (the last three digits are always zero).
+
+    Args:
+        dt: The capture time.  Naive values are treated as UTC.
+        nanoseconds: When ``True``, return the fraction in nanoseconds (for a
+            nanosecond-resolution file); otherwise in microseconds (the
+            default).  Must match the *nanoseconds* argument of the writer.
+
+    Returns:
+        ``(ts_sec, ts_frac)`` where *ts_sec* is whole seconds since the Unix
+        epoch and *ts_frac* is the sub-second remainder in microseconds (or
+        nanoseconds when *nanoseconds* is ``True``).
+
+    Raises:
+        ValueError: If *dt* predates the Unix epoch or is beyond what the
+            32-bit ``ts_sec`` field can hold (year 2106).
+
+    """
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    delta = dt - _EPOCH
+    total_us = delta // timedelta(microseconds=1)
+    ts_sec, us_frac = divmod(total_us, 1_000_000)
+    if not 0 <= ts_sec <= _MAX_TS_SEC:
+        raise ValueError(
+            f"timestamp {dt.isoformat()} is out of range for a pcap file "
+            f"(ts_sec must be between 0 and {_MAX_TS_SEC}, got {ts_sec})"
+        )
+    return (ts_sec, us_frac * 1000 if nanoseconds else us_frac)
+
+
+def pcap_ts_to_datetime(
+    ts_sec: int, ts_frac: int, *, nanoseconds: bool = False,
+) -> datetime:
+    """Convert a pcap ``(ts_sec, ts_frac)`` pair to a timezone-aware UTC datetime.
+
+    The inverse of :func:`datetime_to_pcap_ts`, for turning the tuples returned
+    by :func:`read_pcap` back into :class:`~datetime.datetime` objects::
+
+        pcap = read_pcap(path="in.pcap")
+        for data, ts_sec, ts_frac in pcap.packets:
+            when = pcap_ts_to_datetime(ts_sec, ts_frac, nanoseconds=pcap.header.nanoseconds)
+
+    Because :class:`~datetime.datetime` only has microsecond resolution, any
+    sub-microsecond part of a nanosecond timestamp is truncated.
+
+    Args:
+        ts_sec: Whole seconds since the Unix epoch.
+        ts_frac: Sub-second remainder — microseconds, or nanoseconds when
+            *nanoseconds* is ``True``.
+        nanoseconds: When ``True``, *ts_frac* is interpreted as nanoseconds;
+            otherwise as microseconds (the default).
+
+    Returns:
+        A timezone-aware :class:`~datetime.datetime` in UTC.
+
+    """
+    us = ts_frac // 1000 if nanoseconds else ts_frac
+    return _EPOCH + timedelta(seconds=ts_sec, microseconds=us)
+
+
 def write_pcap(
     packets: list[tuple[bytes, int, int]],
     *,
@@ -555,6 +640,9 @@ def write_pcap(
         packets: Ordered list of ``(raw_bytes, ts_sec, ts_frac)`` — one per
             pcap record.  *ts_frac* is microseconds when *nanoseconds* is
             ``False`` (default) or nanoseconds when *nanoseconds* is ``True``.
+            For :class:`~datetime.datetime` timestamps, build the pair with
+            :func:`datetime_to_pcap_ts`, e.g.
+            ``(raw, *datetime_to_pcap_ts(dt, nanoseconds=nanoseconds))``.
         path: Destination file path.  Created or overwritten.
         file_object: Destination file-like object.
         link_type: pcap link-layer type.  Use :data:`LINKTYPE_ETHERNET`
@@ -606,6 +694,9 @@ def write_pcapng(
         packets: Ordered list of ``(raw_bytes, ts_sec, ts_frac)`` — one per
             packet.  *ts_frac* is microseconds when *nanoseconds* is ``False``
             (default) or nanoseconds when *nanoseconds* is ``True``.
+            For :class:`~datetime.datetime` timestamps, build the pair with
+            :func:`datetime_to_pcap_ts`, e.g.
+            ``(raw, *datetime_to_pcap_ts(dt, nanoseconds=nanoseconds))``.
         path: Destination file path.  Created or overwritten.
         file_object: Destination file-like object.
         link_type: Link-layer type written into the Interface Description

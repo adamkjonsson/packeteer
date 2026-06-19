@@ -8,6 +8,34 @@ All notable changes to packeteer are recorded in this file.
 
 ### New features
 
+- **VXLAN encapsulation (RFC 7348)** — Virtual eXtensible LAN tunnelling is now
+  supported end-to-end across the builder, stream encapsulation, parser,
+  packet-spec serialisation, and CLI.
+
+  - `PacketBuilder.vxlan(vni=..., flags=...)` inserts the 8-byte VXLAN header
+    after the outer UDP layer.  When the preceding `.udp()` is left on its
+    default port, the destination port is switched to the standard VXLAN port
+    (4789) automatically; an explicit non-default port is preserved.
+  - New `VXLANEncap(vni, src_ip, dst_ip, ttl=64, udp_src_port=4789)` stream
+    encapsulation descriptor wraps any generated TCP/UDP/SCTP stream as inner
+    traffic inside an outer Ethernet / IP / UDP:4789 / VXLAN / inner-Ethernet
+    stack.
+  - Unlike the IP-protocol tunnels (GRE/EtherIP/IP-in-IP), VXLAN is recognised
+    by the outer UDP destination port 4789, so the parser retains the outer UDP
+    header in `ParsedPacket.transport` and stores the decoded `VXLANHeader` in
+    the new `ParsedPacket.vxlan` field, with the inner Ethernet frame parsed
+    recursively into `tunneled`.
+  - `packeteer parse` serialises VXLAN packets with a top-level `"vxlan"` key
+    (VNI plus the nested inner-frame spec) alongside the outer UDP transport;
+    `packeteer build` reconstructs them.
+  - `packeteer stream` gains `--vxlan SRC DST`, `--vxlan-vni`, `--vxlan-ttl`,
+    and `--vxlan-src-port` flags (and matching INI keys).
+  - New `VXLANHeader` dataclass, `VXLAN_PORT` (4789), and `VXLAN_FLAG_VALID_VNI`
+    (`0x08`) exported from `packeteer.generate`; new `packeteer.parse.vxlan`
+    parser module.
+  - New tests in `test_vxlan.py`, plus VXLAN cases added to `test_stream_encap.py`
+    and `test_cli.py`.
+
 - **Fictive VPN payload type for `packeteer stream`** — `--payload vpn`
   generates a small binary VPN protocol over two UDP channels: a key-exchange
   channel (`--vpn-key-port`, default 51821) doing a three-message handshake
@@ -293,6 +321,25 @@ All notable changes to packeteer are recorded in this file.
 
 ### Enhancements
 
+- **`datetime` ↔ pcap timestamp converters** — two helpers in `packeteer.pcap`
+  simplify the common case of working with `datetime.datetime` capture times,
+  which `write_pcap` / `write_pcapng` / `read_pcap` otherwise express as a
+  `(ts_sec, ts_frac)` pair:
+
+  - `datetime_to_pcap_ts(dt, *, nanoseconds=False) -> (ts_sec, ts_frac)` for the
+    write side — unpack it straight into a record tuple:
+    `write_pcap([(raw, *datetime_to_pcap_ts(dt))], ...)`.  A naive *dt* is
+    treated as UTC, conversion is integer-exact to the microsecond, and a
+    `ValueError` is raised for timestamps outside the 32-bit `ts_sec` range
+    (pre-1970 or beyond year 2106).
+  - `pcap_ts_to_datetime(ts_sec, ts_frac, *, nanoseconds=False) -> datetime`
+    for the read side — returns a timezone-aware UTC datetime.
+  - `datetime` has only microsecond resolution, so nanosecond timestamps
+    round-trip on a microsecond grid (documented on both helpers).
+  - The `write_pcap` / `write_pcapng` signatures are unchanged — the helpers are
+    opt-in converters, not a new accepted tuple shape.
+  - 14 new tests in `test_pcap_timestamps.py`.
+
 - **TCP flag constants used consistently throughout the codebase** — raw
   numeric literals (`0x002`, `0x018`, …) have been replaced with the named
   constants already exported from `packeteer.generate` (`TCP_SYN`,
@@ -386,6 +433,22 @@ All notable changes to packeteer are recorded in this file.
   warnings should pass `SanitiseOptions(scan_pii=False)`.
 
 ### Documentation
+
+- **Tag vs tunnel encapsulation clarified** — the stream-generator docstrings
+  (`generate_tcp_stream` / `generate_udp_stream` / `generate_sctp_stream`), the
+  `stream_encap` module, and the generating / stream-encap guide pages now
+  distinguish **tag-based** encaps (VLAN/QinQ/MPLS/PPPoE), which leave the
+  stream's own transport on the wire, from **tunnel** encaps
+  (GRE/EtherIP/IPIP/VXLAN), which carry the whole stream as inner traffic.  This
+  clarifies why every stream generator accepts every encap, and that VXLAN
+  always uses an outer UDP datagram on port 4789 regardless of the inner stream
+  protocol.  The previously-missing `VXLANEncap` was also added to those
+  docstring lists.
+
+- **`datetime` timestamp converters documented** — `docs/api/pcap-io.md` gains a
+  "Timestamp conversion" section with autodoc for `datetime_to_pcap_ts` and
+  `pcap_ts_to_datetime`, and `docs/guide/pcap.md` shows building record
+  timestamps from `datetime` objects and reading them back.
 
 - **Fuzzer documentation** — four new pages covering the `fuzz` feature:
   - `docs/cli/fuzz.md` — CLI reference: usage synopsis, output options, full

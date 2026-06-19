@@ -35,6 +35,24 @@ pcapng (`.pcapng`) files.  Both formats are detected automatically on read.
 
 ---
 
+## Timestamp conversion
+
+`write_pcap` / `write_pcapng` take timestamps as a `(ts_sec, ts_frac)` pair and
+`read_pcap` returns them the same way.  When you are working with
+`datetime.datetime` objects, use these helpers to convert in either direction.
+Naive datetimes are treated as UTC; `datetime` resolution is microseconds, so
+nanosecond timestamps round-trip on a microsecond grid.
+
+```{eval-rst}
+.. autofunction:: packeteer.pcap.datetime_to_pcap_ts
+```
+
+```{eval-rst}
+.. autofunction:: packeteer.pcap.pcap_ts_to_datetime
+```
+
+---
+
 ## Link-layer type constants
 
 | Constant | Value | Description |

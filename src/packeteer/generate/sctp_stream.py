@@ -311,8 +311,11 @@ def generate_sctp_stream(
             Accepts a single descriptor, a list of descriptors (applied
             outermost first), or ``None`` (default, no encapsulation).
             See :mod:`packeteer.generate.stream_encap` for available types
-            (VLANEncap, QinQEncap, MPLSEncap, PPPoEEncap, GREEncap,
-            EtherIPEncap, IPIPEncap) and combination rules.
+            (tag-based: VLANEncap, QinQEncap, MPLSEncap, PPPoEEncap; tunnel:
+            GREEncap, EtherIPEncap, IPIPEncap, VXLANEncap) and combination
+            rules.  Tunnel encaps carry the whole stream as inner traffic;
+            VXLANEncap in particular always uses an outer UDP datagram on port
+            4789 regardless of the inner stream protocol.
         config: Optional :class:`SCTPStreamConfig` supplying timing details,
             explicit payload sizes, and RNG seed.  All fields default to their
             *SCTPStreamConfig* defaults when ``None``.
