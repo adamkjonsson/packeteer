@@ -324,6 +324,52 @@ UDP destination port defaults to `6081` when no `transport` block is present.
 
 ---
 
+(packet-spec-gtpu)=
+## `gtpu`
+
+An optional GTP-U tunnel (GTPv1-U, 3GPP TS 29.281).  GTP-U rides on UDP, so the
+enclosing packet keeps `network.protocol` set to `"udp"` and carries the outer
+UDP ports in its `transport` block (destination port `2152`).  The `"gtpu"` key
+holds the TEID, optional fields, and — for the default G-PDU message — the inner
+**IP** packet (GTP-U carries IP directly, so there is no `"ethernet"` key).
+
+```json
+"network":   { "src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "udp", "ttl": 64 },
+"transport": { "src_port": 2152, "dst_port": 2152 },
+"gtpu": {
+  "teid": 4660,
+  "sequence": 7,
+  "extension_headers": [
+    { "type": 133, "content": "010000000000" }
+  ],
+  "network":   { "src": "192.168.1.1", "dst": "192.168.1.2", "protocol": "tcp" },
+  "transport": { "dst_port": 80 }
+}
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `teid` | `0` | 32-bit Tunnel Endpoint Identifier |
+| `message_type` | `255` | GTP-U message type; omitted from parse output for G-PDU |
+| `sequence` | — | 16-bit sequence number (sets the S flag) |
+| `n_pdu` | — | 8-bit N-PDU number (sets the PN flag) |
+| `extension_headers` | `[]` | List of extension headers (see below) |
+
+Each entry in `extension_headers` is an object:
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `type` | — | 8-bit extension header type (e.g. `133` = PDU Session Container) |
+| `content` | `""` | Content as a hex string; `(2 + len) % 4 == 0` octets |
+
+The Length field, the E/S/PN flags, and the extension-header chaining pointers
+are computed automatically.  When the message is **not** a G-PDU (e.g. End
+Marker) the `"gtpu"` block omits the inner `network`; control-message
+Information Elements are not modelled.  The outer UDP destination port defaults
+to `2152` when no `transport` block is present.
+
+---
+
 (packet-spec-network)=
 ## `network`
 

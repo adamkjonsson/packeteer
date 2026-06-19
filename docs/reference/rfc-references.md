@@ -105,6 +105,9 @@ RFCs implemented or referenced by this library.
 * - [RFC 9260](https://datatracker.ietf.org/doc/html/rfc9260)
   - Stream Control Transmission Protocol (SCTP)
   - `SCTPHeader` and all chunk dataclasses; `IPPROTO_SCTP`; CRC-32c checksum (§6.8)
+* - [3GPP TS 29.281](https://www.3gpp.org/DynaReport/29281.htm)
+  - GPRS Tunnelling Protocol User Plane (GTPv1-U)
+  - `GTPUHeader`, `GTPUExtensionHeader`, `GTPUEncap`, `.gtpu()`, `GTPU_PORT`, `packeteer.parse.gtpu`
 * - [IEEE 802.1Q](https://standards.ieee.org/ieee/802.1Q)
   - VLAN Tagging
   - `VLANTag`

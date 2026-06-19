@@ -6,11 +6,13 @@ import unittest
 
 from packeteer.generate.builder import PacketBuilder
 from packeteer.generate.geneve import GENEVE_PORT
+from packeteer.generate.gtpu import GTPU_PORT
 from packeteer.generate.sctp_stream import generate_sctp_stream
 from packeteer.generate.stream_encap import (
     EtherIPEncap,
     GeneveEncap,
     GREEncap,
+    GTPUEncap,
     IPIPEncap,
     MPLSEncap,
     PPPoEEncap,
@@ -98,6 +100,9 @@ class TestEncapIpStart(unittest.TestCase):
 
     def test_geneve_tunnel_stops_at_ethernet(self):
         self.assertEqual(_encap_ip_start(GeneveEncap(5000, "1.2.3.4", "5.6.7.8"), True), 14)
+
+    def test_gtpu_tunnel_stops_at_ethernet(self):
+        self.assertEqual(_encap_ip_start(GTPUEncap(5000, "1.2.3.4", "5.6.7.8"), True), 14)
 
     def test_vlan_then_gre_stops_after_vlan(self):
         # 14 (eth) + 4 (vlan) = 18; GRE stops accumulation
@@ -285,6 +290,18 @@ class TestApplyEncap(unittest.TestCase):
         # No options → inner Ethernet starts at 42+8 = 50
         self.assertEqual(struct.unpack_from("!H", pkt, 50 + 12)[0], 0x0800)
 
+    def test_gtpu_outer_udp_and_inner_ip(self):
+        pkt = _build_with_encap(GTPUEncap(
+            teid=0x1234, src_ip="203.0.113.1", dst_ip="203.0.113.2"))
+        # Outer IP protocol = 17 (UDP) at byte 23
+        self.assertEqual(pkt[23], 17)
+        # Outer UDP dst port at 36
+        self.assertEqual(struct.unpack_from("!H", pkt, 36)[0], GTPU_PORT)
+        # GTP-U base header at 42; TEID at +4 = 46
+        self.assertEqual(struct.unpack_from("!I", pkt, 46)[0], 0x1234)
+        # No optional block → inner IP (no Ethernet) starts at 42+8 = 50
+        self.assertEqual(pkt[50] >> 4, 4)   # IPv4 version nibble
+
     def test_combined_vlan_then_gre(self):
         layers = [VLANEncap(vid=100), GREEncap("203.0.113.1", "203.0.113.2")]
         pkt = _build_with_encap(layers)
@@ -377,6 +394,12 @@ class TestTCPStreamWithEncap(unittest.TestCase):
         pkt = s.packets[0].raw
         self.assertEqual(pkt[23], 17)  # outer UDP
         self.assertEqual(struct.unpack_from("!H", pkt, 36)[0], GENEVE_PORT)
+
+    def test_gtpu_stream(self):
+        s = self._stream(GTPUEncap(teid=42, src_ip="192.168.1.1", dst_ip="192.168.1.2"))
+        pkt = s.packets[0].raw
+        self.assertEqual(pkt[23], 17)  # outer UDP
+        self.assertEqual(struct.unpack_from("!H", pkt, 36)[0], GTPU_PORT)
 
     def test_combined_mpls_ipip_stream(self):
         layers = [MPLSEncap(labels=[100]), IPIPEncap("192.168.1.1", "192.168.1.2")]

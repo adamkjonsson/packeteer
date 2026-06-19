@@ -11,7 +11,8 @@ This package constructs byte-accurate network packets at all layers:
   EtherIP tunnels (:class:`EtherIPHeader`, RFC 3378);
   GRE tunnels (:class:`GREHeader`, RFC 2784 / RFC 2890);
   VXLAN tunnels (:class:`VXLANHeader`, RFC 7348);
-  GENEVE tunnels (:class:`GeneveHeader`, RFC 8926)
+  GENEVE tunnels (:class:`GeneveHeader`, RFC 8926);
+  GTP-U tunnels (:class:`GTPUHeader`, 3GPP TS 29.281)
 * **Layer 4** — TCP (:class:`TCPHeader`), UDP (:class:`UDPHeader`),
   SCTP (:class:`SCTPHeader`, RFC 9260), ICMPv4 (:class:`ICMPHeader`),
   ICMPv6 (:class:`ICMPv6Header`)
@@ -140,6 +141,17 @@ multiple times to produce advanced encapsulations.
         .build()
     )
 
+    # GTP-U tunnel (3GPP TS 29.281) — outer UDP:2152 + GTP-U + inner IP packet
+    pkt = (PacketBuilder()
+        .ethernet()
+        .ip(src="10.0.0.1", dst="10.0.0.2")
+        .udp()
+        .gtpu(teid=0x1234)
+        .ip(src="192.168.1.1", dst="192.168.1.2")
+        .tcp(dst_port=80)
+        .build()
+    )
+
     # PPPoE PADI discovery frame
     from packeteer.generate import PPPOE_CODE_PADI, PPPoETag, PPPOE_TAG_SERVICE_NAME
     pkt = (PacketBuilder()
@@ -170,6 +182,13 @@ Public API:
     GENEVE_PROTO_IPV4: GENEVE Protocol Type 0x0800 — IPv4 payload.
     GENEVE_PROTO_IPV6: GENEVE Protocol Type 0x86DD — IPv6 payload.
     GENEVE_PROTO_TEB: GENEVE Protocol Type 0x6558 — inner Ethernet frame.
+    GTPUHeader: Dataclass for the GTP-U tunnel header (3GPP TS 29.281).
+        Fields: teid, message_type, sequence, n_pdu, extension_headers, version.
+    GTPUExtensionHeader: Dataclass for one GTP-U extension header (header_type, content).
+    GTPU_PORT: UDP destination port 2152 — GTP-U.
+    GTPU_MSG_G_PDU: GTP-U message type 255 — user-plane G-PDU (carries inner IP).
+    GTPU_MSG_ECHO_REQUEST, GTPU_MSG_ECHO_RESPONSE, GTPU_MSG_ERROR_INDICATION,
+        GTPU_MSG_END_MARKER: GTP-U control message type constants.
     VLANTag: Dataclass for IEEE 802.1Q VLAN tag fields.
     MPLSLabel: Dataclass for one MPLS label stack entry (RFC 3032).
     ETHERTYPE_MPLS_UNICAST: EtherType 0x8847 — MPLS unicast.
@@ -293,6 +312,16 @@ from .geneve import (
     GeneveOption,
 )
 from .gre import GRE_PROTO_IPV4, GRE_PROTO_IPV6, GRE_PROTO_TEB, IPPROTO_GRE, GREHeader
+from .gtpu import (
+    GTPU_MSG_ECHO_REQUEST,
+    GTPU_MSG_ECHO_RESPONSE,
+    GTPU_MSG_END_MARKER,
+    GTPU_MSG_ERROR_INDICATION,
+    GTPU_MSG_G_PDU,
+    GTPU_PORT,
+    GTPUExtensionHeader,
+    GTPUHeader,
+)
 from .http import HTTP_ALT_PORT, HTTP_PORT, HTTPRequest, HTTPResponse
 from .icmp import ICMPHeader
 from .icmpv6 import ICMPv6Header
@@ -388,6 +417,7 @@ from .stream_encap import (
     EtherIPEncap,
     GeneveEncap,
     GREEncap,
+    GTPUEncap,
     IPIPEncap,
     MPLSEncap,
     PPPoEEncap,
@@ -437,6 +467,14 @@ __all__ = [
     "GENEVE_PROTO_IPV4",
     "GENEVE_PROTO_IPV6",
     "GENEVE_PROTO_TEB",
+    "GTPUHeader",
+    "GTPUExtensionHeader",
+    "GTPU_PORT",
+    "GTPU_MSG_G_PDU",
+    "GTPU_MSG_ECHO_REQUEST",
+    "GTPU_MSG_ECHO_RESPONSE",
+    "GTPU_MSG_ERROR_INDICATION",
+    "GTPU_MSG_END_MARKER",
     "IPHeader",
     "IPv6Header",
     "HopByHopOptions",
@@ -553,6 +591,7 @@ __all__ = [
     "IPIPEncap",
     "VXLANEncap",
     "GeneveEncap",
+    "GTPUEncap",
     "fragment_ipv4",
     "fragment_ipv6",
     "DNSFlags",
