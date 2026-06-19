@@ -402,15 +402,25 @@ def generate_tcp_stream(
         encap: One or more encapsulation layers to wrap every packet in.
             Accepts a single descriptor, a list of descriptors (applied
             outermost first), or ``None`` (default, no encapsulation).
-            Available types (all from :mod:`packeteer.generate.stream_encap`):
+            Available types (all from :mod:`packeteer.generate.stream_encap`).
+            **Tag-based** encaps insert layer-2 tags and leave the stream's own
+            transport on the wire:
 
             * :class:`~packeteer.generate.stream_encap.VLANEncap` — 802.1Q tag
             * :class:`~packeteer.generate.stream_encap.QinQEncap` — double 802.1Q tags
             * :class:`~packeteer.generate.stream_encap.MPLSEncap` — MPLS label stack
             * :class:`~packeteer.generate.stream_encap.PPPoEEncap` — PPPoE session frame
+
+            **Tunnel** encaps add their own outer headers and carry the whole
+            generated stream as *inner* traffic — so the stream's TCP becomes
+            the inner protocol, not the outer transport:
+
             * :class:`~packeteer.generate.stream_encap.GREEncap` — GRE tunnel
             * :class:`~packeteer.generate.stream_encap.EtherIPEncap` — EtherIP tunnel
             * :class:`~packeteer.generate.stream_encap.IPIPEncap` — IP-in-IP tunnel
+            * :class:`~packeteer.generate.stream_encap.VXLANEncap` — VXLAN tunnel;
+              the outer transport is always UDP on port 4789 regardless of the
+              inner stream protocol
 
         config: Optional :class:`TCPStreamConfig` supplying timing, anomaly
             injection, per-packet hook settings, and RNG seed.  All fields

@@ -22,6 +22,22 @@ IPIPEncap      IP-in-IP tunnel (RFC 2003 / RFC 4213).
 VXLANEncap     VXLAN tunnel (RFC 7348) over UDP:4789; stream becomes inner.
 =============  ============================================================
 
+There are two categories, and the distinction matters when reading the result:
+
+* **Tag-based** (``VLANEncap``, ``QinQEncap``, ``MPLSEncap``, ``PPPoEEncap``)
+  insert layer-2 tags between the Ethernet header and the IP header.  The
+  stream's own transport (TCP / UDP / SCTP) is unchanged and remains the
+  outer transport on the wire.
+
+* **Tunnel** (``GREEncap``, ``EtherIPEncap``, ``IPIPEncap``, ``VXLANEncap``)
+  add their own outer headers and carry the entire generated stream as
+  *inner* traffic.  This is why any stream generator accepts any tunnel: a
+  ``generate_tcp_stream(..., encap=VXLANEncap(...))`` call tunnels the TCP
+  conversation *inside* VXLAN — the TCP becomes the inner protocol.  In
+  particular ``VXLANEncap`` always uses an outer **UDP** datagram on port
+  4789 regardless of whether the inner stream is TCP, UDP, or SCTP; it never
+  runs over TCP or SCTP itself.
+
 Example::
 
     from packeteer.generate.stream_encap import VLANEncap, GREEncap
