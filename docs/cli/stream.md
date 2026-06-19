@@ -198,6 +198,10 @@ At most one of `--vlan` / `--qinq` may be given; at most one tunnel type.
 | `--geneve-vni N` | 24-bit GENEVE Virtual Network Identifier (default 0) |
 | `--geneve-ttl N` | Outer IP TTL (default 64) |
 | `--geneve-src-port N` | Outer UDP source port (default 6081) |
+| `--gtpu SRC_IP DST_IP` | GTP-U tunnel (3GPP TS 29.281) over UDP:2152 |
+| `--gtpu-teid N` | 32-bit GTP-U Tunnel Endpoint Identifier (default 0) |
+| `--gtpu-ttl N` | Outer IP TTL (default 64) |
+| `--gtpu-src-port N` | Outer UDP source port (default 2152) |
 
 ## INI config file
 
@@ -283,6 +287,13 @@ packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
 ```bash
 packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
     --geneve 203.0.113.1 203.0.113.2 --geneve-vni 5000 --pcap geneve.pcap
+```
+
+**GTP-U tunnel:**
+
+```bash
+packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
+    --gtpu 203.0.113.1 203.0.113.2 --gtpu-teid 5000 --pcap gtpu.pcap
 ```
 
 **Generate packet spec for downstream editing:**

@@ -8,6 +8,43 @@ All notable changes to packeteer are recorded in this file.
 
 ### New features
 
+- **GTP-U encapsulation (3GPP TS 29.281)** — GPRS Tunnelling Protocol, user
+  plane (GTPv1-U), is now supported end-to-end across the builder, stream
+  encapsulation, parser, packet-spec serialisation, and CLI.  GTP-U is
+  ubiquitous in 4G/5G mobile captures.  It rides on UDP destination port 2152
+  and, for the user-plane **G-PDU** message, carries an inner **IP** packet
+  directly (no inner Ethernet frame) — so it is shaped like IP-in-GRE / IP-in-IP
+  rather than the Ethernet-wrapping VXLAN/GENEVE.
+
+  - `PacketBuilder.gtpu(teid=…, message_type=…, sequence=…, n_pdu=…,
+    extension_headers=…)` inserts the GTP-U header after the outer UDP layer.
+    The Length field, the E/S/PN flags, and the extension-header chaining are
+    computed automatically; as with `.vxlan()`/`.geneve()` a preceding `.udp()`
+    left on its default port is rewritten to 2152.
+  - New `GTPUEncap(teid, src_ip, dst_ip, ttl=64, udp_src_port=2152, sequence=…,
+    n_pdu=…, extension_headers=…)` stream descriptor wraps any TCP/UDP/SCTP
+    stream's IP as the inner G-PDU payload.
+  - `GTPUExtensionHeader(header_type, content)` models one extension header
+    (the 5G PDU Session Container lives here); content is raw bytes.
+  - The parser recognises GTP-U by the outer UDP destination port 2152, retains
+    the outer UDP header in `ParsedPacket.transport`, and stores the decoded
+    `GTPUHeader` (TEID, sequence, N-PDU, extension headers) in the new
+    `ParsedPacket.gtpu` field.  For a G-PDU the inner IP packet is parsed
+    recursively into `tunneled`; other message types leave their content in
+    `payload`.
+  - `packeteer parse` serialises GTP-U packets with a top-level `"gtpu"` key
+    (TEID, optional fields, `extension_headers`, and the inner IP spec);
+    `packeteer build` reconstructs them.  `packeteer stream` gains `--gtpu SRC
+    DST`, `--gtpu-teid`, `--gtpu-ttl`, and `--gtpu-src-port` flags (sequence /
+    extension headers are set via the Python API / packet spec).
+  - New `GTPUHeader` / `GTPUExtensionHeader` dataclasses, `GTPU_PORT` (2152), and
+    `GTPU_MSG_*` message-type constants exported from `packeteer.generate`; new
+    `packeteer.parse.gtpu` parser module.  Control-message Information Elements
+    are not modelled (a generic `message_type` lets control messages be built as
+    headers).
+  - New tests in `test_gtpu.py`, plus GTP-U cases in `test_stream_encap.py` and
+    `test_cli.py`.
+
 - **GENEVE encapsulation (RFC 8926)** — Generic Network Virtualization
   Encapsulation is now supported end-to-end across the builder, stream
   encapsulation, parser, packet-spec serialisation, and CLI.  GENEVE is VXLAN's

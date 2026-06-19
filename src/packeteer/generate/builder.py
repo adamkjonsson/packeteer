@@ -124,6 +124,17 @@ Typical usage::
         .tcp(dst_port=80)
         .build()
     )
+
+    # GTP-U tunnel (3GPP TS 29.281) — outer UDP:2152 + GTP-U + inner IP packet
+    pkt = (PacketBuilder()
+        .ethernet()
+        .ip(src="10.0.0.1", dst="10.0.0.2")
+        .udp()
+        .gtpu(teid=0x1234)
+        .ip(src="192.168.1.1", dst="192.168.1.2")
+        .tcp(dst_port=80)
+        .build()
+    )
 """
 from __future__ import annotations
 
@@ -159,6 +170,13 @@ from .gre import (
     IPPROTO_GRE,
     GREHeader,
     _build_gre_header,
+)
+from .gtpu import (
+    GTPU_MSG_G_PDU,
+    GTPU_PORT,
+    GTPUExtensionHeader,
+    GTPUHeader,
+    _build_gtpu_header,
 )
 from .http import HTTPMessage, _build_http_message
 from .icmp import ICMPHeader, _build_icmp_header
@@ -284,6 +302,73 @@ def _detect_ip_version(addr: str) -> int:
         return 4
 
 
+def _build_encap_layer(layer: object, next_layer: object, data: bytes) -> bytes:
+    """Prepend one L2 / tunnel header layer to *data*.
+
+    Handles the layer types that insert a header in front of the already-assembled
+    *data* (PPPoE, EtherIP, VXLAN, GENEVE, GTP-U, GRE, pseudowire, MPLS, VLAN, and
+    Ethernet).  Protocol-number / EtherType fields that depend on the enclosed
+    layer are filled from *next_layer*.  Returns *data* unchanged for any other
+    layer type (handled by :meth:`PacketBuilder._assemble_range`).
+    """
+    if isinstance(layer, PPPoEHeader):
+        if layer.code == PPPOE_CODE_SESSION:
+            # Insert 2-byte PPP protocol field between PPPoE and IP
+            ppp_proto = _PPP_PROTO_MAP.get(type(next_layer), 0)
+            payload = struct.pack("!H", ppp_proto) + data
+        else:
+            # Discovery: encode tags as payload; ignore upstream data
+            payload = b"".join(
+                struct.pack("!HH", t.type, len(t.data)) + t.data
+                for t in layer.tags
+            )
+        return _build_pppoe_header(layer, payload) + payload
+
+    if isinstance(layer, EtherIPHeader):
+        return _build_etherip_header() + data
+
+    if isinstance(layer, VXLANHeader):
+        return _build_vxlan_header(layer) + data
+
+    if isinstance(layer, GeneveHeader):
+        proto_type = _GENEVE_PROTO_MAP.get(type(next_layer), 0)
+        hdr = GeneveHeader(
+            vni=layer.vni, protocol_type=proto_type,
+            options=layer.options, oam=layer.oam, version=layer.version,
+        )
+        return _build_geneve_header(hdr) + data
+
+    if isinstance(layer, GTPUHeader):
+        return _build_gtpu_header(layer, data) + data
+
+    if isinstance(layer, GREHeader):
+        proto_type = _GRE_PROTO_MAP.get(type(next_layer), 0)
+        hdr = GREHeader(
+            key=layer.key, seq=layer.seq,
+            checksum=layer.checksum, protocol_type=proto_type,
+        )
+        return _build_gre_header(hdr, data) + data
+
+    if isinstance(layer, PseudowireHeader):
+        return _build_pseudowire_header(layer, data)
+
+    if isinstance(layer, MPLSLabel):
+        bos = not isinstance(next_layer, MPLSLabel)
+        return _build_mpls_label(layer, bos) + data
+
+    if isinstance(layer, VLANTag):
+        ethertype = _ethertype_for(next_layer) if next_layer else 0
+        tci = (layer.pcp << 13) | (layer.dei << 12) | layer.vid
+        return struct.pack("!HH", tci, ethertype) + data
+
+    if isinstance(layer, EthernetHeader):
+        ethertype = _ethertype_for(next_layer) if next_layer else 0
+        eth = EthernetHeader(layer.dst_mac, layer.src_mac, ethertype)
+        return _build_ethernet_header(eth) + data
+
+    return data
+
+
 # ── PacketBuilder ─────────────────────────────────────────────────────────────
 
 class PacketBuilder:
@@ -313,6 +398,8 @@ class PacketBuilder:
     * Calling :meth:`geneve` inserts a GENEVE tunnel header (RFC 8926) after the
       outer :meth:`udp`.  The Protocol Type is set automatically from the layer
       that follows (inner :meth:`ethernet`, or :meth:`ip` directly).
+    * Calling :meth:`gtpu` inserts a GTP-U tunnel header (3GPP TS 29.281) after
+      the outer :meth:`udp`, followed by the inner :meth:`ip` packet.
 
     The layer list stores the same public dataclasses exported by
     ``packeteer.generate`` (``EthernetHeader``, ``VLANTag``, ``MPLSLabel``,
@@ -591,6 +678,61 @@ class PacketBuilder:
                 and self._layers[-1].dst_port == _DEFAULT_UDP_DST_PORT):
             self._layers[-1].dst_port = GENEVE_PORT
         self._layers.append(GeneveHeader(vni=vni, options=list(options or []), oam=oam))
+        return self
+
+    def gtpu(
+        self,
+        *,
+        teid: int = 0,
+        message_type: int = GTPU_MSG_G_PDU,
+        sequence: int | None = None,
+        n_pdu: int | None = None,
+        extension_headers: list[GTPUExtensionHeader] | None = None,
+    ) -> "PacketBuilder":
+        """Append a GTP-U tunnel header (GTPv1-U, 3GPP TS 29.281).
+
+        Call after the outer :meth:`udp`.  For the default G-PDU message type the
+        next layer is the inner :meth:`ip` packet (GTP-U carries IP directly, not
+        an Ethernet frame).  The Length field, the E/S/PN flags, and the
+        extension-header chaining are computed at build time.
+
+        As with :meth:`vxlan` / :meth:`geneve`, when the immediately preceding
+        :meth:`udp` header is left on its default destination port it is
+        rewritten to the standard GTP-U port (2152); an explicit non-default port
+        is preserved.
+
+        Args:
+            teid: 32-bit Tunnel Endpoint Identifier.
+            message_type: GTP-U message type.  Defaults to
+                :data:`~packeteer.generate.gtpu.GTPU_MSG_G_PDU` (255).
+            sequence: Optional 16-bit sequence number (sets the S flag).
+            n_pdu: Optional 8-bit N-PDU number (sets the PN flag).
+            extension_headers: List of
+                :class:`~packeteer.generate.gtpu.GTPUExtensionHeader` (sets the
+                E flag).  Defaults to none.
+
+        Example — outer Ethernet + outer IP + UDP + GTP-U + inner IP + TCP::
+
+            pkt = (PacketBuilder()
+                .ethernet()
+                .ip(src="10.0.0.1", dst="10.0.0.2")
+                .udp()
+                .gtpu(teid=0x1234)
+                .ip(src="192.168.1.1", dst="192.168.1.2")
+                .tcp(dst_port=80)
+                .build()
+            )
+
+        """
+        if (self._layers
+                and isinstance(self._layers[-1], UDPHeader)
+                and self._layers[-1].dst_port == _DEFAULT_UDP_DST_PORT):
+            self._layers[-1].dst_port = GTPU_PORT
+        self._layers.append(GTPUHeader(
+            teid=teid, message_type=message_type,
+            sequence=sequence, n_pdu=n_pdu,
+            extension_headers=list(extension_headers or []),
+        ))
         return self
 
     def pseudowire(
@@ -989,57 +1131,10 @@ class PacketBuilder:
                 transport_proto = _ip_proto_for(next_layer) if next_layer else 0
                 data = _build_hop_by_hop_header(layer, transport_proto) + data
 
-            elif isinstance(layer, PPPoEHeader):
-                if layer.code == PPPOE_CODE_SESSION:
-                    # Insert 2-byte PPP protocol field between PPPoE and IP
-                    ppp_proto = _PPP_PROTO_MAP.get(type(next_layer), 0)
-                    payload = struct.pack("!H", ppp_proto) + data
-                else:
-                    # Discovery: encode tags as payload; ignore upstream data
-                    payload = b"".join(
-                        struct.pack("!HH", t.type, len(t.data)) + t.data
-                        for t in layer.tags
-                    )
-                data = _build_pppoe_header(layer, payload) + payload
-
-            elif isinstance(layer, EtherIPHeader):
-                data = _build_etherip_header() + data
-
-            elif isinstance(layer, VXLANHeader):
-                data = _build_vxlan_header(layer) + data
-
-            elif isinstance(layer, GeneveHeader):
-                proto_type = _GENEVE_PROTO_MAP.get(type(next_layer), 0)
-                hdr = GeneveHeader(
-                    vni=layer.vni, protocol_type=proto_type,
-                    options=layer.options, oam=layer.oam, version=layer.version,
-                )
-                data = _build_geneve_header(hdr) + data
-
-            elif isinstance(layer, GREHeader):
-                proto_type = _GRE_PROTO_MAP.get(type(next_layer), 0)
-                hdr = GREHeader(
-                    key=layer.key, seq=layer.seq,
-                    checksum=layer.checksum, protocol_type=proto_type,
-                )
-                data = _build_gre_header(hdr, data) + data
-
-            elif isinstance(layer, PseudowireHeader):
-                data = _build_pseudowire_header(layer, data)
-
-            elif isinstance(layer, MPLSLabel):
-                bos = not isinstance(next_layer, MPLSLabel)
-                data = _build_mpls_label(layer, bos) + data
-
-            elif isinstance(layer, VLANTag):
-                ethertype = _ethertype_for(next_layer) if next_layer else 0
-                tci = (layer.pcp << 13) | (layer.dei << 12) | layer.vid
-                data = struct.pack("!HH", tci, ethertype) + data
-
-            elif isinstance(layer, EthernetHeader):
-                ethertype = _ethertype_for(next_layer) if next_layer else 0
-                eth = EthernetHeader(layer.dst_mac, layer.src_mac, ethertype)
-                data = _build_ethernet_header(eth) + data
+            else:
+                # L2 / tunnel header layers (PPPoE, EtherIP, VXLAN, GENEVE,
+                # GTP-U, GRE, pseudowire, MPLS, VLAN, Ethernet).
+                data = _build_encap_layer(layer, next_layer, data)
 
         return data
 

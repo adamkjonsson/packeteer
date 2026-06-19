@@ -160,6 +160,29 @@ EtherType and PPP protocol constants:
 
 ---
 
+## Tunnels — GTP-U
+
+```{eval-rst}
+.. autoclass:: packeteer.generate.gtpu.GTPUHeader
+   :members:
+```
+
+```{eval-rst}
+.. autoclass:: packeteer.generate.gtpu.GTPUExtensionHeader
+   :members:
+```
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `GTPU_PORT` | `2152` | UDP destination port for GTP-U |
+| `GTPU_MSG_G_PDU` | `255` | Message type: user-plane G-PDU (carries inner IP) |
+| `GTPU_MSG_ECHO_REQUEST` | `1` | Message type: Echo Request |
+| `GTPU_MSG_ECHO_RESPONSE` | `2` | Message type: Echo Response |
+| `GTPU_MSG_ERROR_INDICATION` | `26` | Message type: Error Indication |
+| `GTPU_MSG_END_MARKER` | `254` | Message type: End Marker |
+
+---
+
 ## Layer 3 — IPv4
 
 ```{eval-rst}

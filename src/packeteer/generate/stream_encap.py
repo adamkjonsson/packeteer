@@ -21,6 +21,7 @@ EtherIPEncap   EtherIP tunnel (RFC 3378); stream traffic becomes inner.
 IPIPEncap      IP-in-IP tunnel (RFC 2003 / RFC 4213).
 VXLANEncap     VXLAN tunnel (RFC 7348) over UDP:4789; stream becomes inner.
 GeneveEncap    GENEVE tunnel (RFC 8926) over UDP:6081; stream becomes inner.
+GTPUEncap      GTP-U tunnel (TS 29.281) over UDP:2152; stream IP becomes inner.
 =============  ============================================================
 
 There are two categories, and the distinction matters when reading the result:
@@ -31,13 +32,14 @@ There are two categories, and the distinction matters when reading the result:
   outer transport on the wire.
 
 * **Tunnel** (``GREEncap``, ``EtherIPEncap``, ``IPIPEncap``, ``VXLANEncap``,
-  ``GeneveEncap``) add their own outer headers and carry the entire generated
-  stream as *inner* traffic.  This is why any stream generator accepts any
-  tunnel: a ``generate_tcp_stream(..., encap=VXLANEncap(...))`` call tunnels the
-  TCP conversation *inside* VXLAN — the TCP becomes the inner protocol.  In
-  particular ``VXLANEncap`` and ``GeneveEncap`` always use an outer **UDP**
-  datagram (port 4789 / 6081) regardless of whether the inner stream is TCP,
-  UDP, or SCTP; they never run over TCP or SCTP themselves.
+  ``GeneveEncap``, ``GTPUEncap``) add their own outer headers and carry the
+  entire generated stream as *inner* traffic.  This is why any stream generator
+  accepts any tunnel: a ``generate_tcp_stream(..., encap=VXLANEncap(...))`` call
+  tunnels the TCP conversation *inside* VXLAN — the TCP becomes the inner
+  protocol.  In particular ``VXLANEncap``, ``GeneveEncap``, and ``GTPUEncap``
+  always use an outer **UDP** datagram (port 4789 / 6081 / 2152) regardless of
+  whether the inner stream is TCP, UDP, or SCTP; they never run over TCP or SCTP
+  themselves.
 
 Example::
 
@@ -64,6 +66,7 @@ from typing import Union
 
 from .builder import PacketBuilder
 from .geneve import GENEVE_PORT, GeneveOption
+from .gtpu import GTPU_PORT, GTPUExtensionHeader
 from .vxlan import VXLAN_PORT
 
 # ── Encap descriptor dataclasses ──────────────────────────────────────────────
@@ -251,9 +254,44 @@ class GeneveEncap:
     options:      list[GeneveOption] = field(default_factory=list)
 
 
+@dataclass
+class GTPUEncap:
+    """GTP-U tunnel (3GPP TS 29.281) over UDP.
+
+    The generated stream's IP packets become the inner IP carried by the GTP-U
+    G-PDU message; the outer IP header uses *src_ip* / *dst_ip* and the outer
+    UDP destination port is 2152.  Unlike the Ethernet-wrapping tunnels
+    (EtherIP / VXLAN / GENEVE), GTP-U carries IP directly, so there is no inner
+    Ethernet frame.
+
+    Attributes:
+        teid: 32-bit Tunnel Endpoint Identifier.
+        src_ip: Outer IP source address (tunnel ingress).
+        dst_ip: Outer IP destination address (tunnel egress).
+        ttl: Outer IP TTL.  Defaults to ``64``.
+        udp_src_port: Outer UDP source port.  Defaults to
+            :data:`~packeteer.generate.gtpu.GTPU_PORT`.
+        sequence: Optional GTP-U sequence number applied to every packet.
+        n_pdu: Optional GTP-U N-PDU number applied to every packet.
+        extension_headers: GTP-U extension headers applied to every packet.
+            Defaults to none.
+
+    """
+
+    teid:              int
+    src_ip:            str
+    dst_ip:            str
+    ttl:               int = 64
+    udp_src_port:      int = GTPU_PORT
+    sequence:          int | None = None
+    n_pdu:             int | None = None
+    extension_headers: list[GTPUExtensionHeader] = field(default_factory=list)
+
+
 #: One encapsulation layer.
 StreamEncap = Union[VLANEncap, QinQEncap, MPLSEncap, PPPoEEncap,
-                    GREEncap, EtherIPEncap, IPIPEncap, VXLANEncap, GeneveEncap]
+                    GREEncap, EtherIPEncap, IPIPEncap, VXLANEncap, GeneveEncap,
+                    GTPUEncap]
 
 #: One or more encapsulation layers to stack (outermost first).
 #: Using a list allows combining tag-based and tunnel encapsulations,
@@ -318,6 +356,16 @@ def _apply_single(
             .geneve(vni=encap.vni, options=encap.options)
             .ethernet(src_mac=src_mac, dst_mac=dst_mac)
         )
+    if isinstance(encap, GTPUEncap):
+        # GTP-U carries IP directly — no inner Ethernet frame.
+        return (b
+            .ip(src=encap.src_ip, dst=encap.dst_ip, ttl=encap.ttl)
+            .udp(src_port=encap.udp_src_port, dst_port=GTPU_PORT)
+            .gtpu(
+                teid=encap.teid, sequence=encap.sequence, n_pdu=encap.n_pdu,
+                extension_headers=encap.extension_headers,
+            )
+        )
     return b  # unreachable — all union members handled
 
 
@@ -343,12 +391,13 @@ def _apply_encap(
     For **tag-based** encapsulations (VLAN, QinQ, MPLS, PPPoE) layers are
     inserted between the Ethernet header and the next layer.
 
-    For **tunnel** encapsulations (GRE, EtherIP, IPIP, VXLAN, GENEVE) an outer
-    IP header plus tunnel header is inserted.  :class:`EtherIPEncap`,
+    For **tunnel** encapsulations (GRE, EtherIP, IPIP, VXLAN, GENEVE, GTP-U) an
+    outer IP header plus tunnel header is inserted.  :class:`EtherIPEncap`,
     :class:`VXLANEncap`, and :class:`GeneveEncap` also insert an inner Ethernet
-    header (using *src_mac* / *dst_mac*) before the inner IP; :class:`VXLANEncap`
-    and :class:`GeneveEncap` additionally insert an outer UDP header (port 4789
-    / 6081).
+    header (using *src_mac* / *dst_mac*) before the inner IP; :class:`VXLANEncap`,
+    :class:`GeneveEncap`, and :class:`GTPUEncap` additionally insert an outer UDP
+    header (port 4789 / 6081 / 2152).  :class:`GTPUEncap` carries the inner IP
+    directly (no inner Ethernet).
 
     The caller is responsible for adding the inner IP and transport layers
     after this function returns.
@@ -374,7 +423,7 @@ def _encap_ip_start(encap: EncapSpec, include_ethernet: bool) -> int:
 
     Walks through the encap list accumulating the byte sizes of tag-based
     layers (VLAN, QinQ, MPLS, PPPoE).  Stops at the first tunnel layer
-    (GRE, EtherIP, IPIP, VXLAN, GENEVE) because the **outer** IP header at that position
+    (GRE, EtherIP, IPIP, VXLAN, GENEVE, GTP-U) because the **outer** IP header at that position
     is the correct fragmentation point — fragmenting the outer datagram keeps
     the tunnel headers intact.
 

@@ -89,6 +89,7 @@ from packeteer.generate.etherip import IPPROTO_ETHERIP, EtherIPHeader
 from packeteer.generate.ethernet import EthernetHeader
 from packeteer.generate.geneve import GeneveHeader
 from packeteer.generate.gre import GREHeader
+from packeteer.generate.gtpu import GTPU_MSG_G_PDU, GTPUHeader
 from packeteer.generate.http import HTTPMessage, HTTPRequest, HTTPResponse
 from packeteer.generate.icmp import ICMPHeader
 from packeteer.generate.icmpv6 import ICMPv6Header
@@ -444,6 +445,35 @@ def _apply_geneve(config: dict[str, Any], hdr: GeneveHeader, tunneled: ParsedPac
     config["geneve"] = inner
 
 
+def _apply_gtpu(
+    config: dict[str, Any], hdr: GTPUHeader, tunneled: ParsedPacket | None,
+) -> None:
+    """Serialise *hdr* and the inner IP frame *tunneled* into ``config["gtpu"]``.
+
+    The outer UDP transport (port 2152) is recorded separately by the caller via
+    :func:`_apply_transport`.  For a G-PDU message *tunneled* is the inner IP
+    packet; other message types have no inner frame (their Information Elements
+    are not modelled and are not round-tripped).
+    """
+    inner: dict[str, Any] = {"teid": hdr.teid}
+    if hdr.message_type != GTPU_MSG_G_PDU:
+        inner["message_type"] = hdr.message_type
+    if hdr.sequence is not None:
+        inner["sequence"] = hdr.sequence
+    if hdr.n_pdu is not None:
+        inner["n_pdu"] = hdr.n_pdu
+    if hdr.extension_headers:
+        inner["extension_headers"] = [
+            {"type": eh.header_type, "content": eh.content.hex()}
+            for eh in hdr.extension_headers
+        ]
+    if tunneled is not None:
+        if tunneled.ip is not None:
+            _apply_ip(inner, tunneled.ip)
+        _apply_inner_tail(inner, tunneled)
+    config["gtpu"] = inner
+
+
 def _apply_ipip(config: dict[str, Any], tunneled: "ParsedPacket") -> None:
     """Serialise inner IP-in-IP frame into ``config["ipip"]`` (no ethernet)."""
     inner: dict[str, Any] = {}
@@ -743,14 +773,15 @@ def apply_tunneled(config: dict[str, Any], pkt: "ParsedPacket") -> None:
     """Serialise the tunnel layers of *pkt* into *config*.
 
     Handles every tunnel type — IP-in-IP, GRE, EtherIP, pseudowire, VXLAN,
-    and GENEVE — by dispatching to the appropriate private helper.  Call this
-    after the outer IP layer has been written via :func:`update_config`
+    GENEVE, and GTP-U — by dispatching to the appropriate private helper.  Call
+    this after the outer IP layer has been written via :func:`update_config`
     whenever :attr:`~packeteer.parse.core.ParsedPacket.ipip`,
     :attr:`~packeteer.parse.core.ParsedPacket.gre`,
     :attr:`~packeteer.parse.core.ParsedPacket.etherip`,
     :attr:`~packeteer.parse.core.ParsedPacket.pseudowire`,
-    :attr:`~packeteer.parse.core.ParsedPacket.vxlan`, or
-    :attr:`~packeteer.parse.core.ParsedPacket.geneve` is set on *pkt*.
+    :attr:`~packeteer.parse.core.ParsedPacket.vxlan`,
+    :attr:`~packeteer.parse.core.ParsedPacket.geneve`, or
+    :attr:`~packeteer.parse.core.ParsedPacket.gtpu` is set on *pkt*.
 
     Modifies *config* in place.  Does nothing when *pkt* carries no tunnel.
 
@@ -778,6 +809,12 @@ def apply_tunneled(config: dict[str, Any], pkt: "ParsedPacket") -> None:
         if pkt.transport is not None:
             _apply_transport(config, pkt.transport)
         _apply_geneve(config, pkt.geneve, pkt.tunneled)
+    elif pkt.gtpu is not None:
+        # GTP-U rides on UDP: record the outer UDP ports, then the GTP-U block.
+        # (tunneled is None for non-G-PDU control messages.)
+        if pkt.transport is not None:
+            _apply_transport(config, pkt.transport)
+        _apply_gtpu(config, pkt.gtpu, pkt.tunneled)
 
 
 def to_packet_spec(

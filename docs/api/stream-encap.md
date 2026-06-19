@@ -9,12 +9,13 @@ There are two categories:
 - **Tag-based** (`VLANEncap`, `QinQEncap`, `MPLSEncap`, `PPPoEEncap`) insert
   layer-2 tags; the stream's own transport (TCP/UDP/SCTP) stays on the wire.
 - **Tunnel** (`GREEncap`, `EtherIPEncap`, `IPIPEncap`, `VXLANEncap`,
-  `GeneveEncap`) add their own outer headers and carry the whole stream as
-  *inner* traffic.  This is why every stream generator accepts every tunnel —
-  e.g. wrapping a TCP stream in `VXLANEncap` tunnels the TCP conversation inside
-  VXLAN, with TCP as the inner protocol.  `VXLANEncap` and `GeneveEncap` always
-  use an outer UDP datagram (port 4789 / 6081) regardless of the inner stream
-  protocol; they never run over TCP or SCTP.
+  `GeneveEncap`, `GTPUEncap`) add their own outer headers and carry the whole
+  stream as *inner* traffic.  This is why every stream generator accepts every
+  tunnel — e.g. wrapping a TCP stream in `VXLANEncap` tunnels the TCP
+  conversation inside VXLAN, with TCP as the inner protocol.  `VXLANEncap`,
+  `GeneveEncap`, and `GTPUEncap` always use an outer UDP datagram (port 4789 /
+  6081 / 2152) regardless of the inner stream protocol; they never run over TCP
+  or SCTP.  `GTPUEncap` carries the inner IP directly (no inner Ethernet frame).
 
 See {doc}`../guide/generating` for usage examples and combination rules.
 
@@ -76,6 +77,11 @@ See {doc}`../guide/generating` for usage examples and combination rules.
 
 ```{eval-rst}
 .. autoclass:: packeteer.generate.stream_encap.GeneveEncap
+   :members:
+```
+
+```{eval-rst}
+.. autoclass:: packeteer.generate.stream_encap.GTPUEncap
    :members:
 ```
 

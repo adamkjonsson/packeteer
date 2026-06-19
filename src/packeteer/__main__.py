@@ -108,6 +108,7 @@ from packeteer.generate.dns import (
     DNSResourceRecord,
 )
 from packeteer.generate.geneve import GENEVE_PORT, GeneveOption
+from packeteer.generate.gtpu import GTPU_MSG_G_PDU, GTPU_PORT, GTPUExtensionHeader
 from packeteer.generate.http import HTTPMessage, HTTPRequest, HTTPResponse
 from packeteer.generate.payloads.http import HTTPRestConfig, generate_http_stream
 from packeteer.generate.payloads.vpn import VPNConfig, generate_vpn_stream
@@ -135,6 +136,7 @@ from packeteer.generate.stream_encap import (
     EtherIPEncap,
     GeneveEncap,
     GREEncap,
+    GTPUEncap,
     IPIPEncap,
     MPLSEncap,
     PPPoEEncap,
@@ -606,6 +608,17 @@ def _geneve_options_from_spec(options: list) -> list[GeneveOption]:
     ]
 
 
+def _gtpu_ext_headers_from_spec(headers: list) -> list[GTPUExtensionHeader]:
+    """Build a list of :class:`GTPUExtensionHeader` from a packet-spec list."""
+    return [
+        GTPUExtensionHeader(
+            header_type=h["type"],
+            content=bytes.fromhex(h.get("content", "")),
+        )
+        for h in headers
+    ]
+
+
 def _apply_tunnel_protocol(
     b: "PacketBuilder",
     proto_lower: str,
@@ -676,6 +689,29 @@ def _apply_tunnel_protocol(
         else:
             # IP-in-GENEVE: no inner Ethernet
             b = _apply_ip_chain(b, geneve_spec, packet_num)
+        return b, True
+
+    # GTP-U rides on UDP (port 2152); a G-PDU carries an inner IP packet.
+    if proto_lower == "udp" and "gtpu" in spec:
+        gtpu_spec = spec["gtpu"]
+        transport = spec.get("transport", {})
+        b = b.udp(
+            src_port=transport.get("src_port", GTPU_PORT),
+            dst_port=transport.get("dst_port", GTPU_PORT),
+        )
+        b = b.gtpu(
+            teid=gtpu_spec.get("teid", 0),
+            message_type=gtpu_spec.get("message_type", GTPU_MSG_G_PDU),
+            sequence=gtpu_spec.get("sequence"),
+            n_pdu=gtpu_spec.get("n_pdu"),
+            extension_headers=_gtpu_ext_headers_from_spec(
+                gtpu_spec.get("extension_headers", [])
+            ),
+        )
+        if "network" in gtpu_spec:
+            # G-PDU: inner IP packet
+            b = _apply_ip_chain(b, gtpu_spec, packet_num)
+        # else: header-only control message (e.g. End Marker) — nothing inner.
         return b, True
 
     return b, False
@@ -1217,6 +1253,10 @@ _STREAM_PARAMS: dict[str, tuple[str, object, object]] = {
     "geneve_vni":      ("geneve_vni",      int,                                  None),
     "geneve_ttl":      ("geneve_ttl",      int,                                  None),
     "geneve_src_port": ("geneve_src_port", int,                                  None),
+    "gtpu":            ("gtpu",            lambda s: s.split(),                  None),
+    "gtpu_teid":       ("gtpu_teid",       int,                                  None),
+    "gtpu_ttl":        ("gtpu_ttl",        int,                                  None),
+    "gtpu_src_port":   ("gtpu_src_port",   int,                                  None),
 }
 
 
@@ -1282,12 +1322,13 @@ def _parse_stream_encap(args: argparse.Namespace) -> "list[StreamEncap] | None":
     Multiple encapsulations may be combined (e.g. ``--mpls 100 --ipip ...``
     produces MPLS labels followed by an IP-in-IP tunnel).  The order of layers
     in the returned list is fixed: tag-based layers first (VLAN/QinQ → MPLS →
-    PPPoE), then at most one tunnel layer (GRE / EtherIP / IPIP / VXLAN / GENEVE).
+    PPPoE), then at most one tunnel layer (GRE / EtherIP / IPIP / VXLAN / GENEVE /
+    GTP-U).
 
     Constraints enforced:
     - ``--vlan`` and ``--qinq`` are mutually exclusive (both are VLAN tags).
     - At most one tunnel type (``--gre``, ``--etherip``, ``--ipip``, ``--vxlan``,
-      ``--geneve``).
+      ``--geneve``, ``--gtpu``).
 
     Returns ``None`` when no encapsulation was requested.
     """
@@ -1330,7 +1371,7 @@ def _parse_stream_encap(args: argparse.Namespace) -> "list[StreamEncap] | None":
         layers.append(PPPoEEncap(session_id=int(args.pppoe)))
 
     # ── Tunnel encap (at most one) ─────────────────────────────────────────────
-    tunnel_names = [n for n in ("gre", "etherip", "ipip", "vxlan", "geneve")
+    tunnel_names = [n for n in ("gre", "etherip", "ipip", "vxlan", "geneve", "gtpu")
                     if getattr(args, n, None) is not None]
     if len(tunnel_names) > 1:
         print(
@@ -1370,6 +1411,14 @@ def _parse_stream_encap(args: argparse.Namespace) -> "list[StreamEncap] | None":
             ttl=_int("geneve_ttl", 64),
             udp_src_port=_int("geneve_src_port", GENEVE_PORT),
         ))
+    elif "gtpu" in tunnel_names:
+        src, dst = args.gtpu
+        layers.append(GTPUEncap(
+            teid=_int("gtpu_teid", 0),
+            src_ip=src, dst_ip=dst,
+            ttl=_int("gtpu_ttl", 64),
+            udp_src_port=_int("gtpu_src_port", GTPU_PORT),
+        ))
 
     return layers if layers else None
 
@@ -1400,7 +1449,7 @@ def _stream_to_json(packets: list, include_ethernet: bool) -> str:
             update_config(cfg, pkt.ip)
         if (pkt.ipip or pkt.gre is not None or pkt.etherip is not None
                 or pkt.pseudowire is not None or pkt.vxlan is not None
-                or pkt.geneve is not None):
+                or pkt.geneve is not None or pkt.gtpu is not None):
             apply_tunneled(cfg, pkt)
         elif pkt.transport is not None:
             update_config(cfg, pkt.transport)
@@ -2283,6 +2332,26 @@ def main() -> None:
         "--geneve-src-port", type=int, default=None, metavar="PORT",
         dest="geneve_src_port",
         help="Outer UDP source port for GENEVE tunnel (default 6081)",
+    )
+    encap_group.add_argument(
+        "--gtpu", nargs=2, default=None,
+        metavar=("OUTER_SRC", "OUTER_DST"),
+        help="GTP-U tunnel (3GPP TS 29.281) over UDP:2152; specify outer IP source and destination",
+    )
+    encap_group.add_argument(
+        "--gtpu-teid", type=int, default=None, metavar="TEID",
+        dest="gtpu_teid",
+        help="32-bit GTP-U Tunnel Endpoint Identifier; used with --gtpu (default 0)",
+    )
+    encap_group.add_argument(
+        "--gtpu-ttl", type=int, default=None, metavar="N",
+        dest="gtpu_ttl",
+        help="Outer IP TTL for GTP-U tunnel (default 64)",
+    )
+    encap_group.add_argument(
+        "--gtpu-src-port", type=int, default=None, metavar="PORT",
+        dest="gtpu_src_port",
+        help="Outer UDP source port for GTP-U tunnel (default 2152)",
     )
     # Output (may also be provided via --config; mutual exclusivity enforced in _cmd_stream)
     stream_parser.add_argument("--pcap", default=None, metavar="FILE",

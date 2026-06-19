@@ -51,6 +51,7 @@ from packeteer.generate.ethernet import (
 )
 from packeteer.generate.geneve import GENEVE_PORT, GENEVE_PROTO_TEB, GeneveHeader
 from packeteer.generate.gre import GRE_PROTO_TEB, IPPROTO_GRE, GREHeader
+from packeteer.generate.gtpu import GTPU_MSG_G_PDU, GTPU_PORT, GTPUHeader
 from packeteer.generate.http import HTTPMessage
 from packeteer.generate.icmp import ICMPHeader
 from packeteer.generate.icmpv6 import ICMPv6Header
@@ -71,6 +72,7 @@ from .etherip import packet_parser as _etherip_parser
 from .ethernet import packet_parser as _ethernet_parser
 from .geneve import packet_parser as _geneve_parser
 from .gre import packet_parser as _gre_parser
+from .gtpu import packet_parser as _gtpu_parser
 from .icmp import packet_parser as _icmp_parser
 from .icmpv6 import packet_parser as _icmpv6_parser
 from .ip import packet_parser as _ip_parser
@@ -168,6 +170,12 @@ class ParsedPacket:
             (6081), so :attr:`transport` remains the outer UDP header.  The
             GENEVE Protocol Type selects the inner payload, so :attr:`tunneled`
             holds an inner Ethernet frame (TEB) or a raw IP packet.
+        gtpu: Parsed GTP-U tunnel header (3GPP TS 29.281), or ``None`` when
+            absent.  Recognised by the outer UDP destination port (2152), so
+            :attr:`transport` remains the outer UDP header.  For a G-PDU
+            message :attr:`tunneled` holds the inner IP packet (no Ethernet);
+            for other message types :attr:`tunneled` is ``None`` and any
+            content remains in :attr:`payload`.
         tunneled: Inner packet parsed recursively when :attr:`ipip` is
             ``True``, :attr:`gre` is set, :attr:`etherip` is set,
             :attr:`pseudowire` is set, or :attr:`vxlan` is set, otherwise
@@ -201,6 +209,7 @@ class ParsedPacket:
     pseudowire:  PseudowireHeader | None = None
     vxlan:       VXLANHeader | None = None
     geneve:      GeneveHeader | None = None
+    gtpu:        GTPUHeader | None = None
     tunneled:    "ParsedPacket | None" = None
     transport: TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | SCTPHeader | None = None
     dns:       DNSMessage | None = None
@@ -414,6 +423,31 @@ def _try_parse_geneve(pkt: ParsedPacket, payload: bytes) -> bool:
     return True
 
 
+def _try_parse_gtpu(pkt: ParsedPacket, payload: bytes) -> bytes | None:
+    """Attempt to decode *payload* as GTP-U if the transport is UDP on port 2152.
+
+    On success, sets ``pkt.gtpu``.  For a G-PDU message the inner IP packet is
+    parsed recursively into ``pkt.tunneled`` and ``b""`` is returned; for other
+    message types ``pkt.tunneled`` is left ``None`` and the leftover bytes are
+    returned (to become ``pkt.payload``).  Returns ``None`` (leaving *pkt*
+    untouched) on wrong port/protocol or a malformed header.
+    """
+    t = pkt.transport
+    if not isinstance(t, UDPHeader):
+        return None
+    if GTPU_PORT not in (t.dst_port, t.src_port):
+        return None
+    g_size, message_type, g_hdr = _gtpu_parser(payload)
+    if g_size == 0 or g_hdr is None:
+        return None
+    pkt.gtpu = g_hdr
+    rest = payload[g_size:]
+    if message_type == GTPU_MSG_G_PDU and rest:
+        pkt.tunneled = parse_packet(rest, link_type=LINKTYPE_RAW)
+        return b""
+    return rest
+
+
 def _parse_ip_protocol(
     pkt: ParsedPacket, remaining: bytes, ip_proto: int | None,
 ) -> bytes:
@@ -441,6 +475,9 @@ def _parse_ip_protocol(
                 return b""
             if _try_parse_geneve(pkt, remaining):
                 return b""
+            gtpu_payload = _try_parse_gtpu(pkt, remaining)
+            if gtpu_payload is not None:
+                return gtpu_payload
             remaining = _try_parse_dns(pkt, remaining)
             remaining = _try_parse_dhcp(pkt, remaining)
             remaining = _try_parse_http(pkt, remaining)
@@ -521,6 +558,14 @@ def parse_packet(data: bytes, *, link_type: int = LINKTYPE_ETHERNET) -> ParsedPa
       parse: ``0x6558`` (TEB) recurses with ``LINKTYPE_ETHERNET``, otherwise
       ``LINKTYPE_RAW``.  The result is stored in :attr:`ParsedPacket.tunneled`
       and the outer :attr:`ParsedPacket.transport` remains the UDP header.
+    - **GTP-U** (UDP destination port ``2152``, 3GPP TS 29.281): After the UDP
+      header is parsed, the GTP-U header (mandatory 8 bytes plus optional
+      sequence / N-PDU fields and extension headers) is decoded into
+      :attr:`ParsedPacket.gtpu`.  For a G-PDU message the inner IP packet is
+      parsed recursively with ``LINKTYPE_RAW`` into
+      :attr:`ParsedPacket.tunneled`; other message types leave the content in
+      :attr:`ParsedPacket.payload`.  The outer
+      :attr:`ParsedPacket.transport` remains the UDP header.
     - **Transport**: TCP, UDP, ICMPv4, or ICMPv6.
     - **Payload**: Any bytes after the last parsed header.
 
@@ -660,7 +705,8 @@ def parse_pcap_file(
                 update_config(cfg, pkt.ip)
             if (pkt.ipip or pkt.gre is not None
                     or pkt.etherip is not None or pkt.pseudowire is not None
-                    or pkt.vxlan is not None or pkt.geneve is not None):
+                    or pkt.vxlan is not None or pkt.geneve is not None
+                    or pkt.gtpu is not None):
                 apply_tunneled(cfg, pkt)
             elif pkt.transport is not None:
                 update_config(cfg, pkt.transport)

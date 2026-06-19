@@ -64,7 +64,7 @@ protocols:
 | Layer | Protocols |
 |-------|-----------|
 | Data link | Ethernet, VLAN (802.1Q), QinQ (stacked VLANs), PPPoE |
-| Tunnelling / encapsulation | MPLS, GRE, EtherIP, IP-in-IP, pseudowire, VXLAN, GENEVE |
+| Tunnelling / encapsulation | MPLS, GRE, EtherIP, IP-in-IP, pseudowire, VXLAN, GENEVE, GTP-U |
 | Network | IPv4, IPv6 |
 | Transport | TCP, UDP, SCTP, ICMP, ICMPv6 |
 | Application | HTTP, DNS, DHCP |
@@ -148,7 +148,7 @@ packeteer stream --protocol udp --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
 Optional features let you inject realistic impairments — packet loss,
 retransmissions, payload corruption, server RST — and wrap every packet in
 one or more encapsulation layers (VLAN, QinQ, MPLS, PPPoE, GRE, EtherIP,
-IP-in-IP, pseudowire, VXLAN, GENEVE) to match the encapsulation stack of the network under test.  The
+IP-in-IP, pseudowire, VXLAN, GENEVE, GTP-U) to match the encapsulation stack of the network under test.  The
 `--mtu` flag causes packets that exceed the limit to be fragmented as they
 would be by a real low-MTU middlebox.
 
