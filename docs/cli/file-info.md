@@ -33,14 +33,16 @@ This is a read-only reporting command — it never modifies the capture.
 
 Layer statistics cover the full protocol stack of each packet: `ethernet`,
 `sll`, `sll2`, `vlan`, `arp`, `mpls`, `pppoe`, `ipv4`, `ipv6`, `ipip`, `gre`,
-`etherip`, `pseudowire`, `vxlan`, `geneve`, `gtpu`, `tcp`, `udp`, `icmp`,
-`icmpv6`, `sctp`, `dns`, `dhcp`, `http`, and `payload`.
+`etherip`, `pseudowire`, `vxlan`, `geneve`, `gtpu`, `ah`, `esp`, `tcp`, `udp`,
+`icmp`, `icmpv6`, `sctp`, `dns`, `dhcp`, `http`, and `payload`.
 
 Tunnelled packets are reported comprehensively: the outer layers, the tunnel
-type (`gre`, `etherip`, `ipip`, `pseudowire`, `vxlan`, `geneve`, `gtpu`), **and**
-the inner frame's layers all contribute.  A layer that appears at more than one
-depth in a single packet (for example the inner and outer IPv4 of a GTP-U
-packet) counts that packet once.
+type (`gre`, `etherip`, `ipip`, `pseudowire`, `vxlan`, `geneve`, `gtpu`, `ah`,
+`esp`), **and** the inner frame's layers all contribute.  A layer that appears
+at more than one depth in a single packet (for example the inner and outer IPv4
+of a GTP-U or AH-tunnel packet) counts that packet once.  ESP is opaque, so an
+ESP packet contributes only the outer layers and `esp` — its inner stack is not
+decoded.
 
 ## Link-type auto-correction
 

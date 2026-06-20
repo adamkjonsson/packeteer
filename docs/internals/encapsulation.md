@@ -21,6 +21,8 @@ Encapsulation in packeteer is split into two concerns:
 | `VXLANEncap` | tunnel | outer IP + UDP:4789 + 8-byte VXLAN header + inner Ethernet |
 | `GeneveEncap` | tunnel | outer IP + UDP:6081 + GENEVE header (+ TLV options) + inner Ethernet |
 | `GTPUEncap` | tunnel | outer IP + UDP:2152 + GTP-U header (+ ext headers) + inner IP (no Ethernet) |
+| `AHEncap` | tunnel | outer IP (proto 51) + AH header + inner IP (visible — AH does not encrypt) |
+| `ESPEncap` | tunnel | outer IP (proto 50) + ESP header + inner IP (opaque — ESP encrypts) |
 
 Tag-based encapsulations are transparent to IP: they sit between the Ethernet
 header and the first IP header and do not introduce a second IP layer.
@@ -67,6 +69,14 @@ b.ip(src=encap.src_ip, dst=encap.dst_ip, ttl=encap.ttl)
 b.udp(src_port=encap.udp_src_port, dst_port=GTPU_PORT)
 b.gtpu(teid=encap.teid, sequence=encap.sequence, n_pdu=encap.n_pdu,
        extension_headers=encap.extension_headers)
+
+# IPsec AH  (outer IP proto 51 + AH; caller adds inner IP next — stays visible)
+b.ip(src=encap.src_ip, dst=encap.dst_ip, ttl=encap.ttl)
+b.ah(spi=encap.spi, sequence=encap.sequence, icv_len=encap.icv_len)
+
+# IPsec ESP  (outer IP proto 50 + ESP; caller adds inner IP next — becomes opaque)
+b.ip(src=encap.src_ip, dst=encap.dst_ip, ttl=encap.ttl)
+b.esp(spi=encap.spi, sequence=encap.sequence, icv_len=encap.icv_len)
 ```
 
 After `_apply_encap` returns, the caller appends the inner IP and transport
@@ -89,7 +99,7 @@ QinQEncap   →  + 8
 MPLSEncap   →  + 4 × number of labels
 PPPoEEncap  →  + 8  (6-byte PPPoE header + 2-byte PPP protocol field)
 
-GRE / EtherIP / IPIP / VXLAN / GENEVE / GTP-U  →  stop (outer IP is at current offset)
+GRE / EtherIP / IPIP / VXLAN / GENEVE / GTP-U / AH / ESP  →  stop (outer IP is at current offset)
 ```
 
 For example, `[VLANEncap(100), GREEncap(...)]` with Ethernet gives offset

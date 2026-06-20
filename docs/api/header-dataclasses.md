@@ -228,6 +228,32 @@ EtherType and PPP protocol constants:
 
 ---
 
+## IPsec — AH and ESP
+
+packeteer performs **no cryptography**: `AHHeader` is integrity-only and its
+protected content stays in cleartext (so AH packets parse in full), while
+`ESPHeader` models only the cleartext SPI + Sequence-Number prefix — everything
+after it is opaque, exactly like a real ESP capture without the SA key.
+
+```{eval-rst}
+.. autoclass:: packeteer.generate.ipsec.AHHeader
+   :members:
+```
+
+```{eval-rst}
+.. autoclass:: packeteer.generate.ipsec.ESPHeader
+   :members:
+```
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `IPPROTO_AH` | `51` | IP protocol number for the Authentication Header (RFC 4302) |
+| `IPPROTO_ESP` | `50` | IP protocol number for ESP (RFC 4303) |
+| `AH_ICV_LEN_SHA1_96` | `12` | ICV length for HMAC-SHA1-96 (the AH default) |
+| `AH_ICV_LEN_SHA256_128` | `16` | ICV length for HMAC-SHA256-128 |
+
+---
+
 ## Layer 3 — IPv4
 
 ```{eval-rst}

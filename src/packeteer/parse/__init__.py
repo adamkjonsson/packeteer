@@ -19,6 +19,7 @@ from .icmp import packet_parser as icmp_packet_parser
 from .icmpv6 import packet_parser as icmpv6_packet_parser
 from .info import PcapInfo, format_pcap_info, pcap_info
 from .ip import packet_parser as ip_packet_parser
+from .ipsec import ah_packet_parser, esp_packet_parser
 from .mpls import packet_parser as mpls_packet_parser
 from .pppoe import packet_parser as pppoe_packet_parser
 from .sll import sll2_packet_parser, sll_packet_parser
@@ -57,6 +58,8 @@ __all__ = [
     "tcp_packet_parser",
     "sll_packet_parser",
     "sll2_packet_parser",
+    "ah_packet_parser",
+    "esp_packet_parser",
     "vxlan_packet_parser",
     "PacketFilter",
 ]

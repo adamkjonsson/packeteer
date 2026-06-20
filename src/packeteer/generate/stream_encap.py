@@ -22,6 +22,8 @@ IPIPEncap      IP-in-IP tunnel (RFC 2003 / RFC 4213).
 VXLANEncap     VXLAN tunnel (RFC 7348) over UDP:4789; stream becomes inner.
 GeneveEncap    GENEVE tunnel (RFC 8926) over UDP:6081; stream becomes inner.
 GTPUEncap      GTP-U tunnel (TS 29.281) over UDP:2152; stream IP becomes inner.
+AHEncap        IPsec AH tunnel (RFC 4302); stream IP becomes inner (cleartext).
+ESPEncap       IPsec ESP tunnel (RFC 4303); stream IP becomes opaque ciphertext.
 =============  ============================================================
 
 There are two categories, and the distinction matters when reading the result:
@@ -32,14 +34,15 @@ There are two categories, and the distinction matters when reading the result:
   outer transport on the wire.
 
 * **Tunnel** (``GREEncap``, ``EtherIPEncap``, ``IPIPEncap``, ``VXLANEncap``,
-  ``GeneveEncap``, ``GTPUEncap``) add their own outer headers and carry the
-  entire generated stream as *inner* traffic.  This is why any stream generator
-  accepts any tunnel: a ``generate_tcp_stream(..., encap=VXLANEncap(...))`` call
-  tunnels the TCP conversation *inside* VXLAN — the TCP becomes the inner
-  protocol.  In particular ``VXLANEncap``, ``GeneveEncap``, and ``GTPUEncap``
-  always use an outer **UDP** datagram (port 4789 / 6081 / 2152) regardless of
-  whether the inner stream is TCP, UDP, or SCTP; they never run over TCP or SCTP
-  themselves.
+  ``GeneveEncap``, ``GTPUEncap``, ``AHEncap``, ``ESPEncap``) add their own outer
+  headers and carry the entire generated stream as *inner* traffic.  This is why
+  any stream generator accepts any tunnel: a ``generate_tcp_stream(...,
+  encap=VXLANEncap(...))`` call tunnels the TCP conversation *inside* VXLAN — the
+  TCP becomes the inner protocol.  ``VXLANEncap``, ``GeneveEncap``, and
+  ``GTPUEncap`` always use an outer **UDP** datagram (port 4789 / 6081 / 2152)
+  regardless of the inner stream protocol.  ``AHEncap`` (integrity-only) keeps
+  the inner stream visible, while ``ESPEncap`` carries it as opaque
+  ("encrypted") bytes that do not decode on parse.
 
 Example::
 
@@ -67,6 +70,7 @@ from typing import Union
 from .builder import PacketBuilder
 from .geneve import GENEVE_PORT, GeneveOption
 from .gtpu import GTPU_PORT, GTPUExtensionHeader
+from .ipsec import AH_ICV_LEN_SHA1_96
 from .vxlan import VXLAN_PORT
 
 # ── Encap descriptor dataclasses ──────────────────────────────────────────────
@@ -288,10 +292,65 @@ class GTPUEncap:
     extension_headers: list[GTPUExtensionHeader] = field(default_factory=list)
 
 
+@dataclass
+class AHEncap:
+    """IPsec Authentication Header tunnel (RFC 4302).
+
+    The generated stream's IP packets become the inner content protected by AH
+    in tunnel mode (outer IP / AH / inner IP / transport).  AH provides integrity
+    only, so the inner traffic stays in cleartext and decodes normally on parse.
+
+    Attributes:
+        spi: 32-bit Security Parameters Index.
+        src_ip: Outer IP source address (tunnel ingress).
+        dst_ip: Outer IP destination address (tunnel egress).
+        sequence: AH sequence number applied to every packet.  Defaults to ``0``.
+        ttl: Outer IP TTL.  Defaults to ``64``.
+        icv_len: ICV length in bytes (random auth data, since packeteer computes
+            no real ICV).  Defaults to ``12`` (HMAC-SHA1-96).
+
+    """
+
+    spi:      int
+    src_ip:   str
+    dst_ip:   str
+    sequence: int = 0
+    ttl:      int = 64
+    icv_len:  int = AH_ICV_LEN_SHA1_96
+
+
+@dataclass
+class ESPEncap:
+    """IPsec ESP tunnel (RFC 4303).
+
+    The generated stream's IP packets become the ESP payload (outer IP / ESP /
+    inner bytes).  ESP encrypts its payload and packeteer has no cryptography, so
+    the inner content is carried as opaque bytes that do **not** decode on parse
+    — matching a real ESP capture taken without the key.
+
+    Attributes:
+        spi: 32-bit Security Parameters Index.
+        src_ip: Outer IP source address (tunnel ingress).
+        dst_ip: Outer IP destination address (tunnel egress).
+        sequence: ESP sequence number applied to every packet.  Defaults to ``0``.
+        ttl: Outer IP TTL.  Defaults to ``64``.
+        icv_len: Extra opaque trailer bytes (an ICV stand-in) appended after the
+            payload.  Defaults to ``0``.
+
+    """
+
+    spi:      int
+    src_ip:   str
+    dst_ip:   str
+    sequence: int = 0
+    ttl:      int = 64
+    icv_len:  int = 0
+
+
 #: One encapsulation layer.
 StreamEncap = Union[VLANEncap, QinQEncap, MPLSEncap, PPPoEEncap,
                     GREEncap, EtherIPEncap, IPIPEncap, VXLANEncap, GeneveEncap,
-                    GTPUEncap]
+                    GTPUEncap, AHEncap, ESPEncap]
 
 #: One or more encapsulation layers to stack (outermost first).
 #: Using a list allows combining tag-based and tunnel encapsulations,
@@ -317,48 +376,47 @@ def _apply_single(
     src_mac: str,
     dst_mac: str,
 ) -> PacketBuilder:
-    """Apply one encapsulation layer to *b*."""
+    """Apply one encapsulation layer to *b* (returns *b* unchanged if unhandled)."""
     if isinstance(encap, VLANEncap):
-        return b.vlan(vid=encap.vid, pcp=encap.pcp, dei=encap.dei)
-    if isinstance(encap, QinQEncap):
-        return (b
+        b = b.vlan(vid=encap.vid, pcp=encap.pcp, dei=encap.dei)
+    elif isinstance(encap, QinQEncap):
+        b = (b
             .vlan(vid=encap.outer_vid, pcp=encap.outer_pcp, dei=encap.outer_dei)
             .vlan(vid=encap.inner_vid, pcp=encap.inner_pcp, dei=encap.inner_dei)
         )
-    if isinstance(encap, MPLSEncap):
+    elif isinstance(encap, MPLSEncap):
         for label in encap.labels:
             b = b.mpls(label=label, tc=encap.tc, ttl=encap.ttl)
-        return b
-    if isinstance(encap, PPPoEEncap):
-        return b.pppoe(session_id=encap.session_id)
-    if isinstance(encap, GREEncap):
+    elif isinstance(encap, PPPoEEncap):
+        b = b.pppoe(session_id=encap.session_id)
+    elif isinstance(encap, GREEncap):
         b = b.ip(src=encap.src_ip, dst=encap.dst_ip, ttl=encap.ttl)
-        return b.gre(key=encap.key) if encap.key is not None else b.gre()
-    if isinstance(encap, EtherIPEncap):
-        return (b
+        b = b.gre(key=encap.key) if encap.key is not None else b.gre()
+    elif isinstance(encap, EtherIPEncap):
+        b = (b
             .ip(src=encap.src_ip, dst=encap.dst_ip, ttl=encap.ttl)
             .etherip()
             .ethernet(src_mac=src_mac, dst_mac=dst_mac)
         )
-    if isinstance(encap, IPIPEncap):
-        return b.ip(src=encap.src_ip, dst=encap.dst_ip, ttl=encap.ttl)
-    if isinstance(encap, VXLANEncap):
-        return (b
+    elif isinstance(encap, IPIPEncap):
+        b = b.ip(src=encap.src_ip, dst=encap.dst_ip, ttl=encap.ttl)
+    elif isinstance(encap, VXLANEncap):
+        b = (b
             .ip(src=encap.src_ip, dst=encap.dst_ip, ttl=encap.ttl)
             .udp(src_port=encap.udp_src_port, dst_port=VXLAN_PORT)
             .vxlan(vni=encap.vni)
             .ethernet(src_mac=src_mac, dst_mac=dst_mac)
         )
-    if isinstance(encap, GeneveEncap):
-        return (b
+    elif isinstance(encap, GeneveEncap):
+        b = (b
             .ip(src=encap.src_ip, dst=encap.dst_ip, ttl=encap.ttl)
             .udp(src_port=encap.udp_src_port, dst_port=GENEVE_PORT)
             .geneve(vni=encap.vni, options=encap.options)
             .ethernet(src_mac=src_mac, dst_mac=dst_mac)
         )
-    if isinstance(encap, GTPUEncap):
+    elif isinstance(encap, GTPUEncap):
         # GTP-U carries IP directly — no inner Ethernet frame.
-        return (b
+        b = (b
             .ip(src=encap.src_ip, dst=encap.dst_ip, ttl=encap.ttl)
             .udp(src_port=encap.udp_src_port, dst_port=GTPU_PORT)
             .gtpu(
@@ -366,7 +424,19 @@ def _apply_single(
                 extension_headers=encap.extension_headers,
             )
         )
-    return b  # unreachable — all union members handled
+    elif isinstance(encap, AHEncap):
+        # IPsec AH tunnel mode — inner IP stays visible (integrity only).
+        b = (b
+            .ip(src=encap.src_ip, dst=encap.dst_ip, ttl=encap.ttl)
+            .ah(spi=encap.spi, sequence=encap.sequence, icv_len=encap.icv_len)
+        )
+    elif isinstance(encap, ESPEncap):
+        # IPsec ESP tunnel mode — inner IP becomes the opaque payload.
+        b = (b
+            .ip(src=encap.src_ip, dst=encap.dst_ip, ttl=encap.ttl)
+            .esp(spi=encap.spi, sequence=encap.sequence, icv_len=encap.icv_len)
+        )
+    return b
 
 
 def _apply_encap(
@@ -391,13 +461,14 @@ def _apply_encap(
     For **tag-based** encapsulations (VLAN, QinQ, MPLS, PPPoE) layers are
     inserted between the Ethernet header and the next layer.
 
-    For **tunnel** encapsulations (GRE, EtherIP, IPIP, VXLAN, GENEVE, GTP-U) an
-    outer IP header plus tunnel header is inserted.  :class:`EtherIPEncap`,
-    :class:`VXLANEncap`, and :class:`GeneveEncap` also insert an inner Ethernet
-    header (using *src_mac* / *dst_mac*) before the inner IP; :class:`VXLANEncap`,
-    :class:`GeneveEncap`, and :class:`GTPUEncap` additionally insert an outer UDP
-    header (port 4789 / 6081 / 2152).  :class:`GTPUEncap` carries the inner IP
-    directly (no inner Ethernet).
+    For **tunnel** encapsulations (GRE, EtherIP, IPIP, VXLAN, GENEVE, GTP-U,
+    IPsec AH/ESP) an outer IP header plus tunnel header is inserted.
+    :class:`EtherIPEncap`, :class:`VXLANEncap`, and :class:`GeneveEncap` also
+    insert an inner Ethernet header (using *src_mac* / *dst_mac*) before the
+    inner IP; :class:`VXLANEncap`, :class:`GeneveEncap`, and :class:`GTPUEncap`
+    additionally insert an outer UDP header (port 4789 / 6081 / 2152).
+    :class:`GTPUEncap`, :class:`AHEncap`, and :class:`ESPEncap` carry the inner
+    IP directly (no inner Ethernet).
 
     The caller is responsible for adding the inner IP and transport layers
     after this function returns.
@@ -423,9 +494,9 @@ def _encap_ip_start(encap: EncapSpec, include_ethernet: bool) -> int:
 
     Walks through the encap list accumulating the byte sizes of tag-based
     layers (VLAN, QinQ, MPLS, PPPoE).  Stops at the first tunnel layer
-    (GRE, EtherIP, IPIP, VXLAN, GENEVE, GTP-U) because the **outer** IP header at that position
-    is the correct fragmentation point — fragmenting the outer datagram keeps
-    the tunnel headers intact.
+    (GRE, EtherIP, IPIP, VXLAN, GENEVE, GTP-U, AH, ESP) because the **outer** IP
+    header at that position is the correct fragmentation point — fragmenting the
+    outer datagram keeps the tunnel headers intact.
 
     Examples:
     * No encap, with Ethernet → 14

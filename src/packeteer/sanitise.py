@@ -616,7 +616,10 @@ def _sanitise_packet(
     _sanitise_app_layers(pkt, r, opts)
 
     # ── Tunnel recursion ──────────────────────────────────────────────────────
-    for tunnel_key in ("ipip", "gre", "etherip", "pseudowire"):
+    # AH protects cleartext content (transport mode) or an inner IP packet
+    # (tunnel mode), so its nested addresses/ports are sanitised too.  ESP's
+    # payload is opaque ciphertext and carries no addresses.
+    for tunnel_key in ("ipip", "gre", "etherip", "pseudowire", "ah"):
         if tunnel_key not in pkt:
             continue
         _sanitise_packet(pkt[tunnel_key], r, opts, packet_num)

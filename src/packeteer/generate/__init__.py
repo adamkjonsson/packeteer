@@ -13,7 +13,8 @@ This package constructs byte-accurate network packets at all layers:
   GRE tunnels (:class:`GREHeader`, RFC 2784 / RFC 2890);
   VXLAN tunnels (:class:`VXLANHeader`, RFC 7348);
   GENEVE tunnels (:class:`GeneveHeader`, RFC 8926);
-  GTP-U tunnels (:class:`GTPUHeader`, 3GPP TS 29.281)
+  GTP-U tunnels (:class:`GTPUHeader`, 3GPP TS 29.281);
+  IPsec AH (:class:`AHHeader`, RFC 4302) and ESP (:class:`ESPHeader`, RFC 4303)
 * **Layer 4** — TCP (:class:`TCPHeader`), UDP (:class:`UDPHeader`),
   SCTP (:class:`SCTPHeader`, RFC 9260), ICMPv4 (:class:`ICMPHeader`),
   ICMPv6 (:class:`ICMPv6Header`)
@@ -176,6 +177,15 @@ multiple times to produce advanced encapsulations.
         .build()
     )
 
+    # IPsec AH (RFC 4302) transport mode — integrity only, inner TCP in cleartext
+    pkt = (PacketBuilder()
+        .ethernet()
+        .ip(src="10.0.0.1", dst="10.0.0.2")
+        .ah(spi=0x1000, sequence=1)
+        .tcp(dst_port=80)
+        .build()
+    )
+
 Public API:
     PacketBuilder: High-level packet assembly class.
     EthernetHeader: Dataclass for Ethernet II header fields
@@ -194,6 +204,13 @@ Public API:
     SLL_HOST, SLL_BROADCAST, SLL_MULTICAST, SLL_OTHERHOST, SLL_OUTGOING:
         SLL packet-type (direction) constants.
     ARPHRD_ETHER: ARPHRD hardware type 1 — Ethernet (used by SLL headers).
+    AHHeader: Dataclass for the IPsec Authentication Header (RFC 4302).
+        Fields: spi, sequence, icv, next_header, icv_len.
+    ESPHeader: Dataclass for the IPsec ESP header (RFC 4303).
+        Fields: spi, sequence, payload (opaque), icv_len.
+    IPPROTO_AH: IP protocol number 51 — IPsec AH.
+    IPPROTO_ESP: IP protocol number 50 — IPsec ESP.
+    AH_ICV_LEN_SHA1_96, AH_ICV_LEN_SHA256_128: common AH ICV lengths (12, 16).
     EtherIPHeader: Dataclass for the EtherIP tunnel header (RFC 3378). No user-configurable fields.
     IPPROTO_ETHERIP: IP protocol number 97 — EtherIP (RFC 3378).
     GREHeader: Dataclass for the GRE tunnel header (RFC 2784 / RFC 2890).
@@ -365,6 +382,14 @@ from .http import HTTP_ALT_PORT, HTTP_PORT, HTTPRequest, HTTPResponse
 from .icmp import ICMPHeader
 from .icmpv6 import ICMPv6Header
 from .ip import IPHeader
+from .ipsec import (
+    AH_ICV_LEN_SHA1_96,
+    AH_ICV_LEN_SHA256_128,
+    IPPROTO_AH,
+    IPPROTO_ESP,
+    AHHeader,
+    ESPHeader,
+)
 from .ipv6 import (
     HBH_NEXT_HEADER,
     HBH_OPT_JUMBO_PAYLOAD,
@@ -462,7 +487,9 @@ from .sll import (
     SLLHeader,
 )
 from .stream_encap import (
+    AHEncap,
     EncapSpec,
+    ESPEncap,
     EtherIPEncap,
     GeneveEncap,
     GREEncap,
@@ -511,6 +538,12 @@ __all__ = [
     "SLL_OTHERHOST",
     "SLL_OUTGOING",
     "ARPHRD_ETHER",
+    "AHHeader",
+    "ESPHeader",
+    "IPPROTO_AH",
+    "IPPROTO_ESP",
+    "AH_ICV_LEN_SHA1_96",
+    "AH_ICV_LEN_SHA256_128",
     "ETHERNET_MIN_FRAME_SIZE",
     "ETHERTYPE_IPV4",
     "ETHERTYPE_IPV6",
@@ -656,6 +689,8 @@ __all__ = [
     "VXLANEncap",
     "GeneveEncap",
     "GTPUEncap",
+    "AHEncap",
+    "ESPEncap",
     "fragment_ipv4",
     "fragment_ipv6",
     "DNSFlags",

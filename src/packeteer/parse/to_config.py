@@ -95,6 +95,7 @@ from packeteer.generate.http import HTTPMessage, HTTPRequest, HTTPResponse
 from packeteer.generate.icmp import ICMPHeader
 from packeteer.generate.icmpv6 import ICMPv6Header
 from packeteer.generate.ip import IPHeader
+from packeteer.generate.ipsec import IPPROTO_AH, IPPROTO_ESP, ESPHeader
 from packeteer.generate.ipv6 import (
     IPv6Header,
     JumboPayloadOption,
@@ -136,6 +137,8 @@ _PROTO_TO_STR: dict[int, str] = {
     socket.IPPROTO_SCTP:     "sctp",      # 132
     socket.IPPROTO_IPIP:     "ipip",      # 4  — IPv4-in-IP (RFC 2003)
     socket.IPPROTO_IPV6:     "ipip",      # 41 — IPv6-in-IP (RFC 4213)
+    IPPROTO_AH:              "ah",        # 51 — IPsec AH (RFC 4302)
+    IPPROTO_ESP:             "esp",       # 50 — IPsec ESP (RFC 4303)
 }
 
 # ── SCTP chunk serialisation ──────────────────────────────────────────────────
@@ -508,6 +511,51 @@ def _apply_gtpu(
     config["gtpu"] = inner
 
 
+_TRANSPORT_PROTO_NAME: dict[type, str] = {
+    TCPHeader:    "tcp",
+    UDPHeader:    "udp",
+    ICMPHeader:   "icmp",
+    ICMPv6Header: "icmpv6",
+    SCTPHeader:   "sctp",
+}
+
+
+def _apply_esp(config: dict[str, Any], hdr: ESPHeader, payload: bytes) -> None:
+    """Serialise an ESP header + opaque (encrypted) payload into ``config["esp"]``."""
+    section: dict[str, Any] = {"spi": hdr.spi, "sequence": hdr.sequence}
+    if payload:
+        section["payload"] = payload.hex()
+    config["esp"] = section
+
+
+def _apply_ah(config: dict[str, Any], pkt: "ParsedPacket") -> None:
+    """Serialise an AH header and its protected content into ``config["ah"]``.
+
+    AH is transparent, so the protected content is whatever the recursive parse
+    produced: a nested ESP block, an inner IP packet (tunnel mode), or a
+    transport header (transport mode).
+    """
+    hdr = pkt.ah
+    inner: dict[str, Any] = {"spi": hdr.spi, "sequence": hdr.sequence}
+    if hdr.icv:
+        inner["icv"] = hdr.icv.hex()
+    if pkt.esp is not None:
+        _apply_esp(inner, pkt.esp, pkt.payload)
+    elif pkt.tunneled is not None:
+        # Tunnel mode: an inner IP packet.
+        if pkt.tunneled.ip is not None:
+            _apply_ip(inner, pkt.tunneled.ip)
+        _apply_inner_tail(inner, pkt.tunneled)
+    elif pkt.transport is not None:
+        # Transport mode: the protected transport header (record its protocol
+        # so the packet can be rebuilt, since there is no inner network block).
+        inner["protocol"] = _TRANSPORT_PROTO_NAME.get(type(pkt.transport), "")
+        _apply_transport(inner, pkt.transport)
+        if pkt.payload:
+            _apply_payload(inner, pkt.payload)
+    config["ah"] = inner
+
+
 def _apply_ipip(config: dict[str, Any], tunneled: "ParsedPacket") -> None:
     """Serialise inner IP-in-IP frame into ``config["ipip"]`` (no ethernet)."""
     inner: dict[str, Any] = {}
@@ -833,7 +881,13 @@ def apply_tunneled(config: dict[str, Any], pkt: "ParsedPacket") -> None:
         pkt: The parsed packet whose tunnel fields should be serialised.
 
     """
-    if pkt.ipip and pkt.tunneled is not None:
+    if pkt.ah is not None:
+        # AH is transparent and may itself set the ipip flag in tunnel mode, so
+        # it must take precedence; it serialises whatever it protects.
+        _apply_ah(config, pkt)
+    elif pkt.esp is not None:
+        _apply_esp(config, pkt.esp, pkt.payload)
+    elif pkt.ipip and pkt.tunneled is not None:
         _apply_ipip(config, pkt.tunneled)
     elif pkt.gre is not None and pkt.tunneled is not None:
         _apply_gre(config, pkt.gre, pkt.tunneled)

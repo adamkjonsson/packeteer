@@ -8,6 +8,40 @@ All notable changes to packeteer are recorded in this file.
 
 ### New features
 
+- **IPsec support — AH (RFC 4302) and ESP (RFC 4303)** — the two IPsec data-path
+  protocols (IP protocols 51 and 50) are now supported end-to-end across the
+  builder, parser, packet-spec serialisation, stream encaps, `file-info`, and
+  `sanitise`.  packeteer performs **no cryptography**, which shapes the model:
+
+  - **AH** is integrity-only — it does not encrypt — so its protected content
+    stays in cleartext.  `parse` decodes the Authentication Header into the new
+    `ParsedPacket.ah` field and walks past it to decode the protected payload,
+    in both **transport** mode (`IP/AH/TCP`) and **tunnel** mode
+    (`IP/AH/IP/TCP`, inner stack under `tunneled`).  The Integrity Check Value
+    is modelled as opaque random bytes of a configurable length (default 12,
+    HMAC-SHA1-96; `AH_ICV_LEN_SHA256_128` = 16 also provided).
+  - **ESP** encrypts everything after the 8-byte SPI + Sequence-Number prefix,
+    so without the Security Association key it is **opaque**.  `parse` reads the
+    SPI and Sequence Number into the new `ParsedPacket.esp` field and treats the
+    rest as an opaque payload — exactly what a real capture without the key
+    looks like.  ESP cannot be decrypted on parse.
+  - `PacketBuilder.ah(spi=…, sequence=…, icv=…, icv_len=…)` and
+    `.esp(spi=…, sequence=…, payload=…, size=…, icv_len=…)` author both
+    protocols; AH's Next Header is filled from the following layer, and inner
+    layers placed after `.esp()` become the opaque (would-be-encrypted) payload.
+    Both round-trip byte-for-byte through `parse` → `build`.
+  - New `AHEncap` / `ESPEncap` stream encapsulations (tunnel mode) wrap a
+    generated TCP/UDP/SCTP stream: `--ah SRC DST` keeps the inner stack visible,
+    `--esp SRC DST` makes it opaque, with `--ipsec-spi` / `--ipsec-ttl` knobs.
+  - `packeteer file-info` counts `ah` / `esp` layers; `sanitise` scrubs AH's
+    cleartext inner addresses (and ESP's opaque payload via `--payload`), while
+    leaving the SPI/sequence — which are not addresses or PII — unchanged.
+  - New `AHHeader` / `ESPHeader` dataclasses, `IPPROTO_AH` / `IPPROTO_ESP` and
+    `AH_ICV_LEN_*` constants, and `AHEncap` / `ESPEncap` exported from
+    `packeteer.generate`; new `packeteer.parse.ipsec` module exporting
+    `ah_packet_parser` / `esp_packet_parser`.
+  - New tests in `test_ipsec.py`.
+
 - **Linux "cooked" capture support (SLL / SLL2)** — packeteer now reads and
   writes the pseudo link-layer framing produced by `tcpdump -i any`:
   `LINKTYPE_LINUX_SLL` (113, the classic 16-byte header) and
