@@ -58,7 +58,9 @@ Example — ESP with an opaque (encrypted) payload::
 """
 from __future__ import annotations
 
+import hashlib
 import os
+import random
 import struct
 from dataclasses import dataclass
 
@@ -116,13 +118,20 @@ class ESPHeader:
             inner layers after ``.esp()`` those assembled bytes are used instead.
         icv_len: Extra opaque trailer bytes (a stand-in for the ICV) appended
             after the payload at build time.  Defaults to ``0``.
+        opaque_random: When ``True``, the payload is replaced at build time with
+            high-entropy bytes that are a stable function of its content (see
+            :func:`_scramble`).  Real ESP ciphertext is indistinguishable from
+            random, so this makes a *generated* ESP packet look encrypted —
+            scrambling the whole inner stack, not just the application data.
+            Off by default so hand-authored / parsed payloads stay byte-exact.
 
     """
 
-    spi:      int
-    sequence: int = 0
-    payload:  bytes = b""
-    icv_len:  int = 0
+    spi:           int
+    sequence:      int = 0
+    payload:       bytes = b""
+    icv_len:       int = 0
+    opaque_random: bool = False
 
 
 def _build_ah_header(hdr: AHHeader, next_header: int) -> bytes:
@@ -144,11 +153,29 @@ def _build_ah_header(hdr: AHHeader, next_header: int) -> bytes:
     ) + icv
 
 
+def _scramble(data: bytes) -> bytes:
+    """Return ``len(data)`` high-entropy bytes derived deterministically from *data*.
+
+    A stand-in for ESP encryption: packeteer has no cryptography, but real ESP
+    ciphertext is indistinguishable from random, so we emit pseudo-random bytes
+    keyed by a stable hash of the plaintext.  Being a pure function of the input
+    keeps ``--seed`` stream reproducibility and ``parse`` → ``build`` round-trips
+    intact, while scrambling the *whole* inner stack (inner IP / transport /
+    payload) so no structured headers leak into the "encrypted" region.
+    """
+    if not data:
+        return data
+    seed = int.from_bytes(hashlib.blake2b(data, digest_size=8).digest(), "big")
+    return random.Random(seed).randbytes(len(data))
+
+
 def _build_esp_header(hdr: ESPHeader) -> bytes:
     """Build the ESP SPI + Sequence prefix followed by the opaque payload.
 
-    The opaque tail is *hdr.payload* plus ``os.urandom(hdr.icv_len)`` (a stand-in
-    for the trailing ICV).
+    When *hdr.opaque_random* is set the payload is scrambled (see
+    :func:`_scramble`) so a generated packet looks encrypted.  The opaque tail is
+    that payload plus ``os.urandom(hdr.icv_len)`` (a stand-in for the ICV).
     """
-    tail = hdr.payload + (os.urandom(hdr.icv_len) if hdr.icv_len else b"")
+    payload = _scramble(hdr.payload) if hdr.opaque_random else hdr.payload
+    tail = payload + (os.urandom(hdr.icv_len) if hdr.icv_len else b"")
     return _ESP_FIXED.pack(hdr.spi & 0xFFFFFFFF, hdr.sequence & 0xFFFFFFFF) + tail

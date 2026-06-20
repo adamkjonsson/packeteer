@@ -511,7 +511,11 @@ the rest is **opaque** — packeteer models exactly that and cannot decrypt it.
 There is no inner `network`/`transport` block: on parse the content after the
 prefix is opaque.  When **building**, inner layers placed after `.esp()` are
 assembled and used as the opaque payload, so a structured ESP packet can be
-authored even though it parses back as opaque.
+authored even though it parses back as opaque.  Streams wrapped in `ESPEncap`
+(or `.esp(opaque_random=True)`) go one step further and **scramble** the whole
+inner stack into high-entropy ciphertext, so no structured inner headers leak
+into the "encrypted" region; the scramble is deterministic, keeping seeded
+streams reproducible.
 
 ---
 

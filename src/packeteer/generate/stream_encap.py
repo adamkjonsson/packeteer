@@ -23,7 +23,7 @@ VXLANEncap     VXLAN tunnel (RFC 7348) over UDP:4789; stream becomes inner.
 GeneveEncap    GENEVE tunnel (RFC 8926) over UDP:6081; stream becomes inner.
 GTPUEncap      GTP-U tunnel (TS 29.281) over UDP:2152; stream IP becomes inner.
 AHEncap        IPsec AH tunnel (RFC 4302); stream IP becomes inner (cleartext).
-ESPEncap       IPsec ESP tunnel (RFC 4303); stream IP becomes opaque ciphertext.
+ESPEncap       IPsec ESP tunnel (RFC 4303); stream becomes scrambled ciphertext.
 =============  ============================================================
 
 There are two categories, and the distinction matters when reading the result:
@@ -325,8 +325,11 @@ class ESPEncap:
 
     The generated stream's IP packets become the ESP payload (outer IP / ESP /
     inner bytes).  ESP encrypts its payload and packeteer has no cryptography, so
-    the inner content is carried as opaque bytes that do **not** decode on parse
-    — matching a real ESP capture taken without the key.
+    the whole inner stack is **scrambled** into high-entropy bytes at build time
+    (a stand-in for encryption) and carried as opaque data that does **not**
+    decode on parse — matching a real ESP capture taken without the key, with no
+    structured inner headers leaking into the ciphertext.  The scramble is a
+    stable function of the content, so a seeded stream stays reproducible.
 
     Attributes:
         spi: 32-bit Security Parameters Index.
@@ -431,10 +434,14 @@ def _apply_single(
             .ah(spi=encap.spi, sequence=encap.sequence, icv_len=encap.icv_len)
         )
     elif isinstance(encap, ESPEncap):
-        # IPsec ESP tunnel mode — inner IP becomes the opaque payload.
+        # IPsec ESP tunnel mode — the whole inner stack becomes opaque ciphertext
+        # (scrambled at build time), as a real ESP capture without the key looks.
         b = (b
             .ip(src=encap.src_ip, dst=encap.dst_ip, ttl=encap.ttl)
-            .esp(spi=encap.spi, sequence=encap.sequence, icv_len=encap.icv_len)
+            .esp(
+                spi=encap.spi, sequence=encap.sequence,
+                icv_len=encap.icv_len, opaque_random=True,
+            )
         )
     return b
 

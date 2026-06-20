@@ -409,6 +409,7 @@ def _build_encap_layer(layer: object, next_layer: object, data: bytes) -> bytes:
         data = _build_esp_header(ESPHeader(
             spi=layer.spi, sequence=layer.sequence,
             payload=layer.payload + data, icv_len=layer.icv_len,
+            opaque_random=layer.opaque_random,
         ))
 
     elif isinstance(layer, GREHeader):
@@ -968,6 +969,7 @@ class PacketBuilder:
         payload: bytes | None = None,
         size: int = 0,
         icv_len: int = 0,
+        opaque_random: bool = False,
     ) -> "PacketBuilder":
         """Append an IPsec Encapsulating Security Payload header (RFC 4303).
 
@@ -986,6 +988,12 @@ class PacketBuilder:
                 is ``None``.
             icv_len: Extra opaque trailer bytes (a stand-in for the ICV) appended
                 after the payload.  Defaults to ``0``.
+            opaque_random: When ``True``, scramble the assembled payload at build
+                time into high-entropy bytes (a stand-in for encryption) so the
+                whole inner stack looks encrypted instead of leaking structured
+                headers.  The scramble is a stable function of the content, so
+                the packet still round-trips through ``parse`` → ``build``.
+                Defaults to ``False``.
 
         Example — ESP with a 64-byte opaque payload::
 
@@ -1005,6 +1013,7 @@ class PacketBuilder:
             data = b""
         self._layers.append(ESPHeader(
             spi=spi, sequence=sequence, payload=data, icv_len=icv_len,
+            opaque_random=opaque_random,
         ))
         return self
 

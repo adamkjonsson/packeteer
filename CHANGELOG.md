@@ -32,7 +32,11 @@ All notable changes to packeteer are recorded in this file.
     Both round-trip byte-for-byte through `parse` → `build`.
   - New `AHEncap` / `ESPEncap` stream encapsulations (tunnel mode) wrap a
     generated TCP/UDP/SCTP stream: `--ah SRC DST` keeps the inner stack visible,
-    `--esp SRC DST` makes it opaque, with `--ipsec-spi` / `--ipsec-ttl` knobs.
+    `--esp SRC DST` **scrambles** the whole inner stack into high-entropy
+    ciphertext (a stand-in for encryption, so no structured headers leak; via
+    the new `ESPHeader.opaque_random` / `.esp(opaque_random=True)`), with
+    `--ipsec-spi` / `--ipsec-ttl` knobs.  The scramble is deterministic, so
+    seeded streams stay reproducible.
   - `packeteer file-info` counts `ah` / `esp` layers; `sanitise` scrubs AH's
     cleartext inner addresses (and ESP's opaque payload via `--payload`), while
     leaving the SPI/sequence — which are not addresses or PII — unchanged.

@@ -203,7 +203,7 @@ At most one of `--vlan` / `--qinq` may be given; at most one tunnel type.
 | `--gtpu-ttl N` | Outer IP TTL (default 64) |
 | `--gtpu-src-port N` | Outer UDP source port (default 2152) |
 | `--ah SRC_IP DST_IP` | IPsec AH tunnel (RFC 4302); inner stack stays **visible** (integrity only) |
-| `--esp SRC_IP DST_IP` | IPsec ESP tunnel (RFC 4303); inner stack becomes **opaque** (encrypted) |
+| `--esp SRC_IP DST_IP` | IPsec ESP tunnel (RFC 4303); inner stack is **scrambled** into opaque high-entropy ciphertext |
 | `--ipsec-spi N` | 32-bit Security Parameters Index for `--ah` / `--esp` (default 256) |
 | `--ipsec-ttl N` | Outer IP TTL for `--ah` / `--esp` (default 64) |
 
