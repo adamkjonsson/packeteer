@@ -23,8 +23,10 @@ from packeteer.generate.ipsec import (
     ESPHeader,
     _build_ah_header,
     _build_esp_header,
+    _scramble,
 )
 from packeteer.generate.tcp import TCPHeader
+from packeteer.generate.tcp_stream import TCPStream
 from packeteer.parse import ah_packet_parser, esp_packet_parser
 from packeteer.parse.core import ParsedPacket, parse_packet, parse_pcap_file
 from packeteer.parse.info import pcap_info
@@ -100,6 +102,33 @@ class TestESPParser(unittest.TestCase):
 
     def test_truncated(self):
         self.assertEqual(esp_packet_parser(b"\x00\x00\x00"), (0, None, None))
+
+
+class TestESPScramble(unittest.TestCase):
+    def test_length_preserved(self):
+        data = b"\x45\x00\x00\x28structured-ip-header-and-payload"
+        self.assertEqual(len(_scramble(data)), len(data))
+
+    def test_deterministic(self):
+        data = bytes(range(64))
+        self.assertEqual(_scramble(data), _scramble(data))
+
+    def test_differs_from_input_and_high_entropy(self):
+        data = b"\x45\x00" + b"\x00" * 60   # very low-entropy structured input
+        out = _scramble(data)
+        self.assertNotEqual(out, data)
+        self.assertGreater(len(set(out)), 40)   # ~random over 62 bytes
+
+    def test_empty(self):
+        self.assertEqual(_scramble(b""), b"")
+
+    def test_opaque_random_scrambles_payload(self):
+        plain = b"\x45\x00\x00\x28" + b"A" * 40
+        faithful = _build_esp_header(ESPHeader(spi=1, payload=plain))
+        scrambled = _build_esp_header(ESPHeader(spi=1, payload=plain, opaque_random=True))
+        self.assertEqual(faithful[8:], plain)               # off by default
+        self.assertEqual(scrambled[8:], _scramble(plain))   # whole blob scrambled
+        self.assertNotEqual(scrambled[8:12], b"\x45\x00\x00\x28")  # no leaked header
 
 
 class TestPacketBuilderAH(unittest.TestCase):
@@ -304,6 +333,41 @@ class TestIPsecSanitise(unittest.TestCase):
         self.assertNotEqual(pkt["ah"]["network"]["src"], "192.168.1.1")
         # ...but the SPI is not an address/PII, so it is left intact.
         self.assertEqual(pkt["ah"]["spi"], 0x1000)
+
+
+class TestESPStreamOpaqueRandom(unittest.TestCase):
+    """An ESP-tunnelled stream must look encrypted: high-entropy, no leaked headers."""
+
+    def _stream(self, seed: int = 42) -> TCPStream:
+        from packeteer.generate.stream_encap import ESPEncap
+        from packeteer.generate.tcp_stream import TCPStreamConfig, generate_tcp_stream
+        return generate_tcp_stream(
+            client_ip="10.0.0.1", server_ip="10.0.0.2", num_data_packets=4,
+            min_payload=200, max_payload=200,
+            encap=ESPEncap(spi=0x2000, src_ip="203.0.113.1", dst_ip="203.0.113.2"),
+            config=TCPStreamConfig(seed=seed),
+        )
+
+    def _largest_esp_blob(self, stream: TCPStream) -> bytes:
+        blobs = [parse_packet(p.raw).payload for p in stream.packets
+                 if parse_packet(p.raw).esp is not None and parse_packet(p.raw).payload]
+        return max(blobs, key=len) if blobs else b""
+
+    def test_blob_is_high_entropy_with_no_leaked_ip_header(self):
+        blob = self._largest_esp_blob(self._stream())
+        self.assertGreater(len(blob), 100)
+        # A non-scrambled tunnel would start with the inner IPv4 header (0x45..).
+        self.assertNotEqual(blob[0], 0x45)
+        self.assertGreater(len(set(blob)), len(blob) // 2)   # broadly random
+
+    def test_seed_reproducible(self):
+        a = [p.raw for p in self._stream(7).packets]
+        b = [p.raw for p in self._stream(7).packets]
+        self.assertEqual(a, b)
+
+    def test_generated_packet_round_trips(self):
+        raw = self._stream().packets[3].raw
+        self.assertEqual(_rebuild(raw), raw)
 
 
 if __name__ == "__main__":

@@ -253,8 +253,10 @@ Encapsulation types fall into two categories:
   run over TCP or SCTP themselves.  `GTPUEncap` carries the inner IP directly
   (no inner Ethernet).  The IPsec tunnels carry the inner IP directly too:
   `AHEncap` keeps the inner stack visible (AH is integrity-only), while
-  `ESPEncap` makes it opaque (ESP encrypts), so an `ESPEncap` stream parses back
-  as opaque ESP — like real encrypted traffic.
+  `ESPEncap` **scrambles** the whole inner stack into high-entropy ciphertext (a
+  stand-in for encryption), so an `ESPEncap` stream parses back as opaque ESP
+  with no structured headers leaking — like real encrypted traffic, and
+  reproducible under a fixed `seed`.
 
 See the Reference section for stacking rules and full parameter lists.
 
