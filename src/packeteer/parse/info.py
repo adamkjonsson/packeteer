@@ -25,9 +25,16 @@ from packeteer.generate.icmpv6 import ICMPv6Header
 from packeteer.generate.ip import IPHeader
 from packeteer.generate.ipv6 import IPv6Header
 from packeteer.generate.sctp import SCTPHeader
+from packeteer.generate.sll import SLL2Header
 from packeteer.generate.tcp import TCPHeader
 from packeteer.generate.udp import UDPHeader
-from packeteer.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW, read_pcap
+from packeteer.pcap import (
+    LINKTYPE_ETHERNET,
+    LINKTYPE_LINUX_SLL,
+    LINKTYPE_LINUX_SLL2,
+    LINKTYPE_RAW,
+    read_pcap,
+)
 
 from .core import ParsedPacket, parse_packet
 
@@ -40,7 +47,7 @@ _LT_SCORE_THRESHOLD: float = 0.5
 
 # Ordered layer labels — controls the order rows appear in the text report.
 _LAYER_ORDER: tuple[str, ...] = (
-    "ethernet", "vlan", "arp", "mpls", "pppoe",
+    "ethernet", "sll", "sll2", "vlan", "arp", "mpls", "pppoe",
     "ipv4", "ipv6", "ipip", "gre", "etherip", "pseudowire", "vxlan", "geneve", "gtpu",
     "tcp", "udp", "icmp", "icmpv6", "sctp",
     "dns", "dhcp", "http", "payload",
@@ -64,6 +71,8 @@ _TUNNEL_ATTRS: tuple[str, ...] = (
 _LINKTYPE_NAMES: dict[int, str] = {
     LINKTYPE_ETHERNET: "ethernet",
     LINKTYPE_RAW: "raw",
+    LINKTYPE_LINUX_SLL: "linux_sll",
+    LINKTYPE_LINUX_SLL2: "linux_sll2",
 }
 
 
@@ -149,6 +158,8 @@ def _packet_layers(pkt: ParsedPacket) -> list[str]:
         labels.append("ethernet")
         if pkt.ethernet.vlan_tag is not None:
             labels.append("vlan")
+    if pkt.sll is not None:
+        labels.append("sll2" if isinstance(pkt.sll, SLL2Header) else "sll")
     if pkt.arp is not None:
         labels.append("arp")
     if pkt.mpls:
@@ -222,7 +233,10 @@ def _choose_link_type(
     records: list[tuple[bytes, int, int]], declared: int,
 ) -> int:
     """Pick the link type that parses *records* cleanest, biased toward *declared*."""
-    candidates = {declared, LINKTYPE_ETHERNET, LINKTYPE_RAW}
+    candidates = {
+        declared, LINKTYPE_ETHERNET, LINKTYPE_RAW,
+        LINKTYPE_LINUX_SLL, LINKTYPE_LINUX_SLL2,
+    }
     scores = {lt: _score_link_type(records, lt) for lt in candidates}
     declared_score = scores[declared]
     alternatives = [lt for lt in candidates if lt != declared]

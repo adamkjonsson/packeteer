@@ -78,6 +78,41 @@ enclosing Ethernet EtherType is set to `0x0806` automatically.
 
 ---
 
+(packet-spec-sll)=
+## `sll` / `sll2`
+
+A Linux "cooked" capture pseudo link-layer header — the framing produced by
+`tcpdump -i any`.  Use the `sll` key for the v1 format
+(`LINKTYPE_LINUX_SLL` = 113) or `sll2` for the v2 format
+(`LINKTYPE_LINUX_SLL2` = 276); it is an alternative to the `ethernet` section
+(do not use both).  Set the top-level `metadata.link_type` to `113` / `276` so
+the written file declares the matching link type (`parse` does this
+automatically; when omitted, the presence of an `sll` / `sll2` section infers
+it).
+
+```json
+"metadata": { "link_type": 113 },
+"packets": [
+  {
+    "sll": { "packet_type": 0, "address": "aa:bb:cc:00:00:01" },
+    "network":   { "src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "tcp" },
+    "transport": { "dst_port": 80 }
+  }
+]
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `packet_type` | `0` | Direction / addressing (0 host, 1 broadcast, 2 multicast, 3 otherhost, 4 outgoing) |
+| `address` | `"00:00:00:00:00:00"` | The single link-layer (MAC) address; `""` for none |
+| `arphrd_type` | `1` | Only emitted by `parse` when not `1` (Ethernet) |
+| `if_index` | `0` | **(`sll2` only)** capture interface index |
+
+The Protocol Type field is set automatically from the layer that follows
+(IP / ARP / …).
+
+---
+
 (packet-spec-mpls)=
 ## `mpls`
 

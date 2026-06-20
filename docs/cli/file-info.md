@@ -19,7 +19,7 @@ This is a read-only reporting command — it never modifies the capture.
 | `capture` | *(required)* Path to a `.pcap` or `.pcapng` file |
 | `--json` | Emit the report as JSON instead of human-readable text |
 | `--num N` / `-n N` | Analyse only the first `N` packets (reading stops early) |
-| `--link-type TYPE` | Force the link-layer type, disabling auto-detection (`ethernet`, `raw`, or an integer) |
+| `--link-type TYPE` | Force the link-layer type, disabling auto-detection (`ethernet`, `raw`, `linux_sll`, `linux_sll2`, or an integer) |
 | `--no-auto-link-type` | Trust the file header's link-layer type instead of auto-detecting |
 
 ## What gets reported
@@ -32,9 +32,9 @@ This is a read-only reporting command — it never modifies the capture.
 | Layers | For each protocol layer seen, the number of packets containing it and the percentage of all packets |
 
 Layer statistics cover the full protocol stack of each packet: `ethernet`,
-`vlan`, `arp`, `mpls`, `pppoe`, `ipv4`, `ipv6`, `ipip`, `gre`, `etherip`,
-`pseudowire`, `vxlan`, `geneve`, `gtpu`, `tcp`, `udp`, `icmp`, `icmpv6`, `sctp`,
-`dns`, `dhcp`, `http`, and `payload`.
+`sll`, `sll2`, `vlan`, `arp`, `mpls`, `pppoe`, `ipv4`, `ipv6`, `ipip`, `gre`,
+`etherip`, `pseudowire`, `vxlan`, `geneve`, `gtpu`, `tcp`, `udp`, `icmp`,
+`icmpv6`, `sctp`, `dns`, `dhcp`, `http`, and `payload`.
 
 Tunnelled packets are reported comprehensively: the outer layers, the tunnel
 type (`gre`, `etherip`, `ipip`, `pseudowire`, `vxlan`, `geneve`, `gtpu`), **and**
@@ -47,8 +47,8 @@ packet) counts that packet once.
 The link-layer type recorded in a capture's header drives parsing.  Some
 captures declare the wrong value, which would otherwise produce garbage.  By
 default `file-info` scores the declared type against the supported alternatives
-(`ethernet` and `raw`) by measuring how many packets parse to a valid IP header,
-and uses whichever is cleanest.
+(`ethernet`, `raw`, `linux_sll`, `linux_sll2`) by measuring how many packets
+parse to a valid IP header, and uses whichever is cleanest.
 
 The heuristic is conservative: an alternative is adopted only when it parses
 meaningfully better than the declared type **and** the declared type already

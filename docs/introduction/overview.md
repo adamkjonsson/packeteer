@@ -63,7 +63,7 @@ protocols:
 
 | Layer | Protocols |
 |-------|-----------|
-| Data link | Ethernet, VLAN (802.1Q), QinQ (stacked VLANs), PPPoE, ARP |
+| Data link | Ethernet, VLAN (802.1Q), QinQ (stacked VLANs), PPPoE, ARP, Linux cooked (SLL/SLL2) |
 | Tunnelling / encapsulation | MPLS, GRE, EtherIP, IP-in-IP, pseudowire, VXLAN, GENEVE, GTP-U |
 | Network | IPv4, IPv6 |
 | Transport | TCP, UDP, SCTP, ICMP, ICMPv6 |

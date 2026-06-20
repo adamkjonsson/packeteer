@@ -63,10 +63,18 @@ from packeteer.generate.mpls import ETHERTYPE_MPLS_MULTICAST, ETHERTYPE_MPLS_UNI
 from packeteer.generate.pppoe import ETHERTYPE_PPPOE_DISCOVERY, ETHERTYPE_PPPOE_SESSION, PPPoEHeader
 from packeteer.generate.pseudowire import ETHERTYPE_PW_CW, PseudowireHeader
 from packeteer.generate.sctp import SCTPHeader
+from packeteer.generate.sll import SLL2Header, SLLHeader
 from packeteer.generate.tcp import TCPHeader
 from packeteer.generate.udp import UDPHeader
 from packeteer.generate.vxlan import VXLAN_PORT, VXLANHeader
-from packeteer.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW, PcapFileHeader, read_pcap
+from packeteer.pcap import (
+    LINKTYPE_ETHERNET,
+    LINKTYPE_LINUX_SLL,
+    LINKTYPE_LINUX_SLL2,
+    LINKTYPE_RAW,
+    PcapFileHeader,
+    read_pcap,
+)
 
 from .arp import packet_parser as _arp_parser
 from .dns import parse_dns_tcp as _parse_dns_tcp
@@ -83,6 +91,8 @@ from .mpls import packet_parser as _mpls_parser
 from .pppoe import packet_parser as _pppoe_parser
 from .pseudowire import packet_parser as _pw_parser
 from .sctp import packet_parser as _sctp_parser
+from .sll import sll2_packet_parser as _sll2_parser
+from .sll import sll_packet_parser as _sll_parser
 from .tcp import packet_parser as _tcp_parser
 from .to_config import apply_tunneled, to_json_string, to_packet_spec, update_config
 from .udp import packet_parser as _udp_parser
@@ -143,6 +153,10 @@ class ParsedPacket:
 
     Attributes:
         ethernet: Parsed Ethernet II header (includes VLAN tag when present).
+        sll: Parsed Linux cooked-capture pseudo header (``SLLHeader`` for
+            ``LINKTYPE_LINUX_SLL``, ``SLL2Header`` for ``LINKTYPE_LINUX_SLL2``),
+            or ``None``.  Present instead of :attr:`ethernet`; its Protocol Type
+            (an EtherType) drives the rest of the parse just like Ethernet.
         arp: Parsed ARP packet (RFC 826), or ``None`` when absent.  An ARP
             frame is terminal: when this is set, :attr:`ip`, :attr:`transport`,
             and the tunnel fields are all ``None``.
@@ -206,6 +220,7 @@ class ParsedPacket:
     """
 
     ethernet:    EthernetHeader | None = None
+    sll:         SLLHeader | SLL2Header | None = None
     arp:         ARPHeader | None = None
     mpls:        list[MPLSLabel] = field(default_factory=list)
     pppoe:       PPPoEHeader | None = None
@@ -248,17 +263,30 @@ def _parse_link_layer(
         ETHERTYPE_MPLS_UNICAST, ETHERTYPE_MPLS_MULTICAST,
         ETHERTYPE_PPPOE_DISCOVERY, ETHERTYPE_PPPOE_SESSION,
     )
-    if link_type == LINKTYPE_ETHERNET:
-        eth_size, ethertype, eth_hdr = _ethernet_parser(data)
-        if eth_size == 0:
+    def _after_l2(size: int, ethertype: int | None) -> tuple[bytes, int | None] | None:
+        # Shared tail for Ethernet/SLL: stop on a parse failure or an unknown
+        # EtherType; otherwise hand the remaining bytes + EtherType downstream.
+        if size == 0:
             pkt.payload = data
             return None
-        pkt.ethernet = eth_hdr
-        remaining = data[eth_size:]
+        remaining = data[size:]
         if ethertype not in _KNOWN_ETHERTYPES:
             pkt.payload = remaining
             return None
         return remaining, ethertype
+
+    if link_type == LINKTYPE_ETHERNET:
+        eth_size, ethertype, eth_hdr = _ethernet_parser(data)
+        pkt.ethernet = eth_hdr
+        return _after_l2(eth_size, ethertype)
+    if link_type == LINKTYPE_LINUX_SLL:
+        s_size, ethertype, s_hdr = _sll_parser(data)
+        pkt.sll = s_hdr
+        return _after_l2(s_size, ethertype)
+    if link_type == LINKTYPE_LINUX_SLL2:
+        s_size, ethertype, s_hdr = _sll2_parser(data)
+        pkt.sll = s_hdr
+        return _after_l2(s_size, ethertype)
     if link_type == LINKTYPE_RAW:
         return data, None   # raw IP — skip MPLS loop below
     pkt.payload = data
@@ -546,6 +574,11 @@ def parse_packet(data: bytes, *, link_type: int = LINKTYPE_ETHERNET) -> ParsedPa
     - **ARP** (EtherType ``0x0806``, RFC 826): The ARP packet is decoded into
       :attr:`ParsedPacket.arp` and parsing stops (ARP is terminal — no IP layer
       follows).
+    - **Linux cooked** (``link_type=LINKTYPE_LINUX_SLL`` / ``LINKTYPE_LINUX_SLL2``):
+      The 16-byte (SLL) or 20-byte (SLL2) pseudo header produced by
+      ``tcpdump -i any`` is decoded into :attr:`ParsedPacket.sll`.  Its Protocol
+      Type field is an EtherType, so layer selection then proceeds exactly as
+      after an Ethernet header.
     - **Raw IP** (``link_type=LINKTYPE_RAW``): Ethernet parsing is skipped;
       IP-version detection starts immediately.
     - **IP**: The protocol/next-header field selects the transport parser.
@@ -715,6 +748,8 @@ def parse_pcap_file(
             cfg: dict[str, Any] = {}
             if pkt.ethernet is not None:
                 update_config(cfg, pkt.ethernet)
+            if pkt.sll is not None:
+                update_config(cfg, pkt.sll)
             if pkt.arp is not None:
                 update_config(cfg, pkt.arp)
             for mpls_label in pkt.mpls:

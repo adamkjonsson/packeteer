@@ -4,7 +4,8 @@ This package constructs byte-accurate network packets at all layers:
 
 * **Layer 2** — Ethernet II frames (:class:`EthernetHeader`), IEEE 802.1Q
   VLAN tags (:class:`VLANTag`), PPPoE session and discovery frames
-  (:class:`PPPoEHeader`, :class:`PPPoETag`), ARP (:class:`ARPHeader`, RFC 826)
+  (:class:`PPPoEHeader`, :class:`PPPoETag`), ARP (:class:`ARPHeader`, RFC 826),
+  Linux cooked-capture headers (:class:`SLLHeader`, :class:`SLL2Header`)
 * **Layer 2.5** — MPLS label stacks (:class:`MPLSLabel`, RFC 3032)
 * **Layer 3** — IPv4 (:class:`IPHeader`) and IPv6 (:class:`IPv6Header`);
   IP-in-IP tunnels (RFC 2003 / RFC 4213);
@@ -167,6 +168,14 @@ multiple times to produce advanced encapsulations.
         .build()
     )
 
+    # Linux cooked capture (SLL) — `tcpdump -i any` pseudo link-layer header
+    pkt = (PacketBuilder()
+        .sll(address="aa:bb:cc:00:00:01")
+        .ip(src="10.0.0.1", dst="10.0.0.2")
+        .tcp(dst_port=80)
+        .build()
+    )
+
 Public API:
     PacketBuilder: High-level packet assembly class.
     EthernetHeader: Dataclass for Ethernet II header fields
@@ -178,6 +187,13 @@ Public API:
     ARP_OP_REQUEST, ARP_OP_REPLY, ARP_OP_RARP_REQUEST, ARP_OP_RARP_REPLY:
         ARP operation code constants.
     ARP_HW_ETHERNET: ARP hardware type 1 — Ethernet.
+    SLLHeader: Dataclass for a Linux cooked-capture v1 pseudo header
+        (LINKTYPE_LINUX_SLL = 113). Fields: packet_type, arphrd_type, address.
+    SLL2Header: Dataclass for a Linux cooked-capture v2 pseudo header
+        (LINKTYPE_LINUX_SLL2 = 276). Adds if_index.
+    SLL_HOST, SLL_BROADCAST, SLL_MULTICAST, SLL_OTHERHOST, SLL_OUTGOING:
+        SLL packet-type (direction) constants.
+    ARPHRD_ETHER: ARPHRD hardware type 1 — Ethernet (used by SLL headers).
     EtherIPHeader: Dataclass for the EtherIP tunnel header (RFC 3378). No user-configurable fields.
     IPPROTO_ETHERIP: IP protocol number 97 — EtherIP (RFC 3378).
     GREHeader: Dataclass for the GRE tunnel header (RFC 2784 / RFC 2890).
@@ -435,6 +451,16 @@ from .session import (
     tcp_teardown,
 )
 from .session_mix import CombinedStream, generate_session_mix, merge_streams
+from .sll import (
+    ARPHRD_ETHER,
+    SLL_BROADCAST,
+    SLL_HOST,
+    SLL_MULTICAST,
+    SLL_OTHERHOST,
+    SLL_OUTGOING,
+    SLL2Header,
+    SLLHeader,
+)
 from .stream_encap import (
     EncapSpec,
     EtherIPEncap,
@@ -477,6 +503,14 @@ __all__ = [
     "ARP_OP_RARP_REQUEST",
     "ARP_OP_RARP_REPLY",
     "ARP_HW_ETHERNET",
+    "SLLHeader",
+    "SLL2Header",
+    "SLL_HOST",
+    "SLL_BROADCAST",
+    "SLL_MULTICAST",
+    "SLL_OTHERHOST",
+    "SLL_OUTGOING",
+    "ARPHRD_ETHER",
     "ETHERNET_MIN_FRAME_SIZE",
     "ETHERTYPE_IPV4",
     "ETHERTYPE_IPV6",

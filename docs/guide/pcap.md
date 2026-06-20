@@ -126,6 +126,8 @@ an Ethernet header:
 |----------|-------|-------------|
 | `LINKTYPE_ETHERNET` | `1` | Packets include an Ethernet II header |
 | `LINKTYPE_RAW` | `101` | Packets start directly with an IP header |
+| `LINKTYPE_LINUX_SLL` | `113` | Linux "cooked" v1 (`tcpdump -i any`) |
+| `LINKTYPE_LINUX_SLL2` | `276` | Linux "cooked" v2 (modern `-i any`) |
 
 ```python
 from packeteer.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW

@@ -74,6 +74,8 @@ Supported pcapng block types:
 Constants:
     LINKTYPE_ETHERNET (int): Link-layer type ``1`` — Ethernet II.
     LINKTYPE_RAW (int): Link-layer type ``101`` — Raw IP (no Ethernet header).
+    LINKTYPE_LINUX_SLL (int): Link-layer type ``113`` — Linux "cooked" v1.
+    LINKTYPE_LINUX_SLL2 (int): Link-layer type ``276`` — Linux "cooked" v2.
 """
 from __future__ import annotations
 
@@ -90,6 +92,8 @@ _MAX_TS_SEC: int = 0xFFFFFFFF
 
 LINKTYPE_ETHERNET: int = 1    # Ethernet II
 LINKTYPE_RAW: int = 101       # Raw IP (no Ethernet header)
+LINKTYPE_LINUX_SLL: int = 113   # Linux "cooked" capture v1 (tcpdump -i any)
+LINKTYPE_LINUX_SLL2: int = 276  # Linux "cooked" capture v2
 
 _MAGIC_USEC: int = 0xA1B2C3D4
 _MAGIC_NSEC: int = 0xA1B23C4D

@@ -159,6 +159,8 @@ from packeteer.parse.to_config import (
 )
 from packeteer.pcap import (
     LINKTYPE_ETHERNET,
+    LINKTYPE_LINUX_SLL,
+    LINKTYPE_LINUX_SLL2,
     LINKTYPE_RAW,
     is_pcap_or_pcapng,
     write_pcap,
@@ -776,8 +778,17 @@ def _apply_spec_to_builder(
         )
         sys.exit(1)
 
-    # ── Ethernet ─────────────────────────────────────────────────────────────
-    if eth.get("enabled", True):
+    # ── Link layer: Ethernet, or a Linux cooked (SLL/SLL2) pseudo header ──────
+    sll_spec = spec.get("sll")
+    sll2_spec = spec.get("sll2")
+    if sll_spec is not None:
+        b = b.sll(**{k: sll_spec[k]
+                     for k in ("packet_type", "arphrd_type", "address") if k in sll_spec})
+    elif sll2_spec is not None:
+        b = b.sll2(**{k: sll2_spec[k]
+                      for k in ("packet_type", "arphrd_type", "address", "if_index")
+                      if k in sll2_spec})
+    elif eth.get("enabled", True):
         b = b.ethernet(
             src_mac=eth.get("src_mac", "00:00:00:00:00:01"),
             dst_mac=eth.get("dst_mac", "00:00:00:00:00:02"),
@@ -868,11 +879,7 @@ def _run_multi_packet(
         sys.exit(1)
 
     # Use link_type from metadata when present; otherwise infer from packet contents.
-    if "link_type" in top_metadata:
-        link_type = int(top_metadata["link_type"])
-    else:
-        all_no_eth = all(not spec.get("ethernet", {}).get("enabled", True) for spec in specs)
-        link_type = LINKTYPE_RAW if all_no_eth else LINKTYPE_ETHERNET
+    link_type = _link_type_for_build(top_metadata, specs)
 
     # collected: list of (pkt_bytes, ts_sec, ts_frac)
     collected: list[tuple[bytes, int, int]] = []
@@ -934,10 +941,18 @@ def _build_packet_filter(args: argparse.Namespace) -> PacketFilter | None:
 def _link_type(value: str) -> int:
     """Convert a ``--link-type`` argument to a link-layer type integer.
 
-    Accepts the names ``ethernet`` and ``raw`` (case-insensitive) or any
-    integer literal (e.g. ``1``, ``101``).
+    Accepts the names ``ethernet``, ``raw``, ``linux_sll`` / ``sll``, and
+    ``linux_sll2`` / ``sll2`` (case-insensitive) or any integer literal
+    (e.g. ``1``, ``101``, ``113``, ``276``).
     """
-    names = {"ethernet": LINKTYPE_ETHERNET, "raw": LINKTYPE_RAW}
+    names = {
+        "ethernet": LINKTYPE_ETHERNET,
+        "raw": LINKTYPE_RAW,
+        "linux_sll": LINKTYPE_LINUX_SLL,
+        "sll": LINKTYPE_LINUX_SLL,
+        "linux_sll2": LINKTYPE_LINUX_SLL2,
+        "sll2": LINKTYPE_LINUX_SLL2,
+    }
     key = value.strip().lower()
     if key in names:
         return names[key]
@@ -945,8 +960,26 @@ def _link_type(value: str) -> int:
         return int(value, 0)
     except ValueError:
         raise argparse.ArgumentTypeError(
-            f"invalid link type {value!r}: use 'ethernet', 'raw', or an integer"
+            f"invalid link type {value!r}: use 'ethernet', 'raw', "
+            "'linux_sll', 'linux_sll2', or an integer"
         ) from None
+
+
+def _infer_link_type(specs: list) -> int:
+    """Infer the pcap link type from packet specs when metadata omits it."""
+    if any("sll2" in spec for spec in specs):
+        return LINKTYPE_LINUX_SLL2
+    if any("sll" in spec for spec in specs):
+        return LINKTYPE_LINUX_SLL
+    all_no_eth = all(not spec.get("ethernet", {}).get("enabled", True) for spec in specs)
+    return LINKTYPE_RAW if all_no_eth else LINKTYPE_ETHERNET
+
+
+def _link_type_for_build(metadata: dict, specs: list) -> int:
+    """Resolve the pcap link type for build: a ``metadata`` override, else inferred."""
+    if "link_type" in metadata:
+        return int(metadata["link_type"])
+    return _infer_link_type(specs)
 
 
 def _positive_int(value: str) -> int:
@@ -1134,10 +1167,7 @@ def _cmd_fuzz(args: argparse.Namespace) -> None:
              p.get("packet_metadata", {}).get(ts_key, 0))
             for p in config["packets"]
         ]
-        all_no_eth = all(
-            not spec.get("ethernet", {}).get("enabled", True) for spec in config["packets"]
-        )
-        link_type  = LINKTYPE_RAW if all_no_eth else LINKTYPE_ETHERNET
+        link_type = _link_type_for_build(top_meta, config["packets"])
         collected: list[tuple[bytes, int, int]] = []
 
         # Build source packets once for byte-level mutations

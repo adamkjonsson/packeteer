@@ -59,5 +59,7 @@ nanosecond timestamps round-trip on a microsecond grid.
 |----------|-------|-------------|
 | `LINKTYPE_ETHERNET` | `1` | Ethernet II — use when packets include an Ethernet header |
 | `LINKTYPE_RAW` | `101` | Raw IP — use for packets with no Ethernet header |
+| `LINKTYPE_LINUX_SLL` | `113` | Linux "cooked" capture v1 (`tcpdump -i any`) |
+| `LINKTYPE_LINUX_SLL2` | `276` | Linux "cooked" capture v2 (modern `-i any` default) |
 
-Both constants live in `packeteer.pcap`.
+All four constants live in `packeteer.pcap`.
