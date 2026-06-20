@@ -380,8 +380,12 @@ def format_pcap_info(info: PcapInfo) -> str:
     else:
         lines.append("  (none)")
 
+    # The "no IP layer" note flags captures that produced no meaningful decode
+    # (likely garbage or a wrong link type).  ARP frames legitimately carry no
+    # IP layer, so an ARP capture is not such a case.
     ip_packets = info.layer_counts.get("ipv4", 0) + info.layer_counts.get("ipv6", 0)
-    if info.packet_count and ip_packets == 0:
+    arp_packets = info.layer_counts.get("arp", 0)
+    if info.packet_count and ip_packets == 0 and arp_packets == 0:
         lines.append(
             "Note: no packets contained an IP layer — the capture may be "
             "malformed or the link-type wrong (try --link-type)."

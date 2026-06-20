@@ -29,7 +29,9 @@ All notable changes to packeteer are recorded in this file.
     `ParsedPacket.arp` field (with `ip` / `transport` left `None`).
   - `packeteer parse` serialises ARP packets to a top-level `"arp"` key;
     `packeteer build` reconstructs them.
-  - `packeteer file-info` reports an `arp` layer count.
+  - `packeteer file-info` reports an `arp` layer count, and no longer prints the
+    "no packets contained an IP layer" note for an all-ARP capture (ARP
+    legitimately carries no IP layer).
   - `packeteer sanitise` rewrites the ARP sender/target MAC and IP addresses
     using the same replacement tables as the Ethernet/IP layers, so an address
     maps consistently wherever it appears.
