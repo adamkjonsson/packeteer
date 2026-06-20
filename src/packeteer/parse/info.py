@@ -49,6 +49,7 @@ _LT_SCORE_THRESHOLD: float = 0.5
 _LAYER_ORDER: tuple[str, ...] = (
     "ethernet", "sll", "sll2", "vlan", "arp", "mpls", "pppoe",
     "ipv4", "ipv6", "ipip", "gre", "etherip", "pseudowire", "vxlan", "geneve", "gtpu",
+    "ah", "esp",
     "tcp", "udp", "icmp", "icmpv6", "sctp",
     "dns", "dhcp", "http", "payload",
 )
@@ -162,6 +163,10 @@ def _packet_layers(pkt: ParsedPacket) -> list[str]:
         labels.append("sll2" if isinstance(pkt.sll, SLL2Header) else "sll")
     if pkt.arp is not None:
         labels.append("arp")
+    if pkt.ah is not None:
+        labels.append("ah")
+    if pkt.esp is not None:
+        labels.append("esp")
     if pkt.mpls:
         labels.append("mpls")
     if pkt.pppoe is not None:
@@ -170,7 +175,9 @@ def _packet_layers(pkt: ParsedPacket) -> list[str]:
         labels.append("ipv4")
     elif isinstance(pkt.ip, IPv6Header):
         labels.append("ipv6")
-    if pkt.ipip:
+    # AH tunnel mode sets the ipip flag internally (its Next Header is 4/41);
+    # it is reported as "ah", not a spurious "ipip".
+    if pkt.ipip and pkt.ah is None:
         labels.append("ipip")
     labels.extend(attr for attr in _TUNNEL_ATTRS if getattr(pkt, attr) is not None)
     transport_label = _TRANSPORT_LABELS.get(type(pkt.transport))

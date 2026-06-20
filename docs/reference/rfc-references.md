@@ -102,6 +102,15 @@ RFCs implemented or referenced by this library.
 * - [RFC 8926](https://datatracker.ietf.org/doc/html/rfc8926)
   - Geneve: Generic Network Virtualization Encapsulation
   - `GeneveHeader`, `GeneveOption`, `GeneveEncap`, `.geneve()`, `GENEVE_PORT`, `packeteer.parse.geneve`
+* - [RFC 4301](https://datatracker.ietf.org/doc/html/rfc4301)
+  - Security Architecture for the Internet Protocol (IPsec)
+  - Architecture context for AH / ESP (transport vs tunnel mode)
+* - [RFC 4302](https://datatracker.ietf.org/doc/html/rfc4302)
+  - IP Authentication Header (AH) — integrity only, no encryption
+  - `AHHeader`, `AHEncap`, `.ah()`, `IPPROTO_AH`, `AH_ICV_LEN_SHA1_96`, `AH_ICV_LEN_SHA256_128`, `packeteer.parse.ipsec`
+* - [RFC 4303](https://datatracker.ietf.org/doc/html/rfc4303)
+  - IP Encapsulating Security Payload (ESP) — modelled as the cleartext SPI + Sequence prefix plus an opaque payload (no decryption)
+  - `ESPHeader`, `ESPEncap`, `.esp()`, `IPPROTO_ESP`, `packeteer.parse.ipsec`
 * - [RFC 826](https://datatracker.ietf.org/doc/html/rfc826)
   - An Ethernet Address Resolution Protocol (ARP)
   - `ARPHeader`, `.arp()`, `ETHERTYPE_ARP`, `packeteer.parse.arp`

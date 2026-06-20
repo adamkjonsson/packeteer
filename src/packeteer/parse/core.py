@@ -58,6 +58,7 @@ from packeteer.generate.http import HTTPMessage
 from packeteer.generate.icmp import ICMPHeader
 from packeteer.generate.icmpv6 import ICMPv6Header
 from packeteer.generate.ip import IPHeader
+from packeteer.generate.ipsec import IPPROTO_AH, IPPROTO_ESP, AHHeader, ESPHeader
 from packeteer.generate.ipv6 import IPv6Header
 from packeteer.generate.mpls import ETHERTYPE_MPLS_MULTICAST, ETHERTYPE_MPLS_UNICAST, MPLSLabel
 from packeteer.generate.pppoe import ETHERTYPE_PPPOE_DISCOVERY, ETHERTYPE_PPPOE_SESSION, PPPoEHeader
@@ -87,6 +88,8 @@ from .gtpu import packet_parser as _gtpu_parser
 from .icmp import packet_parser as _icmp_parser
 from .icmpv6 import packet_parser as _icmpv6_parser
 from .ip import packet_parser as _ip_parser
+from .ipsec import ah_packet_parser as _ah_parser
+from .ipsec import esp_packet_parser as _esp_parser
 from .mpls import packet_parser as _mpls_parser
 from .pppoe import packet_parser as _pppoe_parser
 from .pseudowire import packet_parser as _pw_parser
@@ -196,6 +199,13 @@ class ParsedPacket:
             message :attr:`tunneled` holds the inner IP packet (no Ethernet);
             for other message types :attr:`tunneled` is ``None`` and any
             content remains in :attr:`payload`.
+        ah: Parsed IPsec Authentication Header (RFC 4302), or ``None``.  AH is
+            transparent (integrity only), so the protected content is decoded
+            normally — :attr:`transport` in transport mode, or
+            :attr:`tunneled` in tunnel mode.
+        esp: Parsed IPsec ESP header (RFC 4303), or ``None``.  Only SPI +
+            Sequence Number are decoded; the encrypted remainder is opaque and
+            kept in :attr:`payload` (ESP is terminal without the key).
         tunneled: Inner packet parsed recursively when :attr:`ipip` is
             ``True``, :attr:`gre` is set, :attr:`etherip` is set,
             :attr:`pseudowire` is set, or :attr:`vxlan` is set, otherwise
@@ -232,6 +242,8 @@ class ParsedPacket:
     vxlan:       VXLANHeader | None = None
     geneve:      GeneveHeader | None = None
     gtpu:        GTPUHeader | None = None
+    ah:          AHHeader | None = None
+    esp:         ESPHeader | None = None
     tunneled:    "ParsedPacket | None" = None
     transport: TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | SCTPHeader | None = None
     dns:       DNSMessage | None = None
@@ -541,6 +553,18 @@ def _parse_ip_protocol(
             pkt.etherip = ei_hdr
             pkt.tunneled = parse_packet(remaining[ei_size:], link_type=LINKTYPE_ETHERNET)
             return b""
+    elif ip_proto == IPPROTO_AH:
+        ah_size, next_header, ah_hdr = _ah_parser(remaining)
+        if ah_size > 0 and ah_hdr is not None:
+            pkt.ah = ah_hdr
+            # AH is transparent: continue parsing the protected content.
+            return _parse_ip_protocol(pkt, remaining[ah_size:], next_header)
+    elif ip_proto == IPPROTO_ESP:
+        e_size, _, e_hdr = _esp_parser(remaining)
+        if e_size > 0 and e_hdr is not None:
+            pkt.esp = e_hdr
+            # ESP payload is encrypted/opaque without the key.
+            return remaining[e_size:]
     elif ip_proto is not None:
         warnings.warn(
             UnsupportedIPProtocolWarning(
@@ -597,6 +621,13 @@ def parse_packet(data: bytes, *, link_type: int = LINKTYPE_ETHERNET) -> ParsedPa
       into :attr:`ParsedPacket.etherip` and ``parse_packet`` is called
       recursively on the inner Ethernet frame.  The result is stored in
       :attr:`ParsedPacket.tunneled`.  Arbitrary nesting is supported.
+    - **IPsec AH** (IP protocol ``51``, RFC 4302): The Authentication Header is
+      decoded into :attr:`ParsedPacket.ah`.  AH provides integrity only, so its
+      Next Header field is followed and the protected content is parsed in full
+      (transport header in transport mode, inner IP in tunnel mode).
+    - **IPsec ESP** (IP protocol ``50``, RFC 4303): The SPI + Sequence-Number
+      prefix is decoded into :attr:`ParsedPacket.esp`; the encrypted remainder
+      is opaque and stored in :attr:`ParsedPacket.payload`.
     - **VXLAN** (UDP destination port ``4789``, RFC 7348): After the UDP header
       is parsed, the 8-byte VXLAN header is decoded into
       :attr:`ParsedPacket.vxlan` and ``parse_packet`` is called recursively
@@ -758,7 +789,8 @@ def parse_pcap_file(
                 update_config(cfg, pkt.pppoe)
             if pkt.ip is not None:
                 update_config(cfg, pkt.ip)
-            if (pkt.ipip or pkt.gre is not None
+            if (pkt.ah is not None or pkt.esp is not None
+                    or pkt.ipip or pkt.gre is not None
                     or pkt.etherip is not None or pkt.pseudowire is not None
                     or pkt.vxlan is not None or pkt.geneve is not None
                     or pkt.gtpu is not None):

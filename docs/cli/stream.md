@@ -202,6 +202,10 @@ At most one of `--vlan` / `--qinq` may be given; at most one tunnel type.
 | `--gtpu-teid N` | 32-bit GTP-U Tunnel Endpoint Identifier (default 0) |
 | `--gtpu-ttl N` | Outer IP TTL (default 64) |
 | `--gtpu-src-port N` | Outer UDP source port (default 2152) |
+| `--ah SRC_IP DST_IP` | IPsec AH tunnel (RFC 4302); inner stack stays **visible** (integrity only) |
+| `--esp SRC_IP DST_IP` | IPsec ESP tunnel (RFC 4303); inner stack becomes **opaque** (encrypted) |
+| `--ipsec-spi N` | 32-bit Security Parameters Index for `--ah` / `--esp` (default 256) |
+| `--ipsec-ttl N` | Outer IP TTL for `--ah` / `--esp` (default 64) |
 
 ## INI config file
 
@@ -294,6 +298,20 @@ packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
 ```bash
 packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
     --gtpu 203.0.113.1 203.0.113.2 --gtpu-teid 5000 --pcap gtpu.pcap
+```
+
+**IPsec AH tunnel (inner stack stays visible):**
+
+```bash
+packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
+    --ah 203.0.113.1 203.0.113.2 --ipsec-spi 0x1000 --pcap ah.pcap
+```
+
+**IPsec ESP tunnel (inner stack opaque, like real encrypted traffic):**
+
+```bash
+packeteer stream --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
+    --esp 203.0.113.1 203.0.113.2 --ipsec-spi 0x2000 --pcap esp.pcap
 ```
 
 **Generate packet spec for downstream editing:**

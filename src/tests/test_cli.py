@@ -605,6 +605,7 @@ class TestParseStreamEncap(unittest.TestCase):
             "geneve_src_port": None,
             "gtpu": None, "gtpu_teid": None, "gtpu_ttl": None,
             "gtpu_src_port": None,
+            "ah": None, "esp": None, "ipsec_spi": None, "ipsec_ttl": None,
         }
         defaults.update(kwargs)
         return argparse.Namespace(**defaults)
@@ -786,6 +787,35 @@ class TestParseStreamEncap(unittest.TestCase):
         with self.assertRaises(SystemExit):
             cli._parse_stream_encap(args)
 
+    def test_ah_basic(self):
+        from packeteer.generate.stream_encap import AHEncap
+        args = self._encap_args(ah=["10.0.0.1", "10.0.0.2"], ipsec_spi=0x1000)
+        result = cli._parse_stream_encap(args)
+        self.assertIsInstance(result[0], AHEncap)
+        self.assertEqual(result[0].spi, 0x1000)
+        self.assertEqual(result[0].src_ip, "10.0.0.1")
+
+    def test_esp_basic(self):
+        from packeteer.generate.stream_encap import ESPEncap
+        args = self._encap_args(esp=["10.0.0.1", "10.0.0.2"], ipsec_spi=0x2000, ipsec_ttl=32)
+        result = cli._parse_stream_encap(args)
+        self.assertIsInstance(result[0], ESPEncap)
+        self.assertEqual(result[0].spi, 0x2000)
+        self.assertEqual(result[0].ttl, 32)
+
+    def test_ah_default_spi(self):
+        args = self._encap_args(ah=["10.0.0.1", "10.0.0.2"])
+        result = cli._parse_stream_encap(args)
+        self.assertEqual(result[0].spi, 256)
+
+    def test_ah_and_esp_mutually_exclusive(self):
+        args = self._encap_args(
+            ah=["1.2.3.4", "5.6.7.8"],
+            esp=["9.0.0.1", "9.0.0.2"],
+        )
+        with self.assertRaises(SystemExit):
+            cli._parse_stream_encap(args)
+
     def test_multiple_tunnels_exits(self):
         args = self._encap_args(
             gre=["1.2.3.4", "5.6.7.8"],
@@ -872,6 +902,7 @@ class TestCmdStreamWithEncap(unittest.TestCase):
             "geneve_src_port": None,
             "gtpu": None, "gtpu_teid": None, "gtpu_ttl": None,
             "gtpu_src_port": None,
+            "ah": None, "esp": None, "ipsec_spi": None, "ipsec_ttl": None,
         }
         defaults.update(kwargs)
         return argparse.Namespace(**defaults)

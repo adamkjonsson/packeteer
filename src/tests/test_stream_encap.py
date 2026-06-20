@@ -9,6 +9,8 @@ from packeteer.generate.geneve import GENEVE_PORT
 from packeteer.generate.gtpu import GTPU_PORT
 from packeteer.generate.sctp_stream import generate_sctp_stream
 from packeteer.generate.stream_encap import (
+    AHEncap,
+    ESPEncap,
     EtherIPEncap,
     GeneveEncap,
     GREEncap,
@@ -103,6 +105,12 @@ class TestEncapIpStart(unittest.TestCase):
 
     def test_gtpu_tunnel_stops_at_ethernet(self):
         self.assertEqual(_encap_ip_start(GTPUEncap(5000, "1.2.3.4", "5.6.7.8"), True), 14)
+
+    def test_ah_tunnel_stops_at_ethernet(self):
+        self.assertEqual(_encap_ip_start(AHEncap(0x1000, "1.2.3.4", "5.6.7.8"), True), 14)
+
+    def test_esp_tunnel_stops_at_ethernet(self):
+        self.assertEqual(_encap_ip_start(ESPEncap(0x2000, "1.2.3.4", "5.6.7.8"), True), 14)
 
     def test_vlan_then_gre_stops_after_vlan(self):
         # 14 (eth) + 4 (vlan) = 18; GRE stops accumulation
@@ -302,6 +310,24 @@ class TestApplyEncap(unittest.TestCase):
         # No optional block → inner IP (no Ethernet) starts at 42+8 = 50
         self.assertEqual(pkt[50] >> 4, 4)   # IPv4 version nibble
 
+    def test_ah_outer_ip_protocol_51_inner_visible(self):
+        pkt = _build_with_encap(AHEncap(
+            spi=0x1000, src_ip="203.0.113.1", dst_ip="203.0.113.2"))
+        # Outer IP protocol = 51 (AH) at byte 23
+        self.assertEqual(pkt[23], 51)
+        # AH header at 14+20=34; Next Header = 4 (IP-in-IP, inner stays visible)
+        self.assertEqual(pkt[34], 4)
+        # SPI at AH offset +4 = 38
+        self.assertEqual(struct.unpack_from("!I", pkt, 38)[0], 0x1000)
+
+    def test_esp_outer_ip_protocol_50_inner_opaque(self):
+        pkt = _build_with_encap(ESPEncap(
+            spi=0x2000, src_ip="203.0.113.1", dst_ip="203.0.113.2"))
+        # Outer IP protocol = 50 (ESP) at byte 23
+        self.assertEqual(pkt[23], 50)
+        # ESP header at 14+20=34; SPI then sequence
+        self.assertEqual(struct.unpack_from("!I", pkt, 34)[0], 0x2000)
+
     def test_combined_vlan_then_gre(self):
         layers = [VLANEncap(vid=100), GREEncap("203.0.113.1", "203.0.113.2")]
         pkt = _build_with_encap(layers)
@@ -400,6 +426,19 @@ class TestTCPStreamWithEncap(unittest.TestCase):
         pkt = s.packets[0].raw
         self.assertEqual(pkt[23], 17)  # outer UDP
         self.assertEqual(struct.unpack_from("!H", pkt, 36)[0], GTPU_PORT)
+
+    def test_ah_stream_outer_ip_proto_51(self):
+        s = self._stream(AHEncap(spi=0x1000, src_ip="192.168.1.1", dst_ip="192.168.1.2"))
+        pkt = s.packets[0].raw
+        self.assertEqual(pkt[23], 51)  # outer IP protocol = AH
+        # Inner IP still visible (AH does not encrypt): AH at 34, inner IP at 34+24
+        self.assertEqual(pkt[34], 4)   # AH Next Header = IP-in-IP
+
+    def test_esp_stream_outer_ip_proto_50(self):
+        s = self._stream(ESPEncap(spi=0x2000, src_ip="192.168.1.1", dst_ip="192.168.1.2"))
+        pkt = s.packets[0].raw
+        self.assertEqual(pkt[23], 50)  # outer IP protocol = ESP
+        self.assertEqual(struct.unpack_from("!I", pkt, 34)[0], 0x2000)  # SPI
 
     def test_combined_mpls_ipip_stream(self):
         layers = [MPLSEncap(labels=[100]), IPIPEncap("192.168.1.1", "192.168.1.2")]

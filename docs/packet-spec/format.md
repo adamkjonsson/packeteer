@@ -435,6 +435,86 @@ to `2152` when no `transport` block is present.
 
 ---
 
+(packet-spec-ah)=
+## `ah`
+
+An optional IPsec Authentication Header (RFC 4302, IP protocol 51).  Set the
+enclosing `network.protocol` to `"ah"`.  AH provides **integrity only — it does
+not encrypt**, so its protected content stays in cleartext and is nested inside
+the `"ah"` key.
+
+In **transport** mode the protected content is a transport header, so `"ah"`
+carries a `protocol` name and a `transport` block:
+
+```json
+"network": { "src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "ah", "ttl": 64 },
+"ah": {
+  "spi": 4096,
+  "sequence": 5,
+  "icv": "fc33302dcfeccd0ddb4994a5",
+  "protocol": "tcp",
+  "transport": { "dst_port": 80 }
+}
+```
+
+In **tunnel** mode the protected content is a whole inner IP packet, so `"ah"`
+carries its own `network` (and `transport`) block instead:
+
+```json
+"network": { "src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "ah", "ttl": 64 },
+"ah": {
+  "spi": 4096,
+  "sequence": 5,
+  "icv": "ec63a30b09901d77eae11991",
+  "network":   { "src": "192.168.1.1", "dst": "192.168.1.2", "protocol": "tcp" },
+  "transport": { "dst_port": 80 }
+}
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `spi` | — | 32-bit Security Parameters Index |
+| `sequence` | `0` | 32-bit anti-replay sequence number |
+| `icv` | random | Integrity Check Value as a hex string.  When omitted on build, random bytes of `icv_len` (default 12, HMAC-SHA1-96) are generated and padded so the header is a multiple of 4 bytes |
+| `protocol` | — | Transport-mode only: name of the protected transport (`"tcp"`, `"udp"`, …) |
+| `network` / `transport` | — | The protected inner stack (tunnel mode → both; transport mode → `transport` only) |
+
+AH's Next Header field and the AH length are computed automatically.  Because AH
+is cleartext, the inner stack is fully decoded and `sanitise` scrubs its
+addresses; the SPI and sequence are not addresses/PII and are left unchanged.
+
+---
+
+(packet-spec-esp)=
+## `esp`
+
+An optional IPsec Encapsulating Security Payload header (RFC 4303, IP protocol
+50).  Set the enclosing `network.protocol` to `"esp"`.  ESP encrypts everything
+after the SPI + Sequence-Number prefix, so without the Security Association key
+the rest is **opaque** — packeteer models exactly that and cannot decrypt it.
+
+```json
+"network": { "src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "esp", "ttl": 64 },
+"esp": {
+  "spi": 8192,
+  "sequence": 3,
+  "payload": "56e38c15d89cfa96ca7b82abddfb7ad70000"
+}
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `spi` | — | 32-bit Security Parameters Index |
+| `sequence` | `0` | 32-bit sequence number |
+| `payload` | `""` | The opaque (encrypted) payload as a hex string |
+
+There is no inner `network`/`transport` block: on parse the content after the
+prefix is opaque.  When **building**, inner layers placed after `.esp()` are
+assembled and used as the opaque payload, so a structured ESP packet can be
+authored even though it parses back as opaque.
+
+---
+
 (packet-spec-network)=
 ## `network`
 

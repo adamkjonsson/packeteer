@@ -244,13 +244,17 @@ Encapsulation types fall into two categories:
   insert layer-2 tags; the stream's own transport (TCP/UDP/SCTP) stays on the
   wire as the outer transport.
 - **Tunnel** — `GREEncap`, `EtherIPEncap`, `IPIPEncap`, `VXLANEncap`,
-  `GeneveEncap`, `GTPUEncap`.  These add their own outer headers and carry the
-  whole stream as *inner* traffic.  Any stream generator accepts any tunnel, so
-  `generate_tcp_stream(..., encap=VXLANEncap(...))` tunnels the TCP conversation
-  *inside* VXLAN — the TCP is the inner protocol.  `VXLANEncap`, `GeneveEncap`,
-  and `GTPUEncap` always use an outer UDP datagram (port 4789 / 6081 / 2152)
-  regardless of the inner stream protocol; they never run over TCP or SCTP
-  themselves.  `GTPUEncap` carries the inner IP directly (no inner Ethernet).
+  `GeneveEncap`, `GTPUEncap`, `AHEncap`, `ESPEncap`.  These add their own outer
+  headers and carry the whole stream as *inner* traffic.  Any stream generator
+  accepts any tunnel, so `generate_tcp_stream(..., encap=VXLANEncap(...))`
+  tunnels the TCP conversation *inside* VXLAN — the TCP is the inner protocol.
+  `VXLANEncap`, `GeneveEncap`, and `GTPUEncap` always use an outer UDP datagram
+  (port 4789 / 6081 / 2152) regardless of the inner stream protocol; they never
+  run over TCP or SCTP themselves.  `GTPUEncap` carries the inner IP directly
+  (no inner Ethernet).  The IPsec tunnels carry the inner IP directly too:
+  `AHEncap` keeps the inner stack visible (AH is integrity-only), while
+  `ESPEncap` makes it opaque (ESP encrypts), so an `ESPEncap` stream parses back
+  as opaque ESP — like real encrypted traffic.
 
 See the Reference section for stacking rules and full parameter lists.
 

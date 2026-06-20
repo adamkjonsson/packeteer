@@ -133,6 +133,8 @@ from packeteer.generate.sctp import (
 from packeteer.generate.sctp_stream import SCTPStreamConfig, generate_sctp_stream
 from packeteer.generate.session_mix import CombinedStream, generate_session_mix
 from packeteer.generate.stream_encap import (
+    AHEncap,
+    ESPEncap,
     EtherIPEncap,
     GeneveEncap,
     GREEncap,
@@ -621,6 +623,15 @@ def _gtpu_ext_headers_from_spec(headers: list) -> list[GTPUExtensionHeader]:
     ]
 
 
+def _apply_esp_spec(b: "PacketBuilder", esp_spec: dict) -> "PacketBuilder":
+    """Append an IPsec ESP header with its opaque payload from a packet spec."""
+    return b.esp(
+        spi=esp_spec.get("spi", 0),
+        sequence=esp_spec.get("sequence", 0),
+        payload=bytes.fromhex(esp_spec.get("payload", "")),
+    )
+
+
 def _apply_tunnel_protocol(
     b: "PacketBuilder",
     proto_lower: str,
@@ -714,6 +725,30 @@ def _apply_tunnel_protocol(
             # G-PDU: inner IP packet
             b = _apply_ip_chain(b, gtpu_spec, packet_num)
         # else: header-only control message (e.g. End Marker) — nothing inner.
+        return b, True
+
+    # IPsec AH (RFC 4302) — transparent; protects ESP / inner IP / a transport.
+    if proto_lower == "ah":
+        ah_spec = spec["ah"]
+        b = b.ah(
+            spi=ah_spec.get("spi", 0),
+            sequence=ah_spec.get("sequence", 0),
+            icv=bytes.fromhex(ah_spec["icv"]) if "icv" in ah_spec else None,
+        )
+        if "esp" in ah_spec:
+            b = _apply_esp_spec(b, ah_spec["esp"])
+        elif "network" in ah_spec:
+            b = _apply_ip_chain(b, ah_spec, packet_num)   # tunnel mode
+        elif "protocol" in ah_spec:
+            b = _dispatch_transport(
+                b, ah_spec["protocol"].lower(), ah_spec.get("transport", {}),
+                packet_num, "ah ",
+            )
+        return b, True
+
+    # IPsec ESP (RFC 4303) — terminal; opaque (encrypted) payload.
+    if proto_lower == "esp":
+        b = _apply_esp_spec(b, spec["esp"])
         return b, True
 
     return b, False
@@ -1298,6 +1333,10 @@ _STREAM_PARAMS: dict[str, tuple[str, object, object]] = {
     "gtpu_teid":       ("gtpu_teid",       int,                                  None),
     "gtpu_ttl":        ("gtpu_ttl",        int,                                  None),
     "gtpu_src_port":   ("gtpu_src_port",   int,                                  None),
+    "ah":              ("ah",              lambda s: s.split(),                  None),
+    "esp":             ("esp",             lambda s: s.split(),                  None),
+    "ipsec_spi":       ("ipsec_spi",       int,                                  None),
+    "ipsec_ttl":       ("ipsec_ttl",       int,                                  None),
 }
 
 
@@ -1364,12 +1403,12 @@ def _parse_stream_encap(args: argparse.Namespace) -> "list[StreamEncap] | None":
     produces MPLS labels followed by an IP-in-IP tunnel).  The order of layers
     in the returned list is fixed: tag-based layers first (VLAN/QinQ → MPLS →
     PPPoE), then at most one tunnel layer (GRE / EtherIP / IPIP / VXLAN / GENEVE /
-    GTP-U).
+    GTP-U / IPsec AH / ESP).
 
     Constraints enforced:
     - ``--vlan`` and ``--qinq`` are mutually exclusive (both are VLAN tags).
     - At most one tunnel type (``--gre``, ``--etherip``, ``--ipip``, ``--vxlan``,
-      ``--geneve``, ``--gtpu``).
+      ``--geneve``, ``--gtpu``, ``--ah``, ``--esp``).
 
     Returns ``None`` when no encapsulation was requested.
     """
@@ -1412,7 +1451,7 @@ def _parse_stream_encap(args: argparse.Namespace) -> "list[StreamEncap] | None":
         layers.append(PPPoEEncap(session_id=int(args.pppoe)))
 
     # ── Tunnel encap (at most one) ─────────────────────────────────────────────
-    tunnel_names = [n for n in ("gre", "etherip", "ipip", "vxlan", "geneve", "gtpu")
+    tunnel_names = [n for n in ("gre", "etherip", "ipip", "vxlan", "geneve", "gtpu", "ah", "esp")
                     if getattr(args, n, None) is not None]
     if len(tunnel_names) > 1:
         print(
@@ -1460,6 +1499,18 @@ def _parse_stream_encap(args: argparse.Namespace) -> "list[StreamEncap] | None":
             ttl=_int("gtpu_ttl", 64),
             udp_src_port=_int("gtpu_src_port", GTPU_PORT),
         ))
+    elif "ah" in tunnel_names:
+        src, dst = args.ah
+        layers.append(AHEncap(
+            spi=_int("ipsec_spi", 256), src_ip=src, dst_ip=dst,
+            ttl=_int("ipsec_ttl", 64),
+        ))
+    elif "esp" in tunnel_names:
+        src, dst = args.esp
+        layers.append(ESPEncap(
+            spi=_int("ipsec_spi", 256), src_ip=src, dst_ip=dst,
+            ttl=_int("ipsec_ttl", 64),
+        ))
 
     return layers if layers else None
 
@@ -1490,7 +1541,8 @@ def _stream_to_json(packets: list, include_ethernet: bool) -> str:
             update_config(cfg, pkt.pppoe)
         if pkt.ip is not None:
             update_config(cfg, pkt.ip)
-        if (pkt.ipip or pkt.gre is not None or pkt.etherip is not None
+        if (pkt.ah is not None or pkt.esp is not None
+                or pkt.ipip or pkt.gre is not None or pkt.etherip is not None
                 or pkt.pseudowire is not None or pkt.vxlan is not None
                 or pkt.geneve is not None or pkt.gtpu is not None):
             apply_tunneled(cfg, pkt)
@@ -2395,6 +2447,26 @@ def main() -> None:
         "--gtpu-src-port", type=int, default=None, metavar="PORT",
         dest="gtpu_src_port",
         help="Outer UDP source port for GTP-U tunnel (default 2152)",
+    )
+    encap_group.add_argument(
+        "--ah", nargs=2, default=None,
+        metavar=("OUTER_SRC", "OUTER_DST"),
+        help="IPsec AH tunnel (RFC 4302); specify outer IP source and destination",
+    )
+    encap_group.add_argument(
+        "--esp", nargs=2, default=None,
+        metavar=("OUTER_SRC", "OUTER_DST"),
+        help="IPsec ESP tunnel (RFC 4303); inner becomes opaque ciphertext",
+    )
+    encap_group.add_argument(
+        "--ipsec-spi", type=int, default=None, metavar="SPI",
+        dest="ipsec_spi",
+        help="32-bit Security Parameters Index for --ah / --esp (default 256)",
+    )
+    encap_group.add_argument(
+        "--ipsec-ttl", type=int, default=None, metavar="N",
+        dest="ipsec_ttl",
+        help="Outer IP TTL for the IPsec tunnel (default 64)",
     )
     # Output (may also be provided via --config; mutual exclusivity enforced in _cmd_stream)
     stream_parser.add_argument("--pcap", default=None, metavar="FILE",

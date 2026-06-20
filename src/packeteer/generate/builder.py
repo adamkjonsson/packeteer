@@ -151,6 +151,23 @@ Typical usage::
         .tcp(dst_port=80)
         .build()
     )
+
+    # IPsec AH (RFC 4302) transport mode — integrity-only, inner TCP in cleartext
+    pkt = (PacketBuilder()
+        .ethernet()
+        .ip(src="10.0.0.1", dst="10.0.0.2")
+        .ah(spi=0x1000, sequence=1)
+        .tcp(dst_port=80)
+        .build()
+    )
+
+    # IPsec ESP (RFC 4303) — SPI + sequence + opaque (encrypted) payload
+    pkt = (PacketBuilder()
+        .ethernet()
+        .ip(src="10.0.0.1", dst="10.0.0.2")
+        .esp(spi=0x2000, sequence=1, size=64)
+        .build()
+    )
 """
 from __future__ import annotations
 
@@ -200,6 +217,15 @@ from .http import HTTPMessage, _build_http_message
 from .icmp import ICMPHeader, _build_icmp_header
 from .icmpv6 import ICMPv6Header, _build_icmpv6_header
 from .ip import IPHeader, _build_ip_header
+from .ipsec import (
+    AH_ICV_LEN_SHA1_96,
+    IPPROTO_AH,
+    IPPROTO_ESP,
+    AHHeader,
+    ESPHeader,
+    _build_ah_header,
+    _build_esp_header,
+)
 from .ipv6 import (
     HBH_NEXT_HEADER,
     HopByHopOptions,
@@ -257,6 +283,8 @@ _IP_PROTO_MAP: dict[type, int] = {
     GREHeader:       IPPROTO_GRE,      # GRE (RFC 2784)
     SCTPHeader:      IPPROTO_SCTP,     # SCTP (RFC 9260)
     HopByHopOptions: HBH_NEXT_HEADER,  # Hop-by-Hop Options (RFC 8200)
+    AHHeader:        IPPROTO_AH,       # IPsec AH (RFC 4302)
+    ESPHeader:       IPPROTO_ESP,      # IPsec ESP (RFC 4303)
 }
 
 # EtherType that a GRE header should advertise based on the next layer type
@@ -372,6 +400,17 @@ def _build_encap_layer(layer: object, next_layer: object, data: bytes) -> bytes:
     elif isinstance(layer, GTPUHeader):
         data = _build_gtpu_header(layer, data) + data
 
+    elif isinstance(layer, AHHeader):
+        # AH is transparent: Next Header is the protocol it protects.
+        data = _build_ah_header(layer, _ip_proto_for(next_layer)) + data
+
+    elif isinstance(layer, ESPHeader):
+        # ESP: SPI + sequence, then the (opaque) inner bytes / explicit payload.
+        data = _build_esp_header(ESPHeader(
+            spi=layer.spi, sequence=layer.sequence,
+            payload=layer.payload + data, icv_len=layer.icv_len,
+        ))
+
     elif isinstance(layer, GREHeader):
         proto_type = _GRE_PROTO_MAP.get(type(next_layer), 0)
         hdr = GREHeader(
@@ -444,6 +483,10 @@ class PacketBuilder:
     * Calling :meth:`sll` / :meth:`sll2` inserts a Linux cooked-capture pseudo
       link-layer header (used by ``tcpdump -i any``) as an alternative outermost
       layer to :meth:`ethernet`.
+    * Calling :meth:`ah` inserts an IPsec Authentication Header (RFC 4302) after
+      the outer :meth:`ip`; the protected content follows in cleartext.
+    * Calling :meth:`esp` inserts an IPsec ESP header (RFC 4303); its payload is
+      opaque (packeteer performs no encryption).
 
     The layer list stores the same public dataclasses exported by
     ``packeteer.generate`` (``EthernetHeader``, ``VLANTag``, ``MPLSLabel``,
@@ -873,6 +916,95 @@ class PacketBuilder:
             teid=teid, message_type=message_type,
             sequence=sequence, n_pdu=n_pdu,
             extension_headers=list(extension_headers or []),
+        ))
+        return self
+
+    def ah(
+        self,
+        *,
+        spi: int,
+        sequence: int = 0,
+        icv: bytes | None = None,
+        icv_len: int = AH_ICV_LEN_SHA1_96,
+    ) -> "PacketBuilder":
+        """Append an IPsec Authentication Header (RFC 4302).
+
+        AH provides integrity only — it does **not** encrypt — so the protected
+        content (a transport header in transport mode, or an inner :meth:`ip`
+        packet in tunnel mode) follows in cleartext.  Call after the outer
+        :meth:`ip`; the enclosing IP protocol (51) and AH's Next Header (the
+        protocol of the next layer) are set automatically at build time.
+
+        Args:
+            spi: 32-bit Security Parameters Index.
+            sequence: 32-bit sequence number.  Defaults to ``0``.
+            icv: Integrity Check Value bytes.  When ``None``, *icv_len* random
+                bytes are used (packeteer computes no real ICV).
+            icv_len: ICV length when *icv* is ``None``.  Defaults to
+                ``12`` (HMAC-SHA1-96).
+
+        Example — AH transport mode protecting TCP::
+
+            pkt = (PacketBuilder()
+                .ethernet()
+                .ip(src="10.0.0.1", dst="10.0.0.2")
+                .ah(spi=0x1000, sequence=1)
+                .tcp(dst_port=80)
+                .build()
+            )
+
+        """
+        self._layers.append(AHHeader(
+            spi=spi, sequence=sequence,
+            icv=icv if icv is not None else b"", icv_len=icv_len,
+        ))
+        return self
+
+    def esp(
+        self,
+        *,
+        spi: int,
+        sequence: int = 0,
+        payload: bytes | None = None,
+        size: int = 0,
+        icv_len: int = 0,
+    ) -> "PacketBuilder":
+        """Append an IPsec Encapsulating Security Payload header (RFC 4303).
+
+        ESP encrypts its payload; packeteer has no cryptography, so the payload
+        is **opaque** bytes.  Supply explicit *payload* bytes or a random *size*,
+        or append inner layers after ``.esp()`` (whose assembled bytes become the
+        opaque payload — a "would-be-encrypted" packet that still parses back as
+        opaque).  Call after the outer :meth:`ip`; the IP protocol (50) is set
+        automatically.
+
+        Args:
+            spi: 32-bit Security Parameters Index.
+            sequence: 32-bit sequence number.  Defaults to ``0``.
+            payload: Explicit opaque payload bytes.  Takes precedence over *size*.
+            size: Generate this many random opaque payload bytes when *payload*
+                is ``None``.
+            icv_len: Extra opaque trailer bytes (a stand-in for the ICV) appended
+                after the payload.  Defaults to ``0``.
+
+        Example — ESP with a 64-byte opaque payload::
+
+            pkt = (PacketBuilder()
+                .ethernet()
+                .ip(src="10.0.0.1", dst="10.0.0.2")
+                .esp(spi=0x2000, sequence=1, size=64)
+                .build()
+            )
+
+        """
+        if payload is not None:
+            data = payload
+        elif size:
+            data = os.urandom(size)
+        else:
+            data = b""
+        self._layers.append(ESPHeader(
+            spi=spi, sequence=sequence, payload=data, icv_len=icv_len,
         ))
         return self
 
@@ -1317,6 +1449,13 @@ class PacketBuilder:
             return
 
         has_ip = any(isinstance(layer, (IPHeader, IPv6Header)) for layer in self._layers)
+        # ESP carries an opaque (encrypted) payload, so an outer IP + ESP is a
+        # complete packet with no separate transport layer.
+        if any(isinstance(layer, ESPHeader) for layer in self._layers):
+            if not has_ip:
+                raise ValueError("No IP layer configured; call .ip() before .esp()")
+            return
+
         has_transport = any(
             isinstance(layer, (TCPHeader, UDPHeader, ICMPHeader, ICMPv6Header, SCTPHeader))
             for layer in self._layers
