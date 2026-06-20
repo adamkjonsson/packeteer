@@ -106,8 +106,9 @@ See {doc}`parse` for details.
 
 When the input is a capture file, `--link-type TYPE` overrides the link-layer
 type recorded in the header — use it when a capture declares the wrong type and
-would otherwise parse incorrectly.  `TYPE` accepts `ethernet`, `raw`, or an
-integer (e.g. `1`, `101`).  The flag is ignored when the input is a JSON packet
+would otherwise parse incorrectly.  `TYPE` accepts `ethernet`, `raw`,
+`linux_sll`, `linux_sll2`, or an integer (e.g. `1`, `101`, `113`, `276`).  The
+flag is ignored when the input is a JSON packet
 spec, since no parsing happens in that case.  See {doc}`parse` for details.
 
 ```bash

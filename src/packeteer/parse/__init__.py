@@ -21,6 +21,7 @@ from .info import PcapInfo, format_pcap_info, pcap_info
 from .ip import packet_parser as ip_packet_parser
 from .mpls import packet_parser as mpls_packet_parser
 from .pppoe import packet_parser as pppoe_packet_parser
+from .sll import sll2_packet_parser, sll_packet_parser
 from .tcp import packet_parser as tcp_packet_parser
 from .to_config import apply_tunneled, to_json_string, to_packet_spec, update_config
 from .udp import packet_parser as udp_packet_parser
@@ -54,6 +55,8 @@ __all__ = [
     "icmpv6_packet_parser",
     "udp_packet_parser",
     "tcp_packet_parser",
+    "sll_packet_parser",
+    "sll2_packet_parser",
     "vxlan_packet_parser",
     "PacketFilter",
 ]

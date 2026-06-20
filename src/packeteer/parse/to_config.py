@@ -121,6 +121,7 @@ from packeteer.generate.sctp import (
     SCTPShutdownChunk,
     SCTPShutdownCompleteChunk,
 )
+from packeteer.generate.sll import ARPHRD_ETHER, SLL2Header, SLLHeader
 from packeteer.generate.tcp import TCPHeader, TCPOptions
 from packeteer.generate.udp import UDPHeader
 from packeteer.generate.vxlan import VXLAN_FLAG_VALID_VNI, VXLANHeader
@@ -241,6 +242,22 @@ def _apply_ethernet(config: dict[str, Any], hdr: EthernetHeader) -> None:
             "dei": hdr.inner_vlan_tag.dei,
         }
     config["ethernet"] = section
+
+
+def _apply_sll(config: dict[str, Any], hdr: SLLHeader | SLL2Header) -> None:
+    """Serialise a Linux cooked-capture header into ``config["sll"]``/``["sll2"]``."""
+    section: dict[str, Any] = {
+        "packet_type": hdr.packet_type,
+        "address":     hdr.address,
+    }
+    if hdr.arphrd_type != ARPHRD_ETHER:
+        section["arphrd_type"] = hdr.arphrd_type
+    if isinstance(hdr, SLL2Header):
+        if hdr.if_index:
+            section["if_index"] = hdr.if_index
+        config["sll2"] = section
+    else:
+        config["sll"] = section
 
 
 def _apply_arp(config: dict[str, Any], hdr: ARPHeader) -> None:
@@ -719,7 +736,8 @@ def _apply_http(config: dict[str, Any], msg: HTTPMessage) -> None:  # type: igno
 def update_config(
     config: dict[str, Any],
     layer: (
-        EthernetHeader | ARPHeader | PPPoEHeader | MPLSLabel | IPHeader | IPv6Header
+        EthernetHeader | SLLHeader | SLL2Header | ARPHeader | PPPoEHeader
+        | MPLSLabel | IPHeader | IPv6Header
         | TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | SCTPHeader
         | DNSMessage | DHCPMessage | HTTPMessage | bytes  # type: ignore[valid-type]
     ),
@@ -729,6 +747,8 @@ def update_config(
     Dispatches on the type of *layer*:
 
     - :class:`~packeteer.generate.ethernet.EthernetHeader` → ``ethernet`` section
+    - :class:`~packeteer.generate.sll.SLLHeader` /
+      :class:`~packeteer.generate.sll.SLL2Header` → ``sll`` / ``sll2`` section
     - :class:`~packeteer.generate.arp.ARPHeader` → ``arp`` section
     - :class:`~packeteer.generate.mpls.MPLSLabel` → appended to the ``mpls`` array
     - :class:`~packeteer.generate.pppoe.PPPoEHeader` → ``pppoe`` section
@@ -766,6 +786,8 @@ def update_config(
     """
     if isinstance(layer, EthernetHeader):
         _apply_ethernet(config, layer)
+    elif isinstance(layer, (SLLHeader, SLL2Header)):
+        _apply_sll(config, layer)
     elif isinstance(layer, ARPHeader):
         _apply_arp(config, layer)
     elif isinstance(layer, PPPoEHeader):

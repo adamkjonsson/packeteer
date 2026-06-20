@@ -515,6 +515,12 @@ def _sanitise_ethernet(eth: dict, r: _Replacer, opts: SanitiseOptions) -> None:
             eth["dst_mac"] = r.mac(eth["dst_mac"])
 
 
+def _sanitise_sll(sll: dict, r: _Replacer, opts: SanitiseOptions) -> None:
+    """Rewrite the link-layer address in a Linux cooked (``sll``/``sll2``) section."""
+    if opts.macs and ":" in sll.get("address", ""):
+        sll["address"] = r.mac(sll["address"])
+
+
 def _sanitise_arp(arp: dict, r: _Replacer, opts: SanitiseOptions) -> None:
     """Sanitise the MAC and IP addresses inside an ``arp`` section in-place.
 
@@ -580,6 +586,10 @@ def _sanitise_packet(
 
     if "ethernet" in pkt:
         _sanitise_ethernet(pkt["ethernet"], r, opts)
+
+    for sll_key in ("sll", "sll2"):
+        if sll_key in pkt:
+            _sanitise_sll(pkt[sll_key], r, opts)
 
     if "arp" in pkt:
         _sanitise_arp(pkt["arp"], r, opts)

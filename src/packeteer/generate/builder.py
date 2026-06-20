@@ -143,6 +143,14 @@ Typical usage::
              target_ip="10.0.0.2")
         .build()
     )
+
+    # Linux cooked capture (SLL) — pseudo L2 header used by `tcpdump -i any`
+    pkt = (PacketBuilder()
+        .sll(address="aa:bb:cc:00:00:01")
+        .ip(src="10.0.0.1", dst="10.0.0.2")
+        .tcp(dst_port=80)
+        .build()
+    )
 """
 from __future__ import annotations
 
@@ -215,6 +223,14 @@ from .pppoe import (
 )
 from .pseudowire import PseudowireHeader, _build_pseudowire_header
 from .sctp import IPPROTO_SCTP, SCTPChunk, SCTPHeader, _build_sctp_packet
+from .sll import (
+    ARPHRD_ETHER,
+    SLL_HOST,
+    SLL2Header,
+    SLLHeader,
+    _build_sll2_header,
+    _build_sll_header,
+)
 from .tcp import TCP_ACK, TCPHeader, TCPOptions, _build_tcp_header
 from .udp import UDPHeader, _build_udp_header
 from .vxlan import VXLAN_FLAG_VALID_VNI, VXLAN_PORT, VXLANHeader, _build_vxlan_header
@@ -317,10 +333,11 @@ def _build_encap_layer(layer: object, next_layer: object, data: bytes) -> bytes:
     """Prepend one L2 / tunnel header layer to *data*.
 
     Handles the layer types that insert a header in front of the already-assembled
-    *data* (PPPoE, EtherIP, VXLAN, GENEVE, GTP-U, GRE, pseudowire, MPLS, VLAN, and
-    Ethernet).  Protocol-number / EtherType fields that depend on the enclosed
-    layer are filled from *next_layer*.  Returns *data* unchanged for any other
-    layer type (handled by :meth:`PacketBuilder._assemble_range`).
+    *data* (PPPoE, ARP, EtherIP, VXLAN, GENEVE, GTP-U, GRE, pseudowire, MPLS,
+    VLAN, Ethernet, and the Linux cooked SLL/SLL2 pseudo headers).
+    Protocol-number / EtherType fields that depend on the enclosed layer are
+    filled from *next_layer*.  Returns *data* unchanged for any other layer type
+    (handled by :meth:`PacketBuilder._assemble_range`).
     """
     if isinstance(layer, PPPoEHeader):
         if layer.code == PPPOE_CODE_SESSION:
@@ -333,52 +350,60 @@ def _build_encap_layer(layer: object, next_layer: object, data: bytes) -> bytes:
                 struct.pack("!HH", t.type, len(t.data)) + t.data
                 for t in layer.tags
             )
-        return _build_pppoe_header(layer, payload) + payload
+        data = _build_pppoe_header(layer, payload) + payload
 
-    if isinstance(layer, ARPHeader):
-        return _build_arp_header(layer) + data
+    elif isinstance(layer, ARPHeader):
+        data = _build_arp_header(layer) + data
 
-    if isinstance(layer, EtherIPHeader):
-        return _build_etherip_header() + data
+    elif isinstance(layer, EtherIPHeader):
+        data = _build_etherip_header() + data
 
-    if isinstance(layer, VXLANHeader):
-        return _build_vxlan_header(layer) + data
+    elif isinstance(layer, VXLANHeader):
+        data = _build_vxlan_header(layer) + data
 
-    if isinstance(layer, GeneveHeader):
+    elif isinstance(layer, GeneveHeader):
         proto_type = _GENEVE_PROTO_MAP.get(type(next_layer), 0)
         hdr = GeneveHeader(
             vni=layer.vni, protocol_type=proto_type,
             options=layer.options, oam=layer.oam, version=layer.version,
         )
-        return _build_geneve_header(hdr) + data
+        data = _build_geneve_header(hdr) + data
 
-    if isinstance(layer, GTPUHeader):
-        return _build_gtpu_header(layer, data) + data
+    elif isinstance(layer, GTPUHeader):
+        data = _build_gtpu_header(layer, data) + data
 
-    if isinstance(layer, GREHeader):
+    elif isinstance(layer, GREHeader):
         proto_type = _GRE_PROTO_MAP.get(type(next_layer), 0)
         hdr = GREHeader(
             key=layer.key, seq=layer.seq,
             checksum=layer.checksum, protocol_type=proto_type,
         )
-        return _build_gre_header(hdr, data) + data
+        data = _build_gre_header(hdr, data) + data
 
-    if isinstance(layer, PseudowireHeader):
-        return _build_pseudowire_header(layer, data)
+    elif isinstance(layer, PseudowireHeader):
+        data = _build_pseudowire_header(layer, data)
 
-    if isinstance(layer, MPLSLabel):
+    elif isinstance(layer, MPLSLabel):
         bos = not isinstance(next_layer, MPLSLabel)
-        return _build_mpls_label(layer, bos) + data
+        data = _build_mpls_label(layer, bos) + data
 
-    if isinstance(layer, VLANTag):
+    elif isinstance(layer, VLANTag):
         ethertype = _ethertype_for(next_layer) if next_layer else 0
         tci = (layer.pcp << 13) | (layer.dei << 12) | layer.vid
-        return struct.pack("!HH", tci, ethertype) + data
+        data = struct.pack("!HH", tci, ethertype) + data
 
-    if isinstance(layer, EthernetHeader):
+    elif isinstance(layer, EthernetHeader):
         ethertype = _ethertype_for(next_layer) if next_layer else 0
         eth = EthernetHeader(layer.dst_mac, layer.src_mac, ethertype)
-        return _build_ethernet_header(eth) + data
+        data = _build_ethernet_header(eth) + data
+
+    elif isinstance(layer, SLLHeader):
+        ethertype = _ethertype_for(next_layer) if next_layer else 0
+        data = _build_sll_header(layer, ethertype) + data
+
+    elif isinstance(layer, SLL2Header):
+        ethertype = _ethertype_for(next_layer) if next_layer else 0
+        data = _build_sll2_header(layer, ethertype) + data
 
     return data
 
@@ -416,6 +441,9 @@ class PacketBuilder:
       the outer :meth:`udp`, followed by the inner :meth:`ip` packet.
     * Calling :meth:`arp` inserts an ARP packet (RFC 826) directly after
       :meth:`ethernet`; it is terminal, with no IP or transport layer.
+    * Calling :meth:`sll` / :meth:`sll2` inserts a Linux cooked-capture pseudo
+      link-layer header (used by ``tcpdump -i any``) as an alternative outermost
+      layer to :meth:`ethernet`.
 
     The layer list stores the same public dataclasses exported by
     ``packeteer.generate`` (``EthernetHeader``, ``VLANTag``, ``MPLSLabel``,
@@ -469,6 +497,56 @@ class PacketBuilder:
         # ethertype=0 is a placeholder; the correct value is filled in at
         # build time based on whatever layer follows this one.
         self._layers.append(EthernetHeader(dst_mac, src_mac, ethertype=0, pad=pad))
+        return self
+
+    def sll(
+        self,
+        *,
+        packet_type: int = SLL_HOST,
+        arphrd_type: int = ARPHRD_ETHER,
+        address: str = "00:00:00:00:00:00",
+    ) -> "PacketBuilder":
+        """Append a Linux cooked-capture v1 header (``LINKTYPE_LINUX_SLL`` = 113).
+
+        An alternative outermost layer to :meth:`ethernet`, used for captures
+        taken with ``tcpdump -i any``.  The Protocol Type field is set
+        automatically at build time from the layer that follows.
+
+        Args:
+            packet_type: Direction / addressing (one of the ``SLL_*`` constants).
+            arphrd_type: ARPHRD hardware type.  Defaults to ``1`` (Ethernet).
+            address: The single link-layer (MAC) address, or ``""`` for none.
+
+        """
+        self._layers.append(SLLHeader(
+            packet_type=packet_type, arphrd_type=arphrd_type, address=address,
+        ))
+        return self
+
+    def sll2(
+        self,
+        *,
+        packet_type: int = SLL_HOST,
+        arphrd_type: int = ARPHRD_ETHER,
+        address: str = "00:00:00:00:00:00",
+        if_index: int = 0,
+    ) -> "PacketBuilder":
+        """Append a Linux cooked-capture v2 header (``LINKTYPE_LINUX_SLL2`` = 276).
+
+        Like :meth:`sll`, but the 20-byte SLL2 format (the default produced by
+        modern ``tcpdump -i any``).  The Protocol Type is set automatically.
+
+        Args:
+            packet_type: Direction / addressing (one of the ``SLL_*`` constants).
+            arphrd_type: ARPHRD hardware type.  Defaults to ``1`` (Ethernet).
+            address: The single link-layer (MAC) address, or ``""`` for none.
+            if_index: Capture interface index.  Defaults to ``0``.
+
+        """
+        self._layers.append(SLL2Header(
+            packet_type=packet_type, arphrd_type=arphrd_type,
+            address=address, if_index=if_index,
+        ))
         return self
 
     def arp(
@@ -1228,12 +1306,13 @@ class PacketBuilder:
                 )
             return
 
-        # ARP frames are terminal: Ethernet + ARP, with no IP or transport.
+        # ARP frames are terminal: an L2 header + ARP, with no IP or transport.
         if any(isinstance(layer, ARPHeader) for layer in self._layers):
-            if not any(isinstance(layer, EthernetHeader) for layer in self._layers):
+            if not any(isinstance(layer, (EthernetHeader, SLLHeader, SLL2Header))
+                       for layer in self._layers):
                 raise ValueError(
-                    "ARP packets require an Ethernet header; "
-                    "call .ethernet() before .arp()"
+                    "ARP packets require a link-layer header; "
+                    "call .ethernet() (or .sll()/.sll2()) before .arp()"
                 )
             return
 

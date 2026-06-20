@@ -41,6 +41,33 @@ classes internally and they are also returned by the parser functions in
 
 ---
 
+## Layer 2 — Linux cooked capture (SLL / SLL2)
+
+```{eval-rst}
+.. autoclass:: packeteer.generate.sll.SLLHeader
+   :members:
+```
+
+```{eval-rst}
+.. autoclass:: packeteer.generate.sll.SLL2Header
+   :members:
+```
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `SLL_HOST` | `0` | Unicast addressed to the capturing host |
+| `SLL_BROADCAST` | `1` | Broadcast |
+| `SLL_MULTICAST` | `2` | Multicast |
+| `SLL_OTHERHOST` | `3` | Addressed to another host (promiscuous) |
+| `SLL_OUTGOING` | `4` | Sent by the capturing host |
+| `ARPHRD_ETHER` | `1` | ARPHRD hardware type for Ethernet |
+
+These headers correspond to the `LINKTYPE_LINUX_SLL` (113) and
+`LINKTYPE_LINUX_SLL2` (276) pcap link types; build via `PacketBuilder.sll()` /
+`.sll2()`.
+
+---
+
 ## Layer 2.5 — MPLS
 
 ```{eval-rst}

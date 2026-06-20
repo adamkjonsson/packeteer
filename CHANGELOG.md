@@ -8,6 +8,34 @@ All notable changes to packeteer are recorded in this file.
 
 ### New features
 
+- **Linux "cooked" capture support (SLL / SLL2)** — packeteer now reads and
+  writes the pseudo link-layer framing produced by `tcpdump -i any`:
+  `LINKTYPE_LINUX_SLL` (113, the classic 16-byte header) and
+  `LINKTYPE_LINUX_SLL2` (276, the modern default).  Previously these whole
+  classes of common captures were dropped to an opaque payload by `parse` /
+  `file-info` / `sanitise`.
+
+  SLL is a link-layer *framing*, not a protocol, but its Protocol Type field is
+  an EtherType, so once the cooked header is decoded the rest of the parse
+  (IP / IPv6 / ARP / MPLS / …) is identical to an Ethernet frame.
+
+  - `parse` decodes the cooked header into the new `ParsedPacket.sll` field
+    (`SLLHeader` / `SLL2Header`) and emits an `"sll"` / `"sll2"` packet-spec
+    section, with `metadata.link_type` recording 113 / 276.
+  - `PacketBuilder.sll()` / `.sll2()` author cooked frames (an alternative to
+    `.ethernet()`); `packeteer build` reconstructs them, so a cooked capture
+    round-trips through `parse` → edit → `build`, and `sanitise` writes an SLL
+    capture back out as SLL (rewriting the cooked link-layer address).
+  - `packeteer file-info` reports the link type as `linux_sll` / `linux_sll2`,
+    counts an `sll` / `sll2` layer, and includes the cooked types in its
+    link-type auto-detection.
+  - `--link-type` now accepts `linux_sll` / `sll` (113) and `linux_sll2` /
+    `sll2` (276) across `parse`, `sanitise`, and `file-info`.
+  - New `SLLHeader` / `SLL2Header` dataclasses, `SLL_*` packet-type constants,
+    and `LINKTYPE_LINUX_SLL` / `LINKTYPE_LINUX_SLL2` exported from
+    `packeteer.generate` / `packeteer.pcap`; new `packeteer.parse.sll` module.
+  - New tests in `test_sll.py`.
+
 - **ARP support (RFC 826)** — the Address Resolution Protocol is now supported
   end-to-end across the builder, parser, packet-spec serialisation, `file-info`,
   and `sanitise`.  Previously an ARP frame's EtherType (`0x0806`) was

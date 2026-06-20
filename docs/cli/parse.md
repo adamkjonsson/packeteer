@@ -34,7 +34,8 @@ header's value and parse with the type you specify:
 packeteer parse capture.pcap --link-type raw
 ```
 
-`TYPE` accepts the names `ethernet` and `raw`, or any integer (e.g. `1`,
+`TYPE` accepts the names `ethernet`, `raw`, `linux_sll` (Linux cooked v1),
+`linux_sll2` (cooked v2), or any integer (e.g. `1`,
 `101`).  The override also replaces `metadata.link_type` in the output, so the
 resulting spec rebuilds with the corrected type.
 
@@ -71,6 +72,7 @@ GTP-U), filtering applies to the outer layer only.
 | Detected layer | JSON key | Notes |
 |----------------|----------|-------|
 | Ethernet II | `ethernet` | Includes VLAN tag as `ethernet.vlan` when present |
+| Linux cooked (SLL/SLL2) | `sll` / `sll2` | `tcpdump -i any` pseudo header; the EtherType drives the rest, so IP/ARP/etc. decode as usual |
 | ARP | `arp` | RFC 826 (IPv4 over Ethernet); operation + sender/target MAC and IP.  Terminal — no IP/transport |
 | MPLS label stack | `mpls` | Array of entries, outermost first |
 | PPPoE | `pppoe` | Discovery and session frames |
