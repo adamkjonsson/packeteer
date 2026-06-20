@@ -48,6 +48,36 @@ Call `.vlan()` twice in the builder (or nest two `vlan` keys) for QinQ
 
 ---
 
+(packet-spec-arp)=
+## `arp`
+
+An optional ARP packet (RFC 826, IPv4 over Ethernet).  ARP is terminal: a packet
+with an `"arp"` key has no `"network"` or `"transport"` section, and the
+enclosing Ethernet EtherType is set to `0x0806` automatically.
+
+```json
+"ethernet": { "src_mac": "aa:bb:cc:00:00:01", "dst_mac": "ff:ff:ff:ff:ff:ff" },
+"arp": {
+  "operation": 1,
+  "sender_mac": "aa:bb:cc:00:00:01",
+  "sender_ip": "10.0.0.1",
+  "target_mac": "00:00:00:00:00:00",
+  "target_ip": "10.0.0.2"
+}
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `operation` | `1` | `1` request, `2` reply (`3` / `4` for RARP) |
+| `sender_mac` | `"00:00:00:00:00:01"` | Sender hardware (MAC) address |
+| `sender_ip` | `"0.0.0.0"` | Sender protocol (IPv4) address |
+| `target_mac` | `"00:00:00:00:00:00"` | Target hardware (MAC) address (all-zero in a request) |
+| `target_ip` | `"0.0.0.0"` | Target protocol (IPv4) address |
+| `hardware_type` | `1` | Only emitted by `parse` when not `1` (Ethernet) |
+| `protocol_type` | `2048` | Only emitted by `parse` when not `0x0800` (IPv4) |
+
+---
+
 (packet-spec-mpls)=
 ## `mpls`
 

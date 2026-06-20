@@ -8,6 +8,36 @@ All notable changes to packeteer are recorded in this file.
 
 ### New features
 
+- **ARP support (RFC 826)** — the Address Resolution Protocol is now supported
+  end-to-end across the builder, parser, packet-spec serialisation, `file-info`,
+  and `sanitise`.  Previously an ARP frame's EtherType (`0x0806`) was
+  unrecognised, so it was dropped to an opaque payload and could not be authored
+  — a real gap given how common ARP is in Ethernet captures.
+
+  ARP is modelled for the common IPv4-over-Ethernet case, with MAC/IP string
+  fields; `hardware_type`, `protocol_type`, and `operation` are overridable, so
+  ARP requests/replies, RARP, gratuitous ARP, probes, and announcements are all
+  expressible.  It is a terminal Layer-2 protocol (no IP/transport, nothing
+  follows), authored via the Python API or a packet spec — there is no `stream`
+  encapsulation flag.
+
+  - `PacketBuilder.arp(operation=…, sender_mac=…, sender_ip=…, target_mac=…,
+    target_ip=…)` appends an ARP packet after `.ethernet()`; the Ethernet
+    EtherType is set to `0x0806` automatically and the frame pads to the 60-byte
+    minimum.
+  - The parser recognises EtherType `0x0806` and decodes the packet into the new
+    `ParsedPacket.arp` field (with `ip` / `transport` left `None`).
+  - `packeteer parse` serialises ARP packets to a top-level `"arp"` key;
+    `packeteer build` reconstructs them.
+  - `packeteer file-info` reports an `arp` layer count.
+  - `packeteer sanitise` rewrites the ARP sender/target MAC and IP addresses
+    using the same replacement tables as the Ethernet/IP layers, so an address
+    maps consistently wherever it appears.
+  - New `ARPHeader` dataclass, `ETHERTYPE_ARP` (`0x0806`), and `ARP_OP_*` /
+    `ARP_HW_ETHERNET` constants exported from `packeteer.generate`; new
+    `packeteer.parse.arp` parser module.
+  - New tests in `test_arp.py`.
+
 - **GTP-U encapsulation (3GPP TS 29.281)** — GPRS Tunnelling Protocol, user
   plane (GTPv1-U), is now supported end-to-end across the builder, stream
   encapsulation, parser, packet-spec serialisation, and CLI.  GTP-U is

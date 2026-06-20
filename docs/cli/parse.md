@@ -71,6 +71,7 @@ GTP-U), filtering applies to the outer layer only.
 | Detected layer | JSON key | Notes |
 |----------------|----------|-------|
 | Ethernet II | `ethernet` | Includes VLAN tag as `ethernet.vlan` when present |
+| ARP | `arp` | RFC 826 (IPv4 over Ethernet); operation + sender/target MAC and IP.  Terminal — no IP/transport |
 | MPLS label stack | `mpls` | Array of entries, outermost first |
 | PPPoE | `pppoe` | Discovery and session frames |
 | IPv4 / IPv6 | `network` | Auto-detected from IP version nibble |

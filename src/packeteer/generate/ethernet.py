@@ -9,6 +9,7 @@ network-layer protocol carried in the frame payload.
 Constants:
     ETHERTYPE_IPV4 (int): EtherType ``0x0800`` — IPv4.
     ETHERTYPE_IPV6 (int): EtherType ``0x86DD`` — IPv6.
+    ETHERTYPE_ARP (int): EtherType ``0x0806`` — ARP (RFC 826).
     ETHERTYPE_8021Q (int): Tag Protocol Identifier ``0x8100`` — IEEE 802.1Q.
 """
 from __future__ import annotations
@@ -18,6 +19,7 @@ from dataclasses import dataclass
 
 ETHERTYPE_IPV4: int = 0x0800
 ETHERTYPE_IPV6: int = 0x86DD
+ETHERTYPE_ARP: int = 0x0806
 ETHERTYPE_8021Q: int = 0x8100
 
 # IEEE 802.3 minimum frame size (excluding the 4-byte FCS that NICs append

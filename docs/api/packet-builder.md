@@ -25,6 +25,7 @@ multiple times to produce advanced encapsulations:
 | Method | Description |
 |--------|-------------|
 | `.ethernet(src_mac, dst_mac, pad=False)` | Ethernet II header.  `pad=True` zero-pads the frame to the IEEE 802.3 minimum of 60 bytes. |
+| `.arp(operation=1, sender_mac=…, sender_ip=…, target_mac=…, target_ip=…, hardware_type=1, protocol_type=0x0800)` | ARP packet (RFC 826, IPv4 over Ethernet).  Terminal — call after `.ethernet()` with no IP/transport layer.  The Ethernet EtherType is set to `0x0806` automatically. |
 | `.vlan(vid, pcp=0, dei=0)` | 802.1Q VLAN tag.  Call twice for QinQ. |
 | `.mpls(label, tc=0, ttl=64)` | MPLS label stack entry (RFC 3032).  S bit set automatically. |
 | `.pseudowire(flags=0, frag=0, length=0, sequence=0)` | RFC 4385 pseudowire control word.  Call after the bottom-of-stack `.mpls()` and before the inner `.ethernet()` or `.ip()`. |

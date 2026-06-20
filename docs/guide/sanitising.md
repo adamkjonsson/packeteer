@@ -34,6 +34,7 @@ is kept:
 |-------|---------|
 | IP `src` / `dst` | replaced with synthetic RFC 5737 addresses |
 | Ethernet `src_mac` / `dst_mac` | replaced with synthetic MACs |
+| ARP sender/target MAC and IP | replaced automatically when an `arp` section is present |
 | Ports, payload, timestamps | unchanged |
 | DNS names and addresses | replaced automatically when `dns` section present |
 | DHCP IPs and client MAC | replaced automatically when `dhcp` section present |

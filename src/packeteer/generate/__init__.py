@@ -4,7 +4,7 @@ This package constructs byte-accurate network packets at all layers:
 
 * **Layer 2** — Ethernet II frames (:class:`EthernetHeader`), IEEE 802.1Q
   VLAN tags (:class:`VLANTag`), PPPoE session and discovery frames
-  (:class:`PPPoEHeader`, :class:`PPPoETag`)
+  (:class:`PPPoEHeader`, :class:`PPPoETag`), ARP (:class:`ARPHeader`, RFC 826)
 * **Layer 2.5** — MPLS label stacks (:class:`MPLSLabel`, RFC 3032)
 * **Layer 3** — IPv4 (:class:`IPHeader`) and IPv6 (:class:`IPv6Header`);
   IP-in-IP tunnels (RFC 2003 / RFC 4213);
@@ -160,10 +160,24 @@ multiple times to produce advanced encapsulations.
         .build()
     )
 
+    # ARP request (RFC 826) — terminal Ethernet payload, no IP layer
+    pkt = (PacketBuilder()
+        .ethernet(src_mac="aa:bb:cc:00:00:01", dst_mac="ff:ff:ff:ff:ff:ff")
+        .arp(sender_mac="aa:bb:cc:00:00:01", sender_ip="10.0.0.1", target_ip="10.0.0.2")
+        .build()
+    )
+
 Public API:
     PacketBuilder: High-level packet assembly class.
     EthernetHeader: Dataclass for Ethernet II header fields
         (dst_mac, src_mac, ethertype, vlan_tag, pad).
+    ARPHeader: Dataclass for an ARP packet (RFC 826, IPv4 over Ethernet).
+        Fields: operation, sender_mac, sender_ip, target_mac, target_ip,
+        hardware_type, protocol_type.
+    ETHERTYPE_ARP: EtherType 0x0806 — ARP.
+    ARP_OP_REQUEST, ARP_OP_REPLY, ARP_OP_RARP_REQUEST, ARP_OP_RARP_REPLY:
+        ARP operation code constants.
+    ARP_HW_ETHERNET: ARP hardware type 1 — Ethernet.
     EtherIPHeader: Dataclass for the EtherIP tunnel header (RFC 3378). No user-configurable fields.
     IPPROTO_ETHERIP: IP protocol number 97 — EtherIP (RFC 3378).
     GREHeader: Dataclass for the GRE tunnel header (RFC 2784 / RFC 2890).
@@ -219,6 +233,14 @@ Public API:
 """
 from __future__ import annotations
 
+from .arp import (
+    ARP_HW_ETHERNET,
+    ARP_OP_RARP_REPLY,
+    ARP_OP_RARP_REQUEST,
+    ARP_OP_REPLY,
+    ARP_OP_REQUEST,
+    ARPHeader,
+)
 from .builder import PacketBuilder
 from .dhcp import (
     DHCP_MSG_ACK,
@@ -297,6 +319,7 @@ from .etherip import IPPROTO_ETHERIP, EtherIPHeader
 from .ethernet import (
     ETHERNET_MIN_FRAME_SIZE,
     ETHERTYPE_8021Q,
+    ETHERTYPE_ARP,
     ETHERTYPE_IPV4,
     ETHERTYPE_IPV6,
     EthernetHeader,
@@ -447,6 +470,13 @@ __all__ = [
     "PacketBuilder",
     "EthernetHeader",
     "VLANTag",
+    "ARPHeader",
+    "ETHERTYPE_ARP",
+    "ARP_OP_REQUEST",
+    "ARP_OP_REPLY",
+    "ARP_OP_RARP_REQUEST",
+    "ARP_OP_RARP_REPLY",
+    "ARP_HW_ETHERNET",
     "ETHERNET_MIN_FRAME_SIZE",
     "ETHERTYPE_IPV4",
     "ETHERTYPE_IPV6",

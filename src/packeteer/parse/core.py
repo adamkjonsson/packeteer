@@ -41,10 +41,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from packeteer.filter import PacketFilter
+from packeteer.generate.arp import ARPHeader
 from packeteer.generate.dhcp import DHCPMessage
 from packeteer.generate.dns import DNSMessage
 from packeteer.generate.etherip import IPPROTO_ETHERIP, EtherIPHeader
 from packeteer.generate.ethernet import (
+    ETHERTYPE_ARP,
     ETHERTYPE_IPV4,
     ETHERTYPE_IPV6,
     EthernetHeader,
@@ -66,6 +68,7 @@ from packeteer.generate.udp import UDPHeader
 from packeteer.generate.vxlan import VXLAN_PORT, VXLANHeader
 from packeteer.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW, PcapFileHeader, read_pcap
 
+from .arp import packet_parser as _arp_parser
 from .dns import parse_dns_tcp as _parse_dns_tcp
 from .dns import parse_dns_udp as _parse_dns_udp
 from .etherip import packet_parser as _etherip_parser
@@ -140,6 +143,9 @@ class ParsedPacket:
 
     Attributes:
         ethernet: Parsed Ethernet II header (includes VLAN tag when present).
+        arp: Parsed ARP packet (RFC 826), or ``None`` when absent.  An ARP
+            frame is terminal: when this is set, :attr:`ip`, :attr:`transport`,
+            and the tunnel fields are all ``None``.
         mpls: List of parsed MPLS label stack entries, outermost first.
             Empty when no MPLS labels are present.
         pppoe: Parsed PPPoE header, or ``None`` when absent.
@@ -200,6 +206,7 @@ class ParsedPacket:
     """
 
     ethernet:    EthernetHeader | None = None
+    arp:         ARPHeader | None = None
     mpls:        list[MPLSLabel] = field(default_factory=list)
     pppoe:       PPPoEHeader | None = None
     ip:          IPHeader | IPv6Header | None = None
@@ -237,7 +244,7 @@ def _parse_link_layer(
 
     """
     _KNOWN_ETHERTYPES = (
-        ETHERTYPE_IPV4, ETHERTYPE_IPV6,
+        ETHERTYPE_IPV4, ETHERTYPE_IPV6, ETHERTYPE_ARP,
         ETHERTYPE_MPLS_UNICAST, ETHERTYPE_MPLS_MULTICAST,
         ETHERTYPE_PPPOE_DISCOVERY, ETHERTYPE_PPPOE_SESSION,
     )
@@ -303,6 +310,14 @@ def _parse_pppoe_and_mpls(
         remaining = remaining[pw_size:]
         inner_lt = LINKTYPE_ETHERNET if inner_et == GRE_PROTO_TEB else LINKTYPE_RAW
         pkt.tunneled = parse_packet(remaining, link_type=inner_lt)
+        return None
+
+    if ethertype == ETHERTYPE_ARP:
+        a_size, _, a_hdr = _arp_parser(remaining)
+        if a_size > 0 and a_hdr is not None:
+            pkt.arp = a_hdr
+        else:
+            pkt.payload = remaining
         return None
 
     if ethertype is not None and ethertype not in (ETHERTYPE_IPV4, ETHERTYPE_IPV6):
@@ -528,6 +543,9 @@ def parse_packet(data: bytes, *, link_type: int = LINKTYPE_ETHERNET) -> ParsedPa
       PPP protocol field is consumed and used to determine whether an IPv4 or
       IPv6 header follows.  For discovery frames parsing stops after the tags
       (no IP layer follows).
+    - **ARP** (EtherType ``0x0806``, RFC 826): The ARP packet is decoded into
+      :attr:`ParsedPacket.arp` and parsing stops (ARP is terminal — no IP layer
+      follows).
     - **Raw IP** (``link_type=LINKTYPE_RAW``): Ethernet parsing is skipped;
       IP-version detection starts immediately.
     - **IP**: The protocol/next-header field selects the transport parser.
@@ -697,6 +715,8 @@ def parse_pcap_file(
             cfg: dict[str, Any] = {}
             if pkt.ethernet is not None:
                 update_config(cfg, pkt.ethernet)
+            if pkt.arp is not None:
+                update_config(cfg, pkt.arp)
             for mpls_label in pkt.mpls:
                 update_config(cfg, mpls_label)
             if pkt.pppoe is not None:

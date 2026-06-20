@@ -23,6 +23,24 @@ classes internally and they are also returned by the parser functions in
 
 ---
 
+## Layer 2 — ARP
+
+```{eval-rst}
+.. autoclass:: packeteer.generate.arp.ARPHeader
+   :members:
+```
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `ETHERTYPE_ARP` | `0x0806` | EtherType for ARP (RFC 826) |
+| `ARP_OP_REQUEST` | `1` | ARP request operation |
+| `ARP_OP_REPLY` | `2` | ARP reply operation |
+| `ARP_OP_RARP_REQUEST` | `3` | RARP request operation |
+| `ARP_OP_RARP_REPLY` | `4` | RARP reply operation |
+| `ARP_HW_ETHERNET` | `1` | Hardware type for Ethernet |
+
+---
+
 ## Layer 2.5 — MPLS
 
 ```{eval-rst}

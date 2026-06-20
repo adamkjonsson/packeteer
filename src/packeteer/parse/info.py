@@ -40,7 +40,7 @@ _LT_SCORE_THRESHOLD: float = 0.5
 
 # Ordered layer labels — controls the order rows appear in the text report.
 _LAYER_ORDER: tuple[str, ...] = (
-    "ethernet", "vlan", "mpls", "pppoe",
+    "ethernet", "vlan", "arp", "mpls", "pppoe",
     "ipv4", "ipv6", "ipip", "gre", "etherip", "pseudowire", "vxlan", "geneve", "gtpu",
     "tcp", "udp", "icmp", "icmpv6", "sctp",
     "dns", "dhcp", "http", "payload",
@@ -149,6 +149,8 @@ def _packet_layers(pkt: ParsedPacket) -> list[str]:
         labels.append("ethernet")
         if pkt.ethernet.vlan_tag is not None:
             labels.append("vlan")
+    if pkt.arp is not None:
+        labels.append("arp")
     if pkt.mpls:
         labels.append("mpls")
     if pkt.pppoe is not None:
