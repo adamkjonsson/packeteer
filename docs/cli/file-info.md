@@ -32,9 +32,9 @@ This is a read-only reporting command — it never modifies the capture.
 | Layers | For each protocol layer seen, the number of packets containing it and the percentage of all packets |
 
 Layer statistics cover the full protocol stack of each packet: `ethernet`,
-`vlan`, `mpls`, `pppoe`, `ipv4`, `ipv6`, `ipip`, `gre`, `etherip`, `pseudowire`,
-`vxlan`, `geneve`, `gtpu`, `tcp`, `udp`, `icmp`, `icmpv6`, `sctp`, `dns`, `dhcp`,
-`http`, and `payload`.
+`vlan`, `arp`, `mpls`, `pppoe`, `ipv4`, `ipv6`, `ipip`, `gre`, `etherip`,
+`pseudowire`, `vxlan`, `geneve`, `gtpu`, `tcp`, `udp`, `icmp`, `icmpv6`, `sctp`,
+`dns`, `dhcp`, `http`, and `payload`.
 
 Tunnelled packets are reported comprehensively: the outer layers, the tunnel
 type (`gre`, `etherip`, `ipip`, `pseudowire`, `vxlan`, `geneve`, `gtpu`), **and**

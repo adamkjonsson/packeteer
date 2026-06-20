@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING, Any, Callable
 if TYPE_CHECKING:
     from .core import ParsedPacket
 
+from packeteer.generate.arp import ARP_HW_ETHERNET, ARPHeader
 from packeteer.generate.dhcp import (
     DHCP_OPT_CLIENT_ID,
     DHCP_OPT_DNS_SERVER,
@@ -86,7 +87,7 @@ from packeteer.generate.dns import (
     DNSRDataTXT,
 )
 from packeteer.generate.etherip import IPPROTO_ETHERIP, EtherIPHeader
-from packeteer.generate.ethernet import EthernetHeader
+from packeteer.generate.ethernet import ETHERTYPE_IPV4, EthernetHeader
 from packeteer.generate.geneve import GeneveHeader
 from packeteer.generate.gre import GREHeader
 from packeteer.generate.gtpu import GTPU_MSG_G_PDU, GTPUHeader
@@ -240,6 +241,22 @@ def _apply_ethernet(config: dict[str, Any], hdr: EthernetHeader) -> None:
             "dei": hdr.inner_vlan_tag.dei,
         }
     config["ethernet"] = section
+
+
+def _apply_arp(config: dict[str, Any], hdr: ARPHeader) -> None:
+    """Serialise *hdr* into ``config["arp"]`` (RFC 826, IPv4 over Ethernet)."""
+    section: dict[str, Any] = {
+        "operation":  hdr.operation,
+        "sender_mac": hdr.sender_mac,
+        "sender_ip":  hdr.sender_ip,
+        "target_mac": hdr.target_mac,
+        "target_ip":  hdr.target_ip,
+    }
+    if hdr.hardware_type != ARP_HW_ETHERNET:
+        section["hardware_type"] = hdr.hardware_type
+    if hdr.protocol_type != ETHERTYPE_IPV4:
+        section["protocol_type"] = hdr.protocol_type
+    config["arp"] = section
 
 
 def _serialise_hbh_opt(opt: RouterAlertOption | JumboPayloadOption | RawOption) -> dict[str, Any]:
@@ -702,7 +719,7 @@ def _apply_http(config: dict[str, Any], msg: HTTPMessage) -> None:  # type: igno
 def update_config(
     config: dict[str, Any],
     layer: (
-        EthernetHeader | PPPoEHeader | MPLSLabel | IPHeader | IPv6Header
+        EthernetHeader | ARPHeader | PPPoEHeader | MPLSLabel | IPHeader | IPv6Header
         | TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | SCTPHeader
         | DNSMessage | DHCPMessage | HTTPMessage | bytes  # type: ignore[valid-type]
     ),
@@ -712,6 +729,7 @@ def update_config(
     Dispatches on the type of *layer*:
 
     - :class:`~packeteer.generate.ethernet.EthernetHeader` → ``ethernet`` section
+    - :class:`~packeteer.generate.arp.ARPHeader` → ``arp`` section
     - :class:`~packeteer.generate.mpls.MPLSLabel` → appended to the ``mpls`` array
     - :class:`~packeteer.generate.pppoe.PPPoEHeader` → ``pppoe`` section
     - :class:`~packeteer.generate.ip.IPHeader` /
@@ -748,6 +766,8 @@ def update_config(
     """
     if isinstance(layer, EthernetHeader):
         _apply_ethernet(config, layer)
+    elif isinstance(layer, ARPHeader):
+        _apply_arp(config, layer)
     elif isinstance(layer, PPPoEHeader):
         _apply_pppoe(config, layer)
     elif isinstance(layer, MPLSLabel):

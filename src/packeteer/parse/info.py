@@ -40,7 +40,7 @@ _LT_SCORE_THRESHOLD: float = 0.5
 
 # Ordered layer labels — controls the order rows appear in the text report.
 _LAYER_ORDER: tuple[str, ...] = (
-    "ethernet", "vlan", "mpls", "pppoe",
+    "ethernet", "vlan", "arp", "mpls", "pppoe",
     "ipv4", "ipv6", "ipip", "gre", "etherip", "pseudowire", "vxlan", "geneve", "gtpu",
     "tcp", "udp", "icmp", "icmpv6", "sctp",
     "dns", "dhcp", "http", "payload",
@@ -149,6 +149,8 @@ def _packet_layers(pkt: ParsedPacket) -> list[str]:
         labels.append("ethernet")
         if pkt.ethernet.vlan_tag is not None:
             labels.append("vlan")
+    if pkt.arp is not None:
+        labels.append("arp")
     if pkt.mpls:
         labels.append("mpls")
     if pkt.pppoe is not None:
@@ -378,8 +380,12 @@ def format_pcap_info(info: PcapInfo) -> str:
     else:
         lines.append("  (none)")
 
+    # The "no IP layer" note flags captures that produced no meaningful decode
+    # (likely garbage or a wrong link type).  ARP frames legitimately carry no
+    # IP layer, so an ARP capture is not such a case.
     ip_packets = info.layer_counts.get("ipv4", 0) + info.layer_counts.get("ipv6", 0)
-    if info.packet_count and ip_packets == 0:
+    arp_packets = info.layer_counts.get("arp", 0)
+    if info.packet_count and ip_packets == 0 and arp_packets == 0:
         lines.append(
             "Note: no packets contained an IP layer — the capture may be "
             "malformed or the link-type wrong (try --link-type)."

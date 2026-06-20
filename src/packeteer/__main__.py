@@ -745,9 +745,10 @@ def _apply_spec_to_builder(
     is_ipip       = bool(protocol_str) and protocol_str.lower() == "ipip"
     is_gre        = bool(protocol_str) and protocol_str.lower() == "gre"
     is_pseudowire = "pseudowire" in spec
+    is_arp        = "arp" in spec
 
     if not is_pppoe_discovery and not is_etherip and not is_ipip and not is_gre and \
-            not is_pseudowire and (not src or not dst or not protocol_str):
+            not is_pseudowire and not is_arp and (not src or not dst or not protocol_str):
         print(
             f"Error: packet {packet_num} missing network.src, network.dst, or network.protocol",
             file=sys.stderr,
@@ -790,6 +791,16 @@ def _apply_spec_to_builder(
             b = b.vlan(
                 vid=inner_vlan["id"], pcp=inner_vlan.get("pcp", 0), dei=inner_vlan.get("dei", 0)
             )
+
+    # ── ARP ──────────────────────────────────────────────────────────────────
+    if is_arp:
+        arp_spec = spec["arp"]
+        arp_keys = (
+            "operation", "sender_mac", "sender_ip", "target_mac", "target_ip",
+            "hardware_type", "protocol_type",
+        )
+        b = b.arp(**{k: arp_spec[k] for k in arp_keys if k in arp_spec})
+        return b, True
 
     # ── MPLS ─────────────────────────────────────────────────────────────────
     for mpls_entry in mpls_labels:
@@ -1441,6 +1452,8 @@ def _stream_to_json(packets: list, include_ethernet: bool) -> str:
         cfg: dict = {}
         if pkt.ethernet is not None:
             update_config(cfg, pkt.ethernet)
+        if pkt.arp is not None:
+            update_config(cfg, pkt.arp)
         for mpls_label in pkt.mpls:
             update_config(cfg, mpls_label)
         if pkt.pppoe is not None:

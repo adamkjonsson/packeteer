@@ -55,11 +55,17 @@ IPv6 and MAC pools are effectively unlimited for practical input sizes.
 1. If `opts.scan_pii`, call `_maybe_scan_pii(pkt, packet_num)` to scan any
    UTF-8 payload for personal data (see below).
 2. Replace MAC addresses in the `"ethernet"` section.
-3. Replace IP addresses in the `"network"` section.
-4. Optionally replace ports in `"transport"`.
-5. Optionally zero out `"payload.data"` (byte length preserved; for UTF-8 payloads the byte count is derived from the string, and the `"encoding"` key is removed from the result).
-6. Optionally zero `"packet_metadata"` timestamps.
-7. For each tunnel key (`"ipip"`, `"gre"`, `"etherip"`): call
+3. Replace the sender/target MAC and IP addresses in the `"arp"` section
+   (via `_sanitise_arp`), using the same replacement tables as Ethernet/IP so an
+   address maps consistently wherever it appears.
+4. Replace IP addresses in the `"network"` section.
+5. Optionally replace ports in `"transport"`.
+6. Optionally zero out `"payload.data"` and opaque SCTP chunk fields, via
+   `_sanitise_payloads` (byte length preserved; for UTF-8 payloads the byte
+   count is derived from the string, and the `"encoding"` key is removed from
+   the result).
+7. Optionally zero `"packet_metadata"` timestamps.
+8. For each tunnel key (`"ipip"`, `"gre"`, `"etherip"`): call
    `_sanitise_ethernet` on the inner `"ethernet"` section (if present), then
    recurse into `_sanitise_packet(inner, r, opts, packet_num)`.
 

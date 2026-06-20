@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from packeteer.filter import PacketFilter
 
+from .arp import packet_parser as arp_packet_parser
 from .core import (
     ParsedPacket,
     UnsupportedIPProtocolWarning,
@@ -39,6 +40,7 @@ __all__ = [
     "apply_tunneled",
     "to_packet_spec",
     "to_json_string",
+    "arp_packet_parser",
     "ethernet_packet_parser",
     "etherip_packet_parser",
     "geneve_packet_parser",

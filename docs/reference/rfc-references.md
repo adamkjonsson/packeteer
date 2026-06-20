@@ -102,6 +102,9 @@ RFCs implemented or referenced by this library.
 * - [RFC 8926](https://datatracker.ietf.org/doc/html/rfc8926)
   - Geneve: Generic Network Virtualization Encapsulation
   - `GeneveHeader`, `GeneveOption`, `GeneveEncap`, `.geneve()`, `GENEVE_PORT`, `packeteer.parse.geneve`
+* - [RFC 826](https://datatracker.ietf.org/doc/html/rfc826)
+  - An Ethernet Address Resolution Protocol (ARP)
+  - `ARPHeader`, `.arp()`, `ETHERTYPE_ARP`, `packeteer.parse.arp`
 * - [RFC 9260](https://datatracker.ietf.org/doc/html/rfc9260)
   - Stream Control Transmission Protocol (SCTP)
   - `SCTPHeader` and all chunk dataclasses; `IPPROTO_SCTP`; CRC-32c checksum (§6.8)

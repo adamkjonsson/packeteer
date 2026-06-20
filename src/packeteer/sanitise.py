@@ -515,6 +515,45 @@ def _sanitise_ethernet(eth: dict, r: _Replacer, opts: SanitiseOptions) -> None:
             eth["dst_mac"] = r.mac(eth["dst_mac"])
 
 
+def _sanitise_arp(arp: dict, r: _Replacer, opts: SanitiseOptions) -> None:
+    """Sanitise the MAC and IP addresses inside an ``arp`` section in-place.
+
+    Uses the same replacement tables as the Ethernet/IP layers, so an address
+    maps to the same synthetic value wherever it appears in the capture.
+    """
+    if opts.macs:
+        for key in ("sender_mac", "target_mac"):
+            if key in arp:
+                arp[key] = r.mac(arp[key])
+    if opts.ips:
+        for key in ("sender_ip", "target_ip"):
+            if key in arp:
+                arp[key] = r.ip(arp[key])
+
+
+def _sanitise_payloads(pkt: dict, opts: SanitiseOptions) -> None:
+    """Zero the payload data and opaque SCTP chunk fields of *pkt* in-place.
+
+    A no-op unless ``opts.payload`` is set.
+    """
+    if not opts.payload:
+        return
+    pl = pkt.get("payload")
+    if isinstance(pl, dict) and isinstance(pl.get("data"), str):
+        if pl.get("encoding") == "utf8":
+            pl["data"] = "00" * len(pl["data"].encode("utf-8"))
+            del pl["encoding"]
+        else:
+            pl["data"] = "00" * (len(pl["data"]) // 2)
+    t = pkt.get("transport")
+    if isinstance(t, dict) and t.get("protocol") == "sctp":
+        for chunk in t.get("chunks", []):
+            # Zero all opaque binary hex fields present in any chunk type.
+            for key in ("data", "params", "cookie", "info", "causes", "value"):
+                if key in chunk and isinstance(chunk[key], str):
+                    chunk[key] = "00" * (len(chunk[key]) // 2)
+
+
 def _sanitise_app_layers(pkt: dict, r: _Replacer, opts: SanitiseOptions) -> None:
     """Sanitise DNS, DHCP, and HTTP sections of *pkt* in-place."""
     if "dns" in pkt:
@@ -542,6 +581,9 @@ def _sanitise_packet(
     if "ethernet" in pkt:
         _sanitise_ethernet(pkt["ethernet"], r, opts)
 
+    if "arp" in pkt:
+        _sanitise_arp(pkt["arp"], r, opts)
+
     if opts.ips and "network" in pkt:
         _sanitise_network(pkt["network"], r)
 
@@ -552,24 +594,7 @@ def _sanitise_packet(
         if "dst_port" in t:
             t["dst_port"] = r.port(t["dst_port"])
 
-    if opts.payload and "payload" in pkt:
-        pl = pkt["payload"]
-        if "data" in pl and isinstance(pl["data"], str):
-            if pl.get("encoding") == "utf8":
-                byte_len = len(pl["data"].encode("utf-8"))
-                pl["data"] = "00" * byte_len
-                del pl["encoding"]
-            else:
-                pl["data"] = "00" * (len(pl["data"]) // 2)
-
-    if opts.payload and "transport" in pkt:
-        t = pkt["transport"]
-        if t.get("protocol") == "sctp":
-            for chunk in t.get("chunks", []):
-                # Zero all opaque binary hex fields present in any chunk type
-                for key in ("data", "params", "cookie", "info", "causes", "value"):
-                    if key in chunk and isinstance(chunk[key], str):
-                        chunk[key] = "00" * (len(chunk[key]) // 2)
+    _sanitise_payloads(pkt, opts)
 
     if opts.timestamps and "packet_metadata" in pkt:
         meta = pkt["packet_metadata"]

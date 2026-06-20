@@ -269,6 +269,16 @@ class TestFormat(unittest.TestCase):
         self.assertNotIn("no packets contained an IP layer", text)
         os.remove(path)
 
+    def test_no_ip_note_absent_for_arp_capture(self) -> None:
+        # ARP frames legitimately carry no IP layer — not a malformed-capture sign.
+        info = PcapInfo(
+            path=None, file_type="pcap",
+            declared_link_type=1, link_type=1, link_type_overridden=False,
+            nanoseconds=False, packet_count=3, session_count=0,
+            layer_counts={"ethernet": 3, "arp": 3},
+        )
+        self.assertNotIn("no packets contained an IP layer", format_pcap_info(info))
+
     def test_no_ip_note_absent_for_empty_capture(self) -> None:
         info = PcapInfo(
             path=None, file_type="pcap",

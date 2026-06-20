@@ -135,6 +135,14 @@ Typical usage::
         .tcp(dst_port=80)
         .build()
     )
+
+    # ARP request (RFC 826) — terminal: Ethernet + ARP, no IP/transport
+    pkt = (PacketBuilder()
+        .ethernet(src_mac="aa:bb:cc:00:00:01", dst_mac="ff:ff:ff:ff:ff:ff")
+        .arp(sender_mac="aa:bb:cc:00:00:01", sender_ip="10.0.0.1",
+             target_ip="10.0.0.2")
+        .build()
+    )
 """
 from __future__ import annotations
 
@@ -142,12 +150,14 @@ import os
 import socket
 import struct
 
+from .arp import ARP_HW_ETHERNET, ARP_OP_REQUEST, ARPHeader, _build_arp_header
 from .dhcp import DHCPMessage, _build_dhcp_message
 from .dns import DNSMessage, _build_dns_message, _build_dns_message_tcp
 from .etherip import IPPROTO_ETHERIP, EtherIPHeader, _build_etherip_header
 from .ethernet import (
     ETHERNET_MIN_FRAME_SIZE,
     ETHERTYPE_8021Q,
+    ETHERTYPE_ARP,
     ETHERTYPE_IPV4,
     ETHERTYPE_IPV6,
     EthernetHeader,
@@ -214,6 +224,7 @@ from .vxlan import VXLAN_FLAG_VALID_VNI, VXLAN_PORT, VXLANHeader, _build_vxlan_h
 _ETHERTYPE_MAP: dict[type, int] = {
     IPHeader:   ETHERTYPE_IPV4,
     IPv6Header: ETHERTYPE_IPV6,
+    ARPHeader:  ETHERTYPE_ARP,
     VLANTag:    ETHERTYPE_8021Q,
     MPLSLabel:  ETHERTYPE_MPLS_UNICAST,
     # PPPoEHeader is handled dynamically in _ethertype_for (session vs discovery)
@@ -324,6 +335,9 @@ def _build_encap_layer(layer: object, next_layer: object, data: bytes) -> bytes:
             )
         return _build_pppoe_header(layer, payload) + payload
 
+    if isinstance(layer, ARPHeader):
+        return _build_arp_header(layer) + data
+
     if isinstance(layer, EtherIPHeader):
         return _build_etherip_header() + data
 
@@ -400,6 +414,8 @@ class PacketBuilder:
       that follows (inner :meth:`ethernet`, or :meth:`ip` directly).
     * Calling :meth:`gtpu` inserts a GTP-U tunnel header (3GPP TS 29.281) after
       the outer :meth:`udp`, followed by the inner :meth:`ip` packet.
+    * Calling :meth:`arp` inserts an ARP packet (RFC 826) directly after
+      :meth:`ethernet`; it is terminal, with no IP or transport layer.
 
     The layer list stores the same public dataclasses exported by
     ``packeteer.generate`` (``EthernetHeader``, ``VLANTag``, ``MPLSLabel``,
@@ -453,6 +469,53 @@ class PacketBuilder:
         # ethertype=0 is a placeholder; the correct value is filled in at
         # build time based on whatever layer follows this one.
         self._layers.append(EthernetHeader(dst_mac, src_mac, ethertype=0, pad=pad))
+        return self
+
+    def arp(
+        self,
+        *,
+        operation: int = ARP_OP_REQUEST,
+        sender_mac: str = "00:00:00:00:00:01",
+        sender_ip: str = "0.0.0.0",
+        target_mac: str = "00:00:00:00:00:00",
+        target_ip: str = "0.0.0.0",
+        hardware_type: int = ARP_HW_ETHERNET,
+        protocol_type: int = ETHERTYPE_IPV4,
+    ) -> "PacketBuilder":
+        """Append an ARP packet (RFC 826) for IPv4 over Ethernet.
+
+        Call after :meth:`ethernet`.  ARP is a terminal layer — it carries no IP
+        or transport, and nothing follows it — so no :meth:`ip` / transport call
+        is needed.  The enclosing Ethernet EtherType is set to ``0x0806``
+        automatically.
+
+        Args:
+            operation: ARP operation — ``1`` request (default), ``2`` reply, or a
+                RARP code (3 / 4).
+            sender_mac: Sender hardware (MAC) address.
+            sender_ip: Sender protocol (IPv4) address.
+            target_mac: Target hardware (MAC) address (all-zero in a request).
+            target_ip: Target protocol (IPv4) address.
+            hardware_type: Hardware type.  Defaults to ``1`` (Ethernet).
+            protocol_type: Protocol type EtherType.  Defaults to ``0x0800`` (IPv4).
+
+        Example — an ARP reply ("10.0.0.2 is at aa:bb:cc:00:00:02")::
+
+            pkt = (PacketBuilder()
+                .ethernet(src_mac="aa:bb:cc:00:00:02", dst_mac="aa:bb:cc:00:00:01")
+                .arp(operation=2,
+                     sender_mac="aa:bb:cc:00:00:02", sender_ip="10.0.0.2",
+                     target_mac="aa:bb:cc:00:00:01", target_ip="10.0.0.1")
+                .build()
+            )
+
+        """
+        self._layers.append(ARPHeader(
+            operation=operation,
+            sender_mac=sender_mac, sender_ip=sender_ip,
+            target_mac=target_mac, target_ip=target_ip,
+            hardware_type=hardware_type, protocol_type=protocol_type,
+        ))
         return self
 
     def vlan(self, *, vid: int, pcp: int = 0, dei: int = 0) -> "PacketBuilder":
@@ -1162,6 +1225,15 @@ class PacketBuilder:
                 raise ValueError(
                     "PPPoE discovery frames require an Ethernet header; "
                     "call .ethernet() before .pppoe()"
+                )
+            return
+
+        # ARP frames are terminal: Ethernet + ARP, with no IP or transport.
+        if any(isinstance(layer, ARPHeader) for layer in self._layers):
+            if not any(isinstance(layer, EthernetHeader) for layer in self._layers):
+                raise ValueError(
+                    "ARP packets require an Ethernet header; "
+                    "call .ethernet() before .arp()"
                 )
             return
 
