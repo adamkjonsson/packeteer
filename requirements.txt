@@ -14,5 +14,5 @@ ruff
 
 # Build / packaging
 build>=1.0
-setuptools>=68
+setuptools>=77
 wheel

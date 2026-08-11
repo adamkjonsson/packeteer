@@ -1,19 +1,27 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "packeteer"
-version = "0.7.0"
+version = "0.8.0.dev0"
 requires-python = ">=3.10"
 description = "Pure-Python library for building, parsing, and sanitising raw network packets"
 authors = [ { name = "Adam Jonsson", email = "adam.jonsson@live.se"} ]
 readme = "README.md"
-classifiers = [ 
-    "Development Status :: 3 - Beta",
+license = "MIT"
+license-files = ["LICENSE"]
+classifiers = [
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "Topic :: Software Development :: Network Analysis",
-    "Programming Language :: Python :: 3.10" ]
+    "Intended Audience :: Telecommunications Industry",
+    "Topic :: System :: Networking",
+    "Topic :: System :: Networking :: Monitoring",
+    "Topic :: Security",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13" ]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -34,3 +42,5 @@ packeteer = "packeteer.__main__:main"
 
 [project.urls]
 Repository = "https://github.com/adamkjonsson/packeteer.git"
+Changelog = "https://github.com/adamkjonsson/packeteer/blob/main/CHANGELOG.md"
+Issues = "https://github.com/adamkjonsson/packeteer/issues"

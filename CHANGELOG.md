@@ -2,11 +2,35 @@
 
 All notable changes to packeteer are recorded in this file.
 
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
+with the usual 0.x caveat: **while the version is below 1.0, a minor bump
+(0.7 → 0.8) may break backwards compatibility.**  Breaking entries are marked
+**Breaking:** so they are easy to find before upgrading.
+
+Change types used here are the Keep a Changelog set — *Added*, *Changed*,
+*Deprecated*, *Removed*, *Fixed*, *Security* — plus a project-specific
+*Documentation* section for docs-only work.  Types with nothing to report are
+omitted.
+
 ---
 
-## Unreleased
+## [Unreleased]
 
-### New features
+<!--
+Add entries here as work lands, under the change types listed above.
+Releasing 0.8.0: replace this heading with `## [0.8.0] - YYYY-MM-DD`, bump the
+version in pyproject.toml to 0.8.0, add a fresh Unreleased section, update the
+link definitions at the bottom of this file, and tag the release `v0.8.0`.
+-->
+
+_Nothing yet._
+
+---
+
+## [0.7.0] - 2026-06-20
+
+### Added
 
 - **IPsec support — AH (RFC 4302) and ESP (RFC 4303)** — the two IPsec data-path
   protocols (IP protocols 51 and 50) are now supported end-to-end across the
@@ -488,7 +512,18 @@ All notable changes to packeteer are recorded in this file.
   section.  This makes it easy to identify specific packets in PII warnings and
   other tooling without manually counting positions in the JSON array.
 
-### Enhancements
+### Changed
+
+- **Breaking: `ethernet.pad` defaults to `true`** — Ethernet frames are now
+  zero-padded to the IEEE 802.3 minimum of 60 bytes by default in both
+  `PacketBuilder` and `packeteer build`.  Set `pad: false` (or
+  `.ethernet(pad=False)`) to suppress padding explicitly.
+
+- **Breaking: PII scanning enabled by default** — `SanitiseOptions.scan_pii` now
+  defaults to `True`.  `packeteer sanitise` will emit `PersonalDataWarning`
+  instances for any email addresses or names found in UTF-8 payloads unless
+  `--no-scan-pii` is passed.  Code that calls `sanitise()` directly and does not
+  want PII warnings should pass `SanitiseOptions(scan_pii=False)`.
 
 - **`packeteer file-info` reports the full tunnelled stack** — the layer
   statistics now recurse into tunnelled packets so the report is a comprehensive
@@ -597,19 +632,6 @@ All notable changes to packeteer are recorded in this file.
   unrecognised protocols it is the raw integer (`89`, `112`, …).  Previously
   the field was silently omitted for unknown protocol numbers, making it
   impossible to tell from the JSON alone why the transport section was absent.
-
-### Breaking changes
-
-- **`ethernet.pad` defaults to `true`** — Ethernet frames are now zero-padded
-  to the IEEE 802.3 minimum of 60 bytes by default in both `PacketBuilder` and
-  `packeteer build`.  Set `pad: false` (or `.ethernet(pad=False)`) to suppress
-  padding explicitly.
-
-- **PII scanning enabled by default** — `SanitiseOptions.scan_pii` now defaults
-  to `True`.  `packeteer sanitise` will emit `PersonalDataWarning` instances for
-  any email addresses or names found in UTF-8 payloads unless `--no-scan-pii`
-  is passed.  Code that calls `sanitise()` directly and does not want PII
-  warnings should pass `SanitiseOptions(scan_pii=False)`.
 
 ### Documentation
 
@@ -1349,3 +1371,12 @@ the exhaustive API reference.
 - RFC 1071 checksum computation for IPv4 headers and TCP/UDP/ICMP pseudo-headers.
 - `write_pcap()`: writes libpcap files with microsecond or nanosecond timestamps.
 - Comprehensive docstrings, type hints, and README with full API reference.
+
+---
+
+<!-- Releases before 0.7.0 are either untagged (0.6.1 and the dated entries) or
+     tagged with names that predate this convention, so only the entries below
+     carry compare links. -->
+
+[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.7...HEAD
+[0.7.0]: https://github.com/adamkjonsson/packeteer/compare/v0.6.0...v0.7
