@@ -45,6 +45,22 @@ def _write_pcap_with_one_packet() -> str:
     return path
 
 
+def _write_pcap_with_http_packet() -> str:
+    """Write a pcap containing one HTTP request on port 80; return path."""
+    from packeteer.generate import TCP_ACK, PacketBuilder
+    from packeteer.pcap import LINKTYPE_ETHERNET, write_pcap
+    raw = (PacketBuilder()
+           .ethernet()
+           .ip(src="10.0.0.1", dst="10.0.0.2")
+           .tcp(src_port=1234, dst_port=80, flags=TCP_ACK)
+           .payload(data=b"GET /x HTTP/1.1\r\nHost: example.com\r\n\r\n")
+           .build())
+    fd, path = tempfile.mkstemp(suffix=".pcap")
+    os.close(fd)
+    write_pcap([(raw, 0, 0)], path=path, link_type=LINKTYPE_ETHERNET)
+    return path
+
+
 def _tmpfile(suffix: str = ".pcap") -> str:
     fd, path = tempfile.mkstemp(suffix=suffix)
     os.close(fd)
@@ -180,6 +196,52 @@ class TestCmdParse(unittest.TestCase):
             cli._cmd_parse(args)
         data = json.loads(out.getvalue())
         self.assertEqual(data.get("metadata", {}).get("from_file"), self.pcap_path)
+
+    def test_parse_decodes_http_by_default(self):
+        args = _args(pcap=_write_pcap_with_http_packet(), output=None)
+        with patch("sys.stdout", new_callable=StringIO) as out:
+            cli._cmd_parse(args)
+        packet = json.loads(out.getvalue())["packets"][0]
+        self.assertIn("http", packet)
+
+    def test_parse_no_decode_app_keeps_payload(self):
+        args = _args(
+            pcap=_write_pcap_with_http_packet(), output=None, no_decode_app=True,
+        )
+        with patch("sys.stdout", new_callable=StringIO) as out:
+            cli._cmd_parse(args)
+        packet = json.loads(out.getvalue())["packets"][0]
+        self.assertNotIn("http", packet)
+        # Hex, not utf8: the CRLFs are outside the printable-ASCII range that
+        # selects UTF-8 encoding.
+        self.assertEqual(
+            bytes.fromhex(packet["payload"]["data"]),
+            b"GET /x HTTP/1.1\r\nHost: example.com\r\n\r\n",
+        )
+
+    def test_parse_build_round_trip_preserves_tcp_options(self):
+        from packeteer.generate import TCP_SYN, PacketBuilder
+        from packeteer.generate.tcp import TCPOptions
+        from packeteer.parse import parse_packet
+        from packeteer.pcap import LINKTYPE_ETHERNET, read_pcap, write_pcap
+
+        opts = TCPOptions(mss=1460, window_scale=7, sack_permitted=True,
+                          timestamps=(9, 8), unknown=[(28, b"\xaa\xbb")])
+        raw = (PacketBuilder()
+               .ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .tcp(src_port=1234, dst_port=443, flags=TCP_SYN, options=opts)
+               .build())
+        src_pcap = _tmpfile(".pcap")
+        write_pcap([(raw, 0, 0)], path=src_pcap, link_type=LINKTYPE_ETHERNET)
+
+        spec_path = _tmpfile(".json")
+        cli._cmd_parse(_args(pcap=src_pcap, output=spec_path))
+        out_pcap = _tmpfile(".pcap")
+        cli._cmd_build(_args(config=spec_path, pcap=out_pcap, pcapng=None))
+
+        rebuilt = read_pcap(path=out_pcap).packets[0][0]
+        self.assertEqual(parse_packet(rebuilt).transport.options, opts)
 
     def test_parse_output_to_unwritable_path_exits(self):
         args = _args(pcap=self.pcap_path, output="/nonexistent/dir/out.json")

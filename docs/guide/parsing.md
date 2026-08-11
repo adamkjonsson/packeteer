@@ -120,6 +120,46 @@ from packeteer.pcap import LINKTYPE_RAW
 pkt = parse_packet(raw, link_type=LINKTYPE_RAW)
 ```
 
+## Payload boundaries and Ethernet padding
+
+`pkt.payload` holds the bytes of the IP datagram that follow the transport
+header — and nothing else.  A frame shorter than the IEEE 802.3 minimum is
+zero-padded to 60 bytes by the sender, and that padding is part of the *frame*
+but not of the *datagram*, so the parser discards it using the IP header's
+length field:
+
+```python
+raw = (PacketBuilder()
+    .ethernet()
+    .ip(src="10.0.0.1", dst="10.0.0.2")
+    .udp(dst_port=9)
+    .payload(data=b"\xde\xad\xbe\xef")
+    .build()
+)
+len(raw)                    # 60 — padded up from 46
+pkt = parse_packet(raw)
+pkt.payload                 # b"\xde\xad\xbe\xef" — the 14 padding bytes are gone
+```
+
+The declared length is available on the parsed header, as `total_length` for
+IPv4 (header + payload) and `payload_length` for IPv6 (everything after the
+40-byte fixed header, including extension headers).  Both are `None` on a
+header you constructed yourself — they are what the wire said, and the builder
+derives the real value at build time.
+
+Comparing the declared length against what you received detects a
+snaplen-truncated capture, where the record carries fewer bytes than the
+datagram claims:
+
+```python
+declared = pkt.ip.total_length - 20 - 8      # minus IPv4 and UDP headers
+if declared > len(pkt.payload):
+    print(f"truncated: {declared - len(pkt.payload)} bytes missing")
+```
+
+In that case the parser keeps every captured byte rather than trimming to a
+length that never arrived.
+
 ## Reading a pcap file packet-by-packet
 
 When you need the capture timestamp alongside each parsed packet, read the
@@ -168,8 +208,63 @@ print(pkt.dns.id)                   # 0xABCD
 print(pkt.dns.questions[0].name)    # "example.com."
 ```
 
-When `pkt.dns` (or `pkt.http`) is set, `pkt.payload` is empty — nothing is
-silently lost.  A failed parse leaves the raw bytes in `pkt.payload` unchanged.
+When `pkt.dns` (or `pkt.http`) is set, `pkt.payload` is empty.  A failed parse
+leaves the raw bytes in `pkt.payload` unchanged.
+
+### Keeping the payload as it appeared on the wire
+
+The decoded object is not a byte-exact substitute for the payload it replaced:
+re-encoding an `HTTPMessage` normalises header casing, header order,
+whitespace, and duplicate headers.  When those bytes matter — reassembling a
+stream, hashing a payload, feeding another decoder — pass `decode_app=False`
+and the decoders are skipped entirely:
+
+```python
+pkt = parse_packet(raw, decode_app=False)
+
+pkt.http                            # None — not decoded
+pkt.payload                         # the exact bytes from the wire
+```
+
+The setting applies to every layer of a tunnelled packet, so an HTTP payload
+inside VXLAN or GRE is left raw too.  Tunnel headers themselves (VXLAN,
+GENEVE, GTP-U) are framing rather than application content and are always
+decoded.
+
+{func}`~packeteer.parse.core.parse_pcap_packet` and
+{func}`~packeteer.parse.core.parse_pcap_file` take the same argument, and
+`packeteer parse --no-decode-app` exposes it on the command line — the spec
+then carries a `payload` section instead of a `dns` / `dhcp` / `http` one.
+
+## TCP options
+
+Options in the TCP header are decoded into `pkt.transport.options`, a
+`TCPOptions` instance, or `None` when the header carries none:
+
+```python
+pkt = parse_packet(raw)
+opts = pkt.transport.options
+
+opts.mss                # 1460
+opts.window_scale       # 7 — the advertised window is window << window_scale
+opts.sack_permitted     # True
+opts.timestamps         # (TSval, TSecr)
+opts.sack_blocks        # [(left_edge, right_edge), …]
+```
+
+Window scale matters for reading `window` at all: on a scaled connection the
+raw `window` field is misleading on its own.  SACK blocks tell a reassembler
+which ranges actually arrived, and timestamps discriminate retransmits.
+
+An option packeteer does not model — or a known kind carrying an unexpected
+length — is kept in `opts.unknown` as `(kind, value)` pairs rather than being
+dropped, and the builder re-emits it.  Structural padding (NOP, End of Option
+List) is not modelled.
+
+Options are re-encoded in a canonical order, so a parse → build round trip
+preserves every option's presence and value, but the resulting header is not
+guaranteed byte-identical to a capture that ordered or padded them
+differently.
 
 ## Tunnel packets
 

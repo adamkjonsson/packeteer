@@ -403,12 +403,49 @@ def _parse_tcp_options(spec: dict | None) -> TCPOptions | None:
         sack_permitted=spec.get("sack_permitted", False),
         sack_blocks=[tuple(b) for b in sack_raw],
         timestamps=tuple(spec["timestamps"]) if "timestamps" in spec else None,
+        unknown=[
+            (o["kind"], bytes.fromhex(o["data"])) for o in spec.get("unknown", [])
+        ],
     )
 
 
+#: Protocol names accepted in a spec's ``network.protocol``, for the case
+#: where no transport section states the protocol (a non-first fragment).
+_PROTO_NUMBERS: dict[str, int] = {
+    "tcp": 6, "udp": 17, "icmp": 1, "icmpv6": 58, "sctp": 132,
+}
+
+
+def _fragment_protocol(net: dict) -> int:
+    """Return the IP protocol number a fragment's header should record.
+
+    A non-first fragment has no transport layer for the builder to derive the
+    protocol from, so it is taken from the spec's ``network.protocol``.
+    """
+    protocol = net.get("protocol")
+    if isinstance(protocol, int):
+        return protocol
+    return _PROTO_NUMBERS.get(str(protocol).lower(), 0)
+
+
+def _is_later_fragment(net: dict) -> bool:
+    """Return ``True`` when a ``network`` spec describes a non-first fragment.
+
+    Only the first fragment carries a transport header, so a spec with a
+    non-zero fragment offset must not have one rebuilt for it.
+    """
+    if net.get("fragment_offset", 0) > 0:
+        return True
+    return net.get("fragment", {}).get("fragment_offset", 0) > 0
+
+
 def _build_ip_layer(b: "PacketBuilder", net: dict) -> "PacketBuilder":
-    """Append an IP layer from a ``network`` spec dict to *b*."""
-    return b.ip(
+    """Append an IP layer from a ``network`` spec dict to *b*.
+
+    An IPv6 ``fragment`` object appends the Fragment extension header after
+    the base header, so a fragmented capture rebuilds as it was captured.
+    """
+    b = b.ip(
         src=net["src"], dst=net["dst"],
         ttl=net.get("ttl", 64),
         tos=net.get("tos", 0),
@@ -417,7 +454,16 @@ def _build_ip_layer(b: "PacketBuilder", net: dict) -> "PacketBuilder":
         fragment_offset=net.get("fragment_offset", 0),
         traffic_class=net.get("traffic_class", 0),
         flow_label=net.get("flow_label", 0),
+        protocol=_fragment_protocol(net) if _is_later_fragment(net) else 0,
     )
+    frag = net.get("fragment")
+    if frag:
+        b = b.fragment_header(
+            fragment_offset=frag.get("fragment_offset", 0),
+            more_fragments=frag.get("more_fragments", False),
+            identification=frag.get("identification", 0),
+        )
+    return b
 
 
 def _dispatch_transport(
@@ -885,6 +931,11 @@ def _apply_spec_to_builder(
     if handled:
         return b, False
 
+    if _is_later_fragment(net):
+        # A later fragment has no transport header — its bytes are payload
+        # from the middle of the datagram.
+        return _apply_payload_spec(b, spec.get("payload", {}), packet_num), False
+
     b = _dispatch_transport(b, proto_lower, spec.get("transport", {}), packet_num)
     if "dns" in spec:
         b = b.dns(_build_dns_from_spec(spec["dns"]), tcp=(proto_lower == "tcp"))
@@ -1039,6 +1090,7 @@ def _cmd_parse(args: argparse.Namespace) -> None:
         json_str = parse_pcap_file(
             path=args.pcap, packet_filter=pf,
             link_type=getattr(args, "link_type", None),
+            decode_app=not getattr(args, "no_decode_app", False),
         )
     except (OSError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -1892,6 +1944,17 @@ def main() -> None:
     filter_group.add_argument(
         "--app", metavar="APP",
         help="Application layer present: dns, dhcp, http (or negated, e.g. !http)",
+    )
+
+    parse_parser.add_argument(
+        "--no-decode-app",
+        action="store_true",
+        help=(
+            "Keep DNS, DHCP, and HTTP payloads as raw bytes in the 'payload' "
+            "section instead of decoding them into 'dns'/'dhcp'/'http' "
+            "sections.  Use when the byte-exact payload matters: re-encoding "
+            "a decoded message normalises header casing, order, and whitespace."
+        ),
     )
 
     parse_parser.set_defaults(func=_cmd_parse)

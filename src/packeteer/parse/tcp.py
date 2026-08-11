@@ -2,7 +2,88 @@ from __future__ import annotations
 
 import struct
 
-from packeteer.generate.tcp import TCPHeader
+from packeteer.generate.tcp import TCPHeader, TCPOptions
+
+# TCP option kinds (RFC 9293 §3.2 and the IANA registry)
+_OPT_EOL: int = 0             # End of Option List — stop parsing
+_OPT_NOP: int = 1             # No-Operation — alignment padding
+_OPT_MSS: int = 2
+_OPT_WINDOW_SCALE: int = 3
+_OPT_SACK_PERMITTED: int = 4
+_OPT_SACK: int = 5
+_OPT_TIMESTAMPS: int = 8
+
+# Wire lengths of the fixed-size options, including the kind and length bytes.
+_LEN_MSS: int = 4
+_LEN_WINDOW_SCALE: int = 3
+_LEN_SACK_PERMITTED: int = 2
+_LEN_TIMESTAMPS: int = 10
+
+_SACK_BLOCK_LEN: int = 8      # two 32-bit sequence numbers per block
+
+
+def _parse_options(data: bytes) -> TCPOptions | None:
+    """Decode the TCP options region into a :class:`TCPOptions`.
+
+    Walks the kind/length TLV list.  EOL (kind ``0``) ends the walk and NOP
+    (kind ``1``) is skipped — both are structural padding and are not
+    modelled.  A recognised kind carrying an unexpected length is kept as an
+    unknown option rather than discarded, as are kinds with no dedicated
+    field, so no option bytes are lost.
+
+    A malformed list (a length byte below the 2-byte minimum, or one running
+    past the end of the region) stops the walk; options decoded up to that
+    point are still returned.
+
+    Args:
+        data: The options region only — the bytes between the fixed 20-byte
+            header and the end of the header given by Data Offset.
+
+    Returns:
+        A :class:`TCPOptions` instance, or ``None`` when the region holds no
+        options at all (empty, or only padding).
+
+    """
+    opts = TCPOptions()
+    found = False
+    i = 0
+
+    while i < len(data):
+        kind = data[i]
+        if kind == _OPT_EOL:
+            break
+        if kind == _OPT_NOP:
+            i += 1
+            continue
+
+        if i + 1 >= len(data):
+            break
+        length = data[i + 1]
+        if length < 2 or i + length > len(data):
+            break
+
+        value = data[i + 2: i + length]
+
+        if kind == _OPT_MSS and length == _LEN_MSS:
+            opts.mss = struct.unpack("!H", value)[0]
+        elif kind == _OPT_WINDOW_SCALE and length == _LEN_WINDOW_SCALE:
+            opts.window_scale = value[0]
+        elif kind == _OPT_SACK_PERMITTED and length == _LEN_SACK_PERMITTED:
+            opts.sack_permitted = True
+        elif kind == _OPT_TIMESTAMPS and length == _LEN_TIMESTAMPS:
+            opts.timestamps = struct.unpack("!II", value)
+        elif kind == _OPT_SACK and len(value) % _SACK_BLOCK_LEN == 0 and value:
+            opts.sack_blocks = [
+                struct.unpack("!II", value[b: b + _SACK_BLOCK_LEN])
+                for b in range(0, len(value), _SACK_BLOCK_LEN)
+            ]
+        else:
+            opts.unknown.append((kind, bytes(value)))
+
+        found = True
+        i += length
+
+    return opts if found else None
 
 
 def packet_parser(data: bytes) -> tuple[int, int | None, TCPHeader | None]:
@@ -16,9 +97,9 @@ def packet_parser(data: bytes) -> tuple[int, int | None, TCPHeader | None]:
         [ Options: (Data Offset - 5) * 4 bytes ]
 
     The Data Offset field (high nibble of byte 12) gives the header length in
-    32-bit words; the minimum valid value is 5 (20 bytes).  The ``options``
-    field of the returned :class:`TCPHeader` is always ``None`` — option bytes
-    are skipped, not decoded.
+    32-bit words; the minimum valid value is 5 (20 bytes).  Any option bytes
+    beyond that are decoded into the ``options`` field of the returned
+    :class:`TCPHeader` (``None`` when the header carries no options).
 
     Args:
         data: Raw bytes starting at the first byte of a TCP header.
@@ -52,6 +133,7 @@ def packet_parser(data: bytes) -> tuple[int, int | None, TCPHeader | None]:
             seq=seq, ack=ack,
             reserved=reserved, flags=flags,
             window=window, urgent_ptr=urgent_ptr,
+            options=_parse_options(data[20:header_size]),
         )
 
     except struct.error:

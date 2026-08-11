@@ -14,6 +14,7 @@ from packeteer.generate.tcp import TCP_ACK, TCP_SYN, TCPHeader
 from packeteer.generate.udp import UDPHeader
 from packeteer.parse.core import (
     ParsedPacket,
+    TimestampResolutionWarning,
     UnsupportedIPProtocolWarning,
     parse_packet,
     parse_pcap_file,
@@ -211,7 +212,6 @@ class TestParsePacketRawIP(unittest.TestCase):
 
 class TestParsePacketPayload(unittest.TestCase):
     def test_payload_captured(self):
-        # Use ≥ 18 bytes to avoid Ethernet minimum-frame zero-padding
         payload = b"\xca\xfe\xba\xbe" * 5
         raw = (PacketBuilder().ethernet()
                .ip(src="10.0.0.1", dst="10.0.0.2")
@@ -219,13 +219,271 @@ class TestParsePacketPayload(unittest.TestCase):
         pkt = parse_packet(raw)
         self.assertEqual(pkt.payload, payload)
 
-    def test_zero_payload_tcp_has_only_padding(self):
-        # 14 (eth) + 20 (ip) + 20 (tcp) = 54 bytes; no padding with pad=False default.
+    def test_zero_payload_tcp_has_empty_payload(self):
+        # 14 (eth) + 20 (ip) + 20 (tcp) = 54 bytes, padded to the 60-byte
+        # Ethernet minimum.  The 6 padding bytes are not part of the datagram.
         raw = (PacketBuilder().ethernet()
                .ip(src="10.0.0.1", dst="10.0.0.2")
                .tcp().build())
+        self.assertEqual(len(raw), 60)
         pkt = parse_packet(raw)
-        self.assertEqual(pkt.payload, bytes(len(pkt.payload)))
+        self.assertEqual(pkt.payload, b"")
+
+    def test_short_payload_keeps_padding_out(self):
+        # 14 + 20 + 8 (udp) + 4 = 46 bytes, padded to 60: the padding must not
+        # be appended to the 4-byte payload.
+        payload = b"\xde\xad\xbe\xef"
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .udp().payload(data=payload).build())
+        self.assertEqual(len(raw), 60)
+        pkt = parse_packet(raw)
+        self.assertEqual(pkt.payload, payload)
+
+    def test_ipv6_padding_not_in_payload(self):
+        raw = (PacketBuilder().ethernet()
+               .ip(src="::1", dst="::2")
+               .udp().build())
+        pkt = parse_packet(raw)
+        self.assertEqual(pkt.payload, b"")
+
+    def test_truncated_capture_keeps_captured_bytes(self):
+        # A snaplen-truncated record declares more than it carries; every
+        # captured byte is kept rather than trimmed away.
+        payload = b"\xab" * 40
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .udp().payload(data=payload).build())
+        pkt = parse_packet(raw[:-10])
+        self.assertEqual(pkt.payload, payload[:-10])
+        self.assertEqual(pkt.ip.total_length, 20 + 8 + len(payload))
+
+
+class TestParsedIPLength(unittest.TestCase):
+    def test_ipv4_total_length_populated(self):
+        payload = b"\xaa" * 32
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .udp().payload(data=payload).build())
+        pkt = parse_packet(raw)
+        self.assertEqual(pkt.ip.total_length, 20 + 8 + len(payload))
+
+    def test_ipv6_payload_length_populated(self):
+        payload = b"\xaa" * 32
+        raw = (PacketBuilder().ethernet()
+               .ip(src="::1", dst="::2")
+               .udp().payload(data=payload).build())
+        pkt = parse_packet(raw)
+        self.assertEqual(pkt.ip.payload_length, 8 + len(payload))
+
+    def test_ipv6_payload_length_covers_extension_headers(self):
+        # payload_length counts the Hop-by-Hop header too, so the payload is
+        # still trimmed at the right place.
+        from packeteer.generate.ipv6 import RouterAlertOption
+        payload = b"\xaa" * 24
+        raw = (PacketBuilder().ethernet()
+               .ip(src="::1", dst="::2")
+               .hop_by_hop_options([RouterAlertOption(value=0)])
+               .udp().payload(data=payload).build())
+        pkt = parse_packet(raw)
+        self.assertEqual(pkt.payload, payload)
+        self.assertEqual(pkt.ip.payload_length, 8 + 8 + len(payload))
+
+    def test_ipv6_zero_payload_length_does_not_trim(self):
+        # payload_length == 0 means a Jumbo Payload option carries the real
+        # length (RFC 2675); the declared value must not be taken literally.
+        payload = b"\xaa" * 24
+        raw = bytearray(PacketBuilder().ethernet()
+                        .ip(src="::1", dst="::2")
+                        .udp().payload(data=payload).build())
+        raw[18:20] = b"\x00\x00"        # IPv6 payload length, after the 14-byte Ethernet header
+        pkt = parse_packet(bytes(raw))
+        self.assertEqual(pkt.payload, payload)
+
+    def test_length_fields_are_none_when_built(self):
+        # Builder-constructed headers derive the wire value at build time and
+        # leave the parse-only fields unset.
+        self.assertIsNone(IPHeader("10.0.0.1", "10.0.0.2", 6).total_length)
+        self.assertIsNone(IPv6Header("::1", "::2", 6).payload_length)
+
+
+_HTTP_REQUEST = (
+    b"GET /api/v1/orders HTTP/1.1\r\n"
+    b"Host: example.com\r\n"
+    b"X-Odd-CASE: preserved\r\n"
+    b"\r\n"
+)
+
+_DNS_QUERY = (
+    b"\x12\x34\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00"
+    b"\x03www\x07example\x03com\x00\x00\x01\x00\x01"
+)
+
+
+def _http_packet() -> bytes:
+    return (PacketBuilder().ethernet()
+            .ip(src="10.0.0.1", dst="10.0.0.2")
+            .tcp(dst_port=80, flags=TCP_ACK)
+            .payload(data=_HTTP_REQUEST).build())
+
+
+def _dns_packet() -> bytes:
+    return (PacketBuilder().ethernet()
+            .ip(src="10.0.0.1", dst="10.0.0.2")
+            .udp(dst_port=53)
+            .payload(data=_DNS_QUERY).build())
+
+
+class TestDecodeAppOption(unittest.TestCase):
+    def test_http_decoded_by_default(self):
+        pkt = parse_packet(_http_packet())
+        self.assertIsNotNone(pkt.http)
+        self.assertEqual(pkt.payload, b"")
+
+    def test_http_payload_byte_exact_when_disabled(self):
+        pkt = parse_packet(_http_packet(), decode_app=False)
+        self.assertIsNone(pkt.http)
+        # Byte-exact: header casing and ordering survive, which re-encoding
+        # a decoded HTTPMessage would not preserve.
+        self.assertEqual(pkt.payload, _HTTP_REQUEST)
+
+    def test_dns_decoded_by_default(self):
+        pkt = parse_packet(_dns_packet())
+        self.assertIsNotNone(pkt.dns)
+        self.assertEqual(pkt.payload, b"")
+
+    def test_dns_payload_kept_when_disabled(self):
+        pkt = parse_packet(_dns_packet(), decode_app=False)
+        self.assertIsNone(pkt.dns)
+        self.assertEqual(pkt.payload, _DNS_QUERY)
+
+    def test_dhcp_payload_kept_when_disabled(self):
+        dhcp_payload = b"\x01\x01\x06\x00" + b"\x00" * 232 + b"\x63\x82\x53\x63\xff"
+        raw = (PacketBuilder().ethernet()
+               .ip(src="0.0.0.0", dst="255.255.255.255")
+               .udp(src_port=68, dst_port=67)
+               .payload(data=dhcp_payload).build())
+        self.assertIsNotNone(parse_packet(raw).dhcp)
+        pkt = parse_packet(raw, decode_app=False)
+        self.assertIsNone(pkt.dhcp)
+        self.assertEqual(pkt.payload, dhcp_payload)
+
+    def test_non_app_payload_unaffected(self):
+        payload = b"\x01\x02\x03\x04" * 8
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .tcp(dst_port=9999).payload(data=payload).build())
+        self.assertEqual(parse_packet(raw).payload, payload)
+        self.assertEqual(parse_packet(raw, decode_app=False).payload, payload)
+
+    def test_flag_reaches_inner_frame_of_udp_tunnel(self):
+        # VXLAN is framing, not application content: it must still be decoded,
+        # while the inner HTTP payload is left raw.
+        inner = (PacketBuilder().ethernet()
+                 .ip(src="192.168.1.1", dst="192.168.1.2")
+                 .tcp(dst_port=80, flags=TCP_ACK)
+                 .payload(data=_HTTP_REQUEST).build())
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .udp(dst_port=4789).vxlan(vni=42)
+               .payload(data=inner).build())
+
+        pkt = parse_packet(raw)
+        self.assertIsNotNone(pkt.vxlan)
+        self.assertIsNotNone(pkt.tunneled.http)
+
+        pkt = parse_packet(raw, decode_app=False)
+        self.assertIsNotNone(pkt.vxlan)
+        self.assertIsNone(pkt.tunneled.http)
+        self.assertEqual(pkt.tunneled.payload, _HTTP_REQUEST)
+
+    def test_flag_reaches_inner_frame_of_ip_tunnel(self):
+        # GRE takes the IP-protocol recursion rather than the UDP-port one.
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .gre()
+               .ip(src="192.168.1.1", dst="192.168.1.2")
+               .tcp(dst_port=80, flags=TCP_ACK)
+               .payload(data=_HTTP_REQUEST).build())
+
+        self.assertIsNotNone(parse_packet(raw).tunneled.http)
+
+        pkt = parse_packet(raw, decode_app=False)
+        self.assertIsNone(pkt.tunneled.http)
+        self.assertEqual(pkt.tunneled.payload, _HTTP_REQUEST)
+
+    def test_parse_pcap_packet_forwards_flag(self):
+        buf = io.BytesIO()
+        write_pcap([(_http_packet(), 1, 0)], file_object=buf)
+        buf.seek(0)
+        pcap = read_pcap(file_object=buf)
+        pkt = parse_pcap_packet(pcap.packets[0], pcap.header, decode_app=False)
+        self.assertIsNone(pkt.http)
+        self.assertEqual(pkt.payload, _HTTP_REQUEST)
+
+    def test_parse_pcap_file_emits_payload_instead_of_http(self):
+        import json
+        buf = io.BytesIO()
+        write_pcap([(_http_packet(), 1, 0)], file_object=buf)
+        buf.seek(0)
+        spec = json.loads(parse_pcap_file(file_object=buf, decode_app=False))
+        packet = spec["packets"][0]
+        self.assertNotIn("http", packet)
+        self.assertIn("payload", packet)
+
+
+class TestSpecTimestampResolution(unittest.TestCase):
+    """A spec can only say us or ns, so other resolutions are converted."""
+
+    def _ms_capture(self, ticks: list[int]) -> io.BytesIO:
+        from tests.test_parser_pcapng import _pcapng_with_tsresol
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2").udp().build())
+        return _pcapng_with_tsresol([(raw, t) for t in ticks], tsresol_byte=3)
+
+    def _spec(self, buf: io.BytesIO) -> dict:
+        import json
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return json.loads(parse_pcap_file(file_object=buf))
+
+    def test_millisecond_fraction_converted_to_microseconds(self):
+        # 250 ms is a quarter of a second: 250_000 us, not 250.
+        meta = self._spec(self._ms_capture([100_250]))["packets"][0]["packet_metadata"]
+        self.assertEqual(meta["timestamp_s"], 100)
+        self.assertEqual(meta["timestamp_us"], 250_000)
+
+    def test_conversion_warns(self):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            parse_pcap_file(file_object=self._ms_capture([1_000]))
+        resolution_warnings = [
+            w for w in caught if issubclass(w.category, TimestampResolutionWarning)
+        ]
+        self.assertEqual(len(resolution_warnings), 1)
+        self.assertEqual(resolution_warnings[0].message.tick_hz, 1_000)
+
+    def test_microsecond_capture_does_not_warn(self):
+        buf = io.BytesIO()
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2").udp().build())
+        write_pcap([(raw, 1, 250_000)], file_object=buf)
+        buf.seek(0)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            parse_pcap_file(file_object=buf)
+        self.assertFalse(
+            [w for w in caught if issubclass(w.category, TimestampResolutionWarning)]
+        )
+
+    def test_microsecond_timestamps_pass_through_unchanged(self):
+        buf = io.BytesIO()
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2").udp().build())
+        write_pcap([(raw, 7, 123_456)], file_object=buf)
+        buf.seek(0)
+        meta = self._spec(buf)["packets"][0]["packet_metadata"]
+        self.assertEqual((meta["timestamp_s"], meta["timestamp_us"]), (7, 123_456))
 
 
 class TestParsePacketFailures(unittest.TestCase):

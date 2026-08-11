@@ -40,6 +40,9 @@ from dataclasses import dataclass, field
 # ── Hop-by-Hop extension header constants ─────────────────────────────────────
 
 HBH_NEXT_HEADER: int = 0
+
+#: Next Header value for the IPv6 Fragment extension header (RFC 8200 §4.5).
+IPV6_NEXT_HEADER_FRAGMENT: int = 44
 """next_header value that signals a Hop-by-Hop Options extension header."""
 
 HBH_OPT_ROUTER_ALERT: int = 0x05
@@ -117,6 +120,32 @@ class HopByHopOptions:
 
 
 @dataclass
+class FragmentHeader:
+    """IPv6 Fragment extension header (RFC 8200 §4.5, next header ``44``).
+
+    Carries one fragment's position within the original datagram.  The
+    reassembled payload is the fragments' data concatenated in offset order;
+    :func:`packeteer.parse.defragment.defragment` does that.
+
+    Attributes:
+        fragment_offset: Offset of this fragment's data within the original
+            unfragmented payload, **in units of 8 bytes** — the raw 13-bit
+            wire value, matching :attr:`packeteer.generate.ip.IPHeader.fragment_offset`.
+            Multiply by 8 for a byte offset.
+        more_fragments: The M flag.  ``True`` on every fragment except the
+            last.
+        identification: 32-bit value shared by all fragments of one datagram.
+            Together with the source and destination addresses it identifies
+            the datagram being reassembled.
+
+    """
+
+    fragment_offset: int = 0
+    more_fragments: bool = False
+    identification: int = 0
+
+
+@dataclass
 class IPv6Header:
     """Fields of a fixed IPv6 header.
 
@@ -138,6 +167,19 @@ class IPv6Header:
             value of *next_header* is ``0`` (HBH); this field stores the
             parsed or requested options, and *next_header* reflects the actual
             transport protocol (e.g. ``6`` for TCP).  Defaults to ``None``.
+        fragment: Fragment extension header following the fixed header, or
+            ``None`` when this packet is not a fragment.  When set, the wire
+            value of *next_header* is ``44``; this field stores the fragment's
+            offset, M flag, and identification, and *next_header* reflects the
+            fragmented datagram's transport protocol.  Defaults to ``None``.
+        payload_length: Payload Length field as read from the wire — the
+            number of bytes following the 40-byte fixed header, including any
+            extension headers.  Populated by
+            :func:`packeteer.parse.ip.packet_parser`; ``None`` for
+            builder-constructed headers.  Ignored when building: the wire
+            value is always derived from the actual payload.  A value of ``0``
+            on the wire means a Jumbo Payload option carries the true length
+            (RFC 2675).  Defaults to ``None``.
 
     """
 
@@ -148,6 +190,8 @@ class IPv6Header:
     traffic_class: int = 0
     flow_label: int = 0
     hop_by_hop: HopByHopOptions | None = None
+    payload_length: int | None = None
+    fragment: FragmentHeader | None = None
 
 
 def _build_ipv6_header(hdr: IPv6Header, payload: bytes) -> bytes:
@@ -181,6 +225,36 @@ def _build_ipv6_header(hdr: IPv6Header, payload: bytes) -> bytes:
         hdr.hop_limit,
         src,
         dst,
+    )
+
+
+def _build_fragment_header(frag: FragmentHeader, next_proto: int) -> bytes:
+    r"""Build an 8-byte Fragment extension header (RFC 8200 §4.5).
+
+    Wire layout::
+
+        +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        |  Next Header  |   Reserved    |    Fragment Offset    |Res|M|
+        +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        |                         Identification                        |
+        +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+    Args:
+        frag: :class:`FragmentHeader` holding the offset, M flag, and
+            identification.
+        next_proto: Protocol number of the header that follows — the
+            fragmented datagram's own transport protocol, not ``44``.
+
+    Returns:
+        Exactly 8 bytes in network byte order.
+
+    """
+    return struct.pack(
+        "!BBHI",
+        next_proto,
+        0,                                                      # reserved
+        (frag.fragment_offset << 3) | (1 if frag.more_fragments else 0),
+        frag.identification,
     )
 
 

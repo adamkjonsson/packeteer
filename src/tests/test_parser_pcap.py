@@ -9,6 +9,8 @@ from packeteer.pcap import (
     LINKTYPE_RAW,
     PcapFile,
     PcapFileHeader,
+    PcapRecord,
+    open_pcap,
     read_pcap,
     write_pcap,
 )
@@ -269,6 +271,152 @@ class TestReadPcapRoundtrip(unittest.TestCase):
         result = self._roundtrip([(b"\x00" * 10, 0, 0)])
         self.assertIsInstance(result, PcapFile)
         self.assertIsInstance(result.header, PcapFileHeader)
+
+
+class TestOpenPcapStreaming(unittest.TestCase):
+    """open_pcap yields records one at a time, with byte offsets."""
+
+    def _packets(self, n: int) -> list:
+        return [(b"\xaa" * (20 + i), 100 + i, i) for i in range(n)]
+
+    def test_header_available_before_iterating(self):
+        with open_pcap(file_object=_write(self._packets(3))) as reader:
+            self.assertIsInstance(reader.header, PcapFileHeader)
+            self.assertEqual(reader.header.link_type, LINKTYPE_ETHERNET)
+
+    def test_yields_pcap_records(self):
+        with open_pcap(file_object=_write(self._packets(3))) as reader:
+            records = list(reader)
+        self.assertEqual(len(records), 3)
+        self.assertIsInstance(records[0], PcapRecord)
+
+    def test_record_fields(self):
+        with open_pcap(file_object=_write([(b"\xaa" * 25, 7, 42)])) as reader:
+            rec = next(iter(reader))
+        self.assertEqual(rec.data, b"\xaa" * 25)
+        self.assertEqual((rec.ts_sec, rec.ts_frac), (7, 42))
+        self.assertEqual(rec.orig_len, 25)
+
+    def test_record_unpacks_like_a_tuple(self):
+        with open_pcap(file_object=_write([(b"\xaa" * 25, 7, 42)])) as reader:
+            data, ts_sec, ts_frac = next(iter(reader))
+        self.assertEqual((data, ts_sec, ts_frac), (b"\xaa" * 25, 7, 42))
+
+    def test_first_record_offset_is_after_global_header(self):
+        with open_pcap(file_object=_write(self._packets(1))) as reader:
+            rec = next(iter(reader))
+        self.assertEqual(rec.offset, _GLOBAL_HDR_SIZE)
+        self.assertEqual(rec.data_offset, _GLOBAL_HDR_SIZE + _PKT_HDR_SIZE)
+
+    def test_offsets_advance_by_record_size(self):
+        packets = self._packets(4)
+        with open_pcap(file_object=_write(packets)) as reader:
+            offsets = [(r.offset, len(r.data)) for r in reader]
+        expected = _GLOBAL_HDR_SIZE
+        for offset, length in offsets:
+            self.assertEqual(offset, expected)
+            expected += _PKT_HDR_SIZE + length
+
+    def test_data_offset_locates_the_packet_bytes(self):
+        packets = self._packets(3)
+        blob = _write(packets).getvalue()
+        with open_pcap(file_object=io.BytesIO(blob)) as reader:
+            for rec in reader:
+                self.assertEqual(
+                    blob[rec.data_offset: rec.data_offset + len(rec.data)], rec.data,
+                )
+
+    def test_orig_len_exceeds_data_for_truncated_record(self):
+        # Hand-build a record whose orig_len is larger than incl_len, as a
+        # snaplen-limited capture produces.
+        buf = io.BytesIO()
+        buf.write(struct.pack("<IHHiIII", _MAGIC_USEC, 2, 4, 0, 0, 65535, 1))
+        buf.write(struct.pack("<IIII", 1, 0, 10, 1514))
+        buf.write(b"\xbb" * 10)
+        buf.seek(0)
+        with open_pcap(file_object=buf) as reader:
+            rec = next(iter(reader))
+        self.assertEqual(len(rec.data), 10)
+        self.assertEqual(rec.orig_len, 1514)
+
+    def test_link_type_override_applies(self):
+        with open_pcap(
+            file_object=_write(self._packets(1)), link_type=LINKTYPE_RAW,
+        ) as reader:
+            self.assertEqual(reader.header.link_type, LINKTYPE_RAW)
+
+    def test_stops_reading_when_iteration_stops(self):
+        # The source is only consumed as far as the records taken, which is
+        # the point of streaming: a huge capture need not be read in full.
+        buf = _write(self._packets(50))
+        with open_pcap(file_object=buf) as reader:
+            first = next(iter(reader))
+        self.assertEqual(first.ts_sec, 100)
+        self.assertLess(buf.tell(), len(buf.getvalue()))
+
+    def test_path_form_closes_its_file(self):
+        import os
+        import tempfile
+        fd, path = tempfile.mkstemp(suffix=".pcap")
+        os.close(fd)
+        write_pcap(self._packets(2), path=path)
+        reader = open_pcap(path=path)
+        list(reader)
+        reader.close()
+        reader.close()          # idempotent
+        os.remove(path)
+
+    def test_file_object_is_not_closed(self):
+        buf = _write(self._packets(2))
+        with open_pcap(file_object=buf) as reader:
+            list(reader)
+        self.assertFalse(buf.closed)
+
+    def test_exhausting_records_does_not_close(self):
+        # Documented behaviour: reading every record is not closing.  The
+        # caller closes, via `with` or close().
+        buf = _write(self._packets(3))
+        reader = open_pcap(file_object=buf)
+        list(reader)
+        self.assertFalse(buf.closed)
+        reader.close()
+
+    def test_failure_to_open_does_not_leak_the_file(self):
+        # A bad magic number raises from open_pcap itself, which must close
+        # the file it opened before propagating — no reader reaches the
+        # caller to close it.
+        import gc
+        import os
+        import tempfile
+        import warnings
+        fd, path = tempfile.mkstemp(suffix=".pcap")
+        with os.fdopen(fd, "wb") as f:
+            f.write(b"\x00\x01\x02\x03" + b"\x00" * 40)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with self.assertRaises(ValueError):
+                open_pcap(path=path)
+            gc.collect()
+        self.assertFalse([w for w in caught if w.category is ResourceWarning])
+        os.remove(path)
+
+    def test_neither_path_nor_file_object_raises(self):
+        with self.assertRaises(ValueError):
+            open_pcap()
+
+    def test_both_path_and_file_object_raises(self):
+        with self.assertRaises(ValueError):
+            open_pcap(path="x.pcap", file_object=io.BytesIO())
+
+    def test_bad_magic_raises_on_open(self):
+        with self.assertRaises(ValueError):
+            open_pcap(file_object=io.BytesIO(b"\x00\x01\x02\x03" + b"\x00" * 40))
+
+    def test_truncated_record_raises_during_iteration(self):
+        blob = _write(self._packets(2)).getvalue()
+        with open_pcap(file_object=io.BytesIO(blob[:-5])) as reader, \
+                self.assertRaises(ValueError):
+            list(reader)
 
 
 if __name__ == "__main__":

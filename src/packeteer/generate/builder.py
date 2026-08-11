@@ -228,11 +228,14 @@ from .ipsec import (
 )
 from .ipv6 import (
     HBH_NEXT_HEADER,
+    IPV6_NEXT_HEADER_FRAGMENT,
+    FragmentHeader,
     HopByHopOptions,
     IPv6Header,
     JumboPayloadOption,
     RawOption,
     RouterAlertOption,
+    _build_fragment_header,
     _build_hop_by_hop_header,
     _build_ipv6_header,
 )
@@ -283,6 +286,7 @@ _IP_PROTO_MAP: dict[type, int] = {
     GREHeader:       IPPROTO_GRE,      # GRE (RFC 2784)
     SCTPHeader:      IPPROTO_SCTP,     # SCTP (RFC 9260)
     HopByHopOptions: HBH_NEXT_HEADER,  # Hop-by-Hop Options (RFC 8200)
+    FragmentHeader:  IPV6_NEXT_HEADER_FRAGMENT,  # Fragment header (RFC 8200)
     AHHeader:        IPPROTO_AH,       # IPsec AH (RFC 4302)
     ESPHeader:       IPPROTO_ESP,      # IPsec ESP (RFC 4303)
 }
@@ -1074,6 +1078,7 @@ class PacketBuilder:
         # IPv6-specific
         traffic_class: int = 0,
         flow_label: int = 0,
+        protocol: int = 0,
     ) -> "PacketBuilder":
         """Append an IP header layer.  IPv4 or IPv6 is auto-detected from *src*.
 
@@ -1093,22 +1098,28 @@ class PacketBuilder:
             fragment_offset: IPv4 Fragment Offset in 8-byte units.
             traffic_class: IPv6 Traffic Class (DSCP + ECN).
             flow_label: IPv6 Flow Label (20-bit value).
+            protocol: IP protocol number to record when no transport layer
+                follows this one — the case for a non-first fragment, which
+                carries payload from the middle of a datagram and so has no
+                header of its own to derive it from.  Ignored otherwise: with
+                a transport layer present the field is always derived from it.
 
         Raises:
             OSError: If *src* is not a valid IPv4 or IPv6 address.
 
         """
-        # protocol / next_header = 0 is a placeholder filled in at build time.
+        # protocol / next_header is normally filled in at build time from the
+        # layer that follows; *protocol* supplies it when nothing does.
         if _detect_ip_version(src) == 6:
             self._layers.append(IPv6Header(
-                src, dst, next_header=0,
+                src, dst, next_header=protocol,
                 hop_limit=ttl,
                 traffic_class=traffic_class,
                 flow_label=flow_label,
             ))
         else:
             self._layers.append(IPHeader(
-                src, dst, protocol=0,
+                src, dst, protocol=protocol,
                 ttl=ttl, tos=tos,
                 identification=identification,
                 flags=flags,
@@ -1146,6 +1157,53 @@ class PacketBuilder:
 
         """
         self._layers.append(HopByHopOptions(options=list(options) if options else []))
+        return self
+
+    def fragment_header(
+        self,
+        *,
+        fragment_offset: int = 0,
+        more_fragments: bool = False,
+        identification: int = 0,
+    ) -> "PacketBuilder":
+        """Append an IPv6 Fragment extension header (RFC 8200 §4.5).
+
+        Call after :meth:`ip` with an IPv6 address and before the transport
+        method.  The enclosing IPv6 header's *next_header* becomes ``44``
+        automatically, and this header's own Next Header is filled in from the
+        layer that follows.
+
+        This authors one fragment at a time, which is what rebuilding a
+        captured fragment needs.  To split a datagram into fragments, use
+        :func:`~packeteer.generate.fragmentation.fragment_ipv6` instead.
+
+        Args:
+            fragment_offset: Offset of this fragment's data within the
+                original payload, in units of 8 bytes.
+            more_fragments: The M flag — ``True`` on every fragment but the
+                last.
+            identification: 32-bit value shared by all fragments of one
+                datagram.
+
+        Example::
+
+            from packeteer.generate import PacketBuilder
+
+            pkt = (PacketBuilder()
+                .ethernet()
+                .ip(src="::1", dst="::2")
+                .fragment_header(fragment_offset=0, more_fragments=True,
+                                 identification=0xABCD)
+                .udp(dst_port=9999)
+                .build()
+            )
+
+        """
+        self._layers.append(FragmentHeader(
+            fragment_offset=fragment_offset,
+            more_fragments=more_fragments,
+            identification=identification,
+        ))
         return self
 
     def tcp(
@@ -1402,16 +1460,25 @@ class PacketBuilder:
                 data = _build_sctp_packet(layer)
 
             elif isinstance(layer, IPHeader):
-                proto = _ip_proto_for(next_layer) if next_layer else 0
+                proto = _ip_proto_for(next_layer) if next_layer else layer.protocol
                 data = _build_ip_header(self._clone_ip(layer, proto), data) + data
 
             elif isinstance(layer, IPv6Header):
-                proto = _ip_proto_for(next_layer) if next_layer else 0
+                proto = _ip_proto_for(next_layer) if next_layer else layer.next_header
                 data = _build_ipv6_header(self._clone_ipv6(layer, proto), data) + data
 
             elif isinstance(layer, HopByHopOptions):
                 transport_proto = _ip_proto_for(next_layer) if next_layer else 0
                 data = _build_hop_by_hop_header(layer, transport_proto) + data
+
+            elif isinstance(layer, FragmentHeader):
+                # A later fragment has no transport layer to read the protocol
+                # from, so fall back to the enclosing IP header's own value.
+                transport_proto = (
+                    _ip_proto_for(next_layer) if next_layer
+                    else self._find_ip_before(i).next_header
+                )
+                data = _build_fragment_header(layer, transport_proto) + data
 
             else:
                 # L2 / tunnel header layers (PPPoE, EtherIP, VXLAN, GENEVE,
@@ -1432,6 +1499,19 @@ class PacketBuilder:
                 and len(data) < ETHERNET_MIN_FRAME_SIZE):
             data += b'\x00' * (ETHERNET_MIN_FRAME_SIZE - len(data))
         return data
+
+    def _is_non_first_fragment(self) -> bool:
+        """Return ``True`` when the configured layers describe a later fragment.
+
+        Such a packet is IP header plus payload bytes taken from the middle of
+        a datagram, so it legitimately has no transport layer of its own.
+        """
+        for layer in self._layers:
+            if isinstance(layer, IPHeader) and layer.fragment_offset > 0:
+                return True
+            if isinstance(layer, FragmentHeader) and layer.fragment_offset > 0:
+                return True
+        return False
 
     def _validate(self) -> None:
         # PPPoE discovery frames carry only tags — no IP or transport required.
@@ -1463,6 +1543,15 @@ class PacketBuilder:
         if any(isinstance(layer, ESPHeader) for layer in self._layers):
             if not has_ip:
                 raise ValueError("No IP layer configured; call .ip() before .esp()")
+            return
+
+        # Only the first fragment of a datagram carries a transport header;
+        # the rest carry payload bytes from the middle of one.
+        if self._is_non_first_fragment():
+            if not has_ip:
+                raise ValueError(
+                    "No IP layer configured; call .ip() before .build()/.fragment()"
+                )
             return
 
         has_transport = any(

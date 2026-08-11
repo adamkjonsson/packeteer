@@ -24,7 +24,266 @@ version in pyproject.toml to 0.8.0, add a fresh Unreleased section, update the
 link definitions at the bottom of this file, and tag the release `v0.8.0`.
 -->
 
-_Nothing yet._
+### Added
+
+- **IP defragmentation** (#65) — `fragment_ipv4` / `fragment_ipv6` had no
+  parse-side counterpart, so a fragmented datagram could only be dropped or
+  reassembled by the caller.  New `packeteer.parse.defragment`, exported from
+  `packeteer.parse`:
+
+  - `defragment(frames, link_type=…, timeout_s=…)` reassembles both IP
+    versions; `defragment_ipv4` / `defragment_ipv6` restrict it to one, with
+    the same signature.  All take and return **raw frames**, mirroring the
+    generate side and composing with `open_pcap` on one end and
+    `parse_packet` on the other.  Non-fragments pass through untouched and in
+    order; out-of-order fragments and interleaved datagrams are handled.
+  - `Defragmenter` is the stateful primitive behind them — `feed(frame, ts)`,
+    `flush()`, and an `incomplete` list of `IncompleteDatagram` records so a
+    caller can see what never arrived, each with a `reason` of `"timeout"`,
+    `"overlap"`, `"too_large"`, or `"evicted"`.  Incomplete datagrams are
+    dropped rather than emitted partly assembled.
+  - Documented policies, all security-relevant: IPv4 overlap keeps the
+    first-arrival bytes (BSD behaviour) while IPv6 discards the whole
+    datagram (RFC 5722); timeouts run on capture timestamps, not wall-clock
+    time; and per-datagram and total buffer caps mean a capture full of
+    first-fragments-only cannot exhaust memory.
+  - A reassembled IPv4 header has its fragment fields cleared, Total Length
+    corrected, and checksum recomputed; a reassembled IPv6 header has the
+    Fragment extension header removed and Next Header restored — both match
+    the datagram as it was before fragmentation, so
+    `fragment_ipv4` → `defragment` round-trips.
+  - Ethernet padding on a short final fragment is excluded from the
+    reassembled payload, using the length declared in the IP header.
+
+- **IPv6 Fragment extension header decoding** (#65) — `next_header == 44` was
+  not decoded at all: it raised `UnsupportedIPProtocolWarning` and left the
+  whole fragment opaque, so the identification needed to group fragments was
+  unreachable.
+
+  - New `FragmentHeader` dataclass (`fragment_offset`, `more_fragments`,
+    `identification`) exported from `packeteer.generate`, and a new
+    `IPv6Header.fragment` field holding it.
+  - `PacketBuilder.fragment_header(…)` authors one, `packeteer parse` emits a
+    `network.fragment` object, and `packeteer build` rebuilds the extension
+    header from it.  Previously `packeteer build` **crashed** on a spec parsed
+    from an IPv6-fragment capture, with an unhandled `AttributeError` from
+    `network.protocol` being the integer `44`.
+  - Known limitation: rebuilding a **first** fragment from a spec recomputes
+    the transport length and checksum from that fragment's bytes, while the
+    captured header states them for the whole datagram, so those two fields
+    differ from the original.  A spec describes one packet and cannot express
+    "this transport header belongs to a larger datagram".  Pre-existing for
+    IPv4; IPv6 now behaves the same rather than crashing.  Later fragments
+    rebuild byte-for-byte, and reassembling with `defragment()` before parsing
+    avoids the issue entirely.
+
+- **`open_pcap` — streaming pcap/pcapng reader with byte offsets** (#62) —
+  `read_pcap` materialises every packet in a list and, without `max_packets`,
+  slurped the whole file first, so processing a capture record by record still
+  cost whole-file memory.  Multi-gigabyte captures are the normal case for
+  session analysis.
+
+  - `open_pcap(path=… | file_object=…, link_type=…)` returns a `PcapReader`:
+    an iterator of `PcapRecord` objects whose `header` is populated before the
+    first record is read.  It is a context manager — a reader opened from a
+    path closes that file on exit, including when iteration stops early, while
+    a caller's *file_object* is never closed.
+  - `PcapRecord` carries `data`, `ts_sec`, `ts_frac`, `offset` (start of the
+    record header or pcapng block), `data_offset` (first captured packet
+    byte), and `orig_len` (on-wire length, larger than `len(data)` for a
+    snaplen-truncated record).  The first three unpack like the tuples
+    `read_pcap` returns, so `for data, ts_sec, ts_frac in reader` works.
+  - The byte offsets cannot be reconstructed after the fact for pcapng —
+    blocks are variable-length and option padding is invisible in the decoded
+    data — so reading them here is the only way to cite a byte range of a
+    capture afterwards.
+  - `read_pcap` is now a thin wrapper over the same machinery, replacing the
+    separate buffered and streaming code paths it used to choose between;
+    `max_packets` is an `islice`.  Its behaviour and signature are unchanged.
+
+- **`PcapFileHeader.tick_hz` — the capture's real timestamp resolution** (#64)
+  — the header modelled resolution as a single `nanoseconds` boolean, so any
+  pcapng declaring something else through `if_tsresol` had its sub-second
+  timestamps silently misread.  `_parse_idb_tsresol` already decoded the full
+  option, including binary (`2**n`) forms, and the result was then discarded
+  unless it happened to be exactly 1e9.
+
+  - `tick_hz` records ticks per second — `1_000_000`, `1_000_000_000`,
+    `1_000`, `1024`, whatever the file declares — and is the field to use for
+    timestamp arithmetic.
+  - `nanoseconds` remains as a derived convenience view and still drives the
+    writers.  The two are reconciled in `__post_init__`: supply either one and
+    the other follows, with `tick_hz` winning when both are given.  Existing
+    `PcapFileHeader(..., nanoseconds=True)` calls are unaffected.
+  - `PcapInfo` gains `tick_hz` (also in `to_dict()` / `file-info --json`), and
+    the text report adds a `Timestamps: N ticks/s` line for a resolution that
+    is neither microseconds nor nanoseconds.
+  - New `TimestampResolutionWarning`, exported from `packeteer.parse`, is
+    raised once by `parse_pcap_file` when a spec cannot express the source
+    resolution; its `tick_hz` attribute carries the real value.
+
+- **TCP options are decoded on the parse path** (#63) — `parse` honoured the
+  Data Offset field when slicing the payload but never decoded the option
+  bytes, so `TCPHeader.options` was always `None` from a real capture.
+  packeteer could *build* MSS, window scale, SACK, and timestamps but not read
+  them back, and the `options` branch in the packet-spec serialiser could
+  never fire.
+
+  - `packeteer.parse.tcp.packet_parser` now decodes the options region into
+    the existing `TCPOptions` dataclass: MSS (kind 2), Window Scale (3),
+    SACK Permitted (4), SACK blocks (5), and Timestamps (8).  `options` is
+    `None` when the header carries no options, so specs stay clean.
+  - Window scale is needed to interpret the `window` field at all on a modern
+    connection; SACK blocks tell a reassembler which ranges arrived; and
+    timestamps discriminate retransmits.
+  - New `TCPOptions.unknown` field — `(kind, value)` pairs for options with no
+    dedicated field, and for a recognised kind carrying an unexpected length.
+    The builder re-emits them, so an option survives a parse → build round
+    trip even when packeteer does not understand it.
+  - Options are re-encoded in a canonical order, so a round trip preserves
+    every option's presence and value but is not guaranteed byte-identical to
+    a capture that ordered or padded them differently.
+  - Structural padding (NOP, End of Option List) is consumed and not
+    modelled.  A malformed list — a length byte below the 2-byte minimum, or
+    one running past the end of the region — stops the walk, keeping whatever
+    was decoded before it rather than discarding the header.
+  - The packet spec gains `transport.options.unknown`, an array of
+    `{"kind": N, "data": "<hex>"}` objects, read back by `packeteer build`.
+
+- **`decode_app` — opt out of DNS/DHCP/HTTP decoding** (#61) — the parser ran
+  its three application decoders unconditionally, and each replaced the
+  payload it decoded, so `ParsedPacket.payload` came back empty for exactly
+  the protocols most worth capturing.  Re-serialising the decoded object is
+  not byte-exact — header casing, header order, whitespace, and duplicate
+  headers are all normalised away — so those bytes were unrecoverable.
+
+  - `parse_packet(data, *, link_type=…, decode_app=True)` and
+    `parse_pcap_packet(record, file_header, *, decode_app=True)`.  With
+    `decode_app=False` the DNS, DHCP, and HTTP decoders are skipped and
+    `payload` holds the transport payload exactly as captured.
+  - The setting propagates through every level of a tunnelled packet, so an
+    HTTP payload inside VXLAN, GENEVE, GTP-U, GRE, EtherIP, IP-in-IP, AH, or
+    an MPLS pseudowire is left raw as well.
+  - Tunnel decoders themselves always run: VXLAN, GENEVE, and GTP-U are
+    framing, not application content.
+  - `parse_pcap_file(..., decode_app=True)` and `packeteer parse
+    --no-decode-app` expose the same switch; the spec then carries a
+    `payload` section instead of `dns` / `dhcp` / `http`.
+  - The default is unchanged, so existing callers are unaffected.
+
+- **IP length fields on parsed headers** (#66) — the parser now records what
+  the IP header says about the datagram's size, so a caller can tell where the
+  datagram ends without re-reading the raw bytes.
+
+  - `IPHeader.total_length` — the IPv4 Total Length field (header + payload).
+  - `IPv6Header.payload_length` — the IPv6 Payload Length field (everything
+    after the 40-byte fixed header, including extension headers).
+  - Both default to `None` and are populated only by
+    `packeteer.parse.ip.packet_parser`; the builder ignores them and continues
+    to derive the wire value from the actual payload, so every existing
+    construction call is unaffected and the fields do not appear in packet
+    specs.
+  - Comparing the declared length against the bytes received detects a
+    snaplen-truncated capture.
+
+### Fixed
+
+- **Breaking: non-first fragments were decoded as if they had a transport
+  header** (#65) — nothing on the parse path checked the fragment offset, so
+  the payload bytes at the start of a non-first fragment were read as a TCP or
+  UDP header.  Fragment 2 of a UDP datagram came back as a `UDPHeader` with
+  ports invented out of user data (`8225` → `19019` → `29299` as the payload
+  advanced), and the eight bytes it consumed vanished from the payload.  For a
+  stream reassembler this is fabricated traffic.
+
+  Such a fragment now has `transport = None` and keeps every byte in
+  `payload`.  Code that read `.transport` on arbitrary packets should either
+  reassemble first with `defragment()` or skip packets whose
+  `ip.fragment_offset` is non-zero (IPv4) or whose `ip.fragment` is set with a
+  non-zero offset (IPv6).
+
+- **A packet spec dropped the payload of any packet with no transport layer**
+  — `parse_pcap_file` emitted the `payload` section only for packets that had
+  a transport header, so the bytes of a packet carrying an IP protocol the
+  parser does not decode never reached the spec at all, despite
+  `UnsupportedIPProtocolWarning` promising they were kept.  The same gap would
+  have swallowed every non-first fragment's data once #65 stopped inventing a
+  transport header for them.  The payload is now emitted whenever there is
+  one, and `packeteer build` reconstructs such a packet: `PacketBuilder.ip()`
+  gains a `protocol` argument for stating the protocol when no transport layer
+  follows, and a non-first fragment no longer trips the "No transport layer
+  configured" check.
+
+- **`fragment_ipv6` announced IPv4 in the Ethernet header** — `EthernetHeader`
+  defaults to EtherType `0x0800`, and `fragment_ipv6` used the caller's header
+  as given, so `fragment_ipv6(..., eth_header=EthernetHeader(dst, src))`
+  produced frames declaring IPv4 while carrying IPv6.  Wireshark misparses
+  those.  A default EtherType is now switched to `0x86DD`; one set explicitly
+  is left alone.
+
+- **Obsolete Packet Block data was shifted four bytes** — a pcapng Packet
+  Block (type `0x00000002`, the pre-standard predecessor of the Enhanced
+  Packet Block, which this module reads for compatibility) has 20 bytes of
+  fixed fields before its packet data: `interface_id`, `drops_count`, the two
+  timestamp halves, `captured_len`, and `packet_len`.  The reader unpacked all
+  20 bytes but sliced the data from offset 16, so every such packet began with
+  the four bytes of `packet_len` and lost its last four real bytes.  Found
+  while adding byte offsets in #62.
+
+- **Non-microsecond pcapng timestamps were read as microseconds** (#64) — a
+  capture declaring `if_tsresol = 3` (milliseconds, legal and emitted by some
+  writers) had its sub-second fractions treated as microseconds by every
+  consumer, a factor of 1000 out with nothing in the returned data to reveal
+  it.  Binary resolutions were wrong by whatever factor applied.
+
+  - `pcap_info` / `packeteer file-info` computed capture duration from the
+    wrong unit: two packets half a second apart in a millisecond capture were
+    reported as 0.0005 s apart.
+  - `parse_pcap_file` labelled the fraction `timestamp_us` regardless, so a
+    250 ms fraction was written as `250` microseconds rather than `250000`.
+    Timestamps are now converted to the spec's unit and the value is correct.
+
+- **Breaking: Ethernet padding no longer lands in `ParsedPacket.payload`**
+  (#66) — a frame below the 60-byte IEEE 802.3 minimum is zero-padded by the
+  sender, and that padding was being reported as transport payload.  A
+  minimal Ethernet/IPv4/UDP frame returned 18 bytes of zeros as its payload;
+  it now returns `b""`.  The parser trims the datagram to the length declared
+  in the IP header before the transport layer is parsed.
+
+  This matters most for stream reassembly, where the padding was bytes that
+  were never sent being injected into the stream.  Callers that relied on the
+  old behaviour to see the padding should read the frame bytes directly.
+
+  When the declared length exceeds what was captured — a snaplen-truncated
+  record — every captured byte is kept rather than trimmed, and
+  `total_length` still reports what the sender declared.
+
+### Documentation
+
+- New `docs/guide/defragmenting.md` chapter covering reassembly, what a
+  fragment looks like before it, incomplete datagrams, and the overlap /
+  timeout / memory policies; a "Reassembly" section in
+  `docs/api/fragmentation.md`; and the `network.fragment` spec key documented
+  in `docs/packet-spec/format.md`.
+- New "Streaming a large capture" section in `docs/guide/pcap.md` and a
+  "Streaming" section in `docs/api/pcap-io.md` documenting `open_pcap`,
+  `PcapReader`, and `PcapRecord`.
+- New "Timestamp resolution" section in `docs/guide/pcap.md`, a
+  `TimestampResolutionWarning` section in `docs/api/parser.md`, and a note on
+  `tick_hz` in `docs/cli/file-info.md`.
+- New "TCP options" section in `docs/guide/parsing.md` covering the decoded
+  fields, why window scale and SACK matter for reassembly, `unknown`, and the
+  canonical-ordering caveat; `options.unknown` documented in
+  `docs/packet-spec/format.md`.
+- New "Keeping the payload as it appeared on the wire" section in
+  `docs/guide/parsing.md`, and a `--no-decode-app` section in
+  `docs/cli/parse.md` noting that raw HTTP payloads serialise as hex (CRLF
+  falls outside the printable-ASCII range that selects UTF-8 encoding).
+- New "Payload boundaries and Ethernet padding" section in
+  `docs/guide/parsing.md` covering the trimming rule, the two length fields,
+  and truncation detection.
+- `docs/api/packet-builder.md` corrected: `.ethernet()` was still documented
+  with `pad=False`, but the default changed to `pad=True` in 0.7.0.
 
 ---
 

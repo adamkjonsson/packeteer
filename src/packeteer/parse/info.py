@@ -91,6 +91,10 @@ class PcapInfo:
         link_type_overridden: ``True`` when *link_type* differs from
             *declared_link_type*.
         nanoseconds: ``True`` when timestamps are in nanoseconds.
+        tick_hz: Timestamp resolution in ticks per second — ``1_000_000``
+            (microseconds), ``1_000_000_000`` (nanoseconds), or any other
+            value a pcapng interface declared via ``if_tsresol``.  Left at
+            ``0`` it is derived from *nanoseconds*.
         packet_count: Number of packet records analysed.  Equal to the total in
             the file unless *packet_limit* capped it.
         session_count: Number of unique directional 5-tuples
@@ -121,6 +125,12 @@ class PcapInfo:
     layer_counts: dict[str, int] = field(default_factory=dict)
     capture_duration_s: float | None = None
     packet_limit: int | None = None
+    tick_hz: int = 0
+
+    def __post_init__(self) -> None:
+        """Derive *tick_hz* from *nanoseconds* when it was not supplied."""
+        if self.tick_hz == 0:
+            self.tick_hz = 1_000_000_000 if self.nanoseconds else 1_000_000
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serialisable dict of every field.
@@ -137,6 +147,7 @@ class PcapInfo:
             "link_type": self.link_type,
             "link_type_overridden": self.link_type_overridden,
             "nanoseconds": self.nanoseconds,
+            "tick_hz": self.tick_hz,
             "packet_count": self.packet_count,
             "session_count": self.session_count,
             "layer_counts": dict(self.layer_counts),
@@ -257,13 +268,16 @@ def _choose_link_type(
 
 
 def _capture_duration(
-    records: list[tuple[bytes, int, int]], nanoseconds: bool,
+    records: list[tuple[bytes, int, int]], tick_hz: int,
 ) -> float | None:
-    """Return the span between the first and last timestamp in seconds."""
+    """Return the span between the first and last timestamp in seconds.
+
+    *tick_hz* is the capture's timestamp resolution in ticks per second, so a
+    millisecond-resolution pcapng is not misread as microseconds.
+    """
     if len(records) < 2:
         return None
-    resolution = 1_000_000_000 if nanoseconds else 1_000_000
-    times = [sec + frac / resolution for _, sec, frac in records]
+    times = [sec + frac / tick_hz for _, sec, frac in records]
     return max(times) - min(times)
 
 
@@ -347,10 +361,11 @@ def pcap_info(
         link_type=used_link_type,
         link_type_overridden=used_link_type != declared,
         nanoseconds=pcap.header.nanoseconds,
+        tick_hz=pcap.header.tick_hz,
         packet_count=len(records),
         session_count=len(sessions),
         layer_counts=layer_counts,
-        capture_duration_s=_capture_duration(records, pcap.header.nanoseconds),
+        capture_duration_s=_capture_duration(records, pcap.header.tick_hz),
         packet_limit=num,
     )
 
@@ -387,6 +402,10 @@ def format_pcap_info(info: PcapInfo) -> str:
     lines.append(f"Sessions:  {info.session_count}  (directional 5-tuples)")
     if info.capture_duration_s is not None:
         lines.append(f"Duration:  {info.capture_duration_s:.6f} s")
+    if info.tick_hz not in (1_000_000, 1_000_000_000):
+        # Worth stating plainly: an unusual resolution is the kind of thing
+        # that makes timestamps look plausible while being wrong elsewhere.
+        lines.append(f"Timestamps: {info.tick_hz} ticks/s")
 
     lines.append("Layers:")
     total = info.packet_count

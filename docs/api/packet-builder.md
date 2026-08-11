@@ -26,7 +26,7 @@ multiple times to produce advanced encapsulations:
 
 | Method | Description |
 |--------|-------------|
-| `.ethernet(src_mac, dst_mac, pad=False)` | Ethernet II header.  `pad=True` zero-pads the frame to the IEEE 802.3 minimum of 60 bytes. |
+| `.ethernet(src_mac, dst_mac, pad=True)` | Ethernet II header.  `pad=True` (the default) zero-pads the frame to the IEEE 802.3 minimum of 60 bytes; pass `pad=False` to suppress it. |
 | `.arp(operation=1, sender_mac=…, sender_ip=…, target_mac=…, target_ip=…, hardware_type=1, protocol_type=0x0800)` | ARP packet (RFC 826, IPv4 over Ethernet).  Terminal — call after `.ethernet()` with no IP/transport layer.  The Ethernet EtherType is set to `0x0806` automatically. |
 | `.sll(packet_type=0, arphrd_type=1, address=…)` | Linux cooked-capture v1 pseudo header (`LINKTYPE_LINUX_SLL`, used by `tcpdump -i any`).  An alternative outermost layer to `.ethernet()`; the Protocol Type is set automatically from the next layer. |
 | `.sll2(packet_type=0, arphrd_type=1, address=…, if_index=0)` | Linux cooked-capture v2 pseudo header (`LINKTYPE_LINUX_SLL2`, the modern `-i any` default). |

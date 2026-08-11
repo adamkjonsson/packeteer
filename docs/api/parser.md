@@ -121,6 +121,25 @@ with warnings.catch_warnings():
 
 ---
 
+## Unrepresentable timestamp resolutions
+
+A packet spec records sub-second timestamps as either `timestamp_us` or
+`timestamp_ns`, but a pcapng interface may declare any resolution through
+`if_tsresol`.  When {func}`~packeteer.parse.core.parse_pcap_file` reads such a
+capture it converts the timestamps to the nearest representable unit — the
+finer one for anything more precise than microseconds — and warns once:
+
+```{eval-rst}
+.. autoclass:: packeteer.parse.core.TimestampResolutionWarning
+   :members:
+```
+
+The capture's own resolution is on the warning's `tick_hz` attribute, and on
+{attr}`packeteer.pcap.PcapFileHeader.tick_hz` for anyone reading records
+directly rather than through a spec.
+
+---
+
 ## Packet spec serialisation
 
 These functions convert {class}`~packeteer.parse.core.ParsedPacket` objects

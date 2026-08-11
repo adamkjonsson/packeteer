@@ -88,9 +88,116 @@ are detected from the file header — no flags needed:
 from packeteer.pcap import read_pcap
 
 pcap = read_pcap(path="capture.pcap")
+print(pcap.header.tick_hz)       # 1_000_000, 1_000_000_000, 1_000, …
 print(pcap.header.nanoseconds)   # True / False
 print(len(pcap.packets))         # number of records
 ```
+
+### Streaming a large capture
+
+`read_pcap` builds a list of every packet, so a multi-gigabyte capture costs
+multi-gigabyte memory.  {func}`packeteer.pcap.open_pcap` reads the same files
+record by record instead:
+
+```python
+from packeteer.pcap import open_pcap
+from packeteer.parse import parse_packet
+
+with open_pcap(path="huge.pcap") as reader:
+    print(reader.header.link_type)          # available before the first record
+    for record in reader:
+        pkt = parse_packet(record.data, link_type=reader.header.link_type)
+        ...
+```
+
+Each {class}`~packeteer.pcap.PcapRecord` also carries its position in the file:
+
+```python
+record.offset        # start of the record header / pcapng block
+record.data_offset   # first captured packet byte — the offset to cite
+record.orig_len      # on-wire length; > len(record.data) if snaplen-truncated
+```
+
+For classic pcap those offsets are derivable externally (a 24-byte global
+header, then `16 + caplen` per record), but for pcapng they are not: blocks
+are variable-length and option padding is invisible in the decoded data.
+Reading them here is the only reliable way to refer to a byte range of the
+capture afterwards.
+
+The first three fields unpack like the tuples `read_pcap` returns, so existing
+code moves over with little change:
+
+```python
+for data, ts_sec, ts_frac in reader:
+    ...
+```
+
+### Closing the reader
+
+`read_pcap` hands back a finished result and holds nothing open.  `open_pcap`
+is different in kind: records are decoded lazily as you iterate, so the file
+stays open until you close it, and **the reader is yours to close.**
+
+Use it as a context manager and this takes care of itself:
+
+```python
+with open_pcap(path="huge.pcap") as reader:
+    for record in reader:
+        if record.ts_sec > deadline:
+            break               # file is closed on the way out
+```
+
+Who closes what:
+
+| Opened with | Closed by |
+|-------------|-----------|
+| `path=` | the reader — on `close()` or context-manager exit |
+| `file_object=` | you, always.  The reader never closes an object you passed in |
+
+`close()` is safe to call more than once, so an explicit call inside a `with`
+block does no harm.
+
+Three things are easy to get wrong without a `with` block:
+
+- **Dropping a reader without closing it** leaks the handle.  CPython reclaims
+  it when the object is collected and emits a `ResourceWarning`, which is an
+  error under `python -W error::ResourceWarning`; other Python
+  implementations may not close it promptly at all.
+- **Running out of records does not close the file.**  `list(reader)` reads
+  every record and still leaves the handle open.
+- **An error part-way through does not close the file.**  A malformed record
+  raises during iteration, at which point closing is on you.
+
+Failures while *opening* are handled for you: a bad magic number or truncated
+file header raises from `open_pcap` itself, which closes the file before the
+exception propagates.  There is nothing to clean up, because you never
+received a reader.
+
+```python
+reader = open_pcap(path="capture.pcap")   # no `with`
+try:
+    for record in reader:
+        ...
+finally:
+    reader.close()                        # required
+```
+
+### Timestamp resolution
+
+`ts_frac` is a count of *ticks*, and `header.tick_hz` says how many ticks make
+a second.  Classic pcap is always microseconds or nanoseconds, selected by the
+magic number, but a pcapng interface declares its own resolution via
+`if_tsresol` — milliseconds and binary (`2**n`) resolutions are both legal and
+do occur.  Use `tick_hz` for any arithmetic:
+
+```python
+seconds = ts_sec + ts_frac / pcap.header.tick_hz
+```
+
+`header.nanoseconds` remains as a convenience view (`tick_hz == 1_000_000_000`)
+and drives the writers, which emit microseconds or nanoseconds only.  It is
+`False` for a millisecond capture, so a program that branches on it alone
+would read such a capture's fractions as microseconds — a factor of 1000 out.
 
 Each element of `pcap.packets` is a `(data, ts_sec, ts_frac)` tuple.  Iterate
 and parse with {func}`packeteer.parse.core.parse_pcap_packet`:

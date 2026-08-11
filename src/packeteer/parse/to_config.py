@@ -314,6 +314,12 @@ def _apply_ip(config: dict[str, Any], hdr: IPHeader | IPv6Header) -> None:
             section["hop_by_hop_options"] = [
                 _serialise_hbh_opt(o) for o in hdr.hop_by_hop.options
             ]
+        if hdr.fragment is not None:
+            section["fragment"] = {
+                "fragment_offset": hdr.fragment.fragment_offset,
+                "more_fragments": hdr.fragment.more_fragments,
+                "identification": hdr.fragment.identification,
+            }
     config["network"] = section
 
 
@@ -329,6 +335,10 @@ def _tcp_options_section(opts: TCPOptions) -> dict[str, Any]:
         section["sack"] = [list(b) for b in opts.sack_blocks]
     if opts.timestamps is not None:
         section["timestamps"] = list(opts.timestamps)
+    if opts.unknown:
+        section["unknown"] = [
+            {"kind": kind, "data": value.hex()} for kind, value in opts.unknown
+        ]
     return section
 
 
