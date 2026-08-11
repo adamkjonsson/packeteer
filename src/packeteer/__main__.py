@@ -1039,6 +1039,7 @@ def _cmd_parse(args: argparse.Namespace) -> None:
         json_str = parse_pcap_file(
             path=args.pcap, packet_filter=pf,
             link_type=getattr(args, "link_type", None),
+            decode_app=not getattr(args, "no_decode_app", False),
         )
     except (OSError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -1892,6 +1893,17 @@ def main() -> None:
     filter_group.add_argument(
         "--app", metavar="APP",
         help="Application layer present: dns, dhcp, http (or negated, e.g. !http)",
+    )
+
+    parse_parser.add_argument(
+        "--no-decode-app",
+        action="store_true",
+        help=(
+            "Keep DNS, DHCP, and HTTP payloads as raw bytes in the 'payload' "
+            "section instead of decoding them into 'dns'/'dhcp'/'http' "
+            "sections.  Use when the byte-exact payload matters: re-encoding "
+            "a decoded message normalises header casing, order, and whitespace."
+        ),
     )
 
     parse_parser.set_defaults(func=_cmd_parse)

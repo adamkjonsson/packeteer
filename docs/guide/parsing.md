@@ -208,8 +208,33 @@ print(pkt.dns.id)                   # 0xABCD
 print(pkt.dns.questions[0].name)    # "example.com."
 ```
 
-When `pkt.dns` (or `pkt.http`) is set, `pkt.payload` is empty — nothing is
-silently lost.  A failed parse leaves the raw bytes in `pkt.payload` unchanged.
+When `pkt.dns` (or `pkt.http`) is set, `pkt.payload` is empty.  A failed parse
+leaves the raw bytes in `pkt.payload` unchanged.
+
+### Keeping the payload as it appeared on the wire
+
+The decoded object is not a byte-exact substitute for the payload it replaced:
+re-encoding an `HTTPMessage` normalises header casing, header order,
+whitespace, and duplicate headers.  When those bytes matter — reassembling a
+stream, hashing a payload, feeding another decoder — pass `decode_app=False`
+and the decoders are skipped entirely:
+
+```python
+pkt = parse_packet(raw, decode_app=False)
+
+pkt.http                            # None — not decoded
+pkt.payload                         # the exact bytes from the wire
+```
+
+The setting applies to every layer of a tunnelled packet, so an HTTP payload
+inside VXLAN or GRE is left raw too.  Tunnel headers themselves (VXLAN,
+GENEVE, GTP-U) are framing rather than application content and are always
+decoded.
+
+{func}`~packeteer.parse.core.parse_pcap_packet` and
+{func}`~packeteer.parse.core.parse_pcap_file` take the same argument, and
+`packeteer parse --no-decode-app` exposes it on the command line — the spec
+then carries a `payload` section instead of a `dns` / `dhcp` / `http` one.
 
 ## Tunnel packets
 

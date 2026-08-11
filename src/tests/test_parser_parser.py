@@ -306,6 +306,131 @@ class TestParsedIPLength(unittest.TestCase):
         self.assertIsNone(IPv6Header("::1", "::2", 6).payload_length)
 
 
+_HTTP_REQUEST = (
+    b"GET /api/v1/orders HTTP/1.1\r\n"
+    b"Host: example.com\r\n"
+    b"X-Odd-CASE: preserved\r\n"
+    b"\r\n"
+)
+
+_DNS_QUERY = (
+    b"\x12\x34\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00"
+    b"\x03www\x07example\x03com\x00\x00\x01\x00\x01"
+)
+
+
+def _http_packet() -> bytes:
+    return (PacketBuilder().ethernet()
+            .ip(src="10.0.0.1", dst="10.0.0.2")
+            .tcp(dst_port=80, flags=TCP_ACK)
+            .payload(data=_HTTP_REQUEST).build())
+
+
+def _dns_packet() -> bytes:
+    return (PacketBuilder().ethernet()
+            .ip(src="10.0.0.1", dst="10.0.0.2")
+            .udp(dst_port=53)
+            .payload(data=_DNS_QUERY).build())
+
+
+class TestDecodeAppOption(unittest.TestCase):
+    def test_http_decoded_by_default(self):
+        pkt = parse_packet(_http_packet())
+        self.assertIsNotNone(pkt.http)
+        self.assertEqual(pkt.payload, b"")
+
+    def test_http_payload_byte_exact_when_disabled(self):
+        pkt = parse_packet(_http_packet(), decode_app=False)
+        self.assertIsNone(pkt.http)
+        # Byte-exact: header casing and ordering survive, which re-encoding
+        # a decoded HTTPMessage would not preserve.
+        self.assertEqual(pkt.payload, _HTTP_REQUEST)
+
+    def test_dns_decoded_by_default(self):
+        pkt = parse_packet(_dns_packet())
+        self.assertIsNotNone(pkt.dns)
+        self.assertEqual(pkt.payload, b"")
+
+    def test_dns_payload_kept_when_disabled(self):
+        pkt = parse_packet(_dns_packet(), decode_app=False)
+        self.assertIsNone(pkt.dns)
+        self.assertEqual(pkt.payload, _DNS_QUERY)
+
+    def test_dhcp_payload_kept_when_disabled(self):
+        dhcp_payload = b"\x01\x01\x06\x00" + b"\x00" * 232 + b"\x63\x82\x53\x63\xff"
+        raw = (PacketBuilder().ethernet()
+               .ip(src="0.0.0.0", dst="255.255.255.255")
+               .udp(src_port=68, dst_port=67)
+               .payload(data=dhcp_payload).build())
+        self.assertIsNotNone(parse_packet(raw).dhcp)
+        pkt = parse_packet(raw, decode_app=False)
+        self.assertIsNone(pkt.dhcp)
+        self.assertEqual(pkt.payload, dhcp_payload)
+
+    def test_non_app_payload_unaffected(self):
+        payload = b"\x01\x02\x03\x04" * 8
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .tcp(dst_port=9999).payload(data=payload).build())
+        self.assertEqual(parse_packet(raw).payload, payload)
+        self.assertEqual(parse_packet(raw, decode_app=False).payload, payload)
+
+    def test_flag_reaches_inner_frame_of_udp_tunnel(self):
+        # VXLAN is framing, not application content: it must still be decoded,
+        # while the inner HTTP payload is left raw.
+        inner = (PacketBuilder().ethernet()
+                 .ip(src="192.168.1.1", dst="192.168.1.2")
+                 .tcp(dst_port=80, flags=TCP_ACK)
+                 .payload(data=_HTTP_REQUEST).build())
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .udp(dst_port=4789).vxlan(vni=42)
+               .payload(data=inner).build())
+
+        pkt = parse_packet(raw)
+        self.assertIsNotNone(pkt.vxlan)
+        self.assertIsNotNone(pkt.tunneled.http)
+
+        pkt = parse_packet(raw, decode_app=False)
+        self.assertIsNotNone(pkt.vxlan)
+        self.assertIsNone(pkt.tunneled.http)
+        self.assertEqual(pkt.tunneled.payload, _HTTP_REQUEST)
+
+    def test_flag_reaches_inner_frame_of_ip_tunnel(self):
+        # GRE takes the IP-protocol recursion rather than the UDP-port one.
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .gre()
+               .ip(src="192.168.1.1", dst="192.168.1.2")
+               .tcp(dst_port=80, flags=TCP_ACK)
+               .payload(data=_HTTP_REQUEST).build())
+
+        self.assertIsNotNone(parse_packet(raw).tunneled.http)
+
+        pkt = parse_packet(raw, decode_app=False)
+        self.assertIsNone(pkt.tunneled.http)
+        self.assertEqual(pkt.tunneled.payload, _HTTP_REQUEST)
+
+    def test_parse_pcap_packet_forwards_flag(self):
+        buf = io.BytesIO()
+        write_pcap([(_http_packet(), 1, 0)], file_object=buf)
+        buf.seek(0)
+        pcap = read_pcap(file_object=buf)
+        pkt = parse_pcap_packet(pcap.packets[0], pcap.header, decode_app=False)
+        self.assertIsNone(pkt.http)
+        self.assertEqual(pkt.payload, _HTTP_REQUEST)
+
+    def test_parse_pcap_file_emits_payload_instead_of_http(self):
+        import json
+        buf = io.BytesIO()
+        write_pcap([(_http_packet(), 1, 0)], file_object=buf)
+        buf.seek(0)
+        spec = json.loads(parse_pcap_file(file_object=buf, decode_app=False))
+        packet = spec["packets"][0]
+        self.assertNotIn("http", packet)
+        self.assertIn("payload", packet)
+
+
 class TestParsePacketFailures(unittest.TestCase):
     def test_empty_bytes_returns_empty_packet(self):
         pkt = parse_packet(b"")

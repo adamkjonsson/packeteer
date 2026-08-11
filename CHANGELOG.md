@@ -26,6 +26,27 @@ link definitions at the bottom of this file, and tag the release `v0.8.0`.
 
 ### Added
 
+- **`decode_app` — opt out of DNS/DHCP/HTTP decoding** (#61) — the parser ran
+  its three application decoders unconditionally, and each replaced the
+  payload it decoded, so `ParsedPacket.payload` came back empty for exactly
+  the protocols most worth capturing.  Re-serialising the decoded object is
+  not byte-exact — header casing, header order, whitespace, and duplicate
+  headers are all normalised away — so those bytes were unrecoverable.
+
+  - `parse_packet(data, *, link_type=…, decode_app=True)` and
+    `parse_pcap_packet(record, file_header, *, decode_app=True)`.  With
+    `decode_app=False` the DNS, DHCP, and HTTP decoders are skipped and
+    `payload` holds the transport payload exactly as captured.
+  - The setting propagates through every level of a tunnelled packet, so an
+    HTTP payload inside VXLAN, GENEVE, GTP-U, GRE, EtherIP, IP-in-IP, AH, or
+    an MPLS pseudowire is left raw as well.
+  - Tunnel decoders themselves always run: VXLAN, GENEVE, and GTP-U are
+    framing, not application content.
+  - `parse_pcap_file(..., decode_app=True)` and `packeteer parse
+    --no-decode-app` expose the same switch; the spec then carries a
+    `payload` section instead of `dns` / `dhcp` / `http`.
+  - The default is unchanged, so existing callers are unaffected.
+
 - **IP length fields on parsed headers** (#66) — the parser now records what
   the IP header says about the datagram's size, so a caller can tell where the
   datagram ends without re-reading the raw bytes.
@@ -60,6 +81,10 @@ link definitions at the bottom of this file, and tag the release `v0.8.0`.
 
 ### Documentation
 
+- New "Keeping the payload as it appeared on the wire" section in
+  `docs/guide/parsing.md`, and a `--no-decode-app` section in
+  `docs/cli/parse.md` noting that raw HTTP payloads serialise as hex (CRLF
+  falls outside the printable-ASCII range that selects UTF-8 encoding).
 - New "Payload boundaries and Ethernet padding" section in
   `docs/guide/parsing.md` covering the trimming rule, the two length fields,
   and truncation detection.

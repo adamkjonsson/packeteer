@@ -21,6 +21,23 @@ by hand or programmatically before rebuilding.
 | `capture` | *(required)* Path to a `.pcap` or `.pcapng` file |
 | `--output FILE` / `-o FILE` | Write packet spec to FILE instead of stdout |
 | `--link-type TYPE` | Override the link-layer type in the file header (see below) |
+| `--no-decode-app` | Keep DNS/DHCP/HTTP payloads as raw bytes (see below) |
+
+### Keeping application payloads raw
+
+By default a payload on a well-known DNS, DHCP, or HTTP port is decoded into a
+`dns`, `dhcp`, or `http` section and the `payload` section is dropped.  The
+decoded form is not byte-exact — rebuilding it normalises header casing,
+header order, and whitespace — so when the exact bytes matter, pass
+`--no-decode-app`:
+
+```bash
+packeteer parse capture.pcap --no-decode-app
+```
+
+Each packet then carries a `payload` section holding the transport payload as
+captured.  HTTP payloads appear as hex rather than `utf8`, since the CRLF line
+endings fall outside the printable-ASCII range that selects UTF-8 encoding.
 
 ### Overriding the link-layer type
 
