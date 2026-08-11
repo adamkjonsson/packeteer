@@ -584,6 +584,29 @@ def _spec_timestamp_unit(tick_hz: int) -> tuple[str, int]:
     return (("timestamp_ns" if spec_hz == _NS_PER_SECOND else "timestamp_us"), spec_hz)
 
 
+def _is_non_first_fragment(ip_hdr: IPHeader | IPv6Header | None) -> bool:
+    """Return ``True`` when *ip_hdr* describes a fragment other than the first.
+
+    Only the first fragment of a datagram carries the transport header; the
+    rest carry payload bytes from the middle of it.  Decoding those bytes as
+    a transport header produces a plausible-looking header made of payload —
+    for a stream reassembler, ports and sequence numbers invented out of user
+    data.
+
+    Args:
+        ip_hdr: Parsed IPv4 or IPv6 header.
+
+    Returns:
+        ``True`` if the packet's data starts partway into the datagram.
+
+    """
+    if isinstance(ip_hdr, IPHeader):
+        return ip_hdr.fragment_offset > 0
+    if isinstance(ip_hdr, IPv6Header):
+        return ip_hdr.fragment is not None and ip_hdr.fragment.fragment_offset > 0
+    return False
+
+
 def _ip_payload_size(ip_hdr: IPHeader | IPv6Header | None, ip_size: int) -> int | None:
     """Return the datagram's declared payload size, or ``None`` when unknown.
 
@@ -828,6 +851,12 @@ def parse_packet(
     if declared is not None and declared < len(remaining):
         remaining = remaining[:declared]
 
+    if _is_non_first_fragment(ip_hdr):
+        # Payload bytes from the middle of a datagram — there is no header
+        # here to parse.  Reassemble with packeteer.parse.defragment first.
+        pkt.payload = remaining
+        return pkt
+
     pkt.payload = _parse_ip_protocol(pkt, remaining, ip_proto, decode_app)
     return pkt
 
@@ -864,6 +893,56 @@ def parse_pcap_packet(
     pkt.ts_sec  = ts_sec
     pkt.ts_frac = ts_frac
     return pkt
+
+
+def _packet_to_spec(pkt: ParsedPacket) -> dict[str, Any]:
+    """Convert every parsed layer of *pkt* into a packet spec dict.
+
+    Args:
+        pkt: A parsed packet.
+
+    Returns:
+        A spec dict holding one section per layer present, in the order
+        ``packeteer build`` expects.  The ``packet_metadata`` section is added
+        by the caller.
+
+    """
+    cfg: dict[str, Any] = {}
+    if pkt.ethernet is not None:
+        update_config(cfg, pkt.ethernet)
+    if pkt.sll is not None:
+        update_config(cfg, pkt.sll)
+    if pkt.arp is not None:
+        update_config(cfg, pkt.arp)
+    for mpls_label in pkt.mpls:
+        update_config(cfg, mpls_label)
+    if pkt.pppoe is not None:
+        update_config(cfg, pkt.pppoe)
+    if pkt.ip is not None:
+        update_config(cfg, pkt.ip)
+
+    if (pkt.ah is not None or pkt.esp is not None
+            or pkt.ipip or pkt.gre is not None
+            or pkt.etherip is not None or pkt.pseudowire is not None
+            or pkt.vxlan is not None or pkt.geneve is not None
+            or pkt.gtpu is not None):
+        apply_tunneled(cfg, pkt)
+    elif pkt.transport is not None:
+        update_config(cfg, pkt.transport)
+        if pkt.dns is not None:
+            update_config(cfg, pkt.dns)
+        elif pkt.dhcp is not None:
+            update_config(cfg, pkt.dhcp)
+        elif pkt.http is not None:
+            update_config(cfg, pkt.http)
+        elif pkt.payload:
+            update_config(cfg, pkt.payload)
+    elif pkt.payload:
+        # No transport header, but bytes to record: a later fragment, or an IP
+        # protocol the parser does not decode.  Without this the spec would
+        # silently drop them.
+        update_config(cfg, pkt.payload)
+    return cfg
 
 
 def parse_pcap_file(
@@ -931,35 +1010,7 @@ def parse_pcap_file(
         warnings.filterwarnings("always", category=UnsupportedIPProtocolWarning)
         for packet_num, record in enumerate(pcap.packets, 1):
             pkt = parse_pcap_packet(record, pcap.header, decode_app=decode_app)
-            cfg: dict[str, Any] = {}
-            if pkt.ethernet is not None:
-                update_config(cfg, pkt.ethernet)
-            if pkt.sll is not None:
-                update_config(cfg, pkt.sll)
-            if pkt.arp is not None:
-                update_config(cfg, pkt.arp)
-            for mpls_label in pkt.mpls:
-                update_config(cfg, mpls_label)
-            if pkt.pppoe is not None:
-                update_config(cfg, pkt.pppoe)
-            if pkt.ip is not None:
-                update_config(cfg, pkt.ip)
-            if (pkt.ah is not None or pkt.esp is not None
-                    or pkt.ipip or pkt.gre is not None
-                    or pkt.etherip is not None or pkt.pseudowire is not None
-                    or pkt.vxlan is not None or pkt.geneve is not None
-                    or pkt.gtpu is not None):
-                apply_tunneled(cfg, pkt)
-            elif pkt.transport is not None:
-                update_config(cfg, pkt.transport)
-                if pkt.dns is not None:
-                    update_config(cfg, pkt.dns)
-                elif pkt.dhcp is not None:
-                    update_config(cfg, pkt.dhcp)
-                elif pkt.http is not None:
-                    update_config(cfg, pkt.http)
-                elif pkt.payload:
-                    update_config(cfg, pkt.payload)
+            cfg = _packet_to_spec(pkt)
             cfg["packet_metadata"] = {
                 "packet_num": packet_num,
                 "timestamp_s": pkt.ts_sec,

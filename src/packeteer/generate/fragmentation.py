@@ -22,10 +22,30 @@ from __future__ import annotations
 
 import random
 import struct
+from dataclasses import replace
 
-from .ethernet import EthernetHeader, _build_ethernet_header
+from .ethernet import (
+    ETHERTYPE_IPV4,
+    ETHERTYPE_IPV6,
+    EthernetHeader,
+    _build_ethernet_header,
+)
 from .ip import IPHeader, _build_ip_header
 from .ipv6 import IPv6Header, _build_ipv6_header
+
+
+def _ipv6_eth_header(eth_header: EthernetHeader) -> EthernetHeader:
+    """Return *eth_header* with an EtherType that matches an IPv6 payload.
+
+    ``EthernetHeader.ethertype`` defaults to IPv4, so a caller passing a
+    default-constructed header to :func:`fragment_ipv6` would otherwise
+    produce frames announcing IPv4 while carrying IPv6.  A deliberately set
+    EtherType is left alone.
+    """
+    if eth_header.ethertype != ETHERTYPE_IPV4:
+        return eth_header
+    return replace(eth_header, ethertype=ETHERTYPE_IPV6)
+
 
 _IPV4_HEADER_LEN = 20
 _IPV6_HEADER_LEN = 40
@@ -197,7 +217,7 @@ def fragment_ipv6(
         ip_bytes = _build_ipv6_header(frag_ip, frag_ext + chunk)
         pkt = ip_bytes + frag_ext + chunk
         if eth_header is not None:
-            pkt = _build_ethernet_header(eth_header) + pkt
+            pkt = _build_ethernet_header(_ipv6_eth_header(eth_header)) + pkt
         fragments.append(pkt)
         offset += len(chunk)
 

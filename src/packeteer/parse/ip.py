@@ -7,12 +7,16 @@ from packeteer.generate.ip import IPHeader
 from packeteer.generate.ipv6 import (
     HBH_OPT_JUMBO_PAYLOAD,
     HBH_OPT_ROUTER_ALERT,
+    IPV6_NEXT_HEADER_FRAGMENT,
+    FragmentHeader,
     HopByHopOptions,
     IPv6Header,
     JumboPayloadOption,
     RawOption,
     RouterAlertOption,
 )
+
+_FRAGMENT_HEADER_LEN: int = 8
 
 
 def packet_parser(data: bytes) -> tuple[int, int | None, IPHeader | IPv6Header | None]:
@@ -149,6 +153,7 @@ def _parse_ipv6(data: bytes) -> tuple[int, int | None, IPv6Header | None]:
         dst = socket.inet_ntop(socket.AF_INET6, data[24:40])
 
         hop_by_hop: HopByHopOptions | None = None
+        fragment: FragmentHeader | None = None
         consumed = 40
 
         if next_header == 0:    # Hop-by-Hop Options extension header
@@ -164,6 +169,20 @@ def _parse_ipv6(data: bytes) -> tuple[int, int | None, IPv6Header | None]:
             next_header = hbh_next_header
             consumed = 40 + hbh_size
 
+        if next_header == IPV6_NEXT_HEADER_FRAGMENT:
+            if len(data) < consumed + _FRAGMENT_HEADER_LEN:
+                return (0, None, None)
+            frag_next_header, _, offset_flags, identification = struct.unpack(
+                "!BBHI", data[consumed: consumed + _FRAGMENT_HEADER_LEN],
+            )
+            fragment = FragmentHeader(
+                fragment_offset=offset_flags >> 3,
+                more_fragments=bool(offset_flags & 0x1),
+                identification=identification,
+            )
+            next_header = frag_next_header
+            consumed += _FRAGMENT_HEADER_LEN
+
         hdr = IPv6Header(
             src=src, dst=dst, next_header=next_header,
             hop_limit=hop_limit,
@@ -171,6 +190,7 @@ def _parse_ipv6(data: bytes) -> tuple[int, int | None, IPv6Header | None]:
             flow_label=flow_label,
             hop_by_hop=hop_by_hop,
             payload_length=payload_length,
+            fragment=fragment,
         )
 
     except struct.error:

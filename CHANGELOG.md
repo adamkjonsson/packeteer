@@ -26,6 +26,57 @@ link definitions at the bottom of this file, and tag the release `v0.8.0`.
 
 ### Added
 
+- **IP defragmentation** (#65) — `fragment_ipv4` / `fragment_ipv6` had no
+  parse-side counterpart, so a fragmented datagram could only be dropped or
+  reassembled by the caller.  New `packeteer.parse.defragment`, exported from
+  `packeteer.parse`:
+
+  - `defragment(frames, link_type=…, timeout_s=…)` reassembles both IP
+    versions; `defragment_ipv4` / `defragment_ipv6` restrict it to one, with
+    the same signature.  All take and return **raw frames**, mirroring the
+    generate side and composing with `open_pcap` on one end and
+    `parse_packet` on the other.  Non-fragments pass through untouched and in
+    order; out-of-order fragments and interleaved datagrams are handled.
+  - `Defragmenter` is the stateful primitive behind them — `feed(frame, ts)`,
+    `flush()`, and an `incomplete` list of `IncompleteDatagram` records so a
+    caller can see what never arrived, each with a `reason` of `"timeout"`,
+    `"overlap"`, `"too_large"`, or `"evicted"`.  Incomplete datagrams are
+    dropped rather than emitted partly assembled.
+  - Documented policies, all security-relevant: IPv4 overlap keeps the
+    first-arrival bytes (BSD behaviour) while IPv6 discards the whole
+    datagram (RFC 5722); timeouts run on capture timestamps, not wall-clock
+    time; and per-datagram and total buffer caps mean a capture full of
+    first-fragments-only cannot exhaust memory.
+  - A reassembled IPv4 header has its fragment fields cleared, Total Length
+    corrected, and checksum recomputed; a reassembled IPv6 header has the
+    Fragment extension header removed and Next Header restored — both match
+    the datagram as it was before fragmentation, so
+    `fragment_ipv4` → `defragment` round-trips.
+  - Ethernet padding on a short final fragment is excluded from the
+    reassembled payload, using the length declared in the IP header.
+
+- **IPv6 Fragment extension header decoding** (#65) — `next_header == 44` was
+  not decoded at all: it raised `UnsupportedIPProtocolWarning` and left the
+  whole fragment opaque, so the identification needed to group fragments was
+  unreachable.
+
+  - New `FragmentHeader` dataclass (`fragment_offset`, `more_fragments`,
+    `identification`) exported from `packeteer.generate`, and a new
+    `IPv6Header.fragment` field holding it.
+  - `PacketBuilder.fragment_header(…)` authors one, `packeteer parse` emits a
+    `network.fragment` object, and `packeteer build` rebuilds the extension
+    header from it.  Previously `packeteer build` **crashed** on a spec parsed
+    from an IPv6-fragment capture, with an unhandled `AttributeError` from
+    `network.protocol` being the integer `44`.
+  - Known limitation: rebuilding a **first** fragment from a spec recomputes
+    the transport length and checksum from that fragment's bytes, while the
+    captured header states them for the whole datagram, so those two fields
+    differ from the original.  A spec describes one packet and cannot express
+    "this transport header belongs to a larger datagram".  Pre-existing for
+    IPv4; IPv6 now behaves the same rather than crashing.  Later fragments
+    rebuild byte-for-byte, and reassembling with `defragment()` before parsing
+    avoids the issue entirely.
+
 - **`open_pcap` — streaming pcap/pcapng reader with byte offsets** (#62) —
   `read_pcap` materialises every packet in a list and, without `max_packets`,
   slurped the whole file first, so processing a capture record by record still
@@ -137,6 +188,39 @@ link definitions at the bottom of this file, and tag the release `v0.8.0`.
 
 ### Fixed
 
+- **Breaking: non-first fragments were decoded as if they had a transport
+  header** (#65) — nothing on the parse path checked the fragment offset, so
+  the payload bytes at the start of a non-first fragment were read as a TCP or
+  UDP header.  Fragment 2 of a UDP datagram came back as a `UDPHeader` with
+  ports invented out of user data (`8225` → `19019` → `29299` as the payload
+  advanced), and the eight bytes it consumed vanished from the payload.  For a
+  stream reassembler this is fabricated traffic.
+
+  Such a fragment now has `transport = None` and keeps every byte in
+  `payload`.  Code that read `.transport` on arbitrary packets should either
+  reassemble first with `defragment()` or skip packets whose
+  `ip.fragment_offset` is non-zero (IPv4) or whose `ip.fragment` is set with a
+  non-zero offset (IPv6).
+
+- **A packet spec dropped the payload of any packet with no transport layer**
+  — `parse_pcap_file` emitted the `payload` section only for packets that had
+  a transport header, so the bytes of a packet carrying an IP protocol the
+  parser does not decode never reached the spec at all, despite
+  `UnsupportedIPProtocolWarning` promising they were kept.  The same gap would
+  have swallowed every non-first fragment's data once #65 stopped inventing a
+  transport header for them.  The payload is now emitted whenever there is
+  one, and `packeteer build` reconstructs such a packet: `PacketBuilder.ip()`
+  gains a `protocol` argument for stating the protocol when no transport layer
+  follows, and a non-first fragment no longer trips the "No transport layer
+  configured" check.
+
+- **`fragment_ipv6` announced IPv4 in the Ethernet header** — `EthernetHeader`
+  defaults to EtherType `0x0800`, and `fragment_ipv6` used the caller's header
+  as given, so `fragment_ipv6(..., eth_header=EthernetHeader(dst, src))`
+  produced frames declaring IPv4 while carrying IPv6.  Wireshark misparses
+  those.  A default EtherType is now switched to `0x86DD`; one set explicitly
+  is left alone.
+
 - **Obsolete Packet Block data was shifted four bytes** — a pcapng Packet
   Block (type `0x00000002`, the pre-standard predecessor of the Enhanced
   Packet Block, which this module reads for compatibility) has 20 bytes of
@@ -176,6 +260,11 @@ link definitions at the bottom of this file, and tag the release `v0.8.0`.
 
 ### Documentation
 
+- New `docs/guide/defragmenting.md` chapter covering reassembly, what a
+  fragment looks like before it, incomplete datagrams, and the overlap /
+  timeout / memory policies; a "Reassembly" section in
+  `docs/api/fragmentation.md`; and the `network.fragment` spec key documented
+  in `docs/packet-spec/format.md`.
 - New "Streaming a large capture" section in `docs/guide/pcap.md` and a
   "Streaming" section in `docs/api/pcap-io.md` documenting `open_pcap`,
   `PcapReader`, and `PcapRecord`.

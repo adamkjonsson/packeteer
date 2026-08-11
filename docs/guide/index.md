@@ -9,17 +9,18 @@ All public names are importable from six top-level packages:
 
 | Package | What it contains |
 |---------|-----------------|
-| `packeteer.parse` | `parse_packet`, `parse_pcap_file`, `pcap_info`, per-protocol parsers |
+| `packeteer.parse` | `parse_packet`, `parse_pcap_file`, `pcap_info`, `defragment`, per-protocol parsers |
 | `packeteer.generate` | `PacketBuilder`, session builders, stream generators, encapsulation types |
 | `packeteer.filter` | `PacketFilter` |
 | `packeteer.sanitise` | `sanitise`, `SanitiseOptions` |
 | `packeteer.fuzz` | `fuzz`, `fuzz_bytes`, `FuzzOptions`, `FuzzVariant` |
-| `packeteer.pcap` | `write_pcap`, `write_pcapng`, `read_pcap`, link-type constants |
+| `packeteer.pcap` | `write_pcap`, `write_pcapng`, `read_pcap`, `open_pcap`, link-type constants |
 
 ```{toctree}
 :maxdepth: 1
 
 parsing
+defragmenting
 summarising
 sanitising
 generating

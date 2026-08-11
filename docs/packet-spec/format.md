@@ -535,9 +535,38 @@ streams reproducible.
 | `traffic_class` | no (default `0`) | IPv6 Traffic Class (DSCP + ECN, 8-bit) |
 | `flow_label` | no (default `0`) | IPv6 20-bit Flow Label |
 | `hop_by_hop_options` | no | IPv6 only.  Array of Hop-by-Hop option objects (RFC 8200 §4.3).  See below. |
+| `fragment` | no | IPv6 only.  Fragment extension header (RFC 8200 §4.5).  See below. |
 
 IPv4 or IPv6 is detected automatically from `src`.  IPv4-specific fields
 are ignored when `src` is an IPv6 address and vice versa.
+
+### `fragment`
+
+Present when an IPv6 packet is one fragment of a larger datagram — the
+IPv6 equivalent of the IPv4 `identification` / `flags` / `fragment_offset`
+fields.  `packeteer parse` emits it and `packeteer build` rebuilds the
+extension header from it, so a fragmented capture round-trips.
+
+```json
+"network": {
+  "src": "::1", "dst": "::2", "protocol": "udp", "ttl": 64,
+  "fragment": {
+    "fragment_offset": 66,
+    "more_fragments": false,
+    "identification": 943459733
+  }
+}
+```
+
+| Key | Description |
+|-----|-------------|
+| `fragment_offset` | Offset of this fragment's data within the original payload, in units of 8 bytes |
+| `more_fragments` | The M flag — `true` on every fragment except the last |
+| `identification` | 32-bit value shared by all fragments of one datagram |
+
+The base header's Next Header is set to `44` automatically; `protocol` stays
+the datagram's own transport protocol.  To reassemble such a capture, see
+{doc}`../guide/defragmenting`.
 
 ### `hop_by_hop_options`
 

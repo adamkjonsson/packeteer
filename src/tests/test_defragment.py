@@ -1,0 +1,403 @@
+"""Tests for packeteer.parse.defragment — IP reassembly."""
+from __future__ import annotations
+
+import socket
+import struct
+import unittest
+import warnings
+
+from packeteer.generate import PacketBuilder
+from packeteer.generate.ethernet import EthernetHeader
+from packeteer.generate.fragmentation import fragment_ipv4, fragment_ipv6
+from packeteer.generate.ip import IPHeader
+from packeteer.generate.ipv6 import IPv6Header
+from packeteer.parse import parse_packet
+from packeteer.parse.defragment import (
+    Defragmenter,
+    defragment,
+    defragment_ipv4,
+    defragment_ipv6,
+)
+from packeteer.pcap import LINKTYPE_RAW
+
+_ETH = EthernetHeader("00:00:00:00:00:02", "00:00:00:00:00:01")
+_PAYLOAD = bytes(range(256)) * 8
+
+
+def _udp_datagram(payload: bytes = _PAYLOAD) -> bytes:
+    """Return a UDP header (12345 -> 53) followed by *payload*."""
+    return struct.pack("!HHHH", 12345, 53, 8 + len(payload), 0) + payload
+
+
+def _v4_fragments(identification: int = 4242, mtu: int = 576,
+                  payload: bytes = _PAYLOAD) -> list[bytes]:
+    hdr = IPHeader("10.0.0.1", "10.0.0.2", socket.IPPROTO_UDP,
+                   identification=identification)
+    return fragment_ipv4(hdr, _udp_datagram(payload), mtu=mtu, eth_header=_ETH)
+
+
+def _v6_fragments(mtu: int = 576, payload: bytes = _PAYLOAD) -> list[bytes]:
+    hdr = IPv6Header("::1", "::2", next_header=socket.IPPROTO_UDP)
+    return fragment_ipv6(hdr, _udp_datagram(payload), mtu=mtu, eth_header=_ETH)
+
+
+def _plain_packet() -> bytes:
+    return (PacketBuilder().ethernet()
+            .ip(src="1.1.1.1", dst="2.2.2.2").tcp(dst_port=80).build())
+
+
+class TestDefragmentIPv4(unittest.TestCase):
+    def setUp(self):
+        warnings.simplefilter("ignore")
+
+    def test_fragments_become_one_frame(self):
+        frames = list(defragment(_v4_fragments()))
+        self.assertEqual(len(frames), 1)
+
+    def test_reassembled_payload_matches_original(self):
+        frames = list(defragment(_v4_fragments()))
+        self.assertEqual(parse_packet(frames[0]).payload, _PAYLOAD)
+
+    def test_transport_header_recovered(self):
+        pkt = parse_packet(list(defragment(_v4_fragments()))[0])
+        self.assertEqual(pkt.transport.src_port, 12345)
+        self.assertEqual(pkt.transport.dst_port, 53)
+
+    def test_reassembled_header_is_not_a_fragment(self):
+        pkt = parse_packet(list(defragment(_v4_fragments()))[0])
+        self.assertEqual(pkt.ip.fragment_offset, 0)
+        self.assertEqual(pkt.ip.flags & 0b001, 0)
+
+    def test_reassembled_total_length_is_correct(self):
+        pkt = parse_packet(list(defragment(_v4_fragments()))[0])
+        self.assertEqual(pkt.ip.total_length, 20 + 8 + len(_PAYLOAD))
+
+    def test_reassembled_checksum_is_valid(self):
+        frame = list(defragment(_v4_fragments()))[0]
+        header = frame[14:34]
+        total = sum(struct.unpack("!10H", header))
+        while total >> 16:
+            total = (total & 0xFFFF) + (total >> 16)
+        self.assertEqual(total, 0xFFFF)
+
+    def test_out_of_order_fragments(self):
+        frames = list(defragment(list(reversed(_v4_fragments()))))
+        self.assertEqual(parse_packet(frames[0]).payload, _PAYLOAD)
+
+    def test_interleaved_datagrams(self):
+        a, b = _v4_fragments(identification=1), _v4_fragments(identification=2)
+        mixed = [f for pair in zip(a, b, strict=True) for f in pair]
+        frames = list(defragment(mixed))
+        self.assertEqual(len(frames), 2)
+        for frame in frames:
+            self.assertEqual(parse_packet(frame).payload, _PAYLOAD)
+
+    def test_round_trip_matches_unfragmented_packet(self):
+        whole = (PacketBuilder().ethernet()
+                 .ip(src="10.0.0.1", dst="10.0.0.2")
+                 .udp(src_port=12345, dst_port=53)
+                 .payload(data=_PAYLOAD).build())
+        reassembled = list(defragment(_v4_fragments()))[0]
+        original, rebuilt = parse_packet(whole), parse_packet(reassembled)
+        self.assertEqual(original.payload, rebuilt.payload)
+        self.assertEqual(original.ip.src, rebuilt.ip.src)
+        self.assertEqual(original.transport.dst_port, rebuilt.transport.dst_port)
+
+    def test_ethernet_padding_not_reassembled_into_payload(self):
+        payload = bytes(range(26))
+        frags = _v4_fragments(mtu=44, payload=payload)
+        padded = frags[:-1] + [frags[-1] + b"\x00" * (60 - len(frags[-1]))]
+        frames = list(defragment(padded))
+        self.assertEqual(parse_packet(frames[0]).payload, payload)
+
+
+class TestDefragmentIPv6(unittest.TestCase):
+    def setUp(self):
+        warnings.simplefilter("ignore")
+
+    def test_fragments_become_one_frame(self):
+        self.assertEqual(len(list(defragment(_v6_fragments()))), 1)
+
+    def test_reassembled_payload_matches_original(self):
+        frames = list(defragment(_v6_fragments()))
+        self.assertEqual(parse_packet(frames[0]).payload, _PAYLOAD)
+
+    def test_fragment_header_removed(self):
+        pkt = parse_packet(list(defragment(_v6_fragments()))[0])
+        self.assertIsNone(pkt.ip.fragment)
+
+    def test_next_header_restored_to_transport(self):
+        pkt = parse_packet(list(defragment(_v6_fragments()))[0])
+        self.assertEqual(pkt.ip.next_header, socket.IPPROTO_UDP)
+        self.assertEqual(pkt.transport.dst_port, 53)
+
+    def test_payload_length_is_correct(self):
+        pkt = parse_packet(list(defragment(_v6_fragments()))[0])
+        self.assertEqual(pkt.ip.payload_length, 8 + len(_PAYLOAD))
+
+    def test_out_of_order_fragments(self):
+        frames = list(defragment(list(reversed(_v6_fragments()))))
+        self.assertEqual(parse_packet(frames[0]).payload, _PAYLOAD)
+
+
+class TestPassThrough(unittest.TestCase):
+    def setUp(self):
+        warnings.simplefilter("ignore")
+
+    def test_unfragmented_frame_unchanged(self):
+        plain = _plain_packet()
+        self.assertEqual(list(defragment([plain])), [plain])
+
+    def test_order_preserved_around_a_datagram(self):
+        plain = _plain_packet()
+        frames = list(defragment([plain, *_v4_fragments(), plain]))
+        self.assertEqual(len(frames), 3)
+        self.assertEqual(frames[0], plain)
+        self.assertEqual(frames[2], plain)
+
+    def test_unknown_link_type_passes_through(self):
+        frags = _v4_fragments()
+        self.assertEqual(list(defragment(frags, link_type=999)), frags)
+
+    def test_raw_ip_link_type(self):
+        frags = [f[14:] for f in _v4_fragments()]     # strip Ethernet
+        frames = list(defragment(frags, link_type=LINKTYPE_RAW))
+        self.assertEqual(len(frames), 1)
+        pkt = parse_packet(frames[0], link_type=LINKTYPE_RAW)
+        self.assertEqual(pkt.payload, _PAYLOAD)
+
+    def test_vlan_tagged_fragments(self):
+        tagged = []
+        for frame in _v4_fragments():
+            vlan = struct.pack("!HH", 0x8100, 0x002A) + frame[12:14]
+            tagged.append(frame[:12] + vlan + frame[14:])
+        frames = list(defragment(tagged))
+        self.assertEqual(len(frames), 1)
+        self.assertEqual(parse_packet(frames[0]).payload, _PAYLOAD)
+
+
+class TestIncompleteDatagrams(unittest.TestCase):
+    def setUp(self):
+        warnings.simplefilter("ignore")
+
+    def test_missing_fragment_yields_nothing(self):
+        self.assertEqual(list(defragment(_v4_fragments()[:-1])), [])
+
+    def test_missing_fragment_is_recorded(self):
+        engine = Defragmenter()
+        for frame in _v4_fragments()[:-1]:
+            engine.feed(frame, 1.0)
+        engine.flush()
+        self.assertEqual(len(engine.incomplete), 1)
+        lost = engine.incomplete[0]
+        self.assertEqual((lost.src, lost.dst), ("10.0.0.1", "10.0.0.2"))
+        self.assertEqual(lost.identification, 4242)
+        self.assertEqual(lost.fragments_seen, 3)
+        self.assertEqual(lost.reason, "timeout")
+
+    def test_timeout_abandons_a_stale_datagram(self):
+        frags = _v4_fragments()
+        engine = Defragmenter(timeout_s=5.0)
+        engine.feed(frags[0], 0.0)
+        engine.feed(frags[1], 100.0)
+        self.assertTrue(any(i.reason == "timeout" for i in engine.incomplete))
+
+    def test_fragments_within_the_timeout_still_reassemble(self):
+        frags = _v4_fragments()
+        engine = Defragmenter(timeout_s=30.0)
+        out = []
+        for i, frame in enumerate(frags):
+            out += engine.feed(frame, float(i))
+        self.assertEqual(len(out), 1)
+        self.assertEqual(engine.incomplete, [])
+
+    def test_oversized_datagram_abandoned(self):
+        engine = Defragmenter(max_datagram_bytes=100)
+        for frame in _v4_fragments():
+            engine.feed(frame, 1.0)
+        self.assertTrue(any(i.reason == "too_large" for i in engine.incomplete))
+
+    def test_buffer_cap_evicts_oldest(self):
+        engine = Defragmenter(max_buffered_bytes=600)
+        engine.feed(_v4_fragments(identification=1)[0], 0.0)
+        engine.feed(_v4_fragments(identification=2)[0], 1.0)
+        engine.feed(_v4_fragments(identification=3)[0], 2.0)
+        self.assertTrue(any(i.reason == "evicted" for i in engine.incomplete))
+
+
+class TestOverlapPolicy(unittest.TestCase):
+    def setUp(self):
+        warnings.simplefilter("ignore")
+
+    def test_ipv4_keeps_first_arrival(self):
+        # A duplicate fragment with different content must not overwrite the
+        # bytes already accepted — the classic overlap evasion.
+        frags = _v4_fragments(identification=7)
+        evil = bytearray(frags[1])
+        evil[34:] = b"\xff" * (len(evil) - 34)
+        engine, out = Defragmenter(), []
+        for frame in [frags[0], frags[1], bytes(evil), *frags[2:]]:
+            out += engine.feed(frame, 1.0)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(parse_packet(out[0]).payload, _PAYLOAD)
+
+    def test_ipv6_discards_the_datagram(self):
+        # RFC 5722 requires an overlapping IPv6 datagram to be dropped whole.
+        frags = _v6_fragments()
+        evil = bytearray(frags[1])
+        evil[62:] = b"\xff" * (len(evil) - 62)
+        engine, out = Defragmenter(), []
+        for frame in [frags[0], frags[1], bytes(evil), *frags[2:]]:
+            out += engine.feed(frame, 1.0)
+        engine.flush()
+        self.assertEqual(out, [])
+        self.assertTrue(any(i.reason == "overlap" for i in engine.incomplete))
+
+
+class TestPerVersionHelpers(unittest.TestCase):
+    def setUp(self):
+        warnings.simplefilter("ignore")
+
+    def test_ipv4_helper_reassembles_v4(self):
+        self.assertEqual(len(list(defragment_ipv4(_v4_fragments()))), 1)
+
+    def test_ipv4_helper_passes_v6_through(self):
+        frags = _v6_fragments()
+        self.assertEqual(list(defragment_ipv4(frags)), frags)
+
+    def test_ipv6_helper_reassembles_v6(self):
+        self.assertEqual(len(list(defragment_ipv6(_v6_fragments()))), 1)
+
+    def test_ipv6_helper_passes_v4_through(self):
+        frags = _v4_fragments()
+        self.assertEqual(list(defragment_ipv6(frags)), frags)
+
+
+class TestNonFirstFragmentParsing(unittest.TestCase):
+    """A non-first fragment carries no transport header to decode."""
+
+    def setUp(self):
+        warnings.simplefilter("ignore")
+
+    def test_ipv4_non_first_fragment_has_no_transport(self):
+        frags = _v4_fragments()
+        self.assertIsNotNone(parse_packet(frags[0]).transport)
+        for frame in frags[1:]:
+            pkt = parse_packet(frame)
+            self.assertIsNone(pkt.transport)
+            self.assertGreater(len(pkt.payload), 0)
+
+    def test_ipv6_non_first_fragment_has_no_transport(self):
+        frags = _v6_fragments()
+        self.assertIsNotNone(parse_packet(frags[0]).transport)
+        for frame in frags[1:]:
+            self.assertIsNone(parse_packet(frame).transport)
+
+    def test_ipv4_fragment_payload_is_not_truncated(self):
+        # A non-first fragment's payload must be its whole data — the eight
+        # bytes a bogus transport header would have consumed are still there.
+        datagram = _udp_datagram()
+        frags = _v4_fragments()
+        first_len = len(parse_packet(frags[0]).payload) + 8   # + the UDP header
+        recovered = b"".join(parse_packet(f).payload for f in frags[1:])
+        self.assertEqual(recovered, datagram[first_len:])
+
+
+class TestFragmentSpecRoundTrip(unittest.TestCase):
+    """A fragment must survive parse -> spec -> build."""
+
+    def setUp(self):
+        warnings.simplefilter("ignore")
+
+    def _spec(self, frames: list[bytes]) -> dict:
+        import io
+        import json
+
+        from packeteer.parse import parse_pcap_file
+        from packeteer.pcap import write_pcap
+        buf = io.BytesIO()
+        write_pcap([(f, 0, 0) for f in frames], file_object=buf)
+        buf.seek(0)
+        return json.loads(parse_pcap_file(file_object=buf))
+
+    def _rebuild(self, frames: list[bytes]) -> list[bytes]:
+        import os
+        import subprocess
+        import sys
+        import tempfile
+
+        from packeteer.pcap import read_pcap, write_pcap
+        directory = tempfile.mkdtemp()
+        src = os.path.join(directory, "in.pcap")
+        spec = os.path.join(directory, "spec.json")
+        out = os.path.join(directory, "out.pcap")
+        write_pcap([(f, 0, 0) for f in frames], path=src)
+        subprocess.run([sys.executable, "-m", "packeteer", "parse", src, "-o", spec],
+                       check=True, capture_output=True)
+        subprocess.run([sys.executable, "-m", "packeteer", "build", spec, "--pcap", out],
+                       check=True, capture_output=True)
+        return [data for data, _, _ in read_pcap(path=out).packets]
+
+    def test_later_fragment_keeps_its_payload_in_the_spec(self):
+        # A later fragment has no transport section, so the payload has to be
+        # emitted on its own — otherwise its bytes vanish from the spec.
+        packet = self._spec(_v4_fragments())["packets"][1]
+        self.assertNotIn("transport", packet)
+        self.assertIn("payload", packet)
+        self.assertGreater(len(packet["payload"]["data"]), 0)
+
+    def test_ipv6_later_fragment_keeps_its_payload_in_the_spec(self):
+        packet = self._spec(_v6_fragments())["packets"][1]
+        self.assertIn("payload", packet)
+
+    def test_ipv4_later_fragment_rebuilds_byte_for_byte(self):
+        frames = _v4_fragments()
+        self.assertEqual(self._rebuild(frames)[1:], frames[1:])
+
+    def test_ipv6_later_fragment_rebuilds_byte_for_byte(self):
+        frames = _v6_fragments()
+        self.assertEqual(self._rebuild(frames)[1:], frames[1:])
+
+    def test_ipv6_fragment_header_survives_the_spec(self):
+        packet = self._spec(_v6_fragments())["packets"][1]
+        fragment = packet["network"]["fragment"]
+        self.assertGreater(fragment["fragment_offset"], 0)
+        self.assertIn("identification", fragment)
+
+
+class TestBuilderLaterFragment(unittest.TestCase):
+    """A later fragment legitimately has no transport layer."""
+
+    def test_ipv4_later_fragment_builds_without_a_transport(self):
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2",
+                   protocol=socket.IPPROTO_UDP, flags=0, fragment_offset=69)
+               .payload(data=b"\xaa" * 40).build())
+        pkt = parse_packet(raw)
+        self.assertEqual(pkt.ip.protocol, socket.IPPROTO_UDP)
+        self.assertEqual(pkt.ip.fragment_offset, 69)
+        self.assertIsNone(pkt.transport)
+        self.assertEqual(pkt.payload, b"\xaa" * 40)
+
+    def test_ipv6_later_fragment_builds_without_a_transport(self):
+        raw = (PacketBuilder().ethernet()
+               .ip(src="::1", dst="::2", protocol=socket.IPPROTO_UDP)
+               .fragment_header(fragment_offset=66, more_fragments=False,
+                                identification=7)
+               .payload(data=b"\xbb" * 40).build())
+        pkt = parse_packet(raw)
+        self.assertIsNotNone(pkt.ip.fragment)
+        self.assertEqual(pkt.ip.fragment.fragment_offset, 66)
+        self.assertEqual(pkt.ip.next_header, socket.IPPROTO_UDP)
+        self.assertIsNone(pkt.transport)
+        self.assertEqual(pkt.payload, b"\xbb" * 40)
+
+    def test_first_fragment_still_requires_a_transport(self):
+        builder = (PacketBuilder().ethernet()
+                   .ip(src="10.0.0.1", dst="10.0.0.2", flags=1))
+        with self.assertRaises(ValueError):
+            builder.build()
+
+
+if __name__ == "__main__":
+    unittest.main()

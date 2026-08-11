@@ -11,6 +11,13 @@ from .core import (
     parse_pcap_file,
     parse_pcap_packet,
 )
+from .defragment import (
+    Defragmenter,
+    IncompleteDatagram,
+    defragment,
+    defragment_ipv4,
+    defragment_ipv6,
+)
 from .etherip import packet_parser as etherip_packet_parser
 from .ethernet import packet_parser as ethernet_packet_parser
 from .geneve import packet_parser as geneve_packet_parser
@@ -40,6 +47,11 @@ __all__ = [
     "ParsedPacket",
     "UnsupportedIPProtocolWarning",
     "TimestampResolutionWarning",
+    "defragment",
+    "defragment_ipv4",
+    "defragment_ipv6",
+    "Defragmenter",
+    "IncompleteDatagram",
     "update_config",
     "apply_tunneled",
     "to_packet_spec",
