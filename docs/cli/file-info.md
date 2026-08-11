@@ -136,6 +136,11 @@ Layers:
 packeteer file-info capture.pcap --json
 ```
 
+The JSON includes `tick_hz`, the capture's timestamp resolution in ticks per
+second.  A pcapng may declare any resolution via `if_tsresol`, so a value
+other than `1000000` or `1000000000` is possible; the text report adds a
+`Timestamps:` line in that case, and stays silent for the usual two.
+
 **Quickly determine the link-type of a huge capture from a small sample:**
 
 ```bash

@@ -22,6 +22,42 @@ def _write(packets: list, **kwargs: object) -> io.BytesIO:
     return buf
 
 
+def _pcapng_with_tsresol(
+    records: list[tuple[bytes, int]], tsresol_byte: int,
+    link_type: int = LINKTYPE_ETHERNET,
+) -> io.BytesIO:
+    """Build a pcapng whose interface declares an arbitrary ``if_tsresol``.
+
+    The writer only emits microsecond or nanosecond resolutions, so a capture
+    using any other — legal, and produced by some writers — has to be built
+    by hand.  *records* are ``(packet_bytes, timestamp_in_ticks)`` pairs, and
+    *tsresol_byte* is the raw option value: ``n`` for ``10**n`` ticks per
+    second, or ``0x80 | n`` for ``2**n``.
+    """
+    out = bytearray()
+
+    shb_body = struct.pack("<IHHq", 0x1A2B3C4D, 1, 0, -1)
+    out += struct.pack("<II", 0x0A0D0D0A, 12 + len(shb_body))
+    out += shb_body + struct.pack("<I", 12 + len(shb_body))
+
+    idb_body = struct.pack("<HHI", link_type, 0, 65535)
+    idb_body += struct.pack("<HH", 9, 1) + bytes([tsresol_byte]) + b"\x00" * 3
+    idb_body += struct.pack("<HH", 0, 0)
+    out += struct.pack("<II", 1, 12 + len(idb_body))
+    out += idb_body + struct.pack("<I", 12 + len(idb_body))
+
+    for data, ticks in records:
+        pad = (-len(data)) % 4
+        epb_body = struct.pack(
+            "<IIIII", 0, ticks >> 32, ticks & 0xFFFFFFFF, len(data), len(data),
+        )
+        epb_body += data + b"\x00" * pad
+        out += struct.pack("<II", 6, 12 + len(epb_body))
+        out += epb_body + struct.pack("<I", 12 + len(epb_body))
+
+    return io.BytesIO(bytes(out))
+
+
 # ---------------------------------------------------------------------------
 # Auto-detect: pcapng files are accepted by read_pcap
 # ---------------------------------------------------------------------------
@@ -225,6 +261,74 @@ class TestReadPcapngFailure(unittest.TestCase):
         bad = io.BytesIO(bytes(raw[:epb_off + 16]))  # only 16 bytes of EPB
         with self.assertRaises(ValueError):
             read_pcap(file_object=bad)
+
+
+class TestTimestampResolution(unittest.TestCase):
+    """A pcapng may declare any if_tsresol; the header must carry it."""
+
+    _PKT = b"\x00" * 60
+
+    def test_microseconds_is_the_default(self):
+        result = read_pcap(file_object=_write([(self._PKT, 1, 2)]))
+        self.assertEqual(result.header.tick_hz, 1_000_000)
+        self.assertFalse(result.header.nanoseconds)
+
+    def test_nanoseconds_sets_tick_hz(self):
+        result = read_pcap(file_object=_write([(self._PKT, 1, 2)], nanoseconds=True))
+        self.assertEqual(result.header.tick_hz, 1_000_000_000)
+        self.assertTrue(result.header.nanoseconds)
+
+    def test_milliseconds_carried_not_collapsed(self):
+        buf = _pcapng_with_tsresol([(self._PKT, 100_250)], tsresol_byte=3)
+        result = read_pcap(file_object=buf)
+        self.assertEqual(result.header.tick_hz, 1_000)
+        self.assertFalse(result.header.nanoseconds)
+
+    def test_millisecond_fraction_is_in_ticks(self):
+        # 100_250 ms = 100 s + 250 ms.  Reported as 250 ticks, which is a
+        # quarter of a second only if tick_hz is consulted.
+        buf = _pcapng_with_tsresol([(self._PKT, 100_250)], tsresol_byte=3)
+        result = read_pcap(file_object=buf)
+        self.assertEqual(result.packets[0][1:], (100, 250))
+
+    def test_binary_resolution_carried(self):
+        # 0x80 | 10 → 2**10 = 1024 ticks per second.
+        buf = _pcapng_with_tsresol([(self._PKT, 2048)], tsresol_byte=0x80 | 10)
+        result = read_pcap(file_object=buf)
+        self.assertEqual(result.header.tick_hz, 1024)
+        self.assertEqual(result.packets[0][1:], (2, 0))
+
+    def test_centisecond_resolution_carried(self):
+        buf = _pcapng_with_tsresol([(self._PKT, 550)], tsresol_byte=2)
+        result = read_pcap(file_object=buf)
+        self.assertEqual(result.header.tick_hz, 100)
+        self.assertEqual(result.packets[0][1:], (5, 50))
+
+
+class TestPcapFileHeaderResolution(unittest.TestCase):
+    """tick_hz and nanoseconds are reconciled so they never disagree."""
+
+    def _header(self, **kwargs: object) -> PcapFileHeader:
+        base = {"link_type": 1, "version_major": 1, "version_minor": 0, "snaplen": 65535}
+        base.update(kwargs)
+        return PcapFileHeader(**base)
+
+    def test_tick_hz_derived_from_nanoseconds_flag(self):
+        self.assertEqual(self._header(nanoseconds=True).tick_hz, 1_000_000_000)
+        self.assertEqual(self._header(nanoseconds=False).tick_hz, 1_000_000)
+
+    def test_nanoseconds_derived_from_tick_hz(self):
+        self.assertTrue(self._header(tick_hz=1_000_000_000).nanoseconds)
+        self.assertFalse(self._header(tick_hz=1_000).nanoseconds)
+
+    def test_explicit_tick_hz_wins_over_flag(self):
+        hdr = self._header(nanoseconds=True, tick_hz=1_000)
+        self.assertEqual(hdr.tick_hz, 1_000)
+        self.assertFalse(hdr.nanoseconds)
+
+    def test_negative_tick_hz_rejected(self):
+        with self.assertRaises(ValueError):
+            self._header(tick_hz=-1)
 
 
 if __name__ == "__main__":

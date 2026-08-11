@@ -136,6 +136,27 @@ class UnsupportedIPProtocolWarning(UserWarning):
         self.protocol = protocol
 
 
+class TimestampResolutionWarning(UserWarning):
+    """Emitted when a capture's timestamp resolution cannot be expressed exactly.
+
+    A packet spec records sub-second timestamps as either ``timestamp_us`` or
+    ``timestamp_ns``, but a pcapng interface may declare any resolution via
+    ``if_tsresol`` — milliseconds, or a binary ``2**n``.  Such timestamps are
+    converted to the nearest representable unit, which can lose precision.
+    The capture's own resolution is available on :attr:`tick_hz`.
+
+    Attributes:
+        tick_hz: The capture's timestamp resolution in ticks per second.
+
+    """
+
+    tick_hz: int
+
+    def __init__(self, message: str, tick_hz: int) -> None:
+        super().__init__(message)
+        self.tick_hz = tick_hz
+
+
 _TRANSPORT_PARSERS = {
     socket.IPPROTO_TCP:    _tcp_parser,
     socket.IPPROTO_UDP:    _udp_parser,
@@ -370,6 +391,10 @@ def _parse_pppoe_and_mpls(
 
 _IPV6_FIXED_HEADER_LEN: int = 40
 
+# Timestamp resolutions the packet spec can express, in ticks per second
+_US_PER_SECOND: int = 1_000_000
+_NS_PER_SECOND: int = 1_000_000_000
+
 _DNS_PORTS:  frozenset[int] = frozenset({53, 5353})
 _DHCP_PORTS: frozenset[int] = frozenset({67, 68})
 _HTTP_PORTS: frozenset[int] = frozenset({80, 8080})
@@ -516,6 +541,47 @@ def _try_parse_gtpu(pkt: ParsedPacket, payload: bytes, decode_app: bool = True) 
         pkt.tunneled = parse_packet(rest, link_type=LINKTYPE_RAW, decode_app=decode_app)
         return b""
     return rest
+
+
+def _spec_timestamp_unit(tick_hz: int) -> tuple[str, int]:
+    """Choose the packet spec's timestamp key and unit for a capture resolution.
+
+    A spec expresses sub-second timestamps as either ``timestamp_us`` or
+    ``timestamp_ns``, so a capture using neither resolution — legal in pcapng
+    via ``if_tsresol`` — has to be converted.  The finer unit is chosen for
+    anything more precise than microseconds, which keeps the conversion
+    lossless whenever the resolution divides a nanosecond evenly.
+
+    Args:
+        tick_hz: The capture's resolution in ticks per second.
+
+    Returns:
+        A ``(key, spec_hz)`` tuple: the metadata key to write, and the ticks
+        per second that key implies.  Convert a fraction with
+        ``ts_frac * spec_hz // tick_hz``.
+
+    Warns:
+        TimestampResolutionWarning: When *tick_hz* is neither microseconds nor
+            nanoseconds, so the spec cannot state the source resolution.
+
+    """
+    if tick_hz == _US_PER_SECOND:
+        return ("timestamp_us", _US_PER_SECOND)
+    if tick_hz == _NS_PER_SECOND:
+        return ("timestamp_ns", _NS_PER_SECOND)
+
+    spec_hz = _NS_PER_SECOND if tick_hz > _US_PER_SECOND else _US_PER_SECOND
+    unit = "nanoseconds" if spec_hz == _NS_PER_SECOND else "microseconds"
+    warnings.warn(
+        TimestampResolutionWarning(
+            f"Capture timestamp resolution is {tick_hz} ticks/s, which a packet "
+            f"spec cannot express; timestamps were converted to {unit} and may "
+            f"lose precision",
+            tick_hz,
+        ),
+        stacklevel=3,
+    )
+    return (("timestamp_ns" if spec_hz == _NS_PER_SECOND else "timestamp_us"), spec_hz)
 
 
 def _ip_payload_size(ip_hdr: IPHeader | IPv6Header | None, ip_size: int) -> int | None:
@@ -855,7 +921,8 @@ def parse_pcap_file(
 
     """
     pcap = read_pcap(path=path, file_object=file_object, link_type=link_type)
-    ts_frac_key = "timestamp_ns" if pcap.header.nanoseconds else "timestamp_us"
+    ts_frac_key, spec_hz = _spec_timestamp_unit(pcap.header.tick_hz)
+    tick_hz = pcap.header.tick_hz
 
     packet_configs: list[dict[str, Any]] = []
     unsupported: Counter[int] = Counter()
@@ -896,7 +963,7 @@ def parse_pcap_file(
             cfg["packet_metadata"] = {
                 "packet_num": packet_num,
                 "timestamp_s": pkt.ts_sec,
-                ts_frac_key: pkt.ts_frac,
+                ts_frac_key: pkt.ts_frac * spec_hz // tick_hz,
             }
             if packet_filter is None or packet_filter.matches(cfg):
                 packet_configs.append(cfg)

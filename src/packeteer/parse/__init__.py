@@ -5,6 +5,7 @@ from packeteer.filter import PacketFilter
 from .arp import packet_parser as arp_packet_parser
 from .core import (
     ParsedPacket,
+    TimestampResolutionWarning,
     UnsupportedIPProtocolWarning,
     parse_packet,
     parse_pcap_file,
@@ -38,6 +39,7 @@ __all__ = [
     "format_pcap_info",
     "ParsedPacket",
     "UnsupportedIPProtocolWarning",
+    "TimestampResolutionWarning",
     "update_config",
     "apply_tunneled",
     "to_packet_spec",

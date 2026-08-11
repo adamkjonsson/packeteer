@@ -115,6 +115,10 @@ _PCAPNG_BOM_BE: int = 0x4D3C2B1A
 _OPT_ENDOFOPT: int = 0
 _PCAPNG_IDB_OPT_TSRESOL: int = 9
 
+# Timestamp resolutions, in ticks per second
+_US_PER_SECOND: int = 1_000_000
+_NS_PER_SECOND: int = 1_000_000_000
+
 
 # ── Dataclasses ───────────────────────────────────────────────────────────────
 
@@ -128,7 +132,20 @@ class PcapFileHeader:
         version_minor: Pcap format minor version (always ``4``).
         snaplen: Maximum number of bytes captured per packet.
         nanoseconds: ``True`` if sub-second timestamps are in nanoseconds
-            rather than microseconds.
+            rather than microseconds.  A convenience view of *tick_hz* — a
+            capture may use neither resolution, in which case this is
+            ``False`` and *tick_hz* is the field to read.
+        tick_hz: Sub-second timestamp resolution in ticks per second, i.e. the
+            unit of ``ts_frac``.  Classic pcap is always ``1_000_000`` or
+            ``1_000_000_000`` (selected by the magic number), while pcapng
+            declares any resolution per interface via ``if_tsresol`` —
+            milliseconds (``1_000``) and binary resolutions (``2**n``) are
+            both legal.  Pass ``0`` (the default) to derive it from
+            *nanoseconds*; when given explicitly it wins, and *nanoseconds* is
+            set to match.
+
+    Raises:
+        ValueError: If *tick_hz* is negative.
 
     """
 
@@ -136,7 +153,17 @@ class PcapFileHeader:
     version_major: int
     version_minor: int
     snaplen: int
-    nanoseconds: bool
+    nanoseconds: bool = False
+    tick_hz: int = 0
+
+    def __post_init__(self) -> None:
+        """Reconcile *tick_hz* and *nanoseconds* so the two never disagree."""
+        if self.tick_hz < 0:
+            raise ValueError(f"tick_hz must be non-negative, got {self.tick_hz}")
+        if self.tick_hz == 0:
+            self.tick_hz = _NS_PER_SECOND if self.nanoseconds else _US_PER_SECOND
+        else:
+            self.nanoseconds = self.tick_hz == _NS_PER_SECOND
 
 
 @dataclass
@@ -226,7 +253,7 @@ def _read_pcapng(
     interfaces: list[tuple[int, int]] = []  # (link_type, ticks_per_second)
     link_type = 1
     snaplen   = 65535
-    nanoseconds = False
+    tick_hz   = _US_PER_SECOND
     packets: list[tuple[bytes, int, int]] = []
 
     while True:
@@ -255,9 +282,9 @@ def _read_pcapng(
             resolution = _parse_idb_tsresol(body, 8, endian)
             interfaces.append((idb_link_type, resolution))
             if len(interfaces) == 1:
-                link_type   = idb_link_type
-                snaplen     = idb_snaplen
-                nanoseconds = (resolution == 1_000_000_000)
+                link_type = idb_link_type
+                snaplen   = idb_snaplen
+                tick_hz   = resolution
 
         elif block_type in (_PCAPNG_EPB_TYPE, _PCAPNG_OPB_TYPE):
             packets.append(_read_pcapng_packet(block_type, body, endian, interfaces))
@@ -267,7 +294,7 @@ def _read_pcapng(
         version_major=1,
         version_minor=0,
         snaplen=snaplen,
-        nanoseconds=nanoseconds,
+        tick_hz=tick_hz,
     )
     return PcapFile(header=file_header, packets=packets)
 
@@ -302,7 +329,7 @@ def _read_pcap(
         version_major=version_major,
         version_minor=version_minor,
         snaplen=snaplen,
-        nanoseconds=nanoseconds,
+        tick_hz=_NS_PER_SECOND if nanoseconds else _US_PER_SECOND,
     )
 
     packets: list[tuple[bytes, int, int]] = []

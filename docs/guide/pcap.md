@@ -88,9 +88,27 @@ are detected from the file header — no flags needed:
 from packeteer.pcap import read_pcap
 
 pcap = read_pcap(path="capture.pcap")
+print(pcap.header.tick_hz)       # 1_000_000, 1_000_000_000, 1_000, …
 print(pcap.header.nanoseconds)   # True / False
 print(len(pcap.packets))         # number of records
 ```
+
+### Timestamp resolution
+
+`ts_frac` is a count of *ticks*, and `header.tick_hz` says how many ticks make
+a second.  Classic pcap is always microseconds or nanoseconds, selected by the
+magic number, but a pcapng interface declares its own resolution via
+`if_tsresol` — milliseconds and binary (`2**n`) resolutions are both legal and
+do occur.  Use `tick_hz` for any arithmetic:
+
+```python
+seconds = ts_sec + ts_frac / pcap.header.tick_hz
+```
+
+`header.nanoseconds` remains as a convenience view (`tick_hz == 1_000_000_000`)
+and drives the writers, which emit microseconds or nanoseconds only.  It is
+`False` for a millisecond capture, so a program that branches on it alone
+would read such a capture's fractions as microseconds — a factor of 1000 out.
 
 Each element of `pcap.packets` is a `(data, ts_sec, ts_frac)` tuple.  Iterate
 and parse with {func}`packeteer.parse.core.parse_pcap_packet`:

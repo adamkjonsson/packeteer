@@ -14,6 +14,7 @@ from packeteer.generate.tcp import TCP_ACK, TCP_SYN, TCPHeader
 from packeteer.generate.udp import UDPHeader
 from packeteer.parse.core import (
     ParsedPacket,
+    TimestampResolutionWarning,
     UnsupportedIPProtocolWarning,
     parse_packet,
     parse_pcap_file,
@@ -429,6 +430,60 @@ class TestDecodeAppOption(unittest.TestCase):
         packet = spec["packets"][0]
         self.assertNotIn("http", packet)
         self.assertIn("payload", packet)
+
+
+class TestSpecTimestampResolution(unittest.TestCase):
+    """A spec can only say us or ns, so other resolutions are converted."""
+
+    def _ms_capture(self, ticks: list[int]) -> io.BytesIO:
+        from tests.test_parser_pcapng import _pcapng_with_tsresol
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2").udp().build())
+        return _pcapng_with_tsresol([(raw, t) for t in ticks], tsresol_byte=3)
+
+    def _spec(self, buf: io.BytesIO) -> dict:
+        import json
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return json.loads(parse_pcap_file(file_object=buf))
+
+    def test_millisecond_fraction_converted_to_microseconds(self):
+        # 250 ms is a quarter of a second: 250_000 us, not 250.
+        meta = self._spec(self._ms_capture([100_250]))["packets"][0]["packet_metadata"]
+        self.assertEqual(meta["timestamp_s"], 100)
+        self.assertEqual(meta["timestamp_us"], 250_000)
+
+    def test_conversion_warns(self):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            parse_pcap_file(file_object=self._ms_capture([1_000]))
+        resolution_warnings = [
+            w for w in caught if issubclass(w.category, TimestampResolutionWarning)
+        ]
+        self.assertEqual(len(resolution_warnings), 1)
+        self.assertEqual(resolution_warnings[0].message.tick_hz, 1_000)
+
+    def test_microsecond_capture_does_not_warn(self):
+        buf = io.BytesIO()
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2").udp().build())
+        write_pcap([(raw, 1, 250_000)], file_object=buf)
+        buf.seek(0)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            parse_pcap_file(file_object=buf)
+        self.assertFalse(
+            [w for w in caught if issubclass(w.category, TimestampResolutionWarning)]
+        )
+
+    def test_microsecond_timestamps_pass_through_unchanged(self):
+        buf = io.BytesIO()
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2").udp().build())
+        write_pcap([(raw, 7, 123_456)], file_object=buf)
+        buf.seek(0)
+        meta = self._spec(buf)["packets"][0]["packet_metadata"]
+        self.assertEqual((meta["timestamp_s"], meta["timestamp_us"]), (7, 123_456))
 
 
 class TestParsePacketFailures(unittest.TestCase):

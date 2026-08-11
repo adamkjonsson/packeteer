@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import tempfile
@@ -375,6 +376,48 @@ class TestCmdFileInfo(unittest.TestCase):
             cli._cmd_file_info(self._args(pcap=path, json=True, num=5))
         self.assertEqual(json.loads(out.getvalue())["packet_count"], 5)
         os.remove(path)
+
+
+class TestTimestampResolution(unittest.TestCase):
+    """A non-microsecond capture must not have its timestamps misread."""
+
+    def _ms_capture(self, ticks: list[int]) -> io.BytesIO:
+        from tests.test_parser_pcapng import _pcapng_with_tsresol
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2").udp().build())
+        return _pcapng_with_tsresol([(raw, t) for t in ticks], tsresol_byte=3)
+
+    def test_tick_hz_reported(self):
+        info = pcap_info(file_object=self._ms_capture([1_000]))
+        self.assertEqual(info.tick_hz, 1_000)
+
+    def test_sub_second_duration_uses_tick_hz(self):
+        # 100.250 s and 100.750 s → half a second apart.  Reading the 250/750
+        # tick fractions as microseconds would report 0.0005 s instead.
+        info = pcap_info(file_object=self._ms_capture([100_250, 100_750]))
+        self.assertAlmostEqual(info.capture_duration_s, 0.5, places=9)
+
+    def test_report_states_unusual_resolution(self):
+        info = pcap_info(file_object=self._ms_capture([1_000, 2_000]))
+        self.assertIn("1000 ticks/s", format_pcap_info(info))
+
+    def test_report_silent_for_microsecond_capture(self):
+        path = _write_pcap([_eth("10.0.0.1", "10.0.0.2", 1, 2)])
+        info = pcap_info(path=path)
+        self.assertNotIn("ticks/s", format_pcap_info(info))
+        os.remove(path)
+
+    def test_tick_hz_in_json_report(self):
+        info = pcap_info(file_object=self._ms_capture([1_000]))
+        self.assertEqual(info.to_dict()["tick_hz"], 1_000)
+
+    def test_tick_hz_defaults_from_nanoseconds_flag(self):
+        info = PcapInfo(
+            path=None, file_type="pcap",
+            declared_link_type=1, link_type=1, link_type_overridden=False,
+            nanoseconds=True, packet_count=0, session_count=0,
+        )
+        self.assertEqual(info.tick_hz, 1_000_000_000)
 
 
 if __name__ == "__main__":

@@ -26,6 +26,27 @@ link definitions at the bottom of this file, and tag the release `v0.8.0`.
 
 ### Added
 
+- **`PcapFileHeader.tick_hz` — the capture's real timestamp resolution** (#64)
+  — the header modelled resolution as a single `nanoseconds` boolean, so any
+  pcapng declaring something else through `if_tsresol` had its sub-second
+  timestamps silently misread.  `_parse_idb_tsresol` already decoded the full
+  option, including binary (`2**n`) forms, and the result was then discarded
+  unless it happened to be exactly 1e9.
+
+  - `tick_hz` records ticks per second — `1_000_000`, `1_000_000_000`,
+    `1_000`, `1024`, whatever the file declares — and is the field to use for
+    timestamp arithmetic.
+  - `nanoseconds` remains as a derived convenience view and still drives the
+    writers.  The two are reconciled in `__post_init__`: supply either one and
+    the other follows, with `tick_hz` winning when both are given.  Existing
+    `PcapFileHeader(..., nanoseconds=True)` calls are unaffected.
+  - `PcapInfo` gains `tick_hz` (also in `to_dict()` / `file-info --json`), and
+    the text report adds a `Timestamps: N ticks/s` line for a resolution that
+    is neither microseconds nor nanoseconds.
+  - New `TimestampResolutionWarning`, exported from `packeteer.parse`, is
+    raised once by `parse_pcap_file` when a spec cannot express the source
+    resolution; its `tick_hz` attribute carries the real value.
+
 - **TCP options are decoded on the parse path** (#63) — `parse` honoured the
   Data Offset field when slicing the payload but never decoded the option
   bytes, so `TCPHeader.options` was always `None` from a real capture.
@@ -92,6 +113,19 @@ link definitions at the bottom of this file, and tag the release `v0.8.0`.
 
 ### Fixed
 
+- **Non-microsecond pcapng timestamps were read as microseconds** (#64) — a
+  capture declaring `if_tsresol = 3` (milliseconds, legal and emitted by some
+  writers) had its sub-second fractions treated as microseconds by every
+  consumer, a factor of 1000 out with nothing in the returned data to reveal
+  it.  Binary resolutions were wrong by whatever factor applied.
+
+  - `pcap_info` / `packeteer file-info` computed capture duration from the
+    wrong unit: two packets half a second apart in a millisecond capture were
+    reported as 0.0005 s apart.
+  - `parse_pcap_file` labelled the fraction `timestamp_us` regardless, so a
+    250 ms fraction was written as `250` microseconds rather than `250000`.
+    Timestamps are now converted to the spec's unit and the value is correct.
+
 - **Breaking: Ethernet padding no longer lands in `ParsedPacket.payload`**
   (#66) — a frame below the 60-byte IEEE 802.3 minimum is zero-padded by the
   sender, and that padding was being reported as transport payload.  A
@@ -109,6 +143,9 @@ link definitions at the bottom of this file, and tag the release `v0.8.0`.
 
 ### Documentation
 
+- New "Timestamp resolution" section in `docs/guide/pcap.md`, a
+  `TimestampResolutionWarning` section in `docs/api/parser.md`, and a note on
+  `tick_hz` in `docs/cli/file-info.md`.
 - New "TCP options" section in `docs/guide/parsing.md` covering the decoded
   fields, why window scale and SACK matter for reassembly, `unknown`, and the
   canonical-ordering caveat; `options.unknown` documented in
