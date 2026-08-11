@@ -403,6 +403,9 @@ def _parse_tcp_options(spec: dict | None) -> TCPOptions | None:
         sack_permitted=spec.get("sack_permitted", False),
         sack_blocks=[tuple(b) for b in sack_raw],
         timestamps=tuple(spec["timestamps"]) if "timestamps" in spec else None,
+        unknown=[
+            (o["kind"], bytes.fromhex(o["data"])) for o in spec.get("unknown", [])
+        ],
     )
 
 

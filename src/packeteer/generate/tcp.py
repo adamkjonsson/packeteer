@@ -60,6 +60,13 @@ class TCPOptions:
             ``(TSval, TSecr)`` — the sender's timestamp value and the most
             recent timestamp received from the remote end.  Both are 32-bit
             unsigned integers (RFC 7323 §3).
+        unknown: Options with no dedicated field above, as ``(kind, value)``
+            pairs where *value* is the option's bytes excluding the kind and
+            length bytes.  The parser puts anything it does not model here —
+            including a recognised kind carrying an unexpected length — and
+            the builder re-emits them, so an option survives a parse → build
+            round trip even when packeteer does not understand it.  Defaults
+            to an empty list.
 
     """
 
@@ -68,13 +75,19 @@ class TCPOptions:
     sack_permitted: bool = False
     sack_blocks: list[tuple[int, int]] = field(default_factory=list)
     timestamps: tuple[int, int] | None = None
+    unknown: list[tuple[int, bytes]] = field(default_factory=list)
 
 
 def _build_options(opts: TCPOptions) -> bytes:
     """Encode *opts* as bytes padded to a 4-byte boundary with NOP (0x01).
 
     Options are emitted in the order:
-    MSS (2) → Window Scale (3) → SACK Permitted (4) → Timestamps (8) → SACK (5).
+    MSS (2) → Window Scale (3) → SACK Permitted (4) → Timestamps (8) →
+    SACK (5) → anything in ``unknown``.
+
+    The order is canonical rather than a replay of whatever a capture
+    contained, so a parse → build round trip preserves every option's
+    presence and value but not necessarily its original byte layout.
     """
     raw = b""
     if opts.mss is not None:
@@ -91,6 +104,8 @@ def _build_options(opts: TCPOptions) -> bytes:
         raw += struct.pack("!BB", 5, sack_len)
         for left, right in opts.sack_blocks:
             raw += struct.pack("!II", left, right)
+    for kind, value in opts.unknown:
+        raw += struct.pack("!BB", kind, 2 + len(value)) + value
     # Pad to 4-byte boundary with NOP (kind 1)
     remainder = len(raw) % 4
     if remainder:

@@ -604,6 +604,7 @@ in order:
 | `options.sack_permitted` | `false` | TCP SACK Permitted option |
 | `options.sack` | `[]` | TCP SACK blocks — array of `[left_edge, right_edge]` pairs |
 | `options.timestamps` | — | TCP Timestamps option — `[TSval, TSecr]` array (RFC 7323) |
+| `options.unknown` | `[]` | TCP options packeteer does not model, as `{"kind": N, "data": "<hex>"}` objects.  `data` excludes the kind and length bytes.  Emitted by `parse` and re-encoded by `build`, so an unrecognised option survives a round trip |
 | `type` | `8` / `128` | ICMP type (`8`=Echo Request) or ICMPv6 type (`128`=Echo Request) |
 | `code` | `0` | ICMP/ICMPv6 sub-type code |
 | `identifier` | `1` | ICMP/ICMPv6 16-bit identifier |

@@ -16,6 +16,7 @@ from packeteer.parse import (
     icmp_packet_parser,
     icmpv6_packet_parser,
     ip_packet_parser,
+    parse_packet,
     tcp_packet_parser,
     udp_packet_parser,
 )
@@ -200,6 +201,28 @@ class TestUpdateConfigTCP(unittest.TestCase):
         hdr = TCPHeader(src_port=1, dst_port=2, options=None)
         cfg = update_config({}, hdr)
         self.assertNotIn("options", cfg["transport"])
+
+    def test_options_unknown(self):
+        hdr = TCPHeader(src_port=1, dst_port=2,
+                        options=TCPOptions(unknown=[(28, b"\xaa\xbb")]))
+        cfg = update_config({}, hdr)
+        self.assertEqual(
+            cfg["transport"]["options"]["unknown"],
+            [{"kind": 28, "data": "aabb"}],
+        )
+
+    def test_options_from_a_parsed_packet(self):
+        # Until the parser decoded options this branch could not be reached
+        # from a real capture at all — TCPHeader.options was always None.
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .tcp(dst_port=443, flags=TCP_SYN,
+                    options=TCPOptions(mss=1460, window_scale=7))
+               .build())
+        pkt = parse_packet(raw)
+        cfg = update_config({}, pkt.transport)
+        self.assertEqual(cfg["transport"]["options"]["mss"], 1460)
+        self.assertEqual(cfg["transport"]["options"]["window_scale"], 7)
 
 
 class TestUpdateConfigUDP(unittest.TestCase):

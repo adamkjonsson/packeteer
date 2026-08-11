@@ -151,6 +151,127 @@ class TestParserTCPOptions(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Options — decoding
+# ---------------------------------------------------------------------------
+
+class TestParserTCPOptionValues(unittest.TestCase):
+    def test_mss_decoded(self):
+        _, _, hdr = packet_parser(_tcp(options=TCPOptions(mss=1460)))
+        self.assertEqual(hdr.options.mss, 1460)
+
+    def test_window_scale_decoded(self):
+        _, _, hdr = packet_parser(_tcp(options=TCPOptions(window_scale=7)))
+        self.assertEqual(hdr.options.window_scale, 7)
+
+    def test_sack_permitted_decoded(self):
+        _, _, hdr = packet_parser(_tcp(options=TCPOptions(sack_permitted=True)))
+        self.assertTrue(hdr.options.sack_permitted)
+
+    def test_timestamps_decoded(self):
+        _, _, hdr = packet_parser(_tcp(options=TCPOptions(timestamps=(123456, 654321))))
+        self.assertEqual(hdr.options.timestamps, (123456, 654321))
+
+    def test_single_sack_block_decoded(self):
+        opts = TCPOptions(sack_blocks=[(1000, 2000)])
+        _, _, hdr = packet_parser(_tcp(options=opts))
+        self.assertEqual(hdr.options.sack_blocks, [(1000, 2000)])
+
+    def test_four_sack_blocks_decoded(self):
+        blocks = [(1, 2), (3, 4), (5, 6), (7, 8)]
+        _, _, hdr = packet_parser(_tcp(options=TCPOptions(sack_blocks=blocks)))
+        self.assertEqual(hdr.options.sack_blocks, blocks)
+
+    def test_full_syn_options_decoded_together(self):
+        opts = TCPOptions(mss=1460, window_scale=7, sack_permitted=True,
+                          timestamps=(1, 2))
+        _, _, hdr = packet_parser(_tcp(flags=TCP_SYN, options=opts))
+        self.assertEqual(hdr.options, opts)
+
+    def test_realistic_linux_syn_layout(self):
+        # Hand-built as Linux emits it: MSS, SACK-permitted, Timestamps, NOP,
+        # Window Scale — the NOP aligns the 3-byte option to a 4-byte boundary.
+        options = (
+            bytes([2, 4, 0x05, 0xB4])           # MSS 1460
+            + bytes([4, 2])                     # SACK permitted
+            + bytes([8, 10, 0, 0, 0, 1, 0, 0, 0, 2])  # Timestamps (1, 2)
+            + bytes([1])                        # NOP
+            + bytes([3, 3, 7])                  # Window scale 7
+        )
+        raw = _tcp() + b""
+        header = bytearray(raw[:20]) + options
+        header[12] = ((20 + len(options)) // 4) << 4
+        _, _, hdr = packet_parser(bytes(header))
+        self.assertEqual(hdr.options.mss, 1460)
+        self.assertTrue(hdr.options.sack_permitted)
+        self.assertEqual(hdr.options.timestamps, (1, 2))
+        self.assertEqual(hdr.options.window_scale, 7)
+        self.assertEqual(hdr.options.unknown, [])
+
+    def test_options_none_when_only_padding(self):
+        header = bytearray(_tcp()[:20]) + bytes([1, 1, 1, 1])   # four NOPs
+        header[12] = 6 << 4
+        _, _, hdr = packet_parser(bytes(header))
+        self.assertIsNone(hdr.options)
+
+
+class TestParserTCPUnknownOptions(unittest.TestCase):
+    def _with_options(self, options: bytes) -> bytes:
+        header = bytearray(_tcp()[:20]) + options
+        header[12] = ((20 + len(options)) // 4) << 4
+        return bytes(header)
+
+    def test_unrecognised_kind_preserved(self):
+        # Kind 28 (User Timeout) is not modelled; its bytes must survive.
+        _, _, hdr = packet_parser(self._with_options(bytes([28, 4, 0x00, 0x05])))
+        self.assertEqual(hdr.options.unknown, [(28, b"\x00\x05")])
+
+    def test_known_kind_with_wrong_length_kept_as_unknown(self):
+        # An MSS option that is 3 bytes rather than 4 is not a valid MSS, but
+        # dropping it would lose bytes that were on the wire.
+        _, _, hdr = packet_parser(self._with_options(bytes([2, 3, 5, 1])))
+        self.assertIsNone(hdr.options.mss)
+        self.assertEqual(hdr.options.unknown, [(2, b"\x05")])
+
+    def test_unknown_option_survives_rebuild(self):
+        opts = TCPOptions(mss=1460, unknown=[(28, b"\xaa\xbb")])
+        _, _, hdr = packet_parser(_tcp(options=opts))
+        self.assertEqual(hdr.options.mss, 1460)
+        self.assertEqual(hdr.options.unknown, [(28, b"\xaa\xbb")])
+
+
+class TestParserTCPMalformedOptions(unittest.TestCase):
+    def _with_options(self, options: bytes) -> bytes:
+        header = bytearray(_tcp()[:20]) + options
+        header[12] = ((20 + len(options)) // 4) << 4
+        return bytes(header)
+
+    def test_end_of_option_list_stops_walk(self):
+        # EOL, then bytes that would otherwise decode as an MSS option.
+        _, _, hdr = packet_parser(self._with_options(bytes([0, 2, 4, 0x05])))
+        self.assertIsNone(hdr.options)
+
+    def test_length_below_minimum_stops_walk(self):
+        _, _, hdr = packet_parser(self._with_options(bytes([5, 1, 2, 3])))
+        self.assertIsNone(hdr.options)
+
+    def test_length_past_end_of_region_stops_walk(self):
+        _, _, hdr = packet_parser(self._with_options(bytes([2, 40, 1, 2])))
+        self.assertIsNone(hdr.options)
+
+    def test_options_decoded_before_malformed_entry_are_kept(self):
+        options = bytes([2, 4, 0x05, 0xB4]) + bytes([3, 99, 7, 0])
+        _, _, hdr = packet_parser(self._with_options(options))
+        self.assertEqual(hdr.options.mss, 1460)
+        self.assertIsNone(hdr.options.window_scale)
+
+    def test_kind_byte_with_no_length_stops_walk(self):
+        options = bytes([2, 4, 0x05, 0xB4]) + bytes([1, 1, 1, 8])
+        _, _, hdr = packet_parser(self._with_options(options))
+        self.assertEqual(hdr.options.mss, 1460)
+        self.assertIsNone(hdr.options.timestamps)
+
+
+# ---------------------------------------------------------------------------
 # Failure cases
 # ---------------------------------------------------------------------------
 

@@ -236,6 +236,36 @@ decoded.
 `packeteer parse --no-decode-app` exposes it on the command line — the spec
 then carries a `payload` section instead of a `dns` / `dhcp` / `http` one.
 
+## TCP options
+
+Options in the TCP header are decoded into `pkt.transport.options`, a
+`TCPOptions` instance, or `None` when the header carries none:
+
+```python
+pkt = parse_packet(raw)
+opts = pkt.transport.options
+
+opts.mss                # 1460
+opts.window_scale       # 7 — the advertised window is window << window_scale
+opts.sack_permitted     # True
+opts.timestamps         # (TSval, TSecr)
+opts.sack_blocks        # [(left_edge, right_edge), …]
+```
+
+Window scale matters for reading `window` at all: on a scaled connection the
+raw `window` field is misleading on its own.  SACK blocks tell a reassembler
+which ranges actually arrived, and timestamps discriminate retransmits.
+
+An option packeteer does not model — or a known kind carrying an unexpected
+length — is kept in `opts.unknown` as `(kind, value)` pairs rather than being
+dropped, and the builder re-emits it.  Structural padding (NOP, End of Option
+List) is not modelled.
+
+Options are re-encoded in a canonical order, so a parse → build round trip
+preserves every option's presence and value, but the resulting header is not
+guaranteed byte-identical to a capture that ordered or padded them
+differently.
+
 ## Tunnel packets
 
 Tunneled packets are parsed recursively.  The inner packet is a full

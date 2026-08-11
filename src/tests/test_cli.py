@@ -219,6 +219,30 @@ class TestCmdParse(unittest.TestCase):
             b"GET /x HTTP/1.1\r\nHost: example.com\r\n\r\n",
         )
 
+    def test_parse_build_round_trip_preserves_tcp_options(self):
+        from packeteer.generate import TCP_SYN, PacketBuilder
+        from packeteer.generate.tcp import TCPOptions
+        from packeteer.parse import parse_packet
+        from packeteer.pcap import LINKTYPE_ETHERNET, read_pcap, write_pcap
+
+        opts = TCPOptions(mss=1460, window_scale=7, sack_permitted=True,
+                          timestamps=(9, 8), unknown=[(28, b"\xaa\xbb")])
+        raw = (PacketBuilder()
+               .ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .tcp(src_port=1234, dst_port=443, flags=TCP_SYN, options=opts)
+               .build())
+        src_pcap = _tmpfile(".pcap")
+        write_pcap([(raw, 0, 0)], path=src_pcap, link_type=LINKTYPE_ETHERNET)
+
+        spec_path = _tmpfile(".json")
+        cli._cmd_parse(_args(pcap=src_pcap, output=spec_path))
+        out_pcap = _tmpfile(".pcap")
+        cli._cmd_build(_args(config=spec_path, pcap=out_pcap, pcapng=None))
+
+        rebuilt = read_pcap(path=out_pcap).packets[0][0]
+        self.assertEqual(parse_packet(rebuilt).transport.options, opts)
+
     def test_parse_output_to_unwritable_path_exits(self):
         args = _args(pcap=self.pcap_path, output="/nonexistent/dir/out.json")
         with self.assertRaises(SystemExit):

@@ -329,6 +329,10 @@ def _tcp_options_section(opts: TCPOptions) -> dict[str, Any]:
         section["sack"] = [list(b) for b in opts.sack_blocks]
     if opts.timestamps is not None:
         section["timestamps"] = list(opts.timestamps)
+    if opts.unknown:
+        section["unknown"] = [
+            {"kind": kind, "data": value.hex()} for kind, value in opts.unknown
+        ]
     return section
 
 

@@ -293,5 +293,33 @@ class TestTCPOptions(unittest.TestCase):
         self.assertEqual(reserved, 0b0011)
 
 
+class TestTCPUnknownOptions(unittest.TestCase):
+    @staticmethod
+    def _build(opts: TCPOptions) -> bytes:
+        hdr = TCPHeader(1234, 80, flags=TCP_SYN, options=opts)
+        return _build_tcp_header(hdr, b'', "10.0.0.1", "10.0.0.2")
+
+    @staticmethod
+    def _options_bytes(raw: bytes) -> bytes:
+        return raw[20: ((raw[12] >> 4) & 0xF) * 4]
+
+    def test_unknown_option_encoded(self):
+        raw = self._build(TCPOptions(unknown=[(28, b"\x00\x05")]))
+        opts = self._options_bytes(raw)
+        self.assertEqual(opts[0], 28)     # kind
+        self.assertEqual(opts[1], 4)      # length includes kind and length bytes
+        self.assertEqual(opts[2:4], b"\x00\x05")
+
+    def test_unknown_option_emitted_after_known_ones(self):
+        raw = self._build(TCPOptions(mss=1460, unknown=[(28, b"\xaa\xbb")]))
+        opts = self._options_bytes(raw)
+        self.assertEqual(opts[0], 2)      # MSS first
+        self.assertEqual(opts[4], 28)     # then the unknown option
+
+    def test_unknown_options_padded_to_boundary(self):
+        raw = self._build(TCPOptions(unknown=[(28, b"\x01")]))
+        self.assertEqual(len(raw) % 4, 0)
+
+
 if __name__ == '__main__':
     unittest.main()

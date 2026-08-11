@@ -26,6 +26,34 @@ link definitions at the bottom of this file, and tag the release `v0.8.0`.
 
 ### Added
 
+- **TCP options are decoded on the parse path** (#63) — `parse` honoured the
+  Data Offset field when slicing the payload but never decoded the option
+  bytes, so `TCPHeader.options` was always `None` from a real capture.
+  packeteer could *build* MSS, window scale, SACK, and timestamps but not read
+  them back, and the `options` branch in the packet-spec serialiser could
+  never fire.
+
+  - `packeteer.parse.tcp.packet_parser` now decodes the options region into
+    the existing `TCPOptions` dataclass: MSS (kind 2), Window Scale (3),
+    SACK Permitted (4), SACK blocks (5), and Timestamps (8).  `options` is
+    `None` when the header carries no options, so specs stay clean.
+  - Window scale is needed to interpret the `window` field at all on a modern
+    connection; SACK blocks tell a reassembler which ranges arrived; and
+    timestamps discriminate retransmits.
+  - New `TCPOptions.unknown` field — `(kind, value)` pairs for options with no
+    dedicated field, and for a recognised kind carrying an unexpected length.
+    The builder re-emits them, so an option survives a parse → build round
+    trip even when packeteer does not understand it.
+  - Options are re-encoded in a canonical order, so a round trip preserves
+    every option's presence and value but is not guaranteed byte-identical to
+    a capture that ordered or padded them differently.
+  - Structural padding (NOP, End of Option List) is consumed and not
+    modelled.  A malformed list — a length byte below the 2-byte minimum, or
+    one running past the end of the region — stops the walk, keeping whatever
+    was decoded before it rather than discarding the header.
+  - The packet spec gains `transport.options.unknown`, an array of
+    `{"kind": N, "data": "<hex>"}` objects, read back by `packeteer build`.
+
 - **`decode_app` — opt out of DNS/DHCP/HTTP decoding** (#61) — the parser ran
   its three application decoders unconditionally, and each replaced the
   payload it decoded, so `ParsedPacket.payload` came back empty for exactly
@@ -81,6 +109,10 @@ link definitions at the bottom of this file, and tag the release `v0.8.0`.
 
 ### Documentation
 
+- New "TCP options" section in `docs/guide/parsing.md` covering the decoded
+  fields, why window scale and SACK matter for reassembly, `unknown`, and the
+  canonical-ordering caveat; `options.unknown` documented in
+  `docs/packet-spec/format.md`.
 - New "Keeping the payload as it appeared on the wire" section in
   `docs/guide/parsing.md`, and a `--no-decode-app` section in
   `docs/cli/parse.md` noting that raw HTTP payloads serialise as hex (CRLF
