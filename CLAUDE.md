@@ -21,6 +21,30 @@ warnings can only be used as a last resort, and **always ask before making such 
 
 - **Never commit or push without explicit instruction.** Do not run `git commit`, `git push`, or any destructive git command (`reset --hard`, `checkout .`, etc.) unless I have asked for it in the current message.
 
+## Versioning and changelog
+
+- The project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+  While below 1.0, **breaking changes are allowed in a minor bump** (0.7 → 0.8);
+  they must still be called out.
+- `CHANGELOG.md` follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/).
+  **Every user-visible change gets an entry under `## [Unreleased]` in the same
+  change that introduces it** — new/changed public API, CLI flags, packet-spec
+  keys, defaults, bug fixes, and docs. Purely internal refactors and test-only
+  changes do not.
+- Change types, in this order, omitting any that are empty: `Added`, `Changed`,
+  `Deprecated`, `Removed`, `Fixed`, `Security`, `Documentation` (the last is a
+  project-specific extra for docs-only work).
+- Anything that breaks backwards compatibility goes under `Changed` (or
+  `Removed`) with a leading **`Breaking:`** and a note on what callers must do
+  instead.
+- `pyproject.toml` carries the version. During development of the next release
+  it is a `.devN` suffix (currently `0.8.0.dev0`); the release commit drops the
+  suffix.
+- Releasing: rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`, add a fresh
+  empty `Unreleased`, set the version in `pyproject.toml`, update the link
+  definitions at the bottom of `CHANGELOG.md`, then tag `vX.Y.Z` (full three-part
+  version — the older `v0.7` style is not used going forward).
+
 ## Project layout
 
 - `src/packeteer/generate/` — packet building and stream generation
