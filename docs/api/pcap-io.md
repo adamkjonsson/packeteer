@@ -35,6 +35,43 @@ pcapng (`.pcapng`) files.  Both formats are detected automatically on read.
 
 ---
 
+## Streaming
+
+`read_pcap` materialises every packet in a list.  `open_pcap` reads the same
+files one record at a time, so a capture larger than memory can be processed,
+and each record carries its byte offset within the file.
+
+Because records are decoded as they are iterated, the reader holds the file
+open — it is the one object in this module with a lifetime to manage.  Use a
+`with` block, or call `close()` from a `finally`:
+
+```python
+with open_pcap(path="capture.pcap") as reader:
+    for record in reader:
+        ...
+```
+
+A reader opened from a `path` closes that file; one given a `file_object`
+never closes it.  Exhausting the records does not close the file, and neither
+does an error raised during iteration — see
+[Closing the reader](../guide/pcap.md#closing-the-reader) in the guide.
+
+```{eval-rst}
+.. autofunction:: packeteer.pcap.open_pcap
+```
+
+```{eval-rst}
+.. autoclass:: packeteer.pcap.PcapReader
+   :members:
+```
+
+```{eval-rst}
+.. autoclass:: packeteer.pcap.PcapRecord
+   :members:
+```
+
+---
+
 ## Timestamp conversion
 
 `write_pcap` / `write_pcapng` take timestamps as a `(ts_sec, ts_frac)` pair and

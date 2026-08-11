@@ -2,8 +2,9 @@
 
 This module reads and writes raw packet bytes from/to libpcap (``.pcap``) and
 pcapng (``.pcapng``) files that can be opened in Wireshark, tcpdump, or
-replayed with tcpreplay.  The format is detected automatically by
-:func:`read_pcap` from the file's magic number.
+replayed with tcpreplay.  The format is detected automatically from the file's
+magic number by :func:`read_pcap`, which returns every packet at once, and by
+:func:`open_pcap`, which streams them one record at a time with byte offsets.
 
 pcap file format overview::
 
@@ -80,10 +81,14 @@ Constants:
 from __future__ import annotations
 
 import io
+import itertools
 import os
 import struct
+from collections.abc import Iterator
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
@@ -106,6 +111,9 @@ _PCAPNG_SHB_TYPE: int = 0x0A0D0D0A
 _PCAPNG_IDB_TYPE: int = 0x00000001
 _PCAPNG_EPB_TYPE: int = 0x00000006
 _PCAPNG_OPB_TYPE: int = 0x00000002  # Obsolete Packet Block (read-only)
+
+#: Bytes of block type + block total length preceding every pcapng block body.
+_PCAPNG_BLOCK_HDR_SIZE: int = 8
 
 # pcapng byte-order magic values
 _PCAPNG_BOM_LE: int = 0x1A2B3C4D
@@ -167,6 +175,41 @@ class PcapFileHeader:
 
 
 @dataclass
+class PcapRecord:
+    """One packet record, with its position in the source file.
+
+    Yielded by :func:`open_pcap`.  Unpacks like the ``(data, ts_sec, ts_frac)``
+    tuples in :attr:`PcapFile.packets` for the first three fields, so the two
+    reading styles line up.
+
+    Attributes:
+        data: Captured packet bytes.  Shorter than *orig_len* when the capture
+            was taken with a snaplen smaller than the packet.
+        ts_sec: Whole seconds of the capture timestamp.
+        ts_frac: Sub-second remainder, in units of
+            :attr:`PcapFileHeader.tick_hz`.
+        offset: Byte offset of the start of this record within the file — the
+            16-byte record header for pcap, the block header for pcapng.
+        data_offset: Byte offset of the first captured packet byte.  This is
+            the offset to cite when referring to packet bytes in the file.
+        orig_len: Length of the packet on the wire, before any snaplen
+            truncation.
+
+    """
+
+    data: bytes
+    ts_sec: int
+    ts_frac: int
+    offset: int
+    data_offset: int
+    orig_len: int
+
+    def __iter__(self) -> Iterator[Any]:
+        """Yield ``data``, ``ts_sec``, ``ts_frac`` so the record unpacks."""
+        return iter((self.data, self.ts_sec, self.ts_frac))
+
+
+@dataclass
 class PcapFile:
     """Parsed contents of a pcap or pcapng file.
 
@@ -205,35 +248,107 @@ def _parse_idb_tsresol(body: bytes, offset: int, endian: str) -> int:
 
 def _read_pcapng_packet(
     block_type: int, body: bytes, endian: str, interfaces: list[tuple[int, int]],
-) -> tuple[bytes, int, int]:
-    """Decode an Enhanced or Simple Packet Block body into a packet tuple."""
+    block_offset: int,
+) -> PcapRecord:
+    """Decode an Enhanced or Simple Packet Block body into a :class:`PcapRecord`.
+
+    *block_offset* is the block's position in the file; the record's
+    ``data_offset`` is derived from it by stepping over the 8-byte block
+    header and the block type's fixed fields.
+    """
     if block_type == _PCAPNG_EPB_TYPE:
         if len(body) < 20:
             raise ValueError("EPB body too short")
-        iface_id, ts_hi, ts_lo, cap_len, _ = struct.unpack_from(endian + "IIIII", body)
-        offset = 20
+        iface_id, ts_hi, ts_lo, cap_len, orig_len = struct.unpack_from(
+            endian + "IIIII", body,
+        )
+        body_offset = 20
     else:  # _PCAPNG_OPB_TYPE
-        if len(body) < 16:
+        # interface_id(2) drops_count(2) ts_high(4) ts_low(4)
+        # captured_len(4) packet_len(4) — 20 bytes before the packet data.
+        if len(body) < 20:
             raise ValueError("OPB body too short")
-        iface_id, _, ts_hi, ts_lo, cap_len, _ = struct.unpack_from(endian + "HHIIII", body)
-        offset = 16
-    pkt_data = body[offset : offset + cap_len]
+        iface_id, _, ts_hi, ts_lo, cap_len, orig_len = struct.unpack_from(
+            endian + "HHIIII", body,
+        )
+        body_offset = 20
+    pkt_data = body[body_offset : body_offset + cap_len]
     if len(pkt_data) < cap_len:
         raise ValueError("Packet block data truncated")
     ts64 = (ts_hi << 32) | ts_lo
-    resolution = interfaces[iface_id][1] if iface_id < len(interfaces) else 1_000_000
+    resolution = interfaces[iface_id][1] if iface_id < len(interfaces) else _US_PER_SECOND
     ts_sec, ts_frac = divmod(ts64, resolution)
-    return (pkt_data, ts_sec, ts_frac)
+    return PcapRecord(
+        data=pkt_data,
+        ts_sec=ts_sec,
+        ts_frac=ts_frac,
+        offset=block_offset,
+        data_offset=block_offset + _PCAPNG_BLOCK_HDR_SIZE + body_offset,
+        orig_len=orig_len,
+    )
 
 
-def _read_pcapng(
-    file_obj: io.RawIOBase | io.BufferedIOBase | _ChainedReader,
-    max_packets: int | None = None,
-) -> PcapFile:
-    """Read a pcapng file.  *file_obj* must be positioned at the start."""
-    type_raw      = file_obj.read(4)
-    total_len_raw = file_obj.read(4)
-    bom_raw       = file_obj.read(4)
+def _read_pcapng_block(
+    reader: _ChainedReader, endian: str,
+) -> tuple[int, bytes, int] | None:
+    """Read one pcapng block.
+
+    Args:
+        reader: Positioned at a block boundary.
+        endian: Byte-order prefix for :mod:`struct`.
+
+    Returns:
+        A ``(block_type, body, offset)`` tuple, where *offset* is the block's
+        position in the file, or ``None`` at end of file.
+
+    Raises:
+        ValueError: If the block header, body, or trailing length is
+            truncated, or the declared length is below the 12-byte minimum.
+
+    """
+    offset = reader.pos
+    block_hdr = reader.read(8)
+    if not block_hdr:
+        return None
+    if len(block_hdr) < 8:
+        raise ValueError("Truncated pcapng block header")
+    block_type, total_len = struct.unpack(endian + "II", block_hdr)
+    if total_len < 12:
+        raise ValueError(f"Block total length {total_len} too small (minimum 12)")
+    body_len = total_len - 12
+    body = reader.read(body_len)
+    if len(body) < body_len:
+        raise ValueError(f"Truncated block body: got {len(body)}, need {body_len}")
+    trailing = reader.read(4)
+    if len(trailing) < 4:
+        raise ValueError("Truncated trailing block total length")
+    return (block_type, body, offset)
+
+
+def _open_pcapng(reader: _ChainedReader) -> tuple[PcapFileHeader, Iterator[PcapRecord]]:
+    """Read a pcapng file's header blocks and return a record iterator.
+
+    The Section Header Block is consumed and blocks are then read until the
+    first Interface Description Block supplies the link type, snaplen, and
+    timestamp resolution — so the returned header is complete before any
+    record is yielded.  A packet block encountered first (no IDB, which is
+    malformed but readable) ends the search and is handed to the iterator
+    rather than dropped.
+
+    Args:
+        reader: Positioned at the start of the file.
+
+    Returns:
+        A ``(header, records)`` tuple.
+
+    Raises:
+        ValueError: If the SHB is truncated or its byte-order magic is
+            unrecognised.
+
+    """
+    type_raw      = reader.read(4)
+    total_len_raw = reader.read(4)
+    bom_raw       = reader.read(4)
     if len(type_raw) < 4 or len(total_len_raw) < 4 or len(bom_raw) < 4:
         raise ValueError("Truncated pcapng SHB")
 
@@ -248,62 +363,85 @@ def _read_pcapng(
     (total_len,) = struct.unpack(endian + "I", total_len_raw)
     if total_len < 12:
         raise ValueError(f"SHB total length {total_len} too small (minimum 12)")
-    file_obj.read(total_len - 12)
+    reader.read(total_len - 12)
 
     interfaces: list[tuple[int, int]] = []  # (link_type, ticks_per_second)
     link_type = 1
     snaplen   = 65535
     tick_hz   = _US_PER_SECOND
-    packets: list[tuple[bytes, int, int]] = []
+    pending: tuple[int, bytes, int] | None = None
 
     while True:
-        if max_packets is not None and len(packets) >= max_packets:
+        block = _read_pcapng_block(reader, endian)
+        if block is None:
             break
-        block_hdr = file_obj.read(8)
-        if not block_hdr:
-            break
-        if len(block_hdr) < 8:
-            raise ValueError("Truncated pcapng block header")
-        block_type, total_len = struct.unpack(endian + "II", block_hdr)
-        if total_len < 12:
-            raise ValueError(f"Block total length {total_len} too small (minimum 12)")
-        body_len = total_len - 12
-        body = file_obj.read(body_len)
-        if len(body) < body_len:
-            raise ValueError(f"Truncated block body: got {len(body)}, need {body_len}")
-        trailing = file_obj.read(4)
-        if len(trailing) < 4:
-            raise ValueError("Truncated trailing block total length")
-
+        block_type, body, _ = block
         if block_type == _PCAPNG_IDB_TYPE:
             if len(body) < 8:
                 raise ValueError("IDB body too short")
-            idb_link_type, _, idb_snaplen = struct.unpack_from(endian + "HHI", body)
-            resolution = _parse_idb_tsresol(body, 8, endian)
-            interfaces.append((idb_link_type, resolution))
-            if len(interfaces) == 1:
-                link_type = idb_link_type
-                snaplen   = idb_snaplen
-                tick_hz   = resolution
+            link_type, _, snaplen = struct.unpack_from(endian + "HHI", body)
+            tick_hz = _parse_idb_tsresol(body, 8, endian)
+            interfaces.append((link_type, tick_hz))
+            break
+        if block_type in (_PCAPNG_EPB_TYPE, _PCAPNG_OPB_TYPE):
+            pending = block
+            break
 
-        elif block_type in (_PCAPNG_EPB_TYPE, _PCAPNG_OPB_TYPE):
-            packets.append(_read_pcapng_packet(block_type, body, endian, interfaces))
-
-    file_header = PcapFileHeader(
+    header = PcapFileHeader(
         link_type=link_type,
         version_major=1,
         version_minor=0,
         snaplen=snaplen,
         tick_hz=tick_hz,
     )
-    return PcapFile(header=file_header, packets=packets)
+    return (header, _iter_pcapng_records(reader, endian, interfaces, pending))
 
 
-def _read_pcap(
-    file_obj: io.RawIOBase | io.BufferedIOBase | _ChainedReader,
-    max_packets: int | None = None,
-) -> PcapFile:
-    global_hdr = file_obj.read(_GLOBAL_HDR_SIZE)
+def _iter_pcapng_records(
+    reader: _ChainedReader,
+    endian: str,
+    interfaces: list[tuple[int, int]],
+    pending: tuple[int, bytes, int] | None,
+) -> Iterator[PcapRecord]:
+    """Yield each packet block as a :class:`PcapRecord`.
+
+    Later Interface Description Blocks are appended to *interfaces* as they
+    are met, so a packet block's timestamp resolution is looked up from the
+    interface it names.
+    """
+    block: tuple[int, bytes, int] | None = pending
+    while True:
+        if block is None:
+            block = _read_pcapng_block(reader, endian)
+            if block is None:
+                return
+        block_type, body, offset = block
+        block = None
+
+        if block_type == _PCAPNG_IDB_TYPE:
+            if len(body) < 8:
+                raise ValueError("IDB body too short")
+            idb_link_type, _, _ = struct.unpack_from(endian + "HHI", body)
+            interfaces.append((idb_link_type, _parse_idb_tsresol(body, 8, endian)))
+        elif block_type in (_PCAPNG_EPB_TYPE, _PCAPNG_OPB_TYPE):
+            yield _read_pcapng_packet(block_type, body, endian, interfaces, offset)
+
+
+def _open_pcap(reader: _ChainedReader) -> tuple[PcapFileHeader, Iterator[PcapRecord]]:
+    """Read a classic pcap global header and return a record iterator.
+
+    Args:
+        reader: Positioned at the start of the file.
+
+    Returns:
+        A ``(header, records)`` tuple.
+
+    Raises:
+        ValueError: If the global header is short or the magic number is
+            unrecognised.
+
+    """
+    global_hdr = reader.read(_GLOBAL_HDR_SIZE)
     if len(global_hdr) < _GLOBAL_HDR_SIZE:
         raise ValueError(
             f"File too short for pcap global header: "
@@ -324,87 +462,241 @@ def _read_pcap(
     fmt = endian + "IHHiIII"
     _, version_major, version_minor, _, _, snaplen, link_type = struct.unpack_from(fmt, global_hdr)
 
-    file_header = PcapFileHeader(
+    header = PcapFileHeader(
         link_type=link_type,
         version_major=version_major,
         version_minor=version_minor,
         snaplen=snaplen,
         tick_hz=_NS_PER_SECOND if nanoseconds else _US_PER_SECOND,
     )
+    return (header, _iter_pcap_records(reader, endian))
 
-    packets: list[tuple[bytes, int, int]] = []
+
+def _iter_pcap_records(reader: _ChainedReader, endian: str) -> Iterator[PcapRecord]:
+    """Yield each classic-pcap packet record as a :class:`PcapRecord`."""
     pkt_fmt = endian + "IIII"
-
     while True:
-        if max_packets is not None and len(packets) >= max_packets:
-            break
-        pkt_hdr_raw = file_obj.read(_PKT_HDR_SIZE)
+        offset = reader.pos
+        pkt_hdr_raw = reader.read(_PKT_HDR_SIZE)
         if not pkt_hdr_raw:
-            break
+            return
         if len(pkt_hdr_raw) < _PKT_HDR_SIZE:
             raise ValueError(
                 f"Truncated packet header: got {len(pkt_hdr_raw)} bytes, need {_PKT_HDR_SIZE}"
             )
-        ts_sec, ts_usec, incl_len, orig_len = struct.unpack(pkt_fmt, pkt_hdr_raw)
-        _ = orig_len
-        data = file_obj.read(incl_len)
+        ts_sec, ts_frac, incl_len, orig_len = struct.unpack(pkt_fmt, pkt_hdr_raw)
+        data = reader.read(incl_len)
         if len(data) < incl_len:
             raise ValueError(
                 f"Truncated packet data: got {len(data)} bytes, need {incl_len}"
             )
-        packets.append((data, ts_sec, ts_usec))
-
-    return PcapFile(header=file_header, packets=packets)
+        yield PcapRecord(
+            data=data,
+            ts_sec=ts_sec,
+            ts_frac=ts_frac,
+            offset=offset,
+            data_offset=offset + _PKT_HDR_SIZE,
+            orig_len=orig_len,
+        )
 
 
 class _ChainedReader:
     """Serve a small byte prefix, then delegate further reads to a stream.
 
-    Lets :func:`_detect_and_read` peek the 4-byte magic number and then keep
-    reading without buffering the whole file — so an early-stopping reader
-    (``max_packets``) can avoid loading a large capture into memory.
+    Lets the format-detection step peek the 4-byte magic number and then keep
+    reading without buffering the whole file, so a capture of any size can be
+    read record by record.
+
+    Tracks how many bytes have been consumed in :attr:`pos`.  Neither
+    ``io.BytesIO`` positions nor the underlying stream's ``tell()`` correspond
+    to an offset within the capture once the prefix is in play, and a source
+    stream need not be seekable at all, so the count is kept here — it is the
+    only way a record's byte offset can be reported.
     """
 
     def __init__(self, prefix: bytes, rest: io.RawIOBase | io.BufferedIOBase) -> None:
         self._prefix = prefix
-        self._pos = 0
+        self._prefix_pos = 0
         self._rest = rest
+        self.pos = 0
 
     def read(self, size: int = -1) -> bytes:
         if size is None or size < 0:
-            out = self._prefix[self._pos:] + self._rest.read()
-            self._pos = len(self._prefix)
+            out = self._prefix[self._prefix_pos:] + self._rest.read()
+            self._prefix_pos = len(self._prefix)
+            self.pos += len(out)
             return out
         out = b""
-        if self._pos < len(self._prefix):
-            chunk = self._prefix[self._pos : self._pos + size]
-            self._pos += len(chunk)
+        if self._prefix_pos < len(self._prefix):
+            chunk = self._prefix[self._prefix_pos : self._prefix_pos + size]
+            self._prefix_pos += len(chunk)
             out += chunk
             size -= len(chunk)
         if size > 0:
             out += self._rest.read(size)
+        self.pos += len(out)
         return out
 
 
-def _detect_and_read(
-    file_obj: io.RawIOBase | io.BufferedIOBase, max_packets: int | None = None,
-) -> PcapFile:
+def _detect_and_open(
+    file_obj: io.RawIOBase | io.BufferedIOBase,
+) -> tuple[PcapFileHeader, Iterator[PcapRecord]]:
     """Detect pcap vs pcapng from the first 4 bytes and dispatch."""
     header4 = file_obj.read(4)
     if len(header4) < 4:
         raise ValueError(f"File too short: got {len(header4)} bytes, need at least 4")
     (magic,) = struct.unpack_from("<I", header4)
-    if max_packets is None:
-        # Buffer the whole file — the simple, well-trodden path.
-        buf: io.RawIOBase | io.BufferedIOBase | _ChainedReader = io.BytesIO(
-            header4 + file_obj.read()
-        )
-    else:
-        # Stream from the original object so we can stop without reading it all.
-        buf = _ChainedReader(header4, file_obj)
+    reader = _ChainedReader(header4, file_obj)
     if magic == _PCAPNG_SHB_TYPE:
-        return _read_pcapng(buf, max_packets)
-    return _read_pcap(buf, max_packets)
+        return _open_pcapng(reader)
+    return _open_pcap(reader)
+
+
+class PcapReader:
+    """Streaming reader over a pcap or pcapng file.
+
+    Yields one :class:`PcapRecord` at a time instead of materialising every
+    packet, so a capture larger than memory can be processed record by record.
+    Each record carries its byte offset within the file, which cannot be
+    reconstructed afterwards for pcapng — blocks are variable-length and
+    option padding is not visible in the decoded data.
+
+    Obtain one from :func:`open_pcap`.  Records are decoded lazily as the
+    reader is iterated, so the file stays open until the reader is closed —
+    unlike :func:`read_pcap`, which returns a finished result and holds
+    nothing open.  Use it as a context manager and that is handled:
+
+    .. code-block:: python
+
+        from packeteer.pcap import open_pcap
+
+        with open_pcap(path="capture.pcap") as reader:
+            print(reader.header.link_type)
+            for record in reader:
+                print(record.offset, record.ts_sec, len(record.data))
+
+    Closing is the caller's responsibility, and neither exhausting the
+    iterator nor an error raised part-way through it closes the file.  A
+    reader dropped without closing leaks the handle until it is collected,
+    which raises a ``ResourceWarning``.  Without a ``with`` block, close it
+    from a ``finally``.
+
+    Attributes:
+        header: File-level metadata, populated before the first record is
+            read.  For pcapng this comes from the first Interface Description
+            Block; a file whose interfaces declare different link types is
+            described by the first one.
+
+    """
+
+    def __init__(
+        self,
+        header: PcapFileHeader,
+        records: Iterator[PcapRecord],
+        stack: ExitStack,
+    ) -> None:
+        self.header = header
+        self._records = records
+        self._stack = stack
+
+    def __iter__(self) -> Iterator[PcapRecord]:
+        """Iterate the capture's packet records."""
+        return self._records
+
+    def __enter__(self) -> PcapReader:
+        """Enter the context manager, returning this reader."""
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        """Close the underlying file if this reader opened it."""
+        self.close()
+
+    def close(self) -> None:
+        """Close the underlying file, if this reader opened it from a path.
+
+        Safe to call more than once, and safe to call from a ``finally`` block
+        alongside a ``with`` statement.
+
+        A reader created from a *file_object* never closes it — the caller
+        owns that object, so only a file this reader opened is registered for
+        closing.  Iteration cannot continue after closing.
+        """
+        self._stack.close()
+
+
+def open_pcap(
+    *,
+    path: str | os.PathLike | None = None,
+    file_object: io.RawIOBase | io.BufferedIOBase | None = None,
+    link_type: int | None = None,
+) -> PcapReader:
+    """Open a ``.pcap`` or ``.pcapng`` file for streaming, record by record.
+
+    The eager counterpart is :func:`read_pcap`, which returns every packet in
+    a list; prefer this when a capture is large, when only a prefix is needed,
+    or when a record's byte offset matters.  The format is detected from the
+    magic number, so both pcap and pcapng are accepted.
+
+    Exactly one of *path* or *file_object* must be supplied.
+
+    The returned reader keeps the file open while records are read from it,
+    so **close it when done** — as a context manager, or from a ``finally``
+    block.  Neither running out of records nor an error during iteration
+    closes it.  See :class:`PcapReader` for the full contract.
+
+    Args:
+        path: Path to the file to read.  The reader opens it and closes it on
+            :meth:`PcapReader.close` or context-manager exit.
+        file_object: Readable binary file-like object positioned at the start
+            of the data.  It is never closed by the reader — the caller keeps
+            ownership of an object it supplied.
+        link_type: When given, override the link-layer type recorded in the
+            file header.  :attr:`PcapReader.header` reflects the override.
+
+    Returns:
+        A :class:`PcapReader` whose ``header`` is already populated and which
+        iterates :class:`PcapRecord` objects.
+
+    Raises:
+        ValueError: If neither or both of *path* / *file_object* are given, if
+            the magic number is unrecognised, or if the file header is
+            truncated.  A malformed *record* raises during iteration instead.
+            Nothing leaks when this is raised: a file opened here is closed
+            before the exception propagates, and no reader is returned.
+        OSError: If *path* cannot be opened for reading.
+
+    Example::
+
+        from packeteer.pcap import open_pcap
+
+        with open_pcap(path="capture.pcap") as reader:
+            for record in reader:
+                print(record.data_offset, record.orig_len)
+
+    """
+    if (path is None) == (file_object is None):
+        raise ValueError("Provide exactly one of 'path' or 'file_object'.")
+
+    stack = ExitStack()
+    try:
+        if path is not None:
+            # Spelled out rather than open(path, "rb") — which returns exactly
+            # this pair — because the reader hands the file's lifetime to the
+            # caller, so it cannot be acquired by a `with` block here.
+            source: io.RawIOBase | io.BufferedIOBase = stack.enter_context(
+                io.BufferedReader(io.FileIO(path, "rb")),
+            )
+        else:
+            assert file_object is not None
+            source = file_object
+        header, records = _detect_and_open(source)
+    except BaseException:
+        stack.close()
+        raise
+
+    if link_type is not None:
+        header.link_type = link_type
+    return PcapReader(header, records, stack)
 
 
 # ── Write helpers ─────────────────────────────────────────────────────────────
@@ -563,19 +855,15 @@ def read_pcap(
             print(ts_sec, ts_frac, data.hex())
 
     """
-    if (path is None) == (file_object is None):
-        raise ValueError("Provide exactly one of 'path' or 'file_object'.")
     if max_packets is not None and max_packets < 0:
         raise ValueError(f"max_packets must be non-negative, got {max_packets}")
-    if path is not None:
-        with open(path, "rb") as f:
-            result = _detect_and_read(f, max_packets)
-    else:
-        assert file_object is not None
-        result = _detect_and_read(file_object, max_packets)
-    if link_type is not None:
-        result.header.link_type = link_type
-    return result
+
+    with open_pcap(path=path, file_object=file_object, link_type=link_type) as reader:
+        records: Iterator[PcapRecord] = iter(reader)
+        if max_packets is not None:
+            records = itertools.islice(records, max_packets)
+        packets = [(r.data, r.ts_sec, r.ts_frac) for r in records]
+    return PcapFile(header=reader.header, packets=packets)
 
 
 def datetime_to_pcap_ts(

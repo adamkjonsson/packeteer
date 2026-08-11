@@ -10,6 +10,7 @@ from packeteer.pcap import (
     LINKTYPE_RAW,
     PcapFile,
     PcapFileHeader,
+    open_pcap,
     read_pcap,
     write_pcapng,
 )
@@ -303,6 +304,86 @@ class TestTimestampResolution(unittest.TestCase):
         result = read_pcap(file_object=buf)
         self.assertEqual(result.header.tick_hz, 100)
         self.assertEqual(result.packets[0][1:], (5, 50))
+
+
+def _pcapng_block(block_type: int, body: bytes) -> bytes:
+    """Wrap *body* in a pcapng block header and trailing length."""
+    total = 12 + len(body)
+    return struct.pack("<II", block_type, total) + body + struct.pack("<I", total)
+
+
+class TestOpenPcapngStreaming(unittest.TestCase):
+    """open_pcap over pcapng: offsets that cannot be derived externally."""
+
+    _PKT = b"\xcc" * 40
+
+    def test_header_available_before_iterating(self):
+        with open_pcap(file_object=_write([(self._PKT, 1, 2)])) as reader:
+            self.assertEqual(reader.header.link_type, LINKTYPE_ETHERNET)
+
+    def test_data_offset_locates_the_packet_bytes(self):
+        packets = [(b"\xaa" * (20 + i), i, 0) for i in range(4)]
+        blob = _write(packets).getvalue()
+        with open_pcap(file_object=io.BytesIO(blob)) as reader:
+            seen = 0
+            for rec in reader:
+                self.assertEqual(
+                    blob[rec.data_offset: rec.data_offset + len(rec.data)], rec.data,
+                )
+                seen += 1
+        self.assertEqual(seen, 4)
+
+    def test_offset_points_at_the_block_header(self):
+        blob = _write([(self._PKT, 1, 0)]).getvalue()
+        with open_pcap(file_object=io.BytesIO(blob)) as reader:
+            rec = next(iter(reader))
+        block_type, = struct.unpack_from("<I", blob, rec.offset)
+        self.assertEqual(block_type, 6)      # Enhanced Packet Block
+
+    def test_orig_len_reported(self):
+        with open_pcap(file_object=_write([(self._PKT, 1, 0)])) as reader:
+            rec = next(iter(reader))
+        self.assertEqual(rec.orig_len, len(self._PKT))
+
+    def test_records_from_a_second_interface(self):
+        # A second IDB appears mid-file; its records must still be read, with
+        # timestamps scaled by that interface's own resolution.
+        out = bytearray()
+        shb = struct.pack("<IHHq", 0x1A2B3C4D, 1, 0, -1)
+        out += _pcapng_block(0x0A0D0D0A, shb)
+        idb = struct.pack("<HHI", LINKTYPE_ETHERNET, 0, 65535) + struct.pack("<HH", 0, 0)
+        out += _pcapng_block(1, idb)
+        epb = struct.pack("<IIIII", 0, 0, 1_000_000, len(self._PKT), len(self._PKT))
+        out += _pcapng_block(6, epb + self._PKT)
+        # second interface, millisecond resolution
+        idb2 = (struct.pack("<HHI", LINKTYPE_ETHERNET, 0, 65535)
+                + struct.pack("<HH", 9, 1) + bytes([3]) + b"\x00" * 3
+                + struct.pack("<HH", 0, 0))
+        out += _pcapng_block(1, idb2)
+        epb2 = struct.pack("<IIIII", 1, 0, 5_000, len(self._PKT), len(self._PKT))
+        out += _pcapng_block(6, epb2 + self._PKT)
+
+        with open_pcap(file_object=io.BytesIO(bytes(out))) as reader:
+            records = list(reader)
+        self.assertEqual(len(records), 2)
+        self.assertEqual((records[0].ts_sec, records[0].ts_frac), (1, 0))
+        self.assertEqual((records[1].ts_sec, records[1].ts_frac), (5, 0))
+
+    def test_obsolete_packet_block_data_is_not_shifted(self):
+        # The obsolete Packet Block's fixed fields are 20 bytes:
+        # interface_id(2) drops(2) ts_high(4) ts_low(4) caplen(4) len(4).
+        data = bytes(range(64))
+        out = bytearray()
+        shb = struct.pack("<IHHq", 0x1A2B3C4D, 1, 0, -1)
+        out += _pcapng_block(0x0A0D0D0A, shb)
+        idb = struct.pack("<HHI", LINKTYPE_ETHERNET, 0, 65535) + struct.pack("<HH", 0, 0)
+        out += _pcapng_block(1, idb)
+        pb = struct.pack("<HHIIII", 0, 0, 0, 1_500_000, len(data), len(data))
+        out += _pcapng_block(2, pb + data)
+
+        result = read_pcap(file_object=io.BytesIO(bytes(out)))
+        self.assertEqual(result.packets[0][0], data)
+        self.assertEqual(result.packets[0][1:], (1, 500_000))
 
 
 class TestPcapFileHeaderResolution(unittest.TestCase):

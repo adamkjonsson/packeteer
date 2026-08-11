@@ -26,6 +26,30 @@ link definitions at the bottom of this file, and tag the release `v0.8.0`.
 
 ### Added
 
+- **`open_pcap` — streaming pcap/pcapng reader with byte offsets** (#62) —
+  `read_pcap` materialises every packet in a list and, without `max_packets`,
+  slurped the whole file first, so processing a capture record by record still
+  cost whole-file memory.  Multi-gigabyte captures are the normal case for
+  session analysis.
+
+  - `open_pcap(path=… | file_object=…, link_type=…)` returns a `PcapReader`:
+    an iterator of `PcapRecord` objects whose `header` is populated before the
+    first record is read.  It is a context manager — a reader opened from a
+    path closes that file on exit, including when iteration stops early, while
+    a caller's *file_object* is never closed.
+  - `PcapRecord` carries `data`, `ts_sec`, `ts_frac`, `offset` (start of the
+    record header or pcapng block), `data_offset` (first captured packet
+    byte), and `orig_len` (on-wire length, larger than `len(data)` for a
+    snaplen-truncated record).  The first three unpack like the tuples
+    `read_pcap` returns, so `for data, ts_sec, ts_frac in reader` works.
+  - The byte offsets cannot be reconstructed after the fact for pcapng —
+    blocks are variable-length and option padding is invisible in the decoded
+    data — so reading them here is the only way to cite a byte range of a
+    capture afterwards.
+  - `read_pcap` is now a thin wrapper over the same machinery, replacing the
+    separate buffered and streaming code paths it used to choose between;
+    `max_packets` is an `islice`.  Its behaviour and signature are unchanged.
+
 - **`PcapFileHeader.tick_hz` — the capture's real timestamp resolution** (#64)
   — the header modelled resolution as a single `nanoseconds` boolean, so any
   pcapng declaring something else through `if_tsresol` had its sub-second
@@ -113,6 +137,15 @@ link definitions at the bottom of this file, and tag the release `v0.8.0`.
 
 ### Fixed
 
+- **Obsolete Packet Block data was shifted four bytes** — a pcapng Packet
+  Block (type `0x00000002`, the pre-standard predecessor of the Enhanced
+  Packet Block, which this module reads for compatibility) has 20 bytes of
+  fixed fields before its packet data: `interface_id`, `drops_count`, the two
+  timestamp halves, `captured_len`, and `packet_len`.  The reader unpacked all
+  20 bytes but sliced the data from offset 16, so every such packet began with
+  the four bytes of `packet_len` and lost its last four real bytes.  Found
+  while adding byte offsets in #62.
+
 - **Non-microsecond pcapng timestamps were read as microseconds** (#64) — a
   capture declaring `if_tsresol = 3` (milliseconds, legal and emitted by some
   writers) had its sub-second fractions treated as microseconds by every
@@ -143,6 +176,9 @@ link definitions at the bottom of this file, and tag the release `v0.8.0`.
 
 ### Documentation
 
+- New "Streaming a large capture" section in `docs/guide/pcap.md` and a
+  "Streaming" section in `docs/api/pcap-io.md` documenting `open_pcap`,
+  `PcapReader`, and `PcapRecord`.
 - New "Timestamp resolution" section in `docs/guide/pcap.md`, a
   `TimestampResolutionWarning` section in `docs/api/parser.md`, and a note on
   `tick_hz` in `docs/cli/file-info.md`.
