@@ -26,6 +26,27 @@ link definitions at the bottom of this file, and tag the release `v0.8.0`.
 
 ### Added
 
+- **`ParsedPacket.payload_offset`** (#71) — the index of `payload[0]` within
+  the frame passed to `parse_packet`, or `None` when there is no payload.
+  Every layer parser already returns a header size and the walk slices by it,
+  so the offset was known during the parse and then discarded.
+
+  - Added to `PcapRecord.data_offset` it gives the payload's byte offset
+    within the capture file, which is what a consumer citing provenance —
+    "these bytes came from file offsets X–Y" — needs.  Without it the two
+    additions from #62 and #66 did not compose.
+  - It cannot be derived as `len(frame) - len(payload)`: that assumes the
+    payload runs to the end of the frame, which #66 deliberately made false.
+    On a frame padded to the 60-byte Ethernet minimum the subtraction lands
+    inside the padding and yields the wrong bytes with no error.
+  - For a tunnelled packet the offset on a nested `tunneled` packet is
+    relative to the **outer** frame as well, so one addition works at any
+    depth — verified through VXLAN, GENEVE, GTP-U, GRE, IP-in-IP, and
+    doubly-nested GRE.
+  - Per-layer offsets (`ip_offset`, `transport_offset`, …) were considered and
+    deferred to #74; `payload_offset` alone closes the gap this was raised
+    for.
+
 - **IP defragmentation** (#65) — `fragment_ipv4` / `fragment_ipv6` had no
   parse-side counterpart, so a fragmented datagram could only be dropped or
   reassembled by the caller.  New `packeteer.parse.defragment`, exported from
@@ -260,6 +281,10 @@ link definitions at the bottom of this file, and tag the release `v0.8.0`.
 
 ### Documentation
 
+- New "Where the payload was in the frame" section in `docs/guide/parsing.md`
+  covering `payload_offset`, combining it with `PcapRecord.data_offset` to
+  cite file offsets, and why the two obvious shortcuts (length subtraction and
+  `frame.find`) are wrong.
 - New `docs/guide/defragmenting.md` chapter covering reassembly, what a
   fragment looks like before it, incomplete datagrams, and the overlap /
   timeout / memory policies; a "Reassembly" section in

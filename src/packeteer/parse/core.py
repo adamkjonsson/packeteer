@@ -244,6 +244,16 @@ class ParsedPacket:
             on port 80 or 8080, otherwise ``None``.  On parse failure the
             raw bytes remain in :attr:`payload` and this field is ``None``.
         payload: Bytes remaining after all parsed headers.
+        payload_offset: Index of ``payload[0]`` within the frame passed to
+            :func:`parse_packet`, or ``None`` when :attr:`payload` is empty.
+            Added to :attr:`packeteer.pcap.PcapRecord.data_offset` it gives
+            the payload's byte offset within the capture file.  It cannot be
+            derived as ``len(frame) - len(payload)``: a frame padded to the
+            60-byte Ethernet minimum has padding after the IP datagram, which
+            the parser trims out of :attr:`payload`, so that arithmetic
+            silently lands inside the padding.  For a tunnelled packet the
+            offset on a nested :attr:`tunneled` packet is relative to the
+            **outer** frame as well, so one addition works at any depth.
         ts_sec: Capture timestamp — whole seconds (from pcap record).
         ts_frac: Capture timestamp — sub-second fraction (microseconds or
             nanoseconds depending on the pcap file's magic number).
@@ -271,8 +281,43 @@ class ParsedPacket:
     dhcp:      DHCPMessage | None = None
     http:      HTTPMessage | None = None  # type: ignore[valid-type]
     payload:   bytes = field(default=b"")
+    payload_offset: int | None = None
     ts_sec:    int = 0
     ts_frac:   int = 0
+
+
+def _set_payload(pkt: ParsedPacket, payload: bytes, offset: int) -> None:
+    """Record *payload* on *pkt* along with where it starts in the frame.
+
+    Every payload assignment goes through here so the offset cannot drift from
+    the bytes, and so the "``None`` when empty" rule is stated once.
+
+    Args:
+        pkt: Packet object to fill in.
+        payload: The payload bytes.
+        offset: Index of ``payload[0]`` within the frame being parsed.
+
+    """
+    pkt.payload = payload
+    pkt.payload_offset = offset if payload else None
+
+
+def _shift_offsets(pkt: ParsedPacket, delta: int) -> None:
+    """Rebase a tunnelled packet's offsets onto the enclosing frame.
+
+    A recursive :func:`parse_packet` sees only the inner frame, so its offsets
+    start at zero.  Adding the inner frame's position within the outer one
+    makes every offset relative to the outermost frame, at any nesting depth.
+
+    Args:
+        pkt: Packet parsed from the inner frame.
+        delta: Offset of that inner frame within the enclosing frame.
+
+    """
+    while pkt is not None:
+        if pkt.payload_offset is not None:
+            pkt.payload_offset += delta
+        pkt = pkt.tunneled
 
 
 def _parse_link_layer(
@@ -300,11 +345,11 @@ def _parse_link_layer(
         # Shared tail for Ethernet/SLL: stop on a parse failure or an unknown
         # EtherType; otherwise hand the remaining bytes + EtherType downstream.
         if size == 0:
-            pkt.payload = data
+            _set_payload(pkt, data, 0)
             return None
         remaining = data[size:]
         if ethertype not in _KNOWN_ETHERTYPES:
-            pkt.payload = remaining
+            _set_payload(pkt, remaining, size)
             return None
         return remaining, ethertype
 
@@ -322,16 +367,18 @@ def _parse_link_layer(
         return _after_l2(s_size, ethertype)
     if link_type == LINKTYPE_RAW:
         return data, None   # raw IP — skip MPLS loop below
-    pkt.payload = data
+    _set_payload(pkt, data, 0)
     return None
 
 
 def _parse_pppoe_and_mpls(
     pkt: ParsedPacket, data: bytes, ethertype: int | None, decode_app: bool = True,
-) -> tuple[bytes, int | None] | None:
+    base: int = 0,
+) -> tuple[bytes, int | None, int] | None:
     """Parse MPLS labels and PPPoE header.
 
-    Returns ``(remaining, ip_ethertype)`` or ``None`` when parsing is complete.
+    Returns ``(remaining, ip_ethertype, offset)`` or ``None`` when parsing is
+    complete.
 
     Args:
         pkt: Packet object to fill in.
@@ -339,40 +386,49 @@ def _parse_pppoe_and_mpls(
         ethertype: EtherType from the Ethernet layer, or ``None`` for raw IP.
         decode_app: Forwarded to the recursive parse of a pseudowire's inner
             frame.  See :func:`parse_packet`.
+        base: Offset of *data* within the frame being parsed, so payload and
+            tunnel offsets can be reported relative to that frame.
 
     Returns:
-        ``(remaining_bytes, ethertype)`` or ``None`` when parsing is complete.
+        ``(remaining_bytes, ethertype, offset_of_remaining)`` or ``None`` when
+        parsing is complete.
 
     """
     remaining = data
+    offset = base
     while ethertype in (ETHERTYPE_MPLS_UNICAST, ETHERTYPE_MPLS_MULTICAST):
         m_size, ethertype, m_hdr = _mpls_parser(remaining)
         if m_size == 0 or m_hdr is None:
-            pkt.payload = remaining
+            _set_payload(pkt, remaining, offset)
             return None
         pkt.mpls.append(m_hdr)
         remaining = remaining[m_size:]
+        offset += m_size
 
     if ethertype in (ETHERTYPE_PPPOE_DISCOVERY, ETHERTYPE_PPPOE_SESSION):
         p_size, ethertype, pppoe_hdr = _pppoe_parser(remaining)
         if p_size == 0 or pppoe_hdr is None:
-            pkt.payload = remaining
+            _set_payload(pkt, remaining, offset)
             return None
         pkt.pppoe = pppoe_hdr
         remaining = remaining[p_size:]
+        offset += p_size
         if ethertype is None:  # discovery frame — no IP follows
-            pkt.payload = remaining
+            _set_payload(pkt, remaining, offset)
             return None
 
     if ethertype == ETHERTYPE_PW_CW:
         pw_size, inner_et, pw_hdr = _pw_parser(remaining)
         if pw_size == 0 or pw_hdr is None:
-            pkt.payload = remaining
+            _set_payload(pkt, remaining, offset)
             return None
         pkt.pseudowire = pw_hdr
         remaining = remaining[pw_size:]
+        offset += pw_size
         inner_lt = LINKTYPE_ETHERNET if inner_et == GRE_PROTO_TEB else LINKTYPE_RAW
-        pkt.tunneled = parse_packet(remaining, link_type=inner_lt, decode_app=decode_app)
+        inner = parse_packet(remaining, link_type=inner_lt, decode_app=decode_app)
+        _shift_offsets(inner, offset)
+        pkt.tunneled = inner
         return None
 
     if ethertype == ETHERTYPE_ARP:
@@ -380,13 +436,13 @@ def _parse_pppoe_and_mpls(
         if a_size > 0 and a_hdr is not None:
             pkt.arp = a_hdr
         else:
-            pkt.payload = remaining
+            _set_payload(pkt, remaining, offset)
         return None
 
     if ethertype is not None and ethertype not in (ETHERTYPE_IPV4, ETHERTYPE_IPV6):
-        pkt.payload = remaining
+        _set_payload(pkt, remaining, offset)
         return None
-    return remaining, ethertype
+    return remaining, ethertype, offset
 
 
 _IPV6_FIXED_HEADER_LEN: int = 40
@@ -465,7 +521,9 @@ def _try_parse_http(pkt: ParsedPacket, payload: bytes) -> bytes:
         return payload
 
 
-def _try_parse_vxlan(pkt: ParsedPacket, payload: bytes, decode_app: bool = True) -> bool:
+def _try_parse_vxlan(
+    pkt: ParsedPacket, payload: bytes, decode_app: bool = True, base: int = 0,
+) -> bool:
     """Attempt to decode *payload* as VXLAN if the transport is UDP on port 4789.
 
     On success, sets ``pkt.vxlan`` and ``pkt.tunneled`` (the inner Ethernet
@@ -484,13 +542,17 @@ def _try_parse_vxlan(pkt: ParsedPacket, payload: bytes, decode_app: bool = True)
     if v_size == 0 or v_hdr is None:
         return False
     pkt.vxlan = v_hdr
-    pkt.tunneled = parse_packet(
+    inner = parse_packet(
         payload[v_size:], link_type=LINKTYPE_ETHERNET, decode_app=decode_app,
     )
+    _shift_offsets(inner, base + v_size)
+    pkt.tunneled = inner
     return True
 
 
-def _try_parse_geneve(pkt: ParsedPacket, payload: bytes, decode_app: bool = True) -> bool:
+def _try_parse_geneve(
+    pkt: ParsedPacket, payload: bytes, decode_app: bool = True, base: int = 0,
+) -> bool:
     """Attempt to decode *payload* as GENEVE if the transport is UDP on port 6081.
 
     On success, sets ``pkt.geneve`` and ``pkt.tunneled`` (the inner frame parsed
@@ -511,11 +573,15 @@ def _try_parse_geneve(pkt: ParsedPacket, payload: bytes, decode_app: bool = True
         return False
     pkt.geneve = g_hdr
     inner_lt = LINKTYPE_ETHERNET if proto_type == GENEVE_PROTO_TEB else LINKTYPE_RAW
-    pkt.tunneled = parse_packet(payload[g_size:], link_type=inner_lt, decode_app=decode_app)
+    inner = parse_packet(payload[g_size:], link_type=inner_lt, decode_app=decode_app)
+    _shift_offsets(inner, base + g_size)
+    pkt.tunneled = inner
     return True
 
 
-def _try_parse_gtpu(pkt: ParsedPacket, payload: bytes, decode_app: bool = True) -> bytes | None:
+def _try_parse_gtpu(
+    pkt: ParsedPacket, payload: bytes, decode_app: bool = True, base: int = 0,
+) -> tuple[bytes, int] | None:
     """Attempt to decode *payload* as GTP-U if the transport is UDP on port 2152.
 
     On success, sets ``pkt.gtpu``.  For a G-PDU message the inner IP packet is
@@ -538,9 +604,11 @@ def _try_parse_gtpu(pkt: ParsedPacket, payload: bytes, decode_app: bool = True) 
     pkt.gtpu = g_hdr
     rest = payload[g_size:]
     if message_type == GTPU_MSG_G_PDU and rest:
-        pkt.tunneled = parse_packet(rest, link_type=LINKTYPE_RAW, decode_app=decode_app)
-        return b""
-    return rest
+        inner = parse_packet(rest, link_type=LINKTYPE_RAW, decode_app=decode_app)
+        _shift_offsets(inner, base + g_size)
+        pkt.tunneled = inner
+        return (b"", base + g_size)
+    return (rest, base + g_size)
 
 
 def _spec_timestamp_unit(tick_hz: int) -> tuple[str, int]:
@@ -644,11 +712,12 @@ def _ip_payload_size(ip_hdr: IPHeader | IPv6Header | None, ip_size: int) -> int 
 
 def _parse_ip_protocol(
     pkt: ParsedPacket, remaining: bytes, ip_proto: int | None, decode_app: bool = True,
-) -> bytes:
+    base: int = 0,
+) -> tuple[bytes, int]:
     """Parse the IP protocol layer (transport or tunnel).
 
     Fills in transport/tunnel fields on *pkt* and returns the remaining
-    (payload) bytes.
+    (payload) bytes together with where they start.
 
     Args:
         pkt: Packet object to fill in.
@@ -657,9 +726,11 @@ def _parse_ip_protocol(
         decode_app: When ``False``, skip the DNS/DHCP/HTTP decoders so the
             transport payload is returned as it appeared on the wire.  See
             :func:`parse_packet`.
+        base: Offset of *remaining* within the frame being parsed.
 
     Returns:
-        Remaining bytes after consuming transport/tunnel headers.
+        ``(payload, offset)`` — the bytes after every consumed header, and the
+        offset of the first of them within the frame.
 
     """
     transport_parser = _TRANSPORT_PARSERS.get(ip_proto) if ip_proto is not None else None
@@ -668,50 +739,59 @@ def _parse_ip_protocol(
         if t_size > 0:
             pkt.transport = t_hdr
             remaining = remaining[t_size:]
-            if _try_parse_vxlan(pkt, remaining, decode_app):
-                return b""
-            if _try_parse_geneve(pkt, remaining, decode_app):
-                return b""
-            gtpu_payload = _try_parse_gtpu(pkt, remaining, decode_app)
-            if gtpu_payload is not None:
-                return gtpu_payload
+            base += t_size
+            if _try_parse_vxlan(pkt, remaining, decode_app, base):
+                return (b"", base)
+            if _try_parse_geneve(pkt, remaining, decode_app, base):
+                return (b"", base)
+            gtpu_result = _try_parse_gtpu(pkt, remaining, decode_app, base)
+            if gtpu_result is not None:
+                return gtpu_result
             if decode_app:
                 remaining = _try_parse_dns(pkt, remaining)
                 remaining = _try_parse_dhcp(pkt, remaining)
                 remaining = _try_parse_http(pkt, remaining)
     elif ip_proto in (4, 41):
         pkt.ipip = True
-        pkt.tunneled = parse_packet(remaining, link_type=LINKTYPE_RAW, decode_app=decode_app)
-        return b""
+        inner = parse_packet(remaining, link_type=LINKTYPE_RAW, decode_app=decode_app)
+        _shift_offsets(inner, base)
+        pkt.tunneled = inner
+        return (b"", base)
     elif ip_proto == IPPROTO_GRE:
         g_size, proto_type, g_hdr = _gre_parser(remaining)
         if g_size > 0 and g_hdr is not None:
             pkt.gre = g_hdr
             inner_lt = LINKTYPE_ETHERNET if proto_type == GRE_PROTO_TEB else LINKTYPE_RAW
-            pkt.tunneled = parse_packet(
+            inner = parse_packet(
                 remaining[g_size:], link_type=inner_lt, decode_app=decode_app,
             )
-            return b""
+            _shift_offsets(inner, base + g_size)
+            pkt.tunneled = inner
+            return (b"", base + g_size)
     elif ip_proto == IPPROTO_ETHERIP:
         ei_size, _, ei_hdr = _etherip_parser(remaining)
         if ei_size > 0 and ei_hdr is not None:
             pkt.etherip = ei_hdr
-            pkt.tunneled = parse_packet(
+            inner = parse_packet(
                 remaining[ei_size:], link_type=LINKTYPE_ETHERNET, decode_app=decode_app,
             )
-            return b""
+            _shift_offsets(inner, base + ei_size)
+            pkt.tunneled = inner
+            return (b"", base + ei_size)
     elif ip_proto == IPPROTO_AH:
         ah_size, next_header, ah_hdr = _ah_parser(remaining)
         if ah_size > 0 and ah_hdr is not None:
             pkt.ah = ah_hdr
             # AH is transparent: continue parsing the protected content.
-            return _parse_ip_protocol(pkt, remaining[ah_size:], next_header, decode_app)
+            return _parse_ip_protocol(
+                pkt, remaining[ah_size:], next_header, decode_app, base + ah_size,
+            )
     elif ip_proto == IPPROTO_ESP:
         e_size, _, e_hdr = _esp_parser(remaining)
         if e_size > 0 and e_hdr is not None:
             pkt.esp = e_hdr
             # ESP payload is encrypted/opaque without the key.
-            return remaining[e_size:]
+            return (remaining[e_size:], base + e_size)
     elif ip_proto is not None:
         warnings.warn(
             UnsupportedIPProtocolWarning(
@@ -721,7 +801,7 @@ def _parse_ip_protocol(
             ),
             stacklevel=3,
         )
-    return remaining
+    return (remaining, base)
 
 
 def parse_packet(
@@ -828,19 +908,24 @@ def parse_packet(
     if link_result is None:
         return pkt
     remaining, ethertype = link_result
+    # Only whole headers have been removed from the front so far, so the
+    # length difference is the offset.  That stops being true below, once the
+    # IP datagram's declared length can trim bytes off the end.
+    offset = len(data) - len(remaining)
 
-    layer_result = _parse_pppoe_and_mpls(pkt, remaining, ethertype, decode_app)
+    layer_result = _parse_pppoe_and_mpls(pkt, remaining, ethertype, decode_app, offset)
     if layer_result is None:
         return pkt
-    remaining, _ = layer_result
+    remaining, _, offset = layer_result
 
     # ── IP ────────────────────────────────────────────────────────────────────
     ip_size, ip_proto, ip_hdr = _ip_parser(remaining)
     if ip_size == 0:
-        pkt.payload = remaining
+        _set_payload(pkt, remaining, offset)
         return pkt
     pkt.ip = ip_hdr
     remaining = remaining[ip_size:]
+    offset += ip_size
 
     # Discard anything past the end of the IP datagram — for a frame below the
     # 60-byte Ethernet minimum that is the sender's zero padding, which is not
@@ -854,10 +939,13 @@ def parse_packet(
     if _is_non_first_fragment(ip_hdr):
         # Payload bytes from the middle of a datagram — there is no header
         # here to parse.  Reassemble with packeteer.parse.defragment first.
-        pkt.payload = remaining
+        _set_payload(pkt, remaining, offset)
         return pkt
 
-    pkt.payload = _parse_ip_protocol(pkt, remaining, ip_proto, decode_app)
+    payload, payload_at = _parse_ip_protocol(
+        pkt, remaining, ip_proto, decode_app, offset,
+    )
+    _set_payload(pkt, payload, payload_at)
     return pkt
 
 

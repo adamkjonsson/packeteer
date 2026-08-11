@@ -160,6 +160,44 @@ if declared > len(pkt.payload):
 In that case the parser keeps every captured byte rather than trimming to a
 length that never arrived.
 
+## Where the payload was in the frame
+
+`pkt.payload_offset` is the index of `payload[0]` within the frame you passed
+to `parse_packet`, or `None` when there is no payload:
+
+```python
+pkt = parse_packet(frame)
+frame[pkt.payload_offset:][:len(pkt.payload)] == pkt.payload    # True
+```
+
+Combined with {attr}`packeteer.pcap.PcapRecord.data_offset` it gives the
+payload's position in the **capture file**, which is what a tool citing
+provenance — "these bytes came from file offsets X–Y" — needs:
+
+```python
+with open_pcap(path="capture.pcap") as reader:
+    for record in reader:
+        pkt = parse_packet(record.data, link_type=reader.header.link_type)
+        if pkt.payload:
+            start = record.data_offset + pkt.payload_offset
+            print(f"payload at file offsets {start}–{start + len(pkt.payload)}")
+```
+
+Do not compute this as `len(frame) - len(payload)`.  That assumes the payload
+runs to the end of the frame, which is false for any frame padded to the
+60-byte Ethernet minimum: the padding sits after the IP datagram and the
+parser trims it out of `payload`, so the subtraction lands inside the padding
+and silently yields the wrong bytes.  Searching with `frame.find(payload)` is
+guesswork — a short payload can occur earlier in the frame by coincidence.
+
+For a tunnelled packet, a nested `payload_offset` is relative to the
+**outermost** frame too, so the same single addition works at any depth:
+
+```python
+inner = pkt.tunneled
+frame[inner.payload_offset:][:len(inner.payload)] == inner.payload    # True
+```
+
 ## Reading a pcap file packet-by-packet
 
 When you need the capture timestamp alongside each parsed packet, read the
