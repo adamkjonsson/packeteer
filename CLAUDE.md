@@ -40,10 +40,18 @@ warnings can only be used as a last resort, and **always ask before making such 
 - `pyproject.toml` carries the version. During development of the next release
   it is a `.devN` suffix (currently `0.8.0.dev0`); the release commit drops the
   suffix.
-- Releasing: rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`, add a fresh
-  empty `Unreleased`, set the version in `pyproject.toml`, update the link
-  definitions at the bottom of `CHANGELOG.md`, then tag `vX.Y.Z` (full three-part
-  version — the older `v0.7` style is not used going forward).
+- Releasing, in order:
+  1. Rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD` and add a fresh
+     empty `Unreleased` above it.
+  2. Drop the `.devN` suffix from the version in `pyproject.toml`.
+  3. Update the link definitions at the bottom of `CHANGELOG.md`.
+  4. Tag `vX.Y.Z` (full three-part version — the older `v0.7` style is not
+     used going forward).
+  5. Close the release's GitHub issues and its milestone.
+- **Issues close at release, not at merge.** Work can sit merged on `main`
+  under `Unreleased` for a while — often while a downstream project reviews a
+  `.devN` build — and closing an issue then would claim a fix is delivered
+  when it is not yet in any release.
 
 ## Project layout
 
