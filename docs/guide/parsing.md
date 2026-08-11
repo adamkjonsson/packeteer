@@ -120,6 +120,46 @@ from packeteer.pcap import LINKTYPE_RAW
 pkt = parse_packet(raw, link_type=LINKTYPE_RAW)
 ```
 
+## Payload boundaries and Ethernet padding
+
+`pkt.payload` holds the bytes of the IP datagram that follow the transport
+header — and nothing else.  A frame shorter than the IEEE 802.3 minimum is
+zero-padded to 60 bytes by the sender, and that padding is part of the *frame*
+but not of the *datagram*, so the parser discards it using the IP header's
+length field:
+
+```python
+raw = (PacketBuilder()
+    .ethernet()
+    .ip(src="10.0.0.1", dst="10.0.0.2")
+    .udp(dst_port=9)
+    .payload(data=b"\xde\xad\xbe\xef")
+    .build()
+)
+len(raw)                    # 60 — padded up from 46
+pkt = parse_packet(raw)
+pkt.payload                 # b"\xde\xad\xbe\xef" — the 14 padding bytes are gone
+```
+
+The declared length is available on the parsed header, as `total_length` for
+IPv4 (header + payload) and `payload_length` for IPv6 (everything after the
+40-byte fixed header, including extension headers).  Both are `None` on a
+header you constructed yourself — they are what the wire said, and the builder
+derives the real value at build time.
+
+Comparing the declared length against what you received detects a
+snaplen-truncated capture, where the record carries fewer bytes than the
+datagram claims:
+
+```python
+declared = pkt.ip.total_length - 20 - 8      # minus IPv4 and UDP headers
+if declared > len(pkt.payload):
+    print(f"truncated: {declared - len(pkt.payload)} bytes missing")
+```
+
+In that case the parser keeps every captured byte rather than trimming to a
+length that never arrived.
+
 ## Reading a pcap file packet-by-packet
 
 When you need the capture timestamp alongside each parsed packet, read the

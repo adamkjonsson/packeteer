@@ -24,7 +24,47 @@ version in pyproject.toml to 0.8.0, add a fresh Unreleased section, update the
 link definitions at the bottom of this file, and tag the release `v0.8.0`.
 -->
 
-_Nothing yet._
+### Added
+
+- **IP length fields on parsed headers** (#66) — the parser now records what
+  the IP header says about the datagram's size, so a caller can tell where the
+  datagram ends without re-reading the raw bytes.
+
+  - `IPHeader.total_length` — the IPv4 Total Length field (header + payload).
+  - `IPv6Header.payload_length` — the IPv6 Payload Length field (everything
+    after the 40-byte fixed header, including extension headers).
+  - Both default to `None` and are populated only by
+    `packeteer.parse.ip.packet_parser`; the builder ignores them and continues
+    to derive the wire value from the actual payload, so every existing
+    construction call is unaffected and the fields do not appear in packet
+    specs.
+  - Comparing the declared length against the bytes received detects a
+    snaplen-truncated capture.
+
+### Fixed
+
+- **Breaking: Ethernet padding no longer lands in `ParsedPacket.payload`**
+  (#66) — a frame below the 60-byte IEEE 802.3 minimum is zero-padded by the
+  sender, and that padding was being reported as transport payload.  A
+  minimal Ethernet/IPv4/UDP frame returned 18 bytes of zeros as its payload;
+  it now returns `b""`.  The parser trims the datagram to the length declared
+  in the IP header before the transport layer is parsed.
+
+  This matters most for stream reassembly, where the padding was bytes that
+  were never sent being injected into the stream.  Callers that relied on the
+  old behaviour to see the padding should read the frame bytes directly.
+
+  When the declared length exceeds what was captured — a snaplen-truncated
+  record — every captured byte is kept rather than trimmed, and
+  `total_length` still reports what the sender declared.
+
+### Documentation
+
+- New "Payload boundaries and Ethernet padding" section in
+  `docs/guide/parsing.md` covering the trimming rule, the two length fields,
+  and truncation detection.
+- `docs/api/packet-builder.md` corrected: `.ethernet()` was still documented
+  with `pad=False`, but the default changed to `pad=True` in 0.7.0.
 
 ---
 

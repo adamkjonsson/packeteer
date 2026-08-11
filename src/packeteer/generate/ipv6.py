@@ -138,6 +138,14 @@ class IPv6Header:
             value of *next_header* is ``0`` (HBH); this field stores the
             parsed or requested options, and *next_header* reflects the actual
             transport protocol (e.g. ``6`` for TCP).  Defaults to ``None``.
+        payload_length: Payload Length field as read from the wire — the
+            number of bytes following the 40-byte fixed header, including any
+            extension headers.  Populated by
+            :func:`packeteer.parse.ip.packet_parser`; ``None`` for
+            builder-constructed headers.  Ignored when building: the wire
+            value is always derived from the actual payload.  A value of ``0``
+            on the wire means a Jumbo Payload option carries the true length
+            (RFC 2675).  Defaults to ``None``.
 
     """
 
@@ -148,6 +156,7 @@ class IPv6Header:
     traffic_class: int = 0
     flow_label: int = 0
     hop_by_hop: HopByHopOptions | None = None
+    payload_length: int | None = None
 
 
 def _build_ipv6_header(hdr: IPv6Header, payload: bytes) -> bytes:

@@ -366,6 +366,8 @@ def _parse_pppoe_and_mpls(
     return remaining, ethertype
 
 
+_IPV6_FIXED_HEADER_LEN: int = 40
+
 _DNS_PORTS:  frozenset[int] = frozenset({53, 5353})
 _DHCP_PORTS: frozenset[int] = frozenset({67, 68})
 _HTTP_PORTS: frozenset[int] = frozenset({80, 8080})
@@ -501,6 +503,41 @@ def _try_parse_gtpu(pkt: ParsedPacket, payload: bytes) -> bytes | None:
         pkt.tunneled = parse_packet(rest, link_type=LINKTYPE_RAW)
         return b""
     return rest
+
+
+def _ip_payload_size(ip_hdr: IPHeader | IPv6Header | None, ip_size: int) -> int | None:
+    """Return the datagram's declared payload size, or ``None`` when unknown.
+
+    The result is the number of bytes the IP header says follow it, so a
+    caller can discard anything beyond that — most importantly the zero
+    padding a sender adds to reach the 60-byte Ethernet minimum, which is part
+    of the frame but not part of the datagram.
+
+    Args:
+        ip_hdr: Parsed IPv4 or IPv6 header.
+        ip_size: Bytes consumed by the header, including IPv4 options or the
+            IPv6 extension headers already decoded into *ip_hdr*.
+
+    Returns:
+        Declared payload size in bytes, or ``None`` when the header does not
+        state one usably — a builder-constructed header, an IPv6 Jumbo Payload
+        (length ``0``, RFC 2675), or a length shorter than the header itself.
+
+    """
+    if isinstance(ip_hdr, IPHeader):
+        if ip_hdr.total_length is None or ip_hdr.total_length < ip_size:
+            return None
+        return ip_hdr.total_length - ip_size
+    if isinstance(ip_hdr, IPv6Header):
+        # payload_length covers everything after the 40-byte fixed header,
+        # including any extension headers already consumed by the parser.
+        if not ip_hdr.payload_length:
+            return None
+        ext_size = ip_size - _IPV6_FIXED_HEADER_LEN
+        if ip_hdr.payload_length < ext_size:
+            return None
+        return ip_hdr.payload_length - ext_size
+    return None
 
 
 def _parse_ip_protocol(
@@ -682,6 +719,15 @@ def parse_packet(data: bytes, *, link_type: int = LINKTYPE_ETHERNET) -> ParsedPa
         return pkt
     pkt.ip = ip_hdr
     remaining = remaining[ip_size:]
+
+    # Discard anything past the end of the IP datagram — for a frame below the
+    # 60-byte Ethernet minimum that is the sender's zero padding, which is not
+    # part of the datagram and must not reach the payload.  When the declared
+    # size exceeds what was captured (a snaplen-truncated record) keep every
+    # captured byte instead.
+    declared = _ip_payload_size(ip_hdr, ip_size)
+    if declared is not None and declared < len(remaining):
+        remaining = remaining[:declared]
 
     pkt.payload = _parse_ip_protocol(pkt, remaining, ip_proto)
     return pkt

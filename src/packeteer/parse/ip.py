@@ -69,6 +69,7 @@ def _parse_ipv4(data: bytes) -> tuple[int, int | None, IPHeader | None]:
             return (0, None, None)
 
         tos = data[1]
+        total_length = struct.unpack("!H", data[2:4])[0]
         identification = struct.unpack("!H", data[4:6])[0]
         flags_frag = struct.unpack("!H", data[6:8])[0]
         flags = (flags_frag >> 13) & 0x7
@@ -83,6 +84,7 @@ def _parse_ipv4(data: bytes) -> tuple[int, int | None, IPHeader | None]:
             ttl=ttl, tos=tos,
             identification=identification,
             flags=flags, fragment_offset=fragment_offset,
+            total_length=total_length,
         )
 
     except struct.error:
@@ -140,6 +142,7 @@ def _parse_ipv6(data: bytes) -> tuple[int, int | None, IPv6Header | None]:
         version_tc_fl = struct.unpack("!I", data[0:4])[0]
         traffic_class = (version_tc_fl >> 20) & 0xFF
         flow_label = version_tc_fl & 0xFFFFF
+        payload_length = struct.unpack("!H", data[4:6])[0]
         next_header = data[6]
         hop_limit = data[7]
         src = socket.inet_ntop(socket.AF_INET6, data[8:24])
@@ -167,6 +170,7 @@ def _parse_ipv6(data: bytes) -> tuple[int, int | None, IPv6Header | None]:
             traffic_class=traffic_class,
             flow_label=flow_label,
             hop_by_hop=hop_by_hop,
+            payload_length=payload_length,
         )
 
     except struct.error:

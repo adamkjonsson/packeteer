@@ -49,6 +49,13 @@ class IPHeader:
             Defaults to ``0b010`` (DF set, no fragmentation).
         fragment_offset: 13-bit offset (in 8-byte units) of this fragment
             within the original datagram.  Defaults to ``0``.
+        total_length: Total Length field as read from the wire — the size of
+            the IP header plus its payload, in bytes.  Populated by
+            :func:`packeteer.parse.ip.packet_parser`; ``None`` for
+            builder-constructed headers.  Ignored when building: the wire
+            value is always derived from the actual payload.  A value larger
+            than the captured bytes indicates a snaplen-truncated capture.
+            Defaults to ``None``.
 
     """
 
@@ -60,6 +67,7 @@ class IPHeader:
     identification: int = 0
     flags: int = 0b010       # DF bit
     fragment_offset: int = 0
+    total_length: int | None = None
 
 
 def _build_ip_header(hdr: IPHeader, payload: bytes) -> bytes:

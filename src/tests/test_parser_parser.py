@@ -211,7 +211,6 @@ class TestParsePacketRawIP(unittest.TestCase):
 
 class TestParsePacketPayload(unittest.TestCase):
     def test_payload_captured(self):
-        # Use ≥ 18 bytes to avoid Ethernet minimum-frame zero-padding
         payload = b"\xca\xfe\xba\xbe" * 5
         raw = (PacketBuilder().ethernet()
                .ip(src="10.0.0.1", dst="10.0.0.2")
@@ -219,13 +218,92 @@ class TestParsePacketPayload(unittest.TestCase):
         pkt = parse_packet(raw)
         self.assertEqual(pkt.payload, payload)
 
-    def test_zero_payload_tcp_has_only_padding(self):
-        # 14 (eth) + 20 (ip) + 20 (tcp) = 54 bytes; no padding with pad=False default.
+    def test_zero_payload_tcp_has_empty_payload(self):
+        # 14 (eth) + 20 (ip) + 20 (tcp) = 54 bytes, padded to the 60-byte
+        # Ethernet minimum.  The 6 padding bytes are not part of the datagram.
         raw = (PacketBuilder().ethernet()
                .ip(src="10.0.0.1", dst="10.0.0.2")
                .tcp().build())
+        self.assertEqual(len(raw), 60)
         pkt = parse_packet(raw)
-        self.assertEqual(pkt.payload, bytes(len(pkt.payload)))
+        self.assertEqual(pkt.payload, b"")
+
+    def test_short_payload_keeps_padding_out(self):
+        # 14 + 20 + 8 (udp) + 4 = 46 bytes, padded to 60: the padding must not
+        # be appended to the 4-byte payload.
+        payload = b"\xde\xad\xbe\xef"
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .udp().payload(data=payload).build())
+        self.assertEqual(len(raw), 60)
+        pkt = parse_packet(raw)
+        self.assertEqual(pkt.payload, payload)
+
+    def test_ipv6_padding_not_in_payload(self):
+        raw = (PacketBuilder().ethernet()
+               .ip(src="::1", dst="::2")
+               .udp().build())
+        pkt = parse_packet(raw)
+        self.assertEqual(pkt.payload, b"")
+
+    def test_truncated_capture_keeps_captured_bytes(self):
+        # A snaplen-truncated record declares more than it carries; every
+        # captured byte is kept rather than trimmed away.
+        payload = b"\xab" * 40
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .udp().payload(data=payload).build())
+        pkt = parse_packet(raw[:-10])
+        self.assertEqual(pkt.payload, payload[:-10])
+        self.assertEqual(pkt.ip.total_length, 20 + 8 + len(payload))
+
+
+class TestParsedIPLength(unittest.TestCase):
+    def test_ipv4_total_length_populated(self):
+        payload = b"\xaa" * 32
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .udp().payload(data=payload).build())
+        pkt = parse_packet(raw)
+        self.assertEqual(pkt.ip.total_length, 20 + 8 + len(payload))
+
+    def test_ipv6_payload_length_populated(self):
+        payload = b"\xaa" * 32
+        raw = (PacketBuilder().ethernet()
+               .ip(src="::1", dst="::2")
+               .udp().payload(data=payload).build())
+        pkt = parse_packet(raw)
+        self.assertEqual(pkt.ip.payload_length, 8 + len(payload))
+
+    def test_ipv6_payload_length_covers_extension_headers(self):
+        # payload_length counts the Hop-by-Hop header too, so the payload is
+        # still trimmed at the right place.
+        from packeteer.generate.ipv6 import RouterAlertOption
+        payload = b"\xaa" * 24
+        raw = (PacketBuilder().ethernet()
+               .ip(src="::1", dst="::2")
+               .hop_by_hop_options([RouterAlertOption(value=0)])
+               .udp().payload(data=payload).build())
+        pkt = parse_packet(raw)
+        self.assertEqual(pkt.payload, payload)
+        self.assertEqual(pkt.ip.payload_length, 8 + 8 + len(payload))
+
+    def test_ipv6_zero_payload_length_does_not_trim(self):
+        # payload_length == 0 means a Jumbo Payload option carries the real
+        # length (RFC 2675); the declared value must not be taken literally.
+        payload = b"\xaa" * 24
+        raw = bytearray(PacketBuilder().ethernet()
+                        .ip(src="::1", dst="::2")
+                        .udp().payload(data=payload).build())
+        raw[18:20] = b"\x00\x00"        # IPv6 payload length, after the 14-byte Ethernet header
+        pkt = parse_packet(bytes(raw))
+        self.assertEqual(pkt.payload, payload)
+
+    def test_length_fields_are_none_when_built(self):
+        # Builder-constructed headers derive the wire value at build time and
+        # leave the parse-only fields unset.
+        self.assertIsNone(IPHeader("10.0.0.1", "10.0.0.2", 6).total_length)
+        self.assertIsNone(IPv6Header("::1", "::2", 6).payload_length)
 
 
 class TestParsePacketFailures(unittest.TestCase):
