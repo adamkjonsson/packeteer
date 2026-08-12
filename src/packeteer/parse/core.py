@@ -37,6 +37,7 @@ import socket
 import struct
 import warnings
 from collections import Counter
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -73,11 +74,15 @@ from packeteer.pcap import (
     LINKTYPE_LINUX_SLL,
     LINKTYPE_LINUX_SLL2,
     LINKTYPE_RAW,
+    PcapFile,
     PcapFileHeader,
+    PcapRecord,
+    open_pcap,
     read_pcap,
 )
 
 from .arp import packet_parser as _arp_parser
+from .defragment import Defragmenter
 from .dns import parse_dns_tcp as _parse_dns_tcp
 from .dns import parse_dns_udp as _parse_dns_udp
 from .etherip import packet_parser as _etherip_parser
@@ -257,6 +262,10 @@ class ParsedPacket:
         ts_sec: Capture timestamp — whole seconds (from pcap record).
         ts_frac: Capture timestamp — sub-second fraction (microseconds or
             nanoseconds depending on the pcap file's magic number).
+        source_records: Capture records this packet came from, populated by
+            :func:`iter_packets` and empty otherwise.  One record for an
+            ordinary packet; for a reassembled datagram, every fragment that
+            contributed, in arrival order.
 
     """
 
@@ -284,6 +293,7 @@ class ParsedPacket:
     payload_offset: int | None = None
     ts_sec:    int = 0
     ts_frac:   int = 0
+    source_records: list[PcapRecord] = field(default_factory=list)
 
 
 def _set_payload(pkt: ParsedPacket, payload: bytes, offset: int) -> None:
@@ -1033,6 +1043,24 @@ def _packet_to_spec(pkt: ParsedPacket) -> dict[str, Any]:
     return cfg
 
 
+def _defragmented_records(
+    pcap: PcapFile,
+) -> Iterator[tuple[bytes, int, int]]:
+    """Yield a capture's records with fragmented datagrams reassembled.
+
+    Each reassembled datagram takes the timestamp of the fragment that
+    completed it.  Incomplete datagrams are dropped.
+    """
+    engine = Defragmenter(link_type=pcap.header.link_type)
+    tick_hz = pcap.header.tick_hz
+    for data, ts_sec, ts_frac in pcap.packets:
+        when = ts_sec + ts_frac / tick_hz
+        for assembled in engine.feed(data, when, token=(ts_sec, ts_frac)):
+            last_sec, last_frac = assembled.tokens[-1]
+            yield (assembled.frame, last_sec, last_frac)
+    engine.flush()
+
+
 def parse_pcap_file(
     *,
     path: str | os.PathLike | None = None,
@@ -1041,6 +1069,7 @@ def parse_pcap_file(
     packet_filter: PacketFilter | None = None,
     link_type: int | None = None,
     decode_app: bool = True,
+    defragment: bool = False,
 ) -> str:
     """Parse every packet in a pcap file and return a packet spec string.
 
@@ -1076,6 +1105,14 @@ def parse_pcap_file(
             raw bytes in the spec's ``payload`` section instead of being
             decoded into ``dns`` / ``dhcp`` / ``http`` sections.  Use it when
             the byte-exact payload matters more than the decoded view.
+        defragment: When ``True``, fragmented datagrams are reassembled and
+            each appears once, as a whole packet.  Off by default because a
+            spec is the round-trip format: a fragmented capture parses and
+            rebuilds byte-for-byte as it is, whereas reassembling first means
+            ``packeteer build`` emits unfragmented packets and the capture no
+            longer round-trips.  Datagrams whose fragments never all arrive
+            are dropped.  For analysis rather than round-tripping, prefer
+            :func:`iter_packets`, where reassembly is the default.
 
     Returns:
         A JSON string whose top-level structure matches the format accepted by
@@ -1094,9 +1131,13 @@ def parse_pcap_file(
     packet_configs: list[dict[str, Any]] = []
     unsupported: Counter[int] = Counter()
 
+    records: Iterable[tuple[bytes, int, int]] = pcap.packets
+    if defragment:
+        records = _defragmented_records(pcap)
+
     with warnings.catch_warnings(record=True) as _caught:
         warnings.filterwarnings("always", category=UnsupportedIPProtocolWarning)
-        for packet_num, record in enumerate(pcap.packets, 1):
+        for packet_num, record in enumerate(records, 1):
             pkt = parse_pcap_packet(record, pcap.header, decode_app=decode_app)
             cfg = _packet_to_spec(pkt)
             cfg["packet_metadata"] = {
@@ -1140,3 +1181,97 @@ def parse_pcap_file(
         global_output.setdefault("from_file", str(path))
 
     return to_json_string(to_packet_spec(packet_configs, metadata=global_output))
+
+
+def iter_packets(
+    *,
+    path: str | os.PathLike | None = None,
+    file_object: io.RawIOBase | io.BufferedIOBase | None = None,
+    link_type: int | None = None,
+    decode_app: bool = True,
+    defragment: bool = True,
+) -> Iterator[ParsedPacket]:
+    """Read a capture and yield whole, parsed packets.
+
+    The convenient front door: it opens the file, reassembles fragmented
+    datagrams, and parses each result, which is the three-step sequence a
+    consumer otherwise writes by hand.  Packets stream one at a time, so a
+    capture larger than memory is fine.
+
+    .. code-block:: python
+
+        from packeteer.parse import iter_packets
+
+        for pkt in iter_packets(path="capture.pcap"):
+            if pkt.transport is not None:
+                print(pkt.ip.src, "->", pkt.ip.dst, len(pkt.payload))
+
+    Fragments are reassembled by default because a caller asking for packets
+    almost never wants the pieces: a fragmented datagram would otherwise
+    arrive as several packets, only the first with a transport header.  Pass
+    ``defragment=False`` to see the capture's records exactly as they are.
+
+    Each packet carries :attr:`ParsedPacket.source_records`, the capture
+    records behind it — one for an ordinary packet, several for a reassembled
+    datagram.  With :attr:`~packeteer.pcap.PcapRecord.data_offset` and
+    :attr:`ParsedPacket.payload_offset` that is enough to cite where a
+    payload's bytes live in the file.
+
+    Exactly one of *path* or *file_object* must be supplied.
+
+    Args:
+        path: Path to the ``.pcap`` or ``.pcapng`` file.
+        file_object: Readable binary file-like object positioned at the start
+            of the capture.  It is not closed.
+        link_type: Override the link-layer type recorded in the file header.
+        decode_app: Passed to :func:`parse_packet`.  ``False`` keeps DNS,
+            DHCP, and HTTP payloads as raw bytes.
+        defragment: When ``True`` (default), fragments are reassembled and a
+            datagram is yielded once, where its final fragment arrived.  A
+            datagram whose fragments never all arrive is dropped — use
+            :class:`~packeteer.parse.defragment.Defragmenter` directly to see
+            what was lost.
+
+    Yields:
+        One :class:`ParsedPacket` per whole packet.  ``ts_sec`` / ``ts_frac``
+        come from the record that completed it, so for a reassembled datagram
+        they are the last contributing fragment's; ``source_records[0]`` has
+        the first fragment's time.
+
+    Raises:
+        ValueError: If neither or both of *path* / *file_object* are given, or
+            the capture is malformed.
+        OSError: If *path* cannot be opened for reading.
+
+    """
+    with open_pcap(path=path, file_object=file_object, link_type=link_type) as reader:
+        resolved = reader.header.link_type
+        tick_hz = reader.header.tick_hz
+
+        if not defragment:
+            for record in reader:
+                yield _packet_from_records(
+                    record.data, resolved, decode_app, [record],
+                )
+            return
+
+        engine = Defragmenter(link_type=resolved)
+        for record in reader:
+            when = record.ts_sec + record.ts_frac / tick_hz
+            for assembled in engine.feed(record.data, when, token=record):
+                yield _packet_from_records(
+                    assembled.frame, resolved, decode_app, assembled.tokens,
+                )
+        engine.flush()
+
+
+def _packet_from_records(
+    frame: bytes, link_type: int, decode_app: bool, records: list[PcapRecord],
+) -> ParsedPacket:
+    """Parse *frame* and attach the capture records it came from."""
+    pkt = parse_packet(frame, link_type=link_type, decode_app=decode_app)
+    last = records[-1]
+    pkt.ts_sec = last.ts_sec
+    pkt.ts_frac = last.ts_frac
+    pkt.source_records = list(records)
+    return pkt

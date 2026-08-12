@@ -26,6 +26,44 @@ link definitions at the bottom of this file, and tag the release `v0.8.0`.
 
 ### Added
 
+- **`iter_packets` — read a capture as whole, parsed packets** (#73) — opening
+  a file, reassembling fragments, and parsing each result was a three-step
+  incantation every consumer wrote by hand, and skipping the middle step is
+  the common mistake: a fragmented datagram otherwise arrives as several
+  packets, only the first with a transport header.
+
+  ```python
+  from packeteer.parse import iter_packets
+
+  for pkt in iter_packets(path="capture.pcap"):
+      print(pkt.ip.src, "->", pkt.ip.dst, len(pkt.payload))
+  ```
+
+  - Reassembly is **on by default** here, because a caller asking for packets
+    almost never wants the pieces.  `defragment=False` yields the capture's
+    records as they are.  `link_type` and `decode_app` are forwarded.
+  - Packets stream one at a time, so a capture larger than memory is fine.
+  - New `ParsedPacket.source_records` lists the capture records behind each
+    packet — one for an ordinary packet, every contributing fragment for a
+    reassembled datagram.  With `PcapRecord.data_offset` (#62) and
+    `payload_offset` (#71) that is enough to cite where a payload's bytes
+    live in the file.
+  - `ts_sec` / `ts_frac` come from the record that completed the packet;
+    `source_records[0]` has the first fragment's time.
+  - Datagrams whose fragments never all arrive are dropped; use
+    `Defragmenter` directly to see what was lost.
+
+- **Opt-in reassembly for the packet-spec path** (#73) —
+  `parse_pcap_file(defragment=True)` and `packeteer parse --defragment`
+  reassemble fragmented datagrams into one packet each.
+
+  It is **off by default there**, unlike `iter_packets`, because a spec is the
+  round-trip format: a fragmented capture currently parses and rebuilds
+  byte-for-byte, and reassembling first means `packeteer build` emits
+  unfragmented packets and the capture no longer round-trips.  The two
+  defaults differ because the two entry points are for different jobs —
+  analysis versus reproduction.
+
 - **Fragment provenance from `Defragmenter`** (#72) — `feed()` returned bare
   frames, so a reassembled datagram carried nothing identifying the fragments
   it was built from: not their timestamps, not their positions in the capture,
@@ -308,6 +346,12 @@ link definitions at the bottom of this file, and tag the release `v0.8.0`.
 
 ### Documentation
 
+- `docs/guide/parsing.md` now opens with "Reading a capture as packets"
+  (`iter_packets`), with the spec and single-frame entry points below it and a
+  note on why the spec path does not reassemble by default;
+  `docs/cli/parse.md` documents `--defragment`; and
+  `docs/guide/defragmenting.md` points at `iter_packets` first, for the
+  callers who never need the module directly.
 - New "Tracking which fragments made a datagram" section in
   `docs/guide/defragmenting.md` covering tokens, `AssembledFrame`, and the
   arrival-order caveat; `AssembledFrame` added to `docs/api/fragmentation.md`.

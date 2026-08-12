@@ -1,6 +1,8 @@
 """Tests for packeteer.parse.defragment — IP reassembly."""
 from __future__ import annotations
 
+import io
+import json
 import socket
 import struct
 import unittest
@@ -11,7 +13,7 @@ from packeteer.generate.ethernet import EthernetHeader
 from packeteer.generate.fragmentation import fragment_ipv4, fragment_ipv6
 from packeteer.generate.ip import IPHeader
 from packeteer.generate.ipv6 import IPv6Header
-from packeteer.parse import parse_packet
+from packeteer.parse import iter_packets, parse_packet, parse_pcap_file
 from packeteer.parse.defragment import (
     AssembledFrame,
     Defragmenter,
@@ -19,7 +21,7 @@ from packeteer.parse.defragment import (
     defragment_ipv4,
     defragment_ipv6,
 )
-from packeteer.pcap import LINKTYPE_RAW
+from packeteer.pcap import LINKTYPE_RAW, write_pcap
 
 _ETH = EthernetHeader("00:00:00:00:00:02", "00:00:00:00:00:01")
 _PAYLOAD = bytes(range(256)) * 8
@@ -514,3 +516,137 @@ class TestBuilderLaterFragment(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestIterPackets(unittest.TestCase):
+    """The front door: open, reassemble, and parse in one call."""
+
+    def setUp(self):
+        warnings.simplefilter("ignore")
+
+    def _capture(self, frames: list[bytes]) -> io.BytesIO:
+        buf = io.BytesIO()
+        write_pcap([(f, i, 0) for i, f in enumerate(frames)], file_object=buf)
+        buf.seek(0)
+        return buf
+
+    def test_fragments_arrive_as_one_packet(self):
+        frames = _v4_fragments()
+        packets = list(iter_packets(file_object=self._capture(frames)))
+        self.assertEqual(len(packets), 1)
+        self.assertEqual(packets[0].payload, _PAYLOAD)
+
+    def test_transport_header_available(self):
+        packets = list(iter_packets(file_object=self._capture(_v4_fragments())))
+        self.assertEqual(packets[0].transport.dst_port, 53)
+
+    def test_source_records_name_every_fragment(self):
+        frames = _v4_fragments()
+        packets = list(iter_packets(file_object=self._capture(frames)))
+        self.assertEqual(len(packets[0].source_records), len(frames))
+
+    def test_unfragmented_packet_has_one_source_record(self):
+        packets = list(iter_packets(file_object=self._capture([_plain_packet()])))
+        self.assertEqual(len(packets[0].source_records), 1)
+
+    def test_defragment_false_yields_every_record(self):
+        frames = _v4_fragments()
+        packets = list(iter_packets(
+            file_object=self._capture(frames), defragment=False,
+        ))
+        self.assertEqual(len(packets), len(frames))
+        self.assertIsNone(packets[1].transport)      # a later fragment
+
+    def test_timestamp_comes_from_the_completing_fragment(self):
+        frames = _v4_fragments()
+        packets = list(iter_packets(file_object=self._capture(frames)))
+        self.assertEqual(packets[0].ts_sec, len(frames) - 1)
+        self.assertEqual(packets[0].source_records[0].ts_sec, 0)
+
+    def test_payload_offset_composes_with_data_offset(self):
+        # The point of #71, #72 and #73 together: cite a payload's bytes.
+        payload = b"\xde\xad\xbe\xef" * 8
+        frame = (PacketBuilder().ethernet()
+                 .ip(src="10.0.0.1", dst="10.0.0.2")
+                 .udp().payload(data=payload).build())
+        buf = self._capture([frame])
+        blob = buf.getvalue()
+        buf.seek(0)
+        pkt = next(iter(iter_packets(file_object=buf)))
+        start = pkt.source_records[0].data_offset + pkt.payload_offset
+        self.assertEqual(blob[start: start + len(pkt.payload)], payload)
+
+    def test_incomplete_datagram_is_dropped(self):
+        packets = list(iter_packets(
+            file_object=self._capture(_v4_fragments()[:-1]),
+        ))
+        self.assertEqual(packets, [])
+
+    def test_order_preserved_around_a_datagram(self):
+        plain = _plain_packet()
+        frames = [plain, *_v4_fragments(), plain]
+        packets = list(iter_packets(file_object=self._capture(frames)))
+        self.assertEqual(len(packets), 3)
+        self.assertEqual(packets[1].payload, _PAYLOAD)
+
+    def test_decode_app_is_forwarded(self):
+        http = b"GET / HTTP/1.1\r\nHost: x\r\n\r\n"
+        frame = (PacketBuilder().ethernet()
+                 .ip(src="10.0.0.1", dst="10.0.0.2")
+                 .tcp(dst_port=80).payload(data=http).build())
+        buf = self._capture([frame])
+        self.assertIsNotNone(next(iter(iter_packets(file_object=buf))).http)
+        buf.seek(0)
+        pkt = next(iter(iter_packets(file_object=buf, decode_app=False)))
+        self.assertIsNone(pkt.http)
+        self.assertEqual(pkt.payload, http)
+
+    def test_requires_exactly_one_source(self):
+        with self.assertRaises(ValueError):
+            list(iter_packets())
+        with self.assertRaises(ValueError):
+            list(iter_packets(path="x.pcap", file_object=io.BytesIO()))
+
+
+class TestParsePcapFileDefragment(unittest.TestCase):
+    """The spec path keeps fragments by default, to stay round-trippable."""
+
+    def setUp(self):
+        warnings.simplefilter("ignore")
+
+    def _spec(self, frames: list[bytes], **kwargs: object) -> dict:
+        buf = io.BytesIO()
+        write_pcap([(f, i, 0) for i, f in enumerate(frames)], file_object=buf)
+        buf.seek(0)
+        return json.loads(parse_pcap_file(file_object=buf, **kwargs))
+
+    def test_fragments_kept_by_default(self):
+        frames = _v4_fragments()
+        self.assertEqual(len(self._spec(frames)["packets"]), len(frames))
+
+    def test_defragment_true_yields_whole_datagrams(self):
+        spec = self._spec(_v4_fragments(), defragment=True)
+        self.assertEqual(len(spec["packets"]), 1)
+        self.assertIn("transport", spec["packets"][0])
+
+    def test_default_still_round_trips_byte_for_byte(self):
+        # Reassembling by default would end this guarantee, which is why it
+        # is opt-in on the spec path.
+        import os
+        import subprocess
+        import sys
+        import tempfile
+
+        from packeteer.pcap import read_pcap
+        frames = _v4_fragments()
+        directory = tempfile.mkdtemp()
+        src = os.path.join(directory, "in.pcap")
+        spec = os.path.join(directory, "spec.json")
+        out = os.path.join(directory, "out.pcap")
+        write_pcap([(f, 0, 0) for f in frames], path=src)
+        subprocess.run([sys.executable, "-m", "packeteer", "parse", src, "-o", spec],
+                       check=True, capture_output=True)
+        subprocess.run([sys.executable, "-m", "packeteer", "build", spec, "--pcap", out],
+                       check=True, capture_output=True)
+        rebuilt = [data for data, _, _ in read_pcap(path=out).packets]
+        self.assertEqual(rebuilt[1:], frames[1:])

@@ -7,6 +7,12 @@ therefore has to reassemble those fragments or account for them: treating each
 one as its own packet silently corrupts a stream, because bytes that belong in
 the middle of a datagram get read as headers.
 
+Most callers do not need this module directly:
+{func}`~packeteer.parse.core.iter_packets` reassembles by default, so
+`for pkt in iter_packets(path=...)` already yields whole datagrams.  Reach for
+the functions here when you are working with frames you already have, or when
+you need to see which fragments went into a datagram and which never arrived.
+
 `packeteer.parse.defragment` is the counterpart to
 {func}`~packeteer.generate.fragmentation.fragment_ipv4` and
 {func}`~packeteer.generate.fragmentation.fragment_ipv6`.  Like them it works

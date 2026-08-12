@@ -7,6 +7,7 @@ from .core import (
     ParsedPacket,
     TimestampResolutionWarning,
     UnsupportedIPProtocolWarning,
+    iter_packets,
     parse_packet,
     parse_pcap_file,
     parse_pcap_packet,
@@ -39,6 +40,7 @@ from .vlan import packet_parser as vlan_packet_parser
 from .vxlan import packet_parser as vxlan_packet_parser
 
 __all__ = [
+    "iter_packets",
     "parse_packet",
     "parse_pcap_packet",
     "parse_pcap_file",

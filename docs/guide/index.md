@@ -9,7 +9,7 @@ All public names are importable from six top-level packages:
 
 | Package | What it contains |
 |---------|-----------------|
-| `packeteer.parse` | `parse_packet`, `parse_pcap_file`, `pcap_info`, `defragment`, per-protocol parsers |
+| `packeteer.parse` | `iter_packets`, `parse_packet`, `parse_pcap_file`, `pcap_info`, `defragment`, per-protocol parsers |
 | `packeteer.generate` | `PacketBuilder`, session builders, stream generators, encapsulation types |
 | `packeteer.filter` | `PacketFilter` |
 | `packeteer.sanitise` | `sanitise`, `SanitiseOptions` |
