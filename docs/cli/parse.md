@@ -2,6 +2,7 @@
 
 ```
 packeteer parse <capture> [--output FILE] [--link-type TYPE]
+                          [--defragment] [--no-decode-app]
                           [--proto PROTO] [--port PORTS] [--src-port PORTS] [--dst-port PORTS]
                           [--src ADDR] [--dst ADDR] [--host ADDR] [--app APP]
 ```
@@ -22,6 +23,24 @@ by hand or programmatically before rebuilding.
 | `--output FILE` / `-o FILE` | Write packet spec to FILE instead of stdout |
 | `--link-type TYPE` | Override the link-layer type in the file header (see below) |
 | `--no-decode-app` | Keep DNS/DHCP/HTTP payloads as raw bytes (see below) |
+| `--defragment` | Reassemble fragmented IP datagrams (see below) |
+
+### Reassembling fragmented datagrams
+
+A fragmented datagram is emitted as it was captured: several packets, only the
+first carrying a transport header.  That keeps the spec round-trippable —
+`parse` then `build` reproduces the original frames byte-for-byte.  Pass
+`--defragment` to reassemble instead, so each datagram appears once as a whole
+packet:
+
+```bash
+packeteer parse capture.pcap --defragment
+```
+
+The reassembled spec no longer rebuilds the original fragments: `packeteer
+build` emits one unfragmented packet per datagram.  Datagrams whose fragments
+are not all present are dropped.  For analysis in Python rather than a spec,
+{func}`~packeteer.parse.core.iter_packets` reassembles by default.
 
 ### Keeping application payloads raw
 

@@ -26,6 +26,92 @@ link definitions at the bottom of this file, and tag the release `v0.8.0`.
 
 ### Added
 
+- **`iter_packets` — read a capture as whole, parsed packets** (#73) — opening
+  a file, reassembling fragments, and parsing each result was a three-step
+  incantation every consumer wrote by hand, and skipping the middle step is
+  the common mistake: a fragmented datagram otherwise arrives as several
+  packets, only the first with a transport header.
+
+  ```python
+  from packeteer.parse import iter_packets
+
+  for pkt in iter_packets(path="capture.pcap"):
+      print(pkt.ip.src, "->", pkt.ip.dst, len(pkt.payload))
+  ```
+
+  - Reassembly is **on by default** here, because a caller asking for packets
+    almost never wants the pieces.  `defragment=False` yields the capture's
+    records as they are.  `link_type` and `decode_app` are forwarded.
+  - Packets stream one at a time, so a capture larger than memory is fine.
+  - New `ParsedPacket.source_records` lists the capture records behind each
+    packet — one for an ordinary packet, every contributing fragment for a
+    reassembled datagram.  With `PcapRecord.data_offset` (#62) and
+    `payload_offset` (#71) that is enough to cite where a payload's bytes
+    live in the file.
+  - `ts_sec` / `ts_frac` come from the record that completed the packet;
+    `source_records[0]` has the first fragment's time.
+  - Datagrams whose fragments never all arrive are dropped; use
+    `Defragmenter` directly to see what was lost.
+
+- **Opt-in reassembly for the packet-spec path** (#73) —
+  `parse_pcap_file(defragment=True)` and `packeteer parse --defragment`
+  reassemble fragmented datagrams into one packet each.
+
+  It is **off by default there**, unlike `iter_packets`, because a spec is the
+  round-trip format: a fragmented capture currently parses and rebuilds
+  byte-for-byte, and reassembling first means `packeteer build` emits
+  unfragmented packets and the capture no longer round-trips.  The two
+  defaults differ because the two entry points are for different jobs —
+  analysis versus reproduction.
+
+- **Fragment provenance from `Defragmenter`** (#72) — `feed()` returned bare
+  frames, so a reassembled datagram carried nothing identifying the fragments
+  it was built from: not their timestamps, not their positions in the capture,
+  not their byte offsets.  The failure path was well served by
+  `IncompleteDatagram`; the success path reported nothing.
+
+  - `feed(frame, ts, token=…)` now returns a list of `AssembledFrame`, with
+    `frame`, `tokens` (every contributing fragment's token, in arrival order),
+    and `fragment_count` (`1` for a frame that passed through untouched).
+  - The token is opaque and never inspected — pass a `PcapRecord`, a packet
+    number, or a file offset and get full provenance back, while the library
+    stays agnostic about what provenance means.  A reassembled datagram's
+    bytes span several discontiguous ranges of the capture, and that set
+    cannot be recovered from the output frame.
+  - `fragment_count == 1` is now the documented way to spot a passthrough,
+    replacing an identity check (`result[0] is frame`) that worked but was
+    never promised.
+  - `IncompleteDatagram` gains `tokens` for the fragments that did arrive, so
+    a report can name the packets that were lost as precisely as it names the
+    ones that completed.
+  - `defragment()` / `defragment_ipv4` / `defragment_ipv6` are unchanged and
+    still yield bare frames — that wrapper exists for callers who only want
+    the bytes.
+  - This changes `feed`'s return type, but `Defragmenter` shipped in this same
+    unreleased cycle, so no released version is affected and no `Breaking:`
+    note applies.
+
+- **`ParsedPacket.payload_offset`** (#71) — the index of `payload[0]` within
+  the frame passed to `parse_packet`, or `None` when there is no payload.
+  Every layer parser already returns a header size and the walk slices by it,
+  so the offset was known during the parse and then discarded.
+
+  - Added to `PcapRecord.data_offset` it gives the payload's byte offset
+    within the capture file, which is what a consumer citing provenance —
+    "these bytes came from file offsets X–Y" — needs.  Without it the two
+    additions from #62 and #66 did not compose.
+  - It cannot be derived as `len(frame) - len(payload)`: that assumes the
+    payload runs to the end of the frame, which #66 deliberately made false.
+    On a frame padded to the 60-byte Ethernet minimum the subtraction lands
+    inside the padding and yields the wrong bytes with no error.
+  - For a tunnelled packet the offset on a nested `tunneled` packet is
+    relative to the **outer** frame as well, so one addition works at any
+    depth — verified through VXLAN, GENEVE, GTP-U, GRE, IP-in-IP, and
+    doubly-nested GRE.
+  - Per-layer offsets (`ip_offset`, `transport_offset`, …) were considered and
+    deferred to #74; `payload_offset` alone closes the gap this was raised
+    for.
+
 - **IP defragmentation** (#65) — `fragment_ipv4` / `fragment_ipv6` had no
   parse-side counterpart, so a fragmented datagram could only be dropped or
   reassembled by the caller.  New `packeteer.parse.defragment`, exported from
@@ -260,6 +346,19 @@ link definitions at the bottom of this file, and tag the release `v0.8.0`.
 
 ### Documentation
 
+- `docs/guide/parsing.md` now opens with "Reading a capture as packets"
+  (`iter_packets`), with the spec and single-frame entry points below it and a
+  note on why the spec path does not reassemble by default;
+  `docs/cli/parse.md` documents `--defragment`; and
+  `docs/guide/defragmenting.md` points at `iter_packets` first, for the
+  callers who never need the module directly.
+- New "Tracking which fragments made a datagram" section in
+  `docs/guide/defragmenting.md` covering tokens, `AssembledFrame`, and the
+  arrival-order caveat; `AssembledFrame` added to `docs/api/fragmentation.md`.
+- New "Where the payload was in the frame" section in `docs/guide/parsing.md`
+  covering `payload_offset`, combining it with `PcapRecord.data_offset` to
+  cite file offsets, and why the two obvious shortcuts (length subtraction and
+  `frame.find`) are wrong.
 - New `docs/guide/defragmenting.md` chapter covering reassembly, what a
   fragment looks like before it, incomplete datagrams, and the overlap /
   timeout / memory policies; a "Reassembly" section in

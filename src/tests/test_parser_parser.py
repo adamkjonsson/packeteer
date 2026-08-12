@@ -259,6 +259,181 @@ class TestParsePacketPayload(unittest.TestCase):
         self.assertEqual(pkt.ip.total_length, 20 + 8 + len(payload))
 
 
+class TestPayloadOffset(unittest.TestCase):
+    """payload_offset must locate the payload inside the frame."""
+
+    def _assert_locates(self, frame: bytes, pkt: ParsedPacket, expected: bytes) -> None:
+        self.assertIsNotNone(pkt.payload_offset)
+        start = pkt.payload_offset
+        self.assertEqual(frame[start: start + len(pkt.payload)], expected)
+        self.assertEqual(pkt.payload, expected)
+
+    def test_unpadded_frame(self):
+        payload = bytes(range(200))
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .udp().payload(data=payload).build())
+        pkt = parse_packet(raw)
+        self._assert_locates(raw, pkt, payload)
+        self.assertEqual(pkt.payload_offset, 14 + 20 + 8)
+
+    def test_padded_frame_defeats_length_arithmetic(self):
+        # 14 + 20 + 8 + 4 = 46, padded to the 60-byte Ethernet minimum.
+        # len(frame) - len(payload) gives 56, which lands in the padding.
+        payload = b"\xde\xad\xbe\xef"
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .udp().payload(data=payload).build())
+        pkt = parse_packet(raw)
+        self._assert_locates(raw, pkt, payload)
+        self.assertEqual(pkt.payload_offset, 42)
+        self.assertNotEqual(pkt.payload_offset, len(raw) - len(pkt.payload))
+
+    def test_non_zero_padding(self):
+        # Padding is supposed to be zeros, but drivers do leak buffer
+        # contents; the offset must come from the header, not from scanning.
+        payload = b"\x2a"
+        raw = (PacketBuilder().ethernet(pad=False)
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .udp().payload(data=payload).build())
+        framed = raw + b"\x2a\x00\x00\x00\x00"
+        pkt = parse_packet(framed)
+        self._assert_locates(framed, pkt, payload)
+        self.assertEqual(pkt.payload_offset, len(raw) - 1)
+
+    def test_vlan_tagged_frame(self):
+        payload = bytes(range(100))
+        raw = (PacketBuilder().ethernet().vlan(vid=42)
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .tcp().payload(data=payload).build())
+        pkt = parse_packet(raw)
+        self._assert_locates(raw, pkt, payload)
+        self.assertEqual(pkt.payload_offset, 14 + 4 + 20 + 20)
+
+    def test_raw_ip_link_type(self):
+        payload = bytes(range(100))
+        raw = (PacketBuilder()
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .udp().payload(data=payload).build())
+        pkt = parse_packet(raw, link_type=LINKTYPE_RAW)
+        self._assert_locates(raw, pkt, payload)
+        self.assertEqual(pkt.payload_offset, 20 + 8)
+
+    def test_none_when_payload_empty(self):
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2").tcp().build())
+        pkt = parse_packet(raw)
+        self.assertEqual(pkt.payload, b"")
+        self.assertIsNone(pkt.payload_offset)
+
+    def test_none_when_decoded_into_an_app_layer(self):
+        raw = _http_packet()
+        self.assertIsNone(parse_packet(raw).payload_offset)
+
+    def test_present_when_app_decoding_disabled(self):
+        raw = _http_packet()
+        pkt = parse_packet(raw, decode_app=False)
+        self._assert_locates(raw, pkt, _HTTP_REQUEST)
+
+    def test_non_first_fragment(self):
+        import socket
+
+        from packeteer.generate.ethernet import EthernetHeader
+        from packeteer.generate.fragmentation import fragment_ipv4
+        eth = EthernetHeader("00:00:00:00:00:02", "00:00:00:00:00:01")
+        hdr = IPHeader("10.0.0.1", "10.0.0.2", socket.IPPROTO_UDP, identification=1)
+        frames = fragment_ipv4(hdr, b"\xaa" * 2000, mtu=576, eth_header=eth)
+        pkt = parse_packet(frames[1])
+        self.assertIsNone(pkt.transport)
+        self._assert_locates(frames[1], pkt, pkt.payload)
+        self.assertEqual(pkt.payload_offset, 14 + 20)
+
+    def test_truncated_capture(self):
+        payload = b"\xab" * 40
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2")
+               .udp().payload(data=payload).build())
+        chopped = raw[:-10]
+        pkt = parse_packet(chopped)
+        self._assert_locates(chopped, pkt, payload[:-10])
+
+    def test_unknown_ethertype_payload(self):
+        raw = (PacketBuilder().ethernet().ip(src="10.0.0.1", dst="10.0.0.2")
+               .udp().payload(data=b"\xaa" * 40).build())
+        framed = bytearray(raw)
+        framed[12:14] = b"\x88\x99"          # unrecognised EtherType
+        pkt = parse_packet(bytes(framed))
+        self.assertEqual(pkt.payload_offset, 14)
+
+
+class TestPayloadOffsetTunnels(unittest.TestCase):
+    """A nested payload_offset is relative to the outermost frame."""
+
+    _PAYLOAD = bytes(range(200))
+
+    def _innermost(self, pkt: ParsedPacket) -> ParsedPacket:
+        while pkt.tunneled is not None:
+            pkt = pkt.tunneled
+        return pkt
+
+    def _assert_inner_locates(self, frame: bytes) -> None:
+        inner = self._innermost(parse_packet(frame))
+        self.assertIsNotNone(inner.payload_offset)
+        start = inner.payload_offset
+        self.assertEqual(frame[start: start + len(inner.payload)], self._PAYLOAD)
+
+    def test_vxlan(self):
+        self._assert_inner_locates(
+            PacketBuilder().ethernet().ip(src="10.0.0.1", dst="10.0.0.2")
+            .udp(dst_port=4789).vxlan(vni=42)
+            .ethernet().ip(src="192.168.1.1", dst="192.168.1.2")
+            .tcp().payload(data=self._PAYLOAD).build())
+
+    def test_geneve(self):
+        self._assert_inner_locates(
+            PacketBuilder().ethernet().ip(src="10.0.0.1", dst="10.0.0.2")
+            .udp(dst_port=6081).geneve(vni=7)
+            .ethernet().ip(src="192.168.1.1", dst="192.168.1.2")
+            .tcp().payload(data=self._PAYLOAD).build())
+
+    def test_gtpu(self):
+        self._assert_inner_locates(
+            PacketBuilder().ethernet().ip(src="10.0.0.1", dst="10.0.0.2")
+            .udp(dst_port=2152).gtpu(teid=5)
+            .ip(src="192.168.1.1", dst="192.168.1.2")
+            .udp().payload(data=self._PAYLOAD).build())
+
+    def test_gre(self):
+        self._assert_inner_locates(
+            PacketBuilder().ethernet().ip(src="10.0.0.1", dst="10.0.0.2")
+            .gre().ip(src="192.168.1.1", dst="192.168.1.2")
+            .tcp().payload(data=self._PAYLOAD).build())
+
+    def test_ip_in_ip(self):
+        self._assert_inner_locates(
+            PacketBuilder().ethernet().ip(src="10.0.0.1", dst="10.0.0.2")
+            .ip(src="192.168.1.1", dst="192.168.1.2")
+            .udp().payload(data=self._PAYLOAD).build())
+
+    def test_double_nested_gre(self):
+        frame = (PacketBuilder().ethernet().ip(src="10.0.0.1", dst="10.0.0.2")
+                 .gre().ip(src="172.16.0.1", dst="172.16.0.2")
+                 .gre().ip(src="192.168.1.1", dst="192.168.1.2")
+                 .udp().payload(data=self._PAYLOAD).build())
+        pkt = parse_packet(frame)
+        self.assertIsNotNone(pkt.tunneled.tunneled)      # two levels deep
+        self._assert_inner_locates(frame)
+
+    def test_outer_and_inner_offsets_differ(self):
+        # The outer packet has no payload of its own; only the inner does.
+        frame = (PacketBuilder().ethernet().ip(src="10.0.0.1", dst="10.0.0.2")
+                 .gre().ip(src="192.168.1.1", dst="192.168.1.2")
+                 .tcp().payload(data=self._PAYLOAD).build())
+        pkt = parse_packet(frame)
+        self.assertIsNone(pkt.payload_offset)
+        self.assertGreater(pkt.tunneled.payload_offset, 14 + 20)
+
+
 class TestParsedIPLength(unittest.TestCase):
     def test_ipv4_total_length_populated(self):
         payload = b"\xaa" * 32

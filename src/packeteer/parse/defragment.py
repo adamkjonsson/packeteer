@@ -40,13 +40,15 @@ than left implicit:
 
 Incomplete datagrams are dropped from the output rather than emitted
 partially assembled.  Use :class:`Defragmenter` directly to see what never
-completed.
+completed, and to attach a token to each frame so a reassembled datagram can
+be traced back to the fragments it came from.
 """
 from __future__ import annotations
 
 import struct
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
+from typing import Any
 
 from packeteer.generate.ethernet import ETHERTYPE_IPV4, ETHERTYPE_IPV6
 from packeteer.generate.ipv6 import IPV6_NEXT_HEADER_FRAGMENT
@@ -84,6 +86,35 @@ class _Key:
 
 
 @dataclass
+class AssembledFrame:
+    """One whole frame produced by :meth:`Defragmenter.feed`.
+
+    Carries the tokens of the fragments it was built from, so a caller that
+    passed something identifying — a :class:`~packeteer.pcap.PcapRecord`, a
+    packet number, a file offset — can say where a reassembled datagram's
+    bytes came from.  A reassembled datagram's bytes are spread over several
+    discontiguous ranges of the capture, and that set is not recoverable from
+    the output frame alone.
+
+    Attributes:
+        frame: The whole frame, ready for
+            :func:`~packeteer.parse.core.parse_packet`.
+        tokens: The *token* argument of every :meth:`Defragmenter.feed` call
+            that contributed, in **arrival** order — which for out-of-order
+            fragments is not the same as offset order.  A list of one for a
+            frame that passed through untouched.
+        fragment_count: Number of fragments reassembled into *frame*, or ``1``
+            when the frame was not fragmented.  This is the supported way to
+            tell a passthrough from a reassembly.
+
+    """
+
+    frame: bytes
+    tokens: list[Any]
+    fragment_count: int
+
+
+@dataclass
 class IncompleteDatagram:
     """A datagram whose fragments never all arrived.
 
@@ -100,6 +131,9 @@ class IncompleteDatagram:
         reason: Why it was abandoned — ``"timeout"``, ``"overlap"`` (IPv6
             only, RFC 5722), ``"too_large"``, or ``"evicted"`` when buffer
             limits forced it out.
+        tokens: Tokens of the fragments that did arrive, in arrival order —
+            the same provenance :class:`AssembledFrame` gives for the frames
+            that completed, so a report can name the packets that were lost.
 
     """
 
@@ -111,6 +145,7 @@ class IncompleteDatagram:
     bytes_seen: int
     expected_bytes: int | None
     reason: str
+    tokens: list[Any] = field(default_factory=list)
 
 
 @dataclass
@@ -123,6 +158,7 @@ class _Pending:
     protocol: int
     first_seen: float
     chunks: dict[int, bytes] = field(default_factory=dict)   # offset -> data
+    tokens: list[Any] = field(default_factory=list)          # in arrival order
     total_length: int | None = None     # known once the last fragment arrives
     bytes_held: int = 0
     overlapped: bool = False
@@ -349,25 +385,32 @@ class Defragmenter:
         self._pending: dict[_Key, _Pending] = {}
         self._buffered = 0
 
-    def feed(self, frame: bytes, ts: float = 0.0) -> list[bytes]:
+    def feed(
+        self, frame: bytes, ts: float = 0.0, token: Any = None,
+    ) -> list[AssembledFrame]:
         """Feed one frame and return the frames it completes.
 
         Args:
             frame: Raw frame bytes, as captured.
             ts: Capture time in seconds.  Drives timeouts only; pass the
                 record's ``ts_sec`` (plus its fraction, if you have it).
+            token: Anything identifying this frame — a
+                :class:`~packeteer.pcap.PcapRecord`, a packet number, a byte
+                offset.  It is returned on the :class:`AssembledFrame` this
+                frame ends up in, and never inspected.
 
         Returns:
-            A list of whole frames: the frame itself when it is not a
-            fragment, one reassembled frame when this fragment completed a
-            datagram, or an empty list while a datagram is still incomplete.
+            A list of :class:`AssembledFrame`: one holding *frame* itself when
+            it is not a fragment, one holding the reassembled datagram when
+            this fragment completed one, or an empty list while a datagram is
+            still incomplete.
 
         """
         self._expire(ts)
 
         info = _examine(frame, self.link_type)
         if info is None:
-            return [frame]
+            return [AssembledFrame(frame=frame, tokens=[token], fragment_count=1)]
 
         pending = self._pending.get(info.key)
         if pending is None:
@@ -388,6 +431,10 @@ class Defragmenter:
             pending.header = frame[: info.header_end]
             pending.ip_header_offset = _ip_offset(frame, self.link_type) or 0
 
+        # Recorded before _place, so a fragment dropped as overlapping or
+        # oversized still shows up in the incomplete report that follows.
+        pending.tokens.append(token)
+
         if not self._place(pending, info):
             self._abandon(info.key, "overlap" if pending.overlapped else "too_large")
             return []
@@ -400,12 +447,16 @@ class Defragmenter:
             self._buffered -= pending.bytes_held
             payload = pending.assemble()
             rebuild = _rebuild_ipv4 if pending.version == 4 else _rebuild_ipv6
-            return [rebuild(pending, payload)]
+            return [AssembledFrame(
+                frame=rebuild(pending, payload),
+                tokens=list(pending.tokens),
+                fragment_count=len(pending.chunks),
+            )]
 
         self._evict_if_over_limit()
         return []
 
-    def flush(self) -> list[bytes]:
+    def flush(self) -> list[AssembledFrame]:
         """Abandon every datagram still awaiting fragments.
 
         Call at end of capture.  Incomplete datagrams are recorded in
@@ -465,6 +516,7 @@ class Defragmenter:
             return
         self._buffered -= pending.bytes_held
         self.incomplete.append(IncompleteDatagram(
+            tokens=list(pending.tokens),
             src=_format_address(key.src),
             dst=_format_address(key.dst),
             identification=key.identification,
@@ -517,8 +569,9 @@ def defragment(
     """
     engine = Defragmenter(link_type=link_type, timeout_s=timeout_s)
     for frame in frames:
-        yield from engine.feed(frame)
-    yield from engine.flush()
+        for assembled in engine.feed(frame):
+            yield assembled.frame
+    engine.flush()
 
 
 def defragment_ipv4(
@@ -561,5 +614,6 @@ def _defragment_version(
         if info is None or info.version != version:
             yield frame
             continue
-        yield from engine.feed(frame)
-    yield from engine.flush()
+        for assembled in engine.feed(frame):
+            yield assembled.frame
+    engine.flush()

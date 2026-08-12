@@ -11,6 +11,15 @@ by {doc}`../api/header-dataclasses`.  The high-level entry points are
 
 ## High-level interface
 
+`iter_packets` is the usual entry point for reading a capture: it opens the
+file, reassembles fragments, and parses each packet.  The others are the
+building blocks it composes — use them directly when you need a spec, a single
+record, or a single frame.
+
+```{eval-rst}
+.. autofunction:: packeteer.parse.core.iter_packets
+```
+
 ```{eval-rst}
 .. autoclass:: packeteer.parse.core.ParsedPacket
    :members:

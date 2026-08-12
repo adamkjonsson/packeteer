@@ -3,6 +3,42 @@
 packeteer can decode any pcap or pcapng file into a structured Python
 representation — either a JSON packet spec or a hierarchy of typed dataclasses.
 
+## Reading a capture as packets
+
+{func}`packeteer.parse.core.iter_packets` is the usual starting point when you
+want to *look at* traffic.  It opens the file, reassembles fragmented
+datagrams, and parses each result, streaming one packet at a time:
+
+```python
+from packeteer.parse import iter_packets
+
+for pkt in iter_packets(path="capture.pcap"):
+    if pkt.transport is not None:
+        print(pkt.ip.src, "->", pkt.ip.dst, len(pkt.payload))
+```
+
+Fragments are reassembled by default because a caller asking for packets
+almost never wants the pieces — a fragmented datagram would otherwise arrive
+as several packets, only the first of which has a transport header at all.
+Pass `defragment=False` to see the capture's records exactly as they are.
+
+Each packet carries `source_records`, the capture records behind it — one for
+an ordinary packet, several for a reassembled datagram:
+
+```python
+for pkt in iter_packets(path="capture.pcap"):
+    if len(pkt.source_records) > 1:
+        offsets = [r.data_offset for r in pkt.source_records]
+        print(f"reassembled from {len(offsets)} fragments at {offsets}")
+```
+
+A datagram whose fragments never all arrive is dropped.  To see what was lost,
+drive the {class}`~packeteer.parse.defragment.Defragmenter` yourself — see
+{doc}`defragmenting`.
+
+The sections below cover the lower-level entry points: whole-file parsing to a
+JSON spec, and parsing individual frames.
+
 ## Whole-file parsing
 
 The simplest starting point is {func}`packeteer.parse.core.parse_pcap_file`,
@@ -30,6 +66,13 @@ json_str = parse_pcap_file(file_object=io.BytesIO(data))
 The returned string is valid JSON with a top-level `"packets"` array and a
 `"metadata"` block — file type, timestamp precision, and link type are all
 auto-detected from the file header.
+
+Fragments are **not** reassembled here, unlike `iter_packets`.  A spec is the
+round-trip format: a fragmented capture parses and rebuilds byte-for-byte as
+it is, whereas reassembling first means `packeteer build` emits unfragmented
+packets and the capture no longer round-trips.  Pass `defragment=True` (or
+`packeteer parse --defragment`) when you want whole datagrams in the spec and
+do not need to rebuild the original frames.
 
 If a capture declares the wrong link-layer type in its header — which would
 otherwise garble the output — pass `link_type` to override it.  The override
@@ -159,6 +202,44 @@ if declared > len(pkt.payload):
 
 In that case the parser keeps every captured byte rather than trimming to a
 length that never arrived.
+
+## Where the payload was in the frame
+
+`pkt.payload_offset` is the index of `payload[0]` within the frame you passed
+to `parse_packet`, or `None` when there is no payload:
+
+```python
+pkt = parse_packet(frame)
+frame[pkt.payload_offset:][:len(pkt.payload)] == pkt.payload    # True
+```
+
+Combined with {attr}`packeteer.pcap.PcapRecord.data_offset` it gives the
+payload's position in the **capture file**, which is what a tool citing
+provenance — "these bytes came from file offsets X–Y" — needs:
+
+```python
+with open_pcap(path="capture.pcap") as reader:
+    for record in reader:
+        pkt = parse_packet(record.data, link_type=reader.header.link_type)
+        if pkt.payload:
+            start = record.data_offset + pkt.payload_offset
+            print(f"payload at file offsets {start}–{start + len(pkt.payload)}")
+```
+
+Do not compute this as `len(frame) - len(payload)`.  That assumes the payload
+runs to the end of the frame, which is false for any frame padded to the
+60-byte Ethernet minimum: the padding sits after the IP datagram and the
+parser trims it out of `payload`, so the subtraction lands inside the padding
+and silently yields the wrong bytes.  Searching with `frame.find(payload)` is
+guesswork — a short payload can occur earlier in the frame by coincidence.
+
+For a tunnelled packet, a nested `payload_offset` is relative to the
+**outermost** frame too, so the same single addition works at any depth:
+
+```python
+inner = pkt.tunneled
+frame[inner.payload_offset:][:len(inner.payload)] == inner.payload    # True
+```
 
 ## Reading a pcap file packet-by-packet
 

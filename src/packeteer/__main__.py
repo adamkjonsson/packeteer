@@ -1091,6 +1091,7 @@ def _cmd_parse(args: argparse.Namespace) -> None:
             path=args.pcap, packet_filter=pf,
             link_type=getattr(args, "link_type", None),
             decode_app=not getattr(args, "no_decode_app", False),
+            defragment=getattr(args, "defragment", False),
         )
     except (OSError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -1946,6 +1947,17 @@ def main() -> None:
         help="Application layer present: dns, dhcp, http (or negated, e.g. !http)",
     )
 
+    parse_parser.add_argument(
+        "--defragment",
+        action="store_true",
+        help=(
+            "Reassemble fragmented IP datagrams, so each appears once as a "
+            "whole packet.  Off by default: a spec round-trips a fragmented "
+            "capture byte-for-byte as it is, whereas reassembling means "
+            "'packeteer build' emits unfragmented packets.  Datagrams whose "
+            "fragments are all missing are dropped."
+        ),
+    )
     parse_parser.add_argument(
         "--no-decode-app",
         action="store_true",
