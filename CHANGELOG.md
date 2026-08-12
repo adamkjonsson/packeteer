@@ -26,6 +26,40 @@ link definitions at the bottom of this file, and tag the release `v0.8.0`.
 
 ### Added
 
+- **`iter_packets` returns a `PacketReader`** (#76) — it was a bare generator,
+  so the two file-level facts a consumer needs alongside the packets were
+  unreachable: the capture's header, and what reassembly discarded.  Iteration
+  is unchanged — `for pkt in iter_packets(path=…)` still works exactly as
+  documented — but the returned object now also carries:
+
+  - `header`, the capture's `PcapFileHeader`, populated before the first
+    packet.  Its `tick_hz` states what a packet's `ts_frac` is counted in;
+    without it a fraction of `250` could be milliseconds, microseconds, or
+    nanoseconds, which is the silent misreading #64 was filed to end.
+  - `incomplete`, the `IncompleteDatagram` records reassembly gave up on,
+    complete once iteration finishes.  Previously the only way to see them was
+    to abandon `iter_packets` and drive `Defragmenter` by hand — the two were
+    alternatives, not layers.
+  - `close()` and the context-manager protocol, matching `PcapReader`.  The
+    file is opened when the reader is created, so a malformed capture now
+    raises there rather than on first iteration, and it is closed when
+    iteration finishes or the generator is discarded.
+
+- **Timestamps carry the unit they are counted in** — reading `ts_frac`
+  required fetching `tick_hz` from somewhere else, and getting that wrong is
+  silent.  The pair and its unit now travel together:
+
+  - `PcapRecord.tick_hz`, plus `timestamp` (float seconds), `timestamp_ns`
+    (exact integer nanoseconds), and `datetime()`.  For pcapng it is *this
+    record's* interface resolution, which in a multi-interface capture can
+    differ from the file header's.
+  - `ParsedPacket.tick_hz` and `ParsedPacket.timestamp`, set by
+    `parse_pcap_packet` and `iter_packets`.
+  - `timestamp` is a float and cannot hold a modern epoch to nanosecond
+    precision — roughly the last three digits are lost — so `ts_sec` /
+    `ts_frac` / `tick_hz` remain the exact representation, with
+    `timestamp_ns` for exact whole nanoseconds.
+
 - **`iter_packets` — read a capture as whole, parsed packets** (#73) — opening
   a file, reassembling fragments, and parsing each result was a three-step
   incantation every consumer wrote by hand, and skipping the middle step is
@@ -274,6 +308,16 @@ link definitions at the bottom of this file, and tag the release `v0.8.0`.
 
 ### Fixed
 
+- **`pcap_ts_to_datetime` misread any capture that was neither microsecond nor
+  nanosecond** — it took a `nanoseconds` boolean, the model #64 replaced
+  everywhere else, so a millisecond capture's fraction came out a thousand
+  times too small: `00:01:40.000250` where the truth was `00:01:40.250000`.
+  The recipe documented in `docs/guide/pcap.md` had exactly that bug.
+
+  It now accepts `tick_hz`, which takes precedence; `nanoseconds` still works
+  for the two standard resolutions, so existing calls are unaffected.  This
+  one predates 0.8.0 — the helper shipped in 0.7.0 and #64 left it behind.
+
 - **Breaking: non-first fragments were decoded as if they had a transport
   header** (#65) — nothing on the parse path checked the fragment offset, so
   the payload bytes at the start of a non-first fragment were read as a TCP or
@@ -346,6 +390,10 @@ link definitions at the bottom of this file, and tag the release `v0.8.0`.
 
 ### Documentation
 
+- New "Working with timestamps" section in `docs/guide/pcap.md` covering
+  `record.timestamp` / `timestamp_ns` / `datetime()`, the float precision
+  caveat, and why `tick_hz` should be passed to `pcap_ts_to_datetime` rather
+  than the `nanoseconds` flag.
 - `docs/guide/parsing.md` now opens with "Reading a capture as packets"
   (`iter_packets`), with the spec and single-frame entry points below it and a
   note on why the spec path does not reassemble by default;

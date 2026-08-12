@@ -32,9 +32,24 @@ for pkt in iter_packets(path="capture.pcap"):
         print(f"reassembled from {len(offsets)} fragments at {offsets}")
 ```
 
-A datagram whose fragments never all arrive is dropped.  To see what was lost,
-drive the {class}`~packeteer.parse.defragment.Defragmenter` yourself — see
-{doc}`defragmenting`.
+`iter_packets` returns a {class}`~packeteer.parse.core.PacketReader`, which
+also carries the two file-level facts that hiding the records would otherwise
+cost you — the capture's header, and the datagrams reassembly gave up on:
+
+```python
+with iter_packets(path="capture.pcap") as capture:
+    print(capture.header.link_type, capture.header.tick_hz)
+
+    for pkt in capture:
+        pkt.timestamp          # seconds — pkt.tick_hz says what ts_frac means
+
+    for lost in capture.incomplete:
+        print("dropped:", lost.src, "->", lost.dst, lost.reason)
+```
+
+`header` is populated before the first packet, and `incomplete` is complete
+once iteration has finished.  Use a `with` block whenever the packets might
+not all be read, so the file is closed promptly.
 
 The sections below cover the lower-level entry points: whole-file parsing to a
 JSON spec, and parsing individual frames.

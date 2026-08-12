@@ -211,18 +211,41 @@ for record in pcap.packets:
         print(pkt.ip.src, "->", pkt.ip.dst)
 ```
 
-To turn a record's timestamp back into a {class}`datetime.datetime`, use
-{func}`packeteer.pcap.pcap_ts_to_datetime` (the inverse of
-`datetime_to_pcap_ts`).  It returns a timezone-aware UTC datetime; pass
-`nanoseconds=` from the file header so the fraction is interpreted correctly:
+### Working with timestamps
+
+A record read through `open_pcap` carries the unit its fraction is in, so the
+arithmetic is done for you:
+
+```python
+with open_pcap(path="capture.pcap") as reader:
+    for record in reader:
+        record.timestamp        # float seconds since the epoch
+        record.timestamp_ns     # exact integer nanoseconds
+        record.datetime()       # timezone-aware UTC datetime
+        record.tick_hz          # the unit ts_frac is expressed in
+```
+
+`timestamp` is a float, which cannot hold a modern epoch to nanosecond
+precision — roughly the last three digits of a nanosecond timestamp are lost.
+Use `timestamp_ns`, or the exact `ts_sec` / `ts_frac` / `tick_hz` triple, when
+that matters.
+
+To convert a bare pair, {func}`packeteer.pcap.pcap_ts_to_datetime` (the
+inverse of `datetime_to_pcap_ts`) returns a timezone-aware UTC datetime.
+Pass `tick_hz`:
 
 ```python
 from packeteer.pcap import pcap_ts_to_datetime
 
 for data, ts_sec, ts_frac in pcap.packets:
-    when = pcap_ts_to_datetime(ts_sec, ts_frac, nanoseconds=pcap.header.nanoseconds)
+    when = pcap_ts_to_datetime(ts_sec, ts_frac, tick_hz=pcap.header.tick_hz)
     print(when.isoformat())
 ```
+
+Pass `tick_hz`, not the older `nanoseconds=` flag: a boolean can only say
+microseconds or nanoseconds, so on a capture declaring any other resolution it
+reads the fraction wrongly — a millisecond capture comes out a thousand times
+too small.  `nanoseconds=` still works for the two standard resolutions.
 
 ## Link-layer type constants
 
