@@ -21,6 +21,11 @@ record, or a single frame.
 ```
 
 ```{eval-rst}
+.. autoclass:: packeteer.parse.core.PacketReader
+   :members:
+```
+
+```{eval-rst}
 .. autoclass:: packeteer.parse.core.ParsedPacket
    :members:
 ```

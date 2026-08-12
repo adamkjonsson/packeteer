@@ -194,6 +194,11 @@ class PcapRecord:
             the offset to cite when referring to packet bytes in the file.
         orig_len: Length of the packet on the wire, before any snaplen
             truncation.
+        tick_hz: Ticks per second that *ts_frac* is expressed in.  Carried on
+            the record so a timestamp is never separated from its unit — for
+            pcapng it is the resolution declared by *this record's* interface,
+            which in a multi-interface capture can differ from
+            :attr:`PcapFileHeader.tick_hz`.
 
     """
 
@@ -203,10 +208,36 @@ class PcapRecord:
     offset: int
     data_offset: int
     orig_len: int
+    tick_hz: int = _US_PER_SECOND
 
     def __iter__(self) -> Iterator[Any]:
         """Yield ``data``, ``ts_sec``, ``ts_frac`` so the record unpacks."""
         return iter((self.data, self.ts_sec, self.ts_frac))
+
+    @property
+    def timestamp(self) -> float:
+        """Capture time in seconds since the Unix epoch.
+
+        Convenience for ``ts_sec + ts_frac / tick_hz``.  A float cannot hold a
+        modern epoch to nanosecond precision — roughly the last three digits
+        of a nanosecond timestamp are lost — so keep using *ts_sec*,
+        *ts_frac* and *tick_hz* where exactness matters, or
+        :attr:`timestamp_ns`.
+        """
+        return self.ts_sec + self.ts_frac / self.tick_hz
+
+    @property
+    def timestamp_ns(self) -> int:
+        """Capture time in whole nanoseconds since the Unix epoch, exactly."""
+        return self.ts_sec * _NS_PER_SECOND + self.ts_frac * _NS_PER_SECOND // self.tick_hz
+
+    def datetime(self) -> datetime:
+        """Return the capture time as a timezone-aware UTC datetime.
+
+        Truncated to microseconds, which is all :class:`~datetime.datetime`
+        holds.
+        """
+        return pcap_ts_to_datetime(self.ts_sec, self.ts_frac, tick_hz=self.tick_hz)
 
 
 @dataclass
@@ -285,6 +316,7 @@ def _read_pcapng_packet(
         offset=block_offset,
         data_offset=block_offset + _PCAPNG_BLOCK_HDR_SIZE + body_offset,
         orig_len=orig_len,
+        tick_hz=resolution,
     )
 
 
@@ -469,10 +501,12 @@ def _open_pcap(reader: _ChainedReader) -> tuple[PcapFileHeader, Iterator[PcapRec
         snaplen=snaplen,
         tick_hz=_NS_PER_SECOND if nanoseconds else _US_PER_SECOND,
     )
-    return (header, _iter_pcap_records(reader, endian))
+    return (header, _iter_pcap_records(reader, endian, header.tick_hz))
 
 
-def _iter_pcap_records(reader: _ChainedReader, endian: str) -> Iterator[PcapRecord]:
+def _iter_pcap_records(
+    reader: _ChainedReader, endian: str, tick_hz: int,
+) -> Iterator[PcapRecord]:
     """Yield each classic-pcap packet record as a :class:`PcapRecord`."""
     pkt_fmt = endian + "IIII"
     while True:
@@ -497,6 +531,7 @@ def _iter_pcap_records(reader: _ChainedReader, endian: str) -> Iterator[PcapReco
             offset=offset,
             data_offset=offset + _PKT_HDR_SIZE,
             orig_len=orig_len,
+            tick_hz=tick_hz,
         )
 
 
@@ -917,6 +952,7 @@ def datetime_to_pcap_ts(
 
 def pcap_ts_to_datetime(
     ts_sec: int, ts_frac: int, *, nanoseconds: bool = False,
+    tick_hz: int | None = None,
 ) -> datetime:
     """Convert a pcap ``(ts_sec, ts_frac)`` pair to a timezone-aware UTC datetime.
 
@@ -925,23 +961,32 @@ def pcap_ts_to_datetime(
 
         pcap = read_pcap(path="in.pcap")
         for data, ts_sec, ts_frac in pcap.packets:
-            when = pcap_ts_to_datetime(ts_sec, ts_frac, nanoseconds=pcap.header.nanoseconds)
+            when = pcap_ts_to_datetime(ts_sec, ts_frac, tick_hz=pcap.header.tick_hz)
+
+    Pass *tick_hz* rather than *nanoseconds*: a pcapng may declare any
+    resolution, and the boolean can only say microseconds or nanoseconds, so
+    it reads a millisecond capture's fraction a thousand times too small.
 
     Because :class:`~datetime.datetime` only has microsecond resolution, any
-    sub-microsecond part of a nanosecond timestamp is truncated.
+    finer part of the timestamp is truncated.
 
     Args:
         ts_sec: Whole seconds since the Unix epoch.
-        ts_frac: Sub-second remainder — microseconds, or nanoseconds when
-            *nanoseconds* is ``True``.
-        nanoseconds: When ``True``, *ts_frac* is interpreted as nanoseconds;
-            otherwise as microseconds (the default).
+        ts_frac: Sub-second remainder, in units of *tick_hz*.
+        nanoseconds: Legacy selector, used only when *tick_hz* is omitted:
+            ``True`` interprets *ts_frac* as nanoseconds, ``False`` (the
+            default) as microseconds.
+        tick_hz: Ticks per second that *ts_frac* is expressed in — take it
+            from :attr:`PcapFileHeader.tick_hz` or
+            :attr:`PcapRecord.tick_hz`.  Overrides *nanoseconds* when given.
 
     Returns:
         A timezone-aware :class:`~datetime.datetime` in UTC.
 
     """
-    us = ts_frac // 1000 if nanoseconds else ts_frac
+    if tick_hz is None:
+        tick_hz = _NS_PER_SECOND if nanoseconds else _US_PER_SECOND
+    us = ts_frac * _US_PER_SECOND // tick_hz
     return _EPOCH + timedelta(seconds=ts_sec, microseconds=us)
 
 

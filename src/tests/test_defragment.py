@@ -650,3 +650,123 @@ class TestParsePcapFileDefragment(unittest.TestCase):
                        check=True, capture_output=True)
         rebuilt = [data for data, _, _ in read_pcap(path=out).packets]
         self.assertEqual(rebuilt[1:], frames[1:])
+
+
+class TestPacketReader(unittest.TestCase):
+    """iter_packets exposes the file header and what reassembly dropped."""
+
+    def setUp(self):
+        warnings.simplefilter("ignore")
+
+    def _capture(self, frames: list[bytes]) -> io.BytesIO:
+        buf = io.BytesIO()
+        write_pcap([(f, i, 0) for i, f in enumerate(frames)], file_object=buf)
+        buf.seek(0)
+        return buf
+
+    def test_header_available_before_iterating(self):
+        capture = iter_packets(file_object=self._capture([_plain_packet()]))
+        self.assertEqual(capture.header.link_type, 1)
+        self.assertEqual(capture.header.tick_hz, 1_000_000)
+        capture.close()
+
+    def test_iteration_is_unchanged(self):
+        # The documented one-liner must keep working verbatim.
+        packets = list(iter_packets(file_object=self._capture(_v4_fragments())))
+        self.assertEqual(len(packets), 1)
+        self.assertEqual(packets[0].payload, _PAYLOAD)
+
+    def test_incomplete_is_reported(self):
+        capture = iter_packets(file_object=self._capture(_v4_fragments()[:-1]))
+        self.assertEqual(list(capture), [])
+        self.assertEqual(len(capture.incomplete), 1)
+        self.assertEqual(capture.incomplete[0].reason, "timeout")
+
+    def test_incomplete_names_the_records_that_arrived(self):
+        capture = iter_packets(file_object=self._capture(_v4_fragments()[:-1]))
+        list(capture)
+        offsets = [t.data_offset for t in capture.incomplete[0].tokens]
+        self.assertEqual(len(offsets), 3)
+        self.assertEqual(sorted(offsets), offsets)
+
+    def test_incomplete_empty_without_reassembly(self):
+        capture = iter_packets(
+            file_object=self._capture(_v4_fragments()[:-1]), defragment=False,
+        )
+        list(capture)
+        self.assertEqual(capture.incomplete, [])
+
+    def test_context_manager(self):
+        with iter_packets(file_object=self._capture([_plain_packet()])) as capture:
+            self.assertEqual(len(list(capture)), 1)
+
+    def test_close_is_idempotent(self):
+        capture = iter_packets(file_object=self._capture([_plain_packet()]))
+        capture.close()
+        capture.close()
+
+    def test_malformed_capture_raises_on_open_not_on_iteration(self):
+        bad = io.BytesIO(b"\x00\x01\x02\x03" + b"\x00" * 40)
+        with self.assertRaises(ValueError):
+            iter_packets(file_object=bad)
+
+    def test_link_type_override_reaches_the_header(self):
+        capture = iter_packets(
+            file_object=self._capture([_plain_packet()]), link_type=LINKTYPE_RAW,
+        )
+        self.assertEqual(capture.header.link_type, LINKTYPE_RAW)
+        capture.close()
+
+
+class TestTimestampErgonomics(unittest.TestCase):
+    """A timestamp travels with the unit it is expressed in."""
+
+    def setUp(self):
+        warnings.simplefilter("ignore")
+
+    def _ms_capture(self, ticks: int) -> io.BytesIO:
+        from tests.test_parser_pcapng import _pcapng_with_tsresol
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2").udp().build())
+        return _pcapng_with_tsresol([(raw, ticks)], tsresol_byte=3)
+
+    def test_parsed_packet_carries_tick_hz(self):
+        pkt = next(iter(iter_packets(file_object=self._ms_capture(100_250))))
+        self.assertEqual(pkt.tick_hz, 1_000)
+
+    def test_parsed_packet_timestamp_in_seconds(self):
+        pkt = next(iter(iter_packets(file_object=self._ms_capture(100_250))))
+        self.assertAlmostEqual(pkt.timestamp, 100.250, places=9)
+
+    def test_record_carries_tick_hz_and_timestamp(self):
+        from packeteer.pcap import open_pcap
+        with open_pcap(file_object=self._ms_capture(100_250)) as reader:
+            record = next(iter(reader))
+        self.assertEqual(record.tick_hz, 1_000)
+        self.assertAlmostEqual(record.timestamp, 100.250, places=9)
+
+    def test_record_timestamp_ns_is_exact(self):
+        from packeteer.pcap import open_pcap
+        with open_pcap(file_object=self._ms_capture(100_250)) as reader:
+            record = next(iter(reader))
+        self.assertEqual(record.timestamp_ns, 100_250_000_000)
+
+    def test_record_datetime_uses_the_right_unit(self):
+        from packeteer.pcap import open_pcap
+        with open_pcap(file_object=self._ms_capture(100_250)) as reader:
+            record = next(iter(reader))
+        self.assertEqual(record.datetime().isoformat(),
+                         "1970-01-01T00:01:40.250000+00:00")
+
+    def test_microsecond_capture_unchanged(self):
+        packets = list(iter_packets(file_object=self._capture_us()))
+        self.assertEqual(packets[0].tick_hz, 1_000_000)
+        self.assertAlmostEqual(packets[0].timestamp, 7.000250, places=9)
+
+    def _capture_us(self) -> io.BytesIO:
+        raw = (PacketBuilder().ethernet()
+               .ip(src="10.0.0.1", dst="10.0.0.2").udp().build())
+        buf = io.BytesIO()
+        write_pcap([(raw, 7, 250)], file_object=buf)
+        buf.seek(0)
+        return buf

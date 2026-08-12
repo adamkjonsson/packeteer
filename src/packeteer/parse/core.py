@@ -76,13 +76,14 @@ from packeteer.pcap import (
     LINKTYPE_RAW,
     PcapFile,
     PcapFileHeader,
+    PcapReader,
     PcapRecord,
     open_pcap,
     read_pcap,
 )
 
 from .arp import packet_parser as _arp_parser
-from .defragment import Defragmenter
+from .defragment import Defragmenter, IncompleteDatagram
 from .dns import parse_dns_tcp as _parse_dns_tcp
 from .dns import parse_dns_udp as _parse_dns_udp
 from .etherip import packet_parser as _etherip_parser
@@ -161,6 +162,10 @@ class TimestampResolutionWarning(UserWarning):
         super().__init__(message)
         self.tick_hz = tick_hz
 
+
+# Timestamp resolutions, in ticks per second
+_US_PER_SECOND: int = 1_000_000
+_NS_PER_SECOND: int = 1_000_000_000
 
 _TRANSPORT_PARSERS = {
     socket.IPPROTO_TCP:    _tcp_parser,
@@ -260,8 +265,13 @@ class ParsedPacket:
             offset on a nested :attr:`tunneled` packet is relative to the
             **outer** frame as well, so one addition works at any depth.
         ts_sec: Capture timestamp — whole seconds (from pcap record).
-        ts_frac: Capture timestamp — sub-second fraction (microseconds or
-            nanoseconds depending on the pcap file's magic number).
+        ts_frac: Capture timestamp — sub-second fraction, in units of
+            :attr:`tick_hz`.
+        tick_hz: Ticks per second that *ts_frac* is expressed in, carried
+            here so a timestamp is never separated from its unit.  Set from
+            the capture by :func:`parse_pcap_packet` and :func:`iter_packets`;
+            microseconds by default for a packet parsed from bare bytes,
+            which has no timestamp anyway.
         source_records: Capture records this packet came from, populated by
             :func:`iter_packets` and empty otherwise.  One record for an
             ordinary packet; for a reassembled datagram, every fragment that
@@ -293,7 +303,19 @@ class ParsedPacket:
     payload_offset: int | None = None
     ts_sec:    int = 0
     ts_frac:   int = 0
+    tick_hz:   int = _US_PER_SECOND
     source_records: list[PcapRecord] = field(default_factory=list)
+
+    @property
+    def timestamp(self) -> float:
+        """Capture time in seconds since the Unix epoch.
+
+        Convenience for ``ts_sec + ts_frac / tick_hz``.  A float cannot hold a
+        modern epoch to nanosecond precision — roughly the last three digits
+        of a nanosecond timestamp are lost — so use *ts_sec*, *ts_frac* and
+        *tick_hz* where exactness matters.
+        """
+        return self.ts_sec + self.ts_frac / self.tick_hz
 
 
 def _set_payload(pkt: ParsedPacket, payload: bytes, offset: int) -> None:
@@ -457,9 +479,6 @@ def _parse_pppoe_and_mpls(
 
 _IPV6_FIXED_HEADER_LEN: int = 40
 
-# Timestamp resolutions the packet spec can express, in ticks per second
-_US_PER_SECOND: int = 1_000_000
-_NS_PER_SECOND: int = 1_000_000_000
 
 _DNS_PORTS:  frozenset[int] = frozenset({53, 5353})
 _DHCP_PORTS: frozenset[int] = frozenset({67, 68})
@@ -990,6 +1009,7 @@ def parse_pcap_packet(
     pkt = parse_packet(data, link_type=file_header.link_type, decode_app=decode_app)
     pkt.ts_sec  = ts_sec
     pkt.ts_frac = ts_frac
+    pkt.tick_hz = file_header.tick_hz
     return pkt
 
 
@@ -1183,6 +1203,112 @@ def parse_pcap_file(
     return to_json_string(to_packet_spec(packet_configs, metadata=global_output))
 
 
+class PacketReader:
+    """Streaming reader over a capture's whole, parsed packets.
+
+    Returned by :func:`iter_packets`.  Iterate it for
+    :class:`ParsedPacket` objects; the file-level facts a consumer needs
+    alongside them — the capture's header, and what reassembly discarded —
+    are attributes here rather than being withheld.
+
+    .. code-block:: python
+
+        from packeteer.parse import iter_packets
+
+        with iter_packets(path="capture.pcap") as capture:
+            print(capture.header.tick_hz)      # before the first packet
+            for pkt in capture:
+                ...
+            for lost in capture.incomplete:    # after iteration
+                ...
+
+    The file is opened when the reader is created, so :attr:`header` is
+    available immediately and a malformed capture raises there rather than on
+    first iteration.  It is closed when iteration finishes, or when the
+    generator is discarded — so stopping early is safe.  A reader that is
+    never iterated at all, though, holds the file until it is collected, the
+    same as :class:`~packeteer.pcap.PcapReader`: use a ``with`` block, or call
+    :meth:`close`, whenever the packets might not all be read.
+
+    :attr:`header` is what makes a packet's ``ts_frac`` interpretable and
+    names the link type; :attr:`incomplete` is what reassembly discarded.
+    Both are needed by anything doing real work with a capture, and neither is
+    reachable from a bare stream of packets.
+
+    """
+
+    def __init__(
+        self,
+        reader: PcapReader,
+        engine: Defragmenter | None,
+        decode_app: bool,
+    ) -> None:
+        self._reader = reader
+        self._engine = engine
+        self._decode_app = decode_app
+
+    @property
+    def header(self) -> PcapFileHeader:
+        """The capture's file header, available before the first packet.
+
+        Its ``link_type`` and ``tick_hz`` are file-level facts: ``tick_hz``
+        states what a packet's ``ts_frac`` is counted in, without which a
+        fraction of ``250`` could be milliseconds, microseconds, or
+        nanoseconds.
+        """
+        return self._reader.header
+
+    @property
+    def incomplete(self) -> list[IncompleteDatagram]:
+        """Datagrams reassembly gave up on and dropped.
+
+        Grows as datagrams are abandoned, so it is only complete once
+        iteration has finished — the same contract
+        :attr:`~packeteer.parse.defragment.Defragmenter.incomplete` has.
+        Always empty when ``defragment=False``, since nothing is dropped.
+        """
+        return self._engine.incomplete if self._engine is not None else []
+
+    def __iter__(self) -> Iterator[ParsedPacket]:
+        """Yield one :class:`ParsedPacket` per whole packet."""
+        return self._packets()
+
+    def __enter__(self) -> PacketReader:
+        """Enter the context manager, returning this reader."""
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        """Close the underlying capture."""
+        self.close()
+
+    def close(self) -> None:
+        """Close the capture, if this reader opened it from a path.
+
+        Safe to call more than once.  A capture supplied as a *file_object* is
+        never closed — the caller owns it.
+        """
+        self._reader.close()
+
+    def _packets(self) -> Iterator[ParsedPacket]:
+        """Read, reassemble, and parse, closing the capture when exhausted."""
+        link_type = self._reader.header.link_type
+        tick_hz = self._reader.header.tick_hz
+        with self._reader:
+            if self._engine is None:
+                for record in self._reader:
+                    yield _packet_from_records(
+                        record.data, link_type, self._decode_app, [record],
+                    )
+                return
+            for record in self._reader:
+                when = record.ts_sec + record.ts_frac / tick_hz
+                for assembled in self._engine.feed(record.data, when, token=record):
+                    yield _packet_from_records(
+                        assembled.frame, link_type, self._decode_app, assembled.tokens,
+                    )
+            self._engine.flush()
+
+
 def iter_packets(
     *,
     path: str | os.PathLike | None = None,
@@ -1190,8 +1316,8 @@ def iter_packets(
     link_type: int | None = None,
     decode_app: bool = True,
     defragment: bool = True,
-) -> Iterator[ParsedPacket]:
-    """Read a capture and yield whole, parsed packets.
+) -> PacketReader:
+    """Read a capture as whole, parsed packets.
 
     The convenient front door: it opens the file, reassembles fragmented
     datagrams, and parses each result, which is the three-step sequence a
@@ -1217,6 +1343,19 @@ def iter_packets(
     :attr:`ParsedPacket.payload_offset` that is enough to cite where a
     payload's bytes live in the file.
 
+    The returned :class:`PacketReader` also exposes the two file-level facts
+    that hiding the records would otherwise cost a caller — the capture's
+    header, and the datagrams reassembly gave up on:
+
+    .. code-block:: python
+
+        with iter_packets(path="capture.pcap") as capture:
+            print(capture.header.tick_hz, capture.header.link_type)
+            for pkt in capture:
+                ...
+            for lost in capture.incomplete:
+                print("dropped:", lost.src, lost.dst, lost.reason)
+
     Exactly one of *path* or *file_object* must be supplied.
 
     Args:
@@ -1228,15 +1367,15 @@ def iter_packets(
             DHCP, and HTTP payloads as raw bytes.
         defragment: When ``True`` (default), fragments are reassembled and a
             datagram is yielded once, where its final fragment arrived.  A
-            datagram whose fragments never all arrive is dropped — use
-            :class:`~packeteer.parse.defragment.Defragmenter` directly to see
-            what was lost.
+            datagram whose fragments never all arrive is dropped and recorded
+            in :attr:`PacketReader.incomplete`.
 
-    Yields:
-        One :class:`ParsedPacket` per whole packet.  ``ts_sec`` / ``ts_frac``
-        come from the record that completed it, so for a reassembled datagram
-        they are the last contributing fragment's; ``source_records[0]`` has
-        the first fragment's time.
+    Returns:
+        A :class:`PacketReader`, iterating :class:`ParsedPacket` objects.
+        Each packet's ``ts_sec`` / ``ts_frac`` come from the record that
+        completed it, so for a reassembled datagram they are the last
+        contributing fragment's; ``source_records[0]`` has the first
+        fragment's time, and ``timestamp`` gives seconds directly.
 
     Raises:
         ValueError: If neither or both of *path* / *file_object* are given, or
@@ -1244,25 +1383,13 @@ def iter_packets(
         OSError: If *path* cannot be opened for reading.
 
     """
-    with open_pcap(path=path, file_object=file_object, link_type=link_type) as reader:
-        resolved = reader.header.link_type
-        tick_hz = reader.header.tick_hz
-
-        if not defragment:
-            for record in reader:
-                yield _packet_from_records(
-                    record.data, resolved, decode_app, [record],
-                )
-            return
-
-        engine = Defragmenter(link_type=resolved)
-        for record in reader:
-            when = record.ts_sec + record.ts_frac / tick_hz
-            for assembled in engine.feed(record.data, when, token=record):
-                yield _packet_from_records(
-                    assembled.frame, resolved, decode_app, assembled.tokens,
-                )
-        engine.flush()
+    reader = open_pcap(path=path, file_object=file_object, link_type=link_type)
+    try:
+        engine = Defragmenter(link_type=reader.header.link_type) if defragment else None
+        return PacketReader(reader, engine, decode_app)
+    except BaseException:
+        reader.close()
+        raise
 
 
 def _packet_from_records(
@@ -1273,5 +1400,6 @@ def _packet_from_records(
     last = records[-1]
     pkt.ts_sec = last.ts_sec
     pkt.ts_frac = last.ts_frac
+    pkt.tick_hz = last.tick_hz
     pkt.source_records = list(records)
     return pkt
