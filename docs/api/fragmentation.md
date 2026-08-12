@@ -47,6 +47,11 @@ overlap handling, timeouts, and memory limits.
 ```
 
 ```{eval-rst}
+.. autoclass:: packeteer.parse.defragment.AssembledFrame
+   :members:
+```
+
+```{eval-rst}
 .. autoclass:: packeteer.parse.defragment.IncompleteDatagram
    :members:
 ```

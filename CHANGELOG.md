@@ -26,6 +26,33 @@ link definitions at the bottom of this file, and tag the release `v0.8.0`.
 
 ### Added
 
+- **Fragment provenance from `Defragmenter`** (#72) — `feed()` returned bare
+  frames, so a reassembled datagram carried nothing identifying the fragments
+  it was built from: not their timestamps, not their positions in the capture,
+  not their byte offsets.  The failure path was well served by
+  `IncompleteDatagram`; the success path reported nothing.
+
+  - `feed(frame, ts, token=…)` now returns a list of `AssembledFrame`, with
+    `frame`, `tokens` (every contributing fragment's token, in arrival order),
+    and `fragment_count` (`1` for a frame that passed through untouched).
+  - The token is opaque and never inspected — pass a `PcapRecord`, a packet
+    number, or a file offset and get full provenance back, while the library
+    stays agnostic about what provenance means.  A reassembled datagram's
+    bytes span several discontiguous ranges of the capture, and that set
+    cannot be recovered from the output frame.
+  - `fragment_count == 1` is now the documented way to spot a passthrough,
+    replacing an identity check (`result[0] is frame`) that worked but was
+    never promised.
+  - `IncompleteDatagram` gains `tokens` for the fragments that did arrive, so
+    a report can name the packets that were lost as precisely as it names the
+    ones that completed.
+  - `defragment()` / `defragment_ipv4` / `defragment_ipv6` are unchanged and
+    still yield bare frames — that wrapper exists for callers who only want
+    the bytes.
+  - This changes `feed`'s return type, but `Defragmenter` shipped in this same
+    unreleased cycle, so no released version is affected and no `Breaking:`
+    note applies.
+
 - **`ParsedPacket.payload_offset`** (#71) — the index of `payload[0]` within
   the frame passed to `parse_packet`, or `None` when there is no payload.
   Every layer parser already returns a header size and the walk slices by it,
@@ -281,6 +308,9 @@ link definitions at the bottom of this file, and tag the release `v0.8.0`.
 
 ### Documentation
 
+- New "Tracking which fragments made a datagram" section in
+  `docs/guide/defragmenting.md` covering tokens, `AssembledFrame`, and the
+  arrival-order caveat; `AssembledFrame` added to `docs/api/fragmentation.md`.
 - New "Where the payload was in the frame" section in `docs/guide/parsing.md`
   covering `payload_offset`, combining it with `PcapRecord.data_offset` to
   cite file offsets, and why the two obvious shortcuts (length subtraction and

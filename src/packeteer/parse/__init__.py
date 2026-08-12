@@ -12,6 +12,7 @@ from .core import (
     parse_pcap_packet,
 )
 from .defragment import (
+    AssembledFrame,
     Defragmenter,
     IncompleteDatagram,
     defragment,
@@ -51,6 +52,7 @@ __all__ = [
     "defragment_ipv4",
     "defragment_ipv6",
     "Defragmenter",
+    "AssembledFrame",
     "IncompleteDatagram",
     "update_config",
     "apply_tunneled",

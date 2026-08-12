@@ -56,30 +56,65 @@ if pkt.ip.fragment is not None:            # IPv6
     pkt.ip.fragment.identification
 ```
 
+## Tracking which fragments made a datagram
+
+`defragment()` hands back bytes, which is all most callers want.  When you
+need to know *which* packets a reassembled datagram came from — to cite them,
+number them, or time them — drive the
+{class}`~packeteer.parse.defragment.Defragmenter` yourself and give each frame
+a **token**.  Whatever you pass comes back on the frames it contributed to:
+
+```python
+from packeteer.parse import Defragmenter, parse_packet
+from packeteer.pcap import open_pcap
+
+with open_pcap(path="capture.pcap") as reader:
+    engine = Defragmenter(link_type=reader.header.link_type)
+    for record in reader:
+        for assembled in engine.feed(record.data, record.ts_sec, token=record):
+            pkt = parse_packet(assembled.frame, link_type=reader.header.link_type)
+            sources = [r.data_offset for r in assembled.tokens]
+            print(f"{assembled.fragment_count} fragment(s) at file offsets {sources}")
+```
+
+Each result is an {class}`~packeteer.parse.defragment.AssembledFrame`:
+
+| Attribute | Meaning |
+|-----------|---------|
+| `frame` | The whole frame, ready for `parse_packet` |
+| `tokens` | Tokens of every contributing fragment, in **arrival** order |
+| `fragment_count` | `1` for a frame that was never fragmented |
+
+A token is never inspected — pass a {class}`~packeteer.pcap.PcapRecord`, a
+packet number, a file offset, whatever identifies the frame in your world.
+This matters because a reassembled datagram's bytes come from several
+discontiguous ranges of the capture, and that set cannot be recovered from the
+output frame.
+
+Use `fragment_count == 1` to tell a passthrough from a reassembly.  Note that
+`tokens` is in arrival order, which for out-of-order fragments is *not* offset
+order; the first token is the fragment seen first, not the one at offset zero.
+
 ## Datagrams that never complete
 
 A capture routinely contains fragments whose siblings were never captured.
 Those datagrams are dropped rather than emitted half-assembled — a partial
-datagram is bytes that were never sent as a unit.  To see what was lost, drive
-the {class}`~packeteer.parse.defragment.Defragmenter` yourself:
+datagram is bytes that were never sent as a unit.  What was lost is recorded
+on the engine:
 
 ```python
-from packeteer.parse import Defragmenter
-
-engine = Defragmenter(link_type=reader.header.link_type)
-for record in reader:
-    for frame in engine.feed(record.data, record.ts_sec):
-        pkt = parse_packet(frame, link_type=reader.header.link_type)
-
 engine.flush()          # abandon anything still waiting at end of capture
 
 for lost in engine.incomplete:
     print(f"{lost.src} -> {lost.dst} id={lost.identification} "
           f"{lost.fragments_seen} fragments, {lost.reason}")
+    print("  arrived in packets:", lost.tokens)
 ```
 
 Each entry is an {class}`~packeteer.parse.defragment.IncompleteDatagram` whose
-`reason` is `"timeout"`, `"overlap"`, `"too_large"`, or `"evicted"`.
+`reason` is `"timeout"`, `"overlap"`, `"too_large"`, or `"evicted"`.  It
+carries `tokens` for the fragments that *did* arrive, so a report can name
+them the same way a successful reassembly does.
 
 ## Policies
 
