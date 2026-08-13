@@ -26,6 +26,28 @@ link definitions at the bottom of this file, and tag the release `v0.8.0`.
 
 ### Added
 
+- **`packeteer stream --write-config` — a config template to start from**
+  (#78) — `packeteer stream` has enough options that reproducing an involved
+  setup is best done from `--config FILE`, but writing that file meant
+  assembling it from the CLI reference by hand.
+
+  - `packeteer stream --write-config FILE` writes a fully commented template
+    listing **every** recognised key with its default and an explanation;
+    `-` writes it to stdout.  `packeteer.generate.stream_config_template()`
+    returns the same text.
+  - The template was already shipped as package data but nothing emitted it,
+    and it had gone stale: 24 of the 73 recognised keys were missing —
+    everything added in 0.7, including the VXLAN, GENEVE, GTP-U and IPsec
+    encapsulations, the `http` and `vpn` payload types, and multi-session
+    generation.  All are now documented.
+  - Fourteen example lines carried their explanation on the same line, so
+    uncommenting them produced `invalid value for 'vlan_pcp'` rather than a
+    working config.  The prose moved to its own line.
+  - A test asserts every key in the CLI's parameter table appears in the
+    template, and that uncommenting every example still parses — so the
+    template cannot silently drift out of date again, which is how it got
+    here.
+
 - **`iter_packets` returns a `PacketReader`** (#76) — it was a bare generator,
   so the two file-level facts a consumer needs alongside the packets were
   unreachable: the capture's header, and what reassembly discarded.  Iteration
@@ -390,6 +412,10 @@ link definitions at the bottom of this file, and tag the release `v0.8.0`.
 
 ### Documentation
 
+- `docs/cli/stream.md` documents `--write-config` and no longer points at the
+  template's path in the source tree, which is not where an installed package
+  keeps it; `docs/api/stream-generators.md` documents
+  `stream_config_template`.
 - New "Working with timestamps" section in `docs/guide/pcap.md` covering
   `record.timestamp` / `timestamp_ns` / `datetime()`, the float precision
   caveat, and why `tick_hz` should be passed to `pcap_ts_to_datetime` rather

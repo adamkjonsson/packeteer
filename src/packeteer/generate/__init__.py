@@ -503,6 +503,7 @@ from .stream_encap import (
     VLANEncap,
     VXLANEncap,
 )
+from .stream_template import stream_config_template
 from .tcp import (
     TCP_ACK,
     TCP_CWR,
@@ -521,6 +522,7 @@ from .udp_stream import UDPStream, UDPStreamConfig, UDPStreamPacket, generate_ud
 from .vxlan import VXLAN_FLAG_VALID_VNI, VXLAN_PORT, VXLANHeader
 
 __all__ = [
+    "stream_config_template",
     "PacketBuilder",
     "EthernetHeader",
     "VLANTag",

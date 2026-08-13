@@ -63,6 +63,59 @@ server_mac = 00:00:00:00:00:02
 #   Write the generated stream to a packet spec (.json) file at this path.
 # json = out.json
 
+# ── Application payload ────────────────────────────────────────────────────────
+
+# payload  (default: unset — random bytes)
+#   Generate a simulated application protocol instead of random payload bytes.
+#   Leave unset for random bytes of min_payload…max_payload.  Options:
+#
+#     http  — a REST client over TCP: varied methods, resource paths, realistic
+#             headers and JSON bodies, with correlated status codes.  Genuinely
+#             bidirectional, and valid HTTP that round-trips through
+#             `packeteer parse`.
+#     vpn   — a fictive binary VPN over two UDP channels: a key-exchange
+#             channel doing a three-message handshake at each key epoch, and a
+#             CTR-mode data channel carrying a counter plus random ciphertext.
+# payload = http
+
+# requests  (default: 10)
+#   http only.  Total request/response transactions to generate.  Replaces
+#   `packets` as the measure of stream length for HTTP.
+# requests = 50
+
+# requests_per_connection  (default: unset — one keep-alive connection)
+#   http only.  Transactions per TCP connection.  Set to 1 for a new
+#   connection per request; omit to put every transaction on one connection.
+# requests_per_connection = 1
+
+# vpn_epochs  (default: 4)
+#   vpn only.  Number of key negotiations.  `packets` data packets flow after
+#   each handshake, so a rekey happens every `packets` packets.
+# vpn_epochs = 4
+
+# vpn_data_port  (default: 51820)
+#   vpn only.  UDP port of the CTR-mode data channel.
+# vpn_data_port = 51820
+
+# vpn_key_port  (default: 51821)
+#   vpn only.  UDP port of the key-exchange channel.
+# vpn_key_port = 51821
+
+# ── Sessions ───────────────────────────────────────────────────────────────────
+
+# sessions  (default: 1)
+#   Number of independent conversations to generate in one capture.  Session i
+#   uses client_ip + i and server_ip + i, so the two address ranges must not
+#   overlap — generation stops with an error rather than emitting traffic where
+#   one session's client is another's server.
+# sessions = 20
+
+# session_stagger  (default: 1.0)
+#   Seconds over which session start times are spread when sessions > 1.  Each
+#   session begins at a random offset within this window and the packets are
+#   merged in timestamp order, so the output looks like concurrent traffic.
+# session_stagger = 1.0
+
 # ── Stream shape ───────────────────────────────────────────────────────────────
 
 # protocol  (default: tcp)
@@ -244,9 +297,13 @@ no_ethernet = false
 #   1. vlan or qinq   (mutually exclusive)
 #   2. mpls
 #   3. pppoe
-#   4. gre, etherip, or ipip   (at most one tunnel type)
+#   4. one tunnel: gre, etherip, ipip, vxlan, geneve, gtpu, ah, or esp
 #
-# Any combination of the above is allowed.  For example, MPLS + IP-in-IP:
+# The tag-based layers (vlan, qinq, mpls, pppoe) leave the stream's own
+# transport on the wire; a tunnel carries the whole stream as inner traffic.
+# At most one tunnel may be used at a time.  Any combination of tags with one
+# tunnel is allowed — for example MPLS plus IP-in-IP:
+#
 #   mpls = 100 200
 #   ipip = 203.0.113.1 203.0.113.2
 #
@@ -255,8 +312,10 @@ no_ethernet = false
 # vlan  — single IEEE 802.1Q VLAN tag
 #   Accepts a VLAN ID (1–4094).
 # vlan = 100
-# vlan_pcp = 0        Priority Code Point (0–7, default 0)
-# vlan_dei = 0        Drop Eligible Indicator (0 or 1, default 0)
+#   Priority Code Point (0–7, default 0)
+# vlan_pcp = 0
+#   Drop Eligible Indicator (0 or 1, default 0)
+# vlan_dei = 0
 #
 # qinq  — QinQ double VLAN tag; space-separated outer then inner VID
 # qinq = 100 200
@@ -267,16 +326,21 @@ no_ethernet = false
 #
 # mpls  — MPLS label stack; space-separated labels, outermost first
 # mpls = 100 200 300
-# mpls_tc = 0         Traffic Class for all labels (0–7, default 0)
-# mpls_ttl = 64       TTL for all labels (0–255, default 64)
+#   Traffic Class for all labels (0–7, default 0)
+# mpls_tc = 0
+#   TTL for all labels (0–255, default 64)
+# mpls_ttl = 64
 #
 # pppoe  — PPPoE session frame (RFC 2516); requires Ethernet framing
-# pppoe = 1           16-bit session ID
+#   16-bit session ID
+# pppoe = 1
 #
 # gre  — GRE tunnel (RFC 2784/2890); space-separated outer src and dst IP
 # gre = 203.0.113.1 203.0.113.2
-# gre_key = 1234      optional 32-bit RFC 2890 Key field
-# gre_ttl = 64        outer IP TTL (default 64)
+#   optional 32-bit RFC 2890 Key field
+# gre_key = 1234
+#   outer IP TTL (default 64)
+# gre_ttl = 64
 #
 # etherip  — EtherIP tunnel (RFC 3378)
 # etherip = 203.0.113.1 203.0.113.2
@@ -285,3 +349,44 @@ no_ethernet = false
 # ipip  — IP-in-IP tunnel (RFC 2003/4213)
 # ipip = 203.0.113.1 203.0.113.2
 # ipip_ttl = 64
+#
+# vxlan  — VXLAN tunnel (RFC 7348) over UDP:4789; outer src and dst IP.
+#          Carries the whole stream as inner traffic inside an outer
+#          Ethernet / IP / UDP / VXLAN / inner-Ethernet stack.
+# vxlan = 203.0.113.1 203.0.113.2
+#   24-bit VXLAN Network Identifier (default 0)
+# vxlan_vni = 0
+#   outer IP TTL (default 64)
+# vxlan_ttl = 64
+#   outer UDP source port (default 4789)
+# vxlan_src_port = 4789
+#
+# geneve  — GENEVE tunnel (RFC 8926) over UDP:6081; outer src and dst IP
+# geneve = 203.0.113.1 203.0.113.2
+#   24-bit Virtual Network Identifier (default 0)
+# geneve_vni = 0
+# geneve_ttl = 64
+# geneve_src_port = 6081
+#
+# gtpu  — GTP-U tunnel (3GPP TS 29.281) over UDP:2152; outer src and dst IP.
+#         Carries the inner IP packet directly, with no inner Ethernet frame.
+# gtpu = 203.0.113.1 203.0.113.2
+#   32-bit Tunnel Endpoint Identifier (default 0)
+# gtpu_teid = 0
+# gtpu_ttl = 64
+# gtpu_src_port = 2152
+#
+# ah  — IPsec AH tunnel (RFC 4302); outer src and dst IP.  AH is integrity
+#       only, so the inner stack stays in cleartext and remains parseable.
+# ah = 203.0.113.1 203.0.113.2
+#
+# esp  — IPsec ESP tunnel (RFC 4303); outer src and dst IP.  The whole inner
+#        stack is scrambled into high-entropy bytes standing in for
+#        ciphertext, so no structured headers leak.  Deterministic, so a
+#        seeded stream stays reproducible.
+# esp = 203.0.113.1 203.0.113.2
+#
+#   Security Parameters Index for ah / esp (default 256)
+# ipsec_spi = 256
+#   outer IP TTL for the IPsec tunnel (default 64)
+# ipsec_ttl = 64
