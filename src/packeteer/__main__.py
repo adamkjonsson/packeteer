@@ -147,6 +147,7 @@ from packeteer.generate.stream_encap import (
     VLANEncap,
     VXLANEncap,
 )
+from packeteer.generate.stream_template import stream_config_template
 from packeteer.generate.tcp import TCP_SYN, TCPOptions
 from packeteer.generate.tcp_stream import TCPStreamConfig, generate_tcp_stream
 from packeteer.generate.udp_stream import UDPStreamConfig, generate_udp_stream
@@ -1756,7 +1757,28 @@ def _generate_vpn_payload_stream(
         sys.exit(1)
 
 
+def _write_stream_config_template(destination: str) -> None:
+    """Write the stream config template to *destination*, or stdout for ``-``."""
+    template = stream_config_template()
+    if destination == "-":
+        print(template, end="")
+        return
+    try:
+        with open(destination, "w") as f:
+            f.write(template)
+    except OSError as e:
+        print(f"Error writing '{destination}': {e}", file=sys.stderr)
+        sys.exit(1)
+    print(f"Wrote stream config template to {destination}")
+    print(f"Edit it, then run: packeteer stream --config {destination}")
+
+
 def _cmd_stream(args: argparse.Namespace) -> None:
+    template_path = getattr(args, "write_config", None)
+    if template_path:
+        _write_stream_config_template(template_path)
+        return
+
     _apply_stream_defaults(args)
     protocol = _validate_stream_args(args)
 
@@ -2176,6 +2198,14 @@ def main() -> None:
     stream_parser.add_argument(
         "--config", metavar="FILE",
         help="INI config file with a [stream] section; CLI flags override file values",
+    )
+    stream_parser.add_argument(
+        "--write-config", metavar="FILE",
+        help=(
+            "Write a documented config template listing every available option "
+            "to FILE (or '-' for stdout) and exit.  Edit it and pass it back "
+            "with --config."
+        ),
     )
     stream_parser.add_argument(
         "--protocol", default=None, choices=["tcp", "udp", "sctp"],

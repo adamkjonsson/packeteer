@@ -226,3 +226,16 @@ See {doc}`../guide/generating` for usage examples and workflows.
 .. autofunction:: packeteer.generate.session.sctp_handshake
    :no-index:
 ```
+
+---
+
+## Config template
+
+`packeteer stream --config FILE` reproduces an involved setup from an INI
+file.  This returns a documented starting point for one, listing every
+recognised key with its default — the same text `packeteer stream
+--write-config` writes.
+
+```{eval-rst}
+.. autofunction:: packeteer.generate.stream_template.stream_config_template
+```

@@ -237,8 +237,30 @@ packeteer stream --config session.ini
 packeteer stream --config session.ini --packets 200
 ```
 
-A fully commented template is at
-`src/packeteer/generate/stream.ini.template`.
+### Starting from a template
+
+`--write-config` writes a fully commented template listing every recognised
+key with its default, so you do not have to assemble one from this page:
+
+```bash
+packeteer stream --write-config my_stream.ini
+```
+
+Edit it — at minimum uncomment an output path — and run it back:
+
+```bash
+packeteer stream --config my_stream.ini
+```
+
+Pass `-` instead of a filename to write it to stdout.  Every commented example
+in the template can be uncommented as-is, and the same text is available from
+Python as {func}`packeteer.generate.stream_template.stream_config_template`:
+
+```python
+from packeteer.generate import stream_config_template
+
+print(stream_config_template())
+```
 
 ## Examples
 
