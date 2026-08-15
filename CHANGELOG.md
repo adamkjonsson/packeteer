@@ -19,10 +19,17 @@ omitted.
 
 <!--
 Add entries here as work lands, under the change types listed above.
-Releasing 0.8.0: replace this heading with `## [0.8.0] - YYYY-MM-DD`, bump the
-version in pyproject.toml to 0.8.0, add a fresh Unreleased section, update the
-link definitions at the bottom of this file, and tag the release `v0.8.0`.
+Releasing: rename this heading to `## [X.Y.Z] - YYYY-MM-DD`, add a fresh
+Unreleased section above it, drop the `.devN` suffix from the version in
+pyproject.toml, update the link definitions at the bottom of this file, tag
+`vX.Y.Z`, and close the release's issues and milestone.
 -->
+
+_Nothing yet._
+
+---
+
+## [0.8.0] - 2026-08-15
 
 ### Added
 
@@ -1810,5 +1817,6 @@ the exhaustive API reference.
      tagged with names that predate this convention, so only the entries below
      carry compare links. -->
 
-[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.7...HEAD
+[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/adamkjonsson/packeteer/compare/v0.7...v0.8.0
 [0.7.0]: https://github.com/adamkjonsson/packeteer/compare/v0.6.0...v0.7
