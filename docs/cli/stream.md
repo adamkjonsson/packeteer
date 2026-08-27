@@ -43,6 +43,7 @@ Exactly one output flag is required; they are mutually exclusive.
 | `--min-chunk BYTES` | `8` | HTTP only: minimum bytes per chunk, before the last |
 | `--max-chunk BYTES` | `32` | HTTP only: maximum bytes per chunk, before the last |
 | `--trailer-rate P` | `0.0` | HTTP only: probability a chunked body carries a trailer section |
+| `--mss BYTES` | `1460` | HTTP only: maximum segment size for splitting a message across TCP segments |
 | `--vpn-epochs E` | `4` | VPN only: number of key negotiations (data rekeys every `--packets`) |
 | `--vpn-data-port PORT` | `51820` | VPN only: UDP port of the data channel |
 | `--vpn-key-port PORT` | `51821` | VPN only: UDP port of the key-exchange channel |
@@ -154,13 +155,37 @@ packeteer stream --client-ip 10.0.0.1 --server-ip 10.1.0.1 \
 Request bodies are always counted with `Content-Length`; the framing knobs
 apply to responses only.
 
+### Impairing HTTP traffic
+
+Every anomaly option works with `--payload http`: `--packet-loss`,
+`--retransmission-probability`, `--payload-corruption`, `--server-rst` and
+`--stray-packets`.  They are applied **per connection**, so a RST cuts one
+connection short rather than reaching across the capture, and with
+`--sessions` each session's connections are impaired independently.
+
+Pair them with `--mss`.  A generated HTTP message is small enough to fit in a
+single 1460-byte segment, so at the default MSS losing a segment loses a whole
+request or response.  Lower the MSS and a message is spread over several
+segments, where loss or corruption leaves a gap *inside* a message a decoder is
+already part-way through — which is the case worth testing and the one hardest
+to build by hand:
+
+```bash
+# Chunked responses, split across small segments, with 15% of segments lost
+packeteer stream --client-ip 10.0.0.1 --server-ip 10.1.0.1 \
+    --payload http --requests 200 --chunked-rate 0.5 \
+    --mss 128 --packet-loss 0.15 --seed 42 --pcap rest-impaired.pcap
+```
+
+In `--json` output a damaged segment's `label` names the message it came from,
+so `CORRUPT[GET /api/v1/orders [2/5]]` reads as "the second of five segments
+carrying that request".
+
 ### Other notes
 
-`--payload http` requires `--protocol tcp` (the default).  The TCP anomaly
-options (`--server-rst`, `--retransmission-*`, `--packet-loss`,
-`--payload-corruption`, `--stray-packets`) do not apply and are ignored with a
-warning.  In `--json` output, each data segment's `label` carries the HTTP
-semantics (e.g. `GET /api/v1/orders/4821`, `201 Created`).
+`--payload http` requires `--protocol tcp` (the default).  In `--json` output,
+each data segment's `label` carries the HTTP semantics (e.g.
+`GET /api/v1/orders/4821`, `201 Created`).
 
 ```bash
 # 50 REST calls over one keep-alive connection
@@ -197,9 +222,16 @@ and the data record layout — is specified RFC-style, with packet diagrams, und
 [Application-layer payloads](../api/stream-generators.md#application-layer-payloads).
 
 It composes with `--sessions` (each IP pair runs the full workload) and `--seed`
-makes the capture reproducible.  `--payload vpn` is UDP-based, so the TCP-only
-options are ignored.  In `--json` output, labels read e.g. `KEY-INIT[epoch=0]`,
-`KEY-RESPONSE[epoch=0]`, `DATA c2s ctr=3 epoch=0`.
+makes the capture reproducible.  In `--json` output, labels read e.g.
+`KEY-INIT[epoch=0]`, `KEY-RESPONSE[epoch=0]`, `DATA c2s ctr=3 epoch=0`.
+
+`--payload vpn` is UDP, which splits the anomaly options in two.
+`--packet-loss` and `--payload-corruption` describe what a wire does to a
+datagram and apply here unchanged, per channel.
+`--retransmission-probability`, `--server-rst` and `--stray-packets` describe
+TCP connection behaviour — a retransmission timer, a connection reset, a
+hijacked sequence number — none of which exists in UDP; they are ignored with a
+warning naming them, rather than approximated.
 
 ```bash
 # 4 key epochs, 20 data packets each, on the default UDP ports

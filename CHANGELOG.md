@@ -27,6 +27,45 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ### Added
 
+- **Wire impairments work with `--payload http` and `--payload vpn`** (#83) —
+  every TCP anomaly option was discarded with a warning when a payload type was
+  given, so impaired *application* traffic — the case a protocol decoder is
+  actually tested against — could not be generated at all.  It was reachable
+  only by running `packeteer fuzz` over an existing capture, which mutates
+  rather than generates and needs a capture to start from.
+
+  - `--packet-loss`, `--retransmission-probability`, `--payload-corruption`,
+    `--server-rst` and `--stray-packets` now all apply to `--payload http`, and
+    the warning is gone.
+  - They are applied **per connection**, so a RST cuts one connection short
+    instead of reaching across a capture that `--sessions` and
+    `--requests-per-connection` may have spread over many.
+  - `--payload vpn` is UDP, which splits the options in two.  `--packet-loss`
+    and `--payload-corruption` describe what a wire does to a datagram and now
+    apply there too; `--retransmission-probability`, `--server-rst` and
+    `--stray-packets` describe TCP connection behaviour and are still ignored,
+    but the warning now names only those three instead of all five.
+  - The passes moved to a new `packeteer.generate.impairments` module and are
+    shared by every generator rather than living on one path.
+    `ImpairmentConfig` is public and reachable as
+    `from packeteer.generate import ImpairmentConfig`; the payload generators
+    take one through `HTTPRestConfig.impairments` / `VPNConfig.impairments`.
+  - A damaged segment's label names the message it came from, so
+    `CORRUPT[GET /api/v1/orders [2/5]]` reads as "the second of five segments
+    carrying that request".
+
+- **`--mss` for `packeteer stream --payload http`** (#83) — `mss` was a
+  parameter of `generate_http_stream` that the CLI never passed, so it was
+  stuck at 1460 and unreachable from the command line or a config file.
+
+  It matters most alongside the impairments above.  A generated HTTP message
+  fits inside one 1460-byte segment, so at the default MSS losing a segment
+  loses a whole request or response.  Lower it and a message spans several
+  segments, where loss or corruption leaves a gap *inside* a message a decoder
+  is already part-way through — and after the chunked support below, a chunk
+  boundary can fall across a segment boundary, which is the case a streaming
+  decoder is most likely to get wrong.
+
 - **Chunked responses from `packeteer stream --payload http`** (#82) — every
   generated response was framed with `Content-Length`; `Transfer-Encoding:
   chunked` appeared nowhere in the generator, so no combination of options
@@ -68,6 +107,21 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   added random draws are skipped entirely when their rate is zero.
 
 ### Fixed
+
+- **`--server-rst` combined with `--packet-loss` kept the wrong
+  acknowledgements** (#83) — when both were used together, the RST pass decided
+  which ACKs to keep by comparing the segment number in an ACK's label against
+  a position in the list of segments that survived loss.  Those two numbers
+  agree only when nothing has been dropped, so with loss the pass discarded
+  acknowledgements for segments that had been delivered before the connection
+  was reset, and kept some that came after it.  An ACK whose own segment was
+  lost was mistaken for part of the teardown.
+
+  Acknowledgements are now cut at the split point by time, which does not
+  depend on any segment numbering.  **Captures generated with both
+  `--server-rst` and `--packet-loss` set will differ from previous versions for
+  the same seed.**  Every other combination, impaired or not, reproduces
+  byte-for-byte — verified across 112 seed and option combinations.
 
 - **`encode_http_message` no longer adds `Content-Length` beside
   `Transfer-Encoding`** (#81) — the encoder added the header whenever the body

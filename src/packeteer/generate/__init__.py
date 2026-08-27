@@ -381,6 +381,7 @@ from .gtpu import (
 from .http import HTTP_ALT_PORT, HTTP_PORT, HTTPRequest, HTTPResponse
 from .icmp import ICMPHeader
 from .icmpv6 import ICMPv6Header
+from .impairments import ImpairmentConfig
 from .ip import IPHeader
 from .ipsec import (
     AH_ICV_LEN_SHA1_96,
@@ -669,6 +670,7 @@ __all__ = [
     "generate_http_stream",
     "generate_http_conversation",
     "HTTPRestConfig",
+    "ImpairmentConfig",
     "generate_vpn_stream",
     "VPNConfig",
     "AppMessage",

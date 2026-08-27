@@ -27,11 +27,18 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from ..http import HTTPRequest, HTTPResponse, encode_http_message
+from ..impairments import (
+    FlowEndpoints,
+    ImpairmentConfig,
+    apply_impairments,
+    apply_packet_loss,
+)
 from ..session_mix import CombinedStream, _assign_endpoints, merge_streams
 from ..stream_encap import (  # noqa: F401  (StreamEncap needed for Sphinx type resolution)
     EncapSpec,
     StreamEncap,
 )
+from ..tcp_stream import TCPStream, TCPStreamPacket
 from .base import AppMessage, render_tcp_session
 
 _WRAP = 2 ** 32
@@ -78,7 +85,11 @@ _TRAILERS: tuple[tuple[str, Callable[[random.Random], str]], ...] = (
 
 @dataclass
 class HTTPRestConfig:
-    """Content knobs for :func:`generate_http_stream`.
+    """Content and impairment knobs for :func:`generate_http_stream`.
+
+    Carried as one object rather than as further arguments, the way
+    :class:`~packeteer.generate.tcp_stream.TCPStreamConfig` is on the
+    low-level path.
 
     Attributes:
         methods: Pool of HTTP methods drawn from (with repeats acting as
@@ -101,6 +112,14 @@ class HTTPRestConfig:
             a trailer section, announced by a ``Trailer`` header.  Legal per
             RFC 7230 4.4 and widely forgotten by decoders.  Defaults to
             ``0.0``.  Has no effect unless *chunked_rate* is non-zero.
+        impairments: Wire impairments
+            (:class:`~packeteer.generate.impairments.ImpairmentConfig`) applied
+            to each connection independently, so a lost segment or a RST
+            affects one connection rather than reaching across the capture.
+            ``None`` (the default) leaves the traffic clean and draws no
+            randomness, so a capture generated without impairments still
+            reproduces from its seed exactly as it did before impairments were
+            available.
 
     """
 
@@ -112,6 +131,7 @@ class HTTPRestConfig:
     chunked_rate: float = 0.0
     chunk_size: tuple[int, int] = (8, 32)
     trailer_rate: float = 0.0
+    impairments: ImpairmentConfig | None = None
 
 
 def _token(rng: random.Random, length: int = 16) -> str:
@@ -297,6 +317,47 @@ def generate_http_conversation(
     return messages
 
 
+def _impair(
+    stream: TCPStream,
+    impairments: ImpairmentConfig,
+    rng: random.Random,
+    *,
+    client_ip: str,
+    server_ip: str,
+    client_port: int,
+    server_port: int,
+    client_mac: str,
+    server_mac: str,
+    include_ethernet: bool,
+    ip_ttl: int,
+    inter_packet_gap: float,
+    encap: EncapSpec,
+) -> TCPStream:
+    """Apply *impairments* to one rendered connection.
+
+    Loss goes first, matching the low-level generator where it is applied as
+    each packet is emitted; the remaining passes then work on what survived.
+    """
+    packets = apply_packet_loss(
+        stream.packets, rng=rng,
+        probability=impairments.packet_loss_probability,
+    )
+    packets = apply_impairments(
+        packets,
+        rng=rng,
+        config=impairments,
+        flow=FlowEndpoints(
+            client_ip=client_ip, client_port=client_port, client_mac=client_mac,
+            server_ip=server_ip, server_port=server_port, server_mac=server_mac,
+            include_ethernet=include_ethernet, ip_ttl=ip_ttl, encap=encap,
+        ),
+        make=TCPStreamPacket,
+        gap_usec=int(inter_packet_gap * 1_000_000),
+    )
+    packets.sort(key=lambda p: (p.ts_sec, p.ts_usec))
+    return TCPStream(packets=packets)
+
+
 def generate_http_stream(
     *,
     client_ip: str,
@@ -352,7 +413,7 @@ def generate_http_stream(
         encap: Optional encapsulation layer(s) applied to every packet.
         seed: RNG seed; the same seed reproduces the whole capture.
         base_time: Unix start time; defaults to the current time.
-        config: Content knobs (:class:`HTTPRestConfig`).
+        config: Content and impairment knobs (:class:`HTTPRestConfig`).
 
     Returns:
         A :class:`~packeteer.generate.session_mix.CombinedStream` of all
@@ -407,7 +468,7 @@ def generate_http_stream(
             )
             offset = 0.0 if first else rng.uniform(0.0, session_stagger)
             first = False
-            streams.append(render_tcp_session(
+            stream = render_tcp_session(
                 conversation,
                 client_ip=client_ips[session_idx],
                 server_ip=server_ips[session_idx],
@@ -423,5 +484,16 @@ def generate_http_stream(
                 encap=encap,
                 client_isn=rng.randint(0, _WRAP - 1),
                 server_isn=rng.randint(0, _WRAP - 1),
-            ))
+            )
+            if config.impairments is not None:
+                stream = _impair(
+                    stream, config.impairments, rng,
+                    client_ip=client_ips[session_idx],
+                    server_ip=server_ips[session_idx],
+                    client_port=client_port + conn, server_port=server_port,
+                    client_mac=client_mac, server_mac=server_mac,
+                    include_ethernet=include_ethernet, ip_ttl=ip_ttl,
+                    inter_packet_gap=inter_packet_gap, encap=encap,
+                )
+            streams.append(stream)
     return merge_streams(streams)

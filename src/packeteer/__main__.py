@@ -110,6 +110,7 @@ from packeteer.generate.dns import (
 from packeteer.generate.geneve import GENEVE_PORT, GeneveOption
 from packeteer.generate.gtpu import GTPU_MSG_G_PDU, GTPU_PORT, GTPUExtensionHeader
 from packeteer.generate.http import HTTPMessage, HTTPRequest, HTTPResponse
+from packeteer.generate.impairments import ImpairmentConfig
 from packeteer.generate.payloads.http import HTTPRestConfig, generate_http_stream
 from packeteer.generate.payloads.vpn import VPNConfig, generate_vpn_stream
 from packeteer.generate.pppoe import PPPOE_CODE_SESSION, PPPoETag
@@ -1332,6 +1333,7 @@ _STREAM_PARAMS: dict[str, tuple[str, object, object]] = {
     "min_chunk":          ("min_chunk",                       int,   8),
     "max_chunk":          ("max_chunk",                       int,   32),
     "trailer_rate":       ("trailer_rate",                    float, 0.0),
+    "mss":                ("mss",                             int,   1460),
     "vpn_epochs":         ("vpn_epochs",                      int,   4),
     "vpn_data_port":      ("vpn_data_port",                   int,   51820),
     "vpn_key_port":       ("vpn_key_port",                    int,   51821),
@@ -1682,11 +1684,36 @@ def _build_stream_config(
     return SCTPStreamConfig(gap_jitter=args.gap_jitter, seed=args.seed)
 
 
-_HTTP_ANOMALY_FLAGS = (
-    "packet_loss_probability", "retransmission_probability",
-    "payload_corruption_probability", "server_rst_probability",
-    "stray_packet_count",
+#: Anomaly options that describe TCP connection behaviour, so they have no
+#: meaning on a UDP payload path.  Loss and payload corruption are absent
+#: deliberately: those describe what a wire does to a datagram and do apply.
+_TCP_ONLY_ANOMALY_FLAGS = (
+    ("retransmission_probability", "--retransmission-probability"),
+    ("server_rst_probability", "--server-rst"),
+    ("stray_packet_count", "--stray-packets"),
 )
+
+
+def _impairments_from_args(args: argparse.Namespace) -> ImpairmentConfig | None:
+    """Build an :class:`ImpairmentConfig` from CLI args, or ``None`` if clean.
+
+    Returning ``None`` when nothing was asked for matters beyond tidiness: an
+    impairment config draws randomness only for the impairments it enables, so
+    a stream generated without any reproduces from its seed exactly as it did
+    before impairments reached this path.
+    """
+    config = ImpairmentConfig(
+        packet_loss_probability=args.packet_loss_probability,
+        retransmission_probability=args.retransmission_probability,
+        retransmission_timeout=args.retransmission_timeout,
+        payload_corruption_probability=args.payload_corruption_probability,
+        server_rst_probability=args.server_rst_probability,
+        rst_propagation_delay=args.rst_propagation_delay,
+        stray_packet_count=args.stray_packet_count,
+        stray_timing_window=args.stray_timing_window,
+        stray_payload_range=(args.min_payload, args.max_payload),
+    )
+    return config if (config.packet_loss_probability or config.any_post_pass) else None
 
 
 def _generate_http_payload_stream(
@@ -1696,13 +1723,6 @@ def _generate_http_payload_stream(
     if protocol != "tcp":
         print("Error: --payload http requires --protocol tcp.", file=sys.stderr)
         sys.exit(1)
-    if any(getattr(args, flag, None) for flag in _HTTP_ANOMALY_FLAGS):
-        print(
-            "Warning: TCP anomaly options (--packet-loss, --retransmission-*, "
-            "--payload-corruption, --server-rst, --stray-packets) are not "
-            "applied with --payload http; ignoring them.",
-            file=sys.stderr,
-        )
     try:
         return generate_http_stream(
             client_ip=args.client_ip,
@@ -1718,6 +1738,7 @@ def _generate_http_payload_stream(
             include_ethernet=not args.no_ethernet,
             ip_ttl=args.ttl,
             inter_packet_gap=args.gap,
+            mss=args.mss,
             encap=encap,
             seed=args.seed,
             config=HTTPRestConfig(
@@ -1725,6 +1746,7 @@ def _generate_http_payload_stream(
                 chunked_rate=args.chunked_rate,
                 chunk_size=(args.min_chunk, args.max_chunk),
                 trailer_rate=args.trailer_rate,
+                impairments=_impairments_from_args(args),
             ),
         )
     except (ValueError, OSError) as e:
@@ -1736,10 +1758,12 @@ def _generate_vpn_payload_stream(
     args: argparse.Namespace, encap: object,
 ) -> CombinedStream:
     """Generate a fictive-VPN payload stream from parsed CLI args."""
-    if any(getattr(args, flag, None) for flag in _HTTP_ANOMALY_FLAGS):
+    ignored = [flag for attr, flag in _TCP_ONLY_ANOMALY_FLAGS if getattr(args, attr, None)]
+    if ignored:
         print(
-            "Warning: TCP anomaly options are not applied with --payload vpn; "
-            "ignoring them.",
+            f"Warning: {', '.join(ignored)} describe TCP connection behaviour "
+            "and are not applied with --payload vpn, which is UDP; ignoring "
+            "them. --packet-loss and --payload-corruption do apply.",
             file=sys.stderr,
         )
     try:
@@ -1760,7 +1784,11 @@ def _generate_vpn_payload_stream(
             max_payload=args.max_payload,
             encap=encap,
             seed=args.seed,
-            config=VPNConfig(data_port=args.vpn_data_port, key_port=args.vpn_key_port),
+            config=VPNConfig(
+                data_port=args.vpn_data_port,
+                key_port=args.vpn_key_port,
+                impairments=_impairments_from_args(args),
+            ),
         )
     except (ValueError, OSError) as e:
         print(f"Error generating stream: {e}", file=sys.stderr)
@@ -2296,6 +2324,15 @@ def main() -> None:
         help=(
             "HTTP only: probability 0.0-1.0 that a chunked body is followed by a "
             "trailer section (default: 0.0); needs --chunked-rate"
+        ),
+    )
+    stream_parser.add_argument(
+        "--mss", type=int, default=None, metavar="BYTES",
+        help=(
+            "HTTP only: maximum segment size used to split a message across TCP "
+            "segments (default: 1460). Lower it to put a message on several "
+            "segments, so a lost or corrupted segment damages part of a message "
+            "rather than all of it."
         ),
     )
     stream_parser.add_argument(

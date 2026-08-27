@@ -143,6 +143,27 @@ onto one or more TCP connections — returning a
    :no-index:
 ```
 
+### Wire impairments
+
+{class}`~packeteer.generate.impairments.ImpairmentConfig` describes damage done
+to a stream after it is assembled — loss, retransmission, payload corruption, a
+server RST, and forged stray packets.  The same object drives every generator:
+pass it as `TCPStreamConfig`'s individual fields on the low-level path, or as
+the `impairments` attribute of
+{class}`~packeteer.generate.payloads.http.HTTPRestConfig` and
+{class}`~packeteer.generate.payloads.vpn.VPNConfig` on the payload paths, where
+it is applied to each connection independently.
+
+On a UDP payload path only `packet_loss_probability` and
+`payload_corruption_probability` are read; the rest describe TCP connection
+behaviour and are ignored.
+
+```{eval-rst}
+.. autoclass:: packeteer.generate.impairments.ImpairmentConfig
+   :members:
+   :no-index:
+```
+
 {func}`~packeteer.generate.payloads.vpn.generate_vpn_stream` simulates a fictive
 binary VPN: a key-exchange channel (three-message handshake per epoch) and a
 CTR-mode data channel, each on its own UDP port.  The complete wire format is

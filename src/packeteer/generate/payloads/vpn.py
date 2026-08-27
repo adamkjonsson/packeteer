@@ -164,11 +164,13 @@ import struct
 import time
 from dataclasses import dataclass
 
+from ..impairments import ImpairmentConfig, apply_datagram_impairments
 from ..session_mix import CombinedStream, _assign_endpoints, merge_streams
 from ..stream_encap import (  # noqa: F401  (StreamEncap needed for Sphinx type resolution)
     EncapSpec,
     StreamEncap,
 )
+from ..udp_stream import UDPStream
 from .base import AppMessage, render_udp_session
 
 _MSG_KEY_INIT = 1
@@ -191,6 +193,15 @@ class VPNConfig:
         version: Protocol version byte.
         random_value_size: Length in bytes of the random value carried in each
             key-exchange message.
+        impairments: Wire impairments
+            (:class:`~packeteer.generate.impairments.ImpairmentConfig`) applied
+            to each channel independently.  This is UDP, so only the two fields
+            that describe what a wire does to a datagram are read —
+            ``packet_loss_probability`` and ``payload_corruption_probability``.
+            Retransmission, server RST and stray injection describe TCP
+            connection behaviour and are ignored rather than approximated.
+            ``None`` (the default) leaves the traffic clean and draws no
+            randomness.
 
     """
 
@@ -199,6 +210,7 @@ class VPNConfig:
     magic: bytes = b"VPNX"
     version: int = 1
     random_value_size: int = 32
+    impairments: ImpairmentConfig | None = None
 
 
 def _header(msg_type: int, epoch: int, config: VPNConfig) -> bytes:
@@ -248,6 +260,17 @@ def _data_messages(
             f"DATA {direction} ctr={counter} epoch={epoch}",
         ))
     return messages
+
+
+def _impair(
+    stream: UDPStream, config: VPNConfig, rng: random.Random,
+) -> UDPStream:
+    """Apply *config*'s impairments to one channel's datagrams."""
+    if config.impairments is None:
+        return stream
+    return UDPStream(packets=apply_datagram_impairments(
+        stream.packets, rng=rng, config=config.impairments,
+    ))
 
 
 def generate_vpn_stream(
@@ -344,16 +367,16 @@ def generate_vpn_stream(
                 "encap": encap,
             }
             handshake = _handshake_messages(rng, epoch, config)
-            streams.append(render_udp_session(
+            streams.append(_impair(render_udp_session(
                 handshake, server_port=config.key_port, base_time=cursor, **common,
-            ))
+            ), config, rng))
             cursor += len(handshake) * gap
 
             data = _data_messages(
                 rng, epoch, packets_per_epoch, min_payload, max_payload, config,
             )
-            streams.append(render_udp_session(
+            streams.append(_impair(render_udp_session(
                 data, server_port=config.data_port, base_time=cursor, **common,
-            ))
+            ), config, rng))
             cursor += len(data) * gap
     return merge_streams(streams)

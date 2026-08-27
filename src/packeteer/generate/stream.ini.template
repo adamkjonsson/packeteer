@@ -118,6 +118,14 @@ server_mac = 00:00:00:00:00:02
 #   widely forgotten by decoders.  Has no effect unless chunked_rate is set.
 # trailer_rate = 0.2
 
+# mss  (default: 1460)
+#   http only.  Maximum segment size used to split a message across TCP
+#   segments.  At the default an entire generated message fits in one segment,
+#   so losing a segment loses a whole request or response; lower it to put a
+#   message on several segments, where a lost or corrupted segment leaves a gap
+#   in the middle of a message a decoder is already part-way through.
+# mss = 128
+
 # vpn_epochs  (default: 4)
 #   vpn only.  Number of key negotiations.  `packets` data packets flow after
 #   each handshake, so a rekey happens every `packets` packets.
@@ -166,6 +174,10 @@ server_mac = 00:00:00:00:00:02
 #   retransmission_timeout, server_rst_probability, rst_propagation_delay,
 #   payload_corruption_probability, stray_packet_count, stray_timing_window,
 #   window) are silently ignored for udp and sctp.
+#
+#   With payload = http they all apply, per connection.  With payload = vpn
+#   (UDP) only packet_loss and payload_corruption apply; the three that
+#   describe TCP connection behaviour are ignored with a warning.
 protocol = tcp
 
 # packets  (default: 10)
