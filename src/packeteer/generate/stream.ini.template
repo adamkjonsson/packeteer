@@ -88,6 +88,36 @@ server_mac = 00:00:00:00:00:02
 #   connection per request; omit to put every transaction on one connection.
 # requests_per_connection = 1
 
+# error_rate  (default: 0.1)
+#   http only.  Probability that a response is a 4xx/5xx error rather than a
+#   success correlated to the request method.  0.0 makes every request succeed.
+# error_rate = 0.1
+
+# chunked_rate  (default: 0.0)
+#   http only.  Probability that a response *with a body* is framed with
+#   `Transfer-Encoding: chunked` instead of `Content-Length`.  Chunked is
+#   HTTP/1.1's other framing mechanism and the harder one to decode, since the
+#   body's extent is discovered by walking size lines rather than read from a
+#   header.  Set to a value below 1.0 to make both framings appear in one
+#   capture, which is what a decoder that has to choose between them needs.
+# chunked_rate = 0.5
+
+# min_chunk  (default: 8)
+# max_chunk  (default: 32)
+#   http only.  Bytes per chunk, before the last; each chunk's size is drawn
+#   from this range.  The defaults split the generated JSON bodies (~70 bytes)
+#   into several chunks — a single-chunk body does not distinguish a decoder
+#   that walks the size lines from one that reads to the end.  Raise both for
+#   larger bodies.
+# min_chunk = 8
+# max_chunk = 32
+
+# trailer_rate  (default: 0.0)
+#   http only.  Probability that a chunked body is followed by a trailer
+#   section, announced by a `Trailer` header.  Legal per RFC 7230 4.4 and
+#   widely forgotten by decoders.  Has no effect unless chunked_rate is set.
+# trailer_rate = 0.2
+
 # vpn_epochs  (default: 4)
 #   vpn only.  Number of key negotiations.  `packets` data packets flow after
 #   each handshake, so a rekey happens every `packets` packets.

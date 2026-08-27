@@ -38,6 +38,11 @@ Exactly one output flag is required; they are mutually exclusive.
 | `--payload TYPE` | off | Application-layer payload to generate instead of random bytes; `http` or `vpn` (see below) |
 | `--requests N` | `10` | HTTP only: total request/response transactions |
 | `--requests-per-connection K` | all | HTTP only: transactions per connection (`1` = a new connection per request) |
+| `--error-rate P` | `0.1` | HTTP only: probability a response is a 4xx/5xx error |
+| `--chunked-rate P` | `0.0` | HTTP only: probability a response with a body is framed `Transfer-Encoding: chunked` |
+| `--min-chunk BYTES` | `8` | HTTP only: minimum bytes per chunk, before the last |
+| `--max-chunk BYTES` | `32` | HTTP only: maximum bytes per chunk, before the last |
+| `--trailer-rate P` | `0.0` | HTTP only: probability a chunked body carries a trailer section |
 | `--vpn-epochs E` | `4` | VPN only: number of key negotiations (data rekeys every `--packets`) |
 | `--vpn-data-port PORT` | `51820` | VPN only: UDP port of the data channel |
 | `--vpn-key-port PORT` | `51821` | VPN only: UDP port of the key-exchange channel |
@@ -116,6 +121,40 @@ connections:
 Connections within a run use successive client ports and staggered start times,
 and combine with `--sessions` (each IP pair runs the full request workload).
 `--seed` makes the whole capture reproducible.
+
+### Response framing
+
+Responses are framed with `Content-Length` by default.  `--chunked-rate P`
+frames that proportion of the responses **that have a body** with
+`Transfer-Encoding: chunked` instead — HTTP/1.1's other framing mechanism, and
+the harder one to decode, since the body's extent is discovered by walking hex
+size lines rather than read from a header.
+
+A rate between the extremes is usually what you want: a decoder that has to
+*choose* between the two framings is where the interesting bugs are, and
+choosing needs both to appear in the same capture.
+
+`--min-chunk` / `--max-chunk` set the bytes per chunk before the last.  The
+defaults split the generated JSON bodies (~70 bytes) into several chunks, which
+matters: a single-chunk body does not distinguish a decoder that walks the size
+lines from one that reads to the end.
+
+`--trailer-rate P` adds a trailer section after the terminating chunk on that
+proportion of chunked bodies, announced by a `Trailer` header.  Trailers are
+legal per RFC 7230 §4.4 and widely forgotten by decoders.  The flag needs
+`--chunked-rate`; a trailer section only exists in a chunked body.
+
+```bash
+# Half the responses chunked, a fifth of those carrying trailers
+packeteer stream --client-ip 10.0.0.1 --server-ip 10.1.0.1 \
+    --payload http --requests 200 --chunked-rate 0.5 --trailer-rate 0.2 \
+    --seed 42 --pcap rest-mixed-framing.pcap
+```
+
+Request bodies are always counted with `Content-Length`; the framing knobs
+apply to responses only.
+
+### Other notes
 
 `--payload http` requires `--protocol tcp` (the default).  The TCP anomaly
 options (`--server-rst`, `--retransmission-*`, `--packet-loss`,

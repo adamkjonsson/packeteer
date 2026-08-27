@@ -1327,6 +1327,11 @@ _STREAM_PARAMS: dict[str, tuple[str, object, object]] = {
     "payload":            ("payload",                         str,   None),
     "requests":           ("requests",                        int,   10),
     "requests_per_connection": ("requests_per_connection",    int,   None),
+    "error_rate":         ("error_rate",                      float, 0.1),
+    "chunked_rate":       ("chunked_rate",                    float, 0.0),
+    "min_chunk":          ("min_chunk",                       int,   8),
+    "max_chunk":          ("max_chunk",                       int,   32),
+    "trailer_rate":       ("trailer_rate",                    float, 0.0),
     "vpn_epochs":         ("vpn_epochs",                      int,   4),
     "vpn_data_port":      ("vpn_data_port",                   int,   51820),
     "vpn_key_port":       ("vpn_key_port",                    int,   51821),
@@ -1715,7 +1720,12 @@ def _generate_http_payload_stream(
             inter_packet_gap=args.gap,
             encap=encap,
             seed=args.seed,
-            config=HTTPRestConfig(),
+            config=HTTPRestConfig(
+                error_rate=args.error_rate,
+                chunked_rate=args.chunked_rate,
+                chunk_size=(args.min_chunk, args.max_chunk),
+                trailer_rate=args.trailer_rate,
+            ),
         )
     except (ValueError, OSError) as e:
         print(f"Error generating stream: {e}", file=sys.stderr)
@@ -2256,6 +2266,36 @@ def main() -> None:
         help=(
             "HTTP only: transactions per TCP connection (default: all in one "
             "keep-alive connection; 1 = a new connection per request)"
+        ),
+    )
+    stream_parser.add_argument(
+        "--error-rate", type=float, default=None, metavar="P",
+        help=(
+            "HTTP only: probability 0.0-1.0 that a response is a 4xx/5xx error "
+            "rather than a success (default: 0.1)"
+        ),
+    )
+    stream_parser.add_argument(
+        "--chunked-rate", type=float, default=None, metavar="P",
+        help=(
+            "HTTP only: probability 0.0-1.0 that a response with a body is framed "
+            "with Transfer-Encoding: chunked instead of Content-Length "
+            "(default: 0.0, every response counted)"
+        ),
+    )
+    stream_parser.add_argument(
+        "--min-chunk", type=int, default=None, metavar="BYTES",
+        help="HTTP only: minimum bytes per chunk, before the last (default: 8)",
+    )
+    stream_parser.add_argument(
+        "--max-chunk", type=int, default=None, metavar="BYTES",
+        help="HTTP only: maximum bytes per chunk, before the last (default: 32)",
+    )
+    stream_parser.add_argument(
+        "--trailer-rate", type=float, default=None, metavar="P",
+        help=(
+            "HTTP only: probability 0.0-1.0 that a chunked body is followed by a "
+            "trailer section (default: 0.0); needs --chunked-rate"
         ),
     )
     stream_parser.add_argument(

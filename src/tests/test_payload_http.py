@@ -38,6 +38,40 @@ def _syn_count(packets: list) -> int:
     return sum(1 for p in packets if p.label == "SYN")
 
 
+def _dechunk(body: bytes) -> tuple[bytes, list[int], dict[str, str]]:
+    """Decode a chunked body the way a decoder under test would.
+
+    Returns:
+        A tuple of ``(payload, chunk_sizes, trailers)``.  Sizes are decoded
+        from the hex size lines, so a body written with decimal sizes would
+        come back wrong here rather than silently passing.
+
+    """
+    payload = bytearray()
+    sizes: list[int] = []
+    pos = 0
+    while True:
+        eol = body.index(b"\r\n", pos)
+        size = int(body[pos:eol], 16)
+        pos = eol + 2
+        if size == 0:
+            break
+        sizes.append(size)
+        payload += body[pos:pos + size]
+        pos += size + 2
+    trailers: dict[str, str] = {}
+    for line in body[pos:].split(b"\r\n"):
+        if b":" in line:
+            name, _, value = line.decode("latin-1").partition(":")
+            trailers[name.strip()] = value.strip()
+    return (bytes(payload), sizes, trailers)
+
+
+def _bodied_responses(conv: list) -> list:
+    """Return the server messages in *conv* that carry a body."""
+    return [m for m in conv if m.direction == "s2c" and m.data.split(b"\r\n\r\n", 1)[1]]
+
+
 # ── Conversation generator ────────────────────────────────────────────────────
 
 class TestConversation(unittest.TestCase):
@@ -74,6 +108,134 @@ class TestConversation(unittest.TestCase):
         # first request keep-alive, last request close
         self.assertIn(b"Connection: keep-alive", conv[0].data)
         self.assertIn(b"Connection: close", conv[2].data)
+
+
+class TestChunkedFraming(unittest.TestCase):
+    """Transfer-Encoding: chunked responses (#82)."""
+
+    #: A config that chunks every bodied response, with errors switched off so
+    #: every transaction produces one.
+    _ALL = HTTPRestConfig(chunked_rate=1.0, error_rate=0.0, methods=("GET",))
+
+    def _conv(self, config: HTTPRestConfig, seed: int = 3, transactions: int = 6) -> list:
+        return generate_http_conversation(
+            random.Random(seed), transactions=transactions,
+            keepalive=True, config=config,
+        )
+
+    def test_no_chunking_by_default(self) -> None:
+        for msg in self._conv(HTTPRestConfig()):
+            self.assertNotIn(b"Transfer-Encoding", msg.data)
+
+    def test_every_bodied_response_chunked_at_rate_one(self) -> None:
+        bodied = _bodied_responses(self._conv(self._ALL))
+        self.assertTrue(bodied)
+        for msg in bodied:
+            self.assertIn(b"Transfer-Encoding: chunked\r\n", msg.data)
+
+    def test_chunked_response_has_no_content_length(self) -> None:
+        """The two together are the smuggling construction #81 removed."""
+        for msg in _bodied_responses(self._conv(self._ALL)):
+            self.assertNotIn(b"Content-Length", msg.data)
+
+    def test_requests_are_never_chunked(self) -> None:
+        """The knob frames responses; request bodies stay counted."""
+        cfg = HTTPRestConfig(chunked_rate=1.0, error_rate=0.0, methods=("POST",))
+        for msg in self._conv(cfg):
+            if msg.direction == "c2s" and msg.data.split(b"\r\n\r\n", 1)[1]:
+                self.assertIn(b"Content-Length", msg.data)
+                self.assertNotIn(b"Transfer-Encoding", msg.data)
+
+    def test_body_splits_into_several_chunks(self) -> None:
+        """A single-chunk body would not exercise walking the size lines."""
+        for msg in _bodied_responses(self._conv(self._ALL)):
+            _, sizes, _ = _dechunk(msg.data.split(b"\r\n\r\n", 1)[1])
+            self.assertGreater(len(sizes), 1)
+
+    def test_chunk_sizes_within_configured_range(self) -> None:
+        cfg = HTTPRestConfig(chunked_rate=1.0, error_rate=0.0,
+                             methods=("GET",), chunk_size=(4, 9))
+        for msg in _bodied_responses(self._conv(cfg)):
+            _, sizes, _ = _dechunk(msg.data.split(b"\r\n\r\n", 1)[1])
+            for size in sizes[:-1]:      # the last chunk is whatever remains
+                self.assertGreaterEqual(size, 4)
+                self.assertLessEqual(size, 9)
+
+    def test_body_is_terminated(self) -> None:
+        for msg in _bodied_responses(self._conv(self._ALL)):
+            self.assertTrue(msg.data.endswith(b"0\r\n\r\n"))
+
+    def test_dechunks_back_to_the_json_body(self) -> None:
+        """Sizes are hex per RFC 7230 4.1, and the payload survives framing."""
+        for msg in _bodied_responses(self._conv(self._ALL)):
+            payload, _, _ = _dechunk(msg.data.split(b"\r\n\r\n", 1)[1])
+            self.assertIn("id", json.loads(payload))
+
+    def test_no_trailers_by_default(self) -> None:
+        for msg in _bodied_responses(self._conv(self._ALL)):
+            self.assertNotIn(b"Trailer:", msg.data)
+
+    def test_trailers_announced_and_emitted(self) -> None:
+        cfg = HTTPRestConfig(chunked_rate=1.0, trailer_rate=1.0,
+                             error_rate=0.0, methods=("GET",))
+        bodied = _bodied_responses(self._conv(cfg))
+        self.assertTrue(bodied)
+        for msg in bodied:
+            head, body = msg.data.split(b"\r\n\r\n", 1)
+            announced = [
+                n.strip() for n in
+                head.decode("latin-1").split("Trailer:", 1)[1].split("\r\n", 1)[0].split(",")
+            ]
+            _, _, trailers = _dechunk(body)
+            self.assertEqual(sorted(announced), sorted(trailers))
+
+    def test_trailer_rate_without_chunking_does_nothing(self) -> None:
+        cfg = HTTPRestConfig(chunked_rate=0.0, trailer_rate=1.0)
+        for msg in self._conv(cfg):
+            self.assertNotIn(b"Trailer", msg.data)
+
+    def test_zero_rates_draw_no_randomness(self) -> None:
+        """Output for a seed is unchanged by knobs that are switched off.
+
+        The framing draws are guarded, so a capture generated before these
+        knobs existed still reproduces from its seed.
+        """
+        plain = self._conv(HTTPRestConfig())
+        for config in (
+            HTTPRestConfig(chunked_rate=0.0),
+            HTTPRestConfig(chunked_rate=0.0, trailer_rate=1.0),
+            HTTPRestConfig(chunked_rate=0.0, chunk_size=(1, 2)),
+        ):
+            self.assertEqual([m.data for m in self._conv(config)],
+                             [m.data for m in plain])
+
+    def test_chunked_stream_roundtrips_through_parser(self) -> None:
+        stream = generate_http_stream(
+            client_ip="10.0.0.1", server_ip="10.1.0.1", requests=4, seed=5,
+            base_time=_BASE_TIME, config=self._ALL,
+        )
+        chunked = [m for m in _http_messages(stream.packets)
+                   if m.headers.get("Transfer-Encoding") == "chunked"]
+        self.assertTrue(chunked)
+        for msg in chunked:
+            self.assertNotIn("Content-Length", msg.headers)
+            payload, _, _ = _dechunk(msg.body)
+            self.assertIn("id", json.loads(payload))
+
+    def test_zero_minimum_chunk_size_raises(self) -> None:
+        """A zero-size chunk is the terminator: the body would end early."""
+        with self.assertRaises(ValueError):
+            generate_http_stream(
+                client_ip="10.0.0.1", server_ip="10.1.0.1", requests=1,
+                config=HTTPRestConfig(chunked_rate=1.0, chunk_size=(0, 32)),
+            )
+
+    def test_inverted_chunk_size_range_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            generate_http_stream(
+                client_ip="10.0.0.1", server_ip="10.1.0.1", requests=1,
+                config=HTTPRestConfig(chunk_size=(40, 20)),
+            )
 
 
 # ── generate_http_stream ──────────────────────────────────────────────────────
@@ -209,6 +371,34 @@ class TestCmdStreamHTTP(unittest.TestCase):
         self.assertTrue(any(lbl.startswith(("GET ", "POST ", "PUT ", "PATCH ", "DELETE "))
                             for lbl in labels))
         os.remove(out)
+
+    def test_cli_chunked_rate_reaches_the_generator(self) -> None:
+        out = self._tmp()
+        with patch("sys.stdout", new=StringIO()):
+            cli._cmd_stream(self._args(pcap=out, requests=20, chunked_rate=1.0,
+                                       error_rate=0.0))
+        self.assertIn(b"Transfer-Encoding: chunked", Path(out).read_bytes())
+        os.remove(out)
+
+    def test_cli_trailer_rate_reaches_the_generator(self) -> None:
+        out = self._tmp()
+        with patch("sys.stdout", new=StringIO()):
+            cli._cmd_stream(self._args(pcap=out, requests=20, chunked_rate=1.0,
+                                       trailer_rate=1.0, error_rate=0.0))
+        self.assertIn(b"Trailer:", Path(out).read_bytes())
+        os.remove(out)
+
+    def test_cli_error_rate_reaches_the_generator(self) -> None:
+        out = self._tmp()
+        with patch("sys.stdout", new=StringIO()):
+            cli._cmd_stream(self._args(pcap=out, requests=10, error_rate=1.0))
+        raw = Path(out).read_bytes()
+        self.assertNotIn(b"HTTP/1.1 200 OK", raw)
+
+    def test_cli_chunk_size_range_validated(self) -> None:
+        with patch("sys.stderr", new=StringIO()), self.assertRaises(SystemExit):
+            cli._cmd_stream(self._args(pcap=self._tmp(), min_chunk=0,
+                                       chunked_rate=1.0))
 
     def test_cli_http_requires_tcp(self) -> None:
         with patch("sys.stderr", new=StringIO()), self.assertRaises(SystemExit):

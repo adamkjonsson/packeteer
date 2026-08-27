@@ -25,6 +25,48 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
+### Added
+
+- **Chunked responses from `packeteer stream --payload http`** (#82) — every
+  generated response was framed with `Content-Length`; `Transfer-Encoding:
+  chunked` appeared nowhere in the generator, so no combination of options
+  produced one.  Chunked is HTTP/1.1's other framing mechanism and the harder
+  one to implement — the body's extent is not in a header, it is discovered by
+  walking hex size lines — so a decoder that reads counted bodies correctly can
+  still be completely wrong about chunked, and a corpus of only counted bodies
+  will not say so.
+
+  - `HTTPRestConfig.chunked_rate` (CLI `--chunked-rate P`) frames that
+    proportion of the responses *with a body* as chunked.  A rate between the
+    extremes puts both framings in one capture, which is what a decoder that
+    has to choose between them needs.
+  - `HTTPRestConfig.chunk_size` (CLI `--min-chunk` / `--max-chunk`) sets the
+    bytes per chunk before the last, defaulting to `(8, 32)`.  The default is
+    deliberately small relative to the generated JSON bodies (~70 bytes) so
+    that bodies split into several chunks: a single-chunk body does not
+    distinguish a decoder that walks the size lines from one that reads to the
+    end.  A range with `min < 1` is rejected, since a zero-size chunk *is* the
+    terminator and would end the body early and silently.
+  - `HTTPRestConfig.trailer_rate` (CLI `--trailer-rate P`) adds a trailer
+    section after the terminating chunk on that proportion of chunked bodies,
+    announced by a `Trailer` header.  Legal per RFC 7230 §4.4 and widely
+    forgotten by decoders.
+  - Request bodies stay counted; the framing knobs apply to responses only.
+
+  Chunked framing depends on the `Content-Length` fix below: without it every
+  generated chunked message would have carried both headers.
+
+- **`--error-rate` exposes the response-error knob on the CLI** (#82) —
+  `HTTPRestConfig.error_rate` has existed since 0.7, but
+  `packeteer stream --payload http` constructed `HTTPRestConfig()` with no
+  arguments, so no HTTP content knob was reachable from the CLI at all.  All
+  five are now settable as flags and as `[stream]` config-file keys, and appear
+  in `--write-config` output.
+
+  Captures generated with the new knobs left at their defaults are
+  byte-identical to captures from previous versions with the same seed: the
+  added random draws are skipped entirely when their rate is zero.
+
 ### Fixed
 
 - **`encode_http_message` no longer adds `Content-Length` beside

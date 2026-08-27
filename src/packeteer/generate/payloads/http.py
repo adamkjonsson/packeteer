@@ -10,6 +10,12 @@ The generated traffic is cleartext HTTP/1.1 and round-trips through packeteer's
 own HTTP parser.  Two knobs shape the connection layout: *requests* (total
 transactions) and *requests_per_connection* (``1`` = a new connection per
 request; larger = keep-alive connections carrying several transactions).
+
+Responses are framed with ``Content-Length`` by default.  Set
+:attr:`HTTPRestConfig.chunked_rate` to frame a proportion of them with
+``Transfer-Encoding: chunked`` instead — HTTP/1.1's other framing mechanism,
+and the one a decoder is more likely to get wrong, since the body's extent is
+discovered by walking size lines rather than read from a header.
 """
 from __future__ import annotations
 
@@ -17,6 +23,7 @@ import json
 import math
 import random
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from ..http import HTTPRequest, HTTPResponse, encode_http_message
@@ -59,6 +66,15 @@ _ERROR_STATUSES: tuple[tuple[int, str], ...] = (
 
 _BODY_METHODS = frozenset({"POST", "PUT", "PATCH"})
 
+#: Trailer fields sent after a chunked body when trailers are enabled.  Each
+#: entry is (name, value factory); these are all fields RFC 7230 4.4 permits
+#: to be deferred, since they are only knowable once the body has been sent.
+_TRAILERS: tuple[tuple[str, Callable[[random.Random], str]], ...] = (
+    ("Server-Timing", lambda rng: f"db;dur={rng.randint(1, 400)}"),
+    ("X-Content-Digest", lambda rng: f"sha256={_token(rng, 32)}"),
+    ("Expires", lambda rng: "Mon, 01 Jan 2024 13:00:00 GMT"),
+)
+
 
 @dataclass
 class HTTPRestConfig:
@@ -72,6 +88,19 @@ class HTTPRestConfig:
         base_path: Path prefix prepended to every resource (e.g. ``"/api/v1"``).
         error_rate: Probability (0.0–1.0) that a response is a 4xx/5xx error
             rather than a success correlated to the request method.
+        chunked_rate: Probability (0.0–1.0) that a response *with a body* is
+            framed with ``Transfer-Encoding: chunked`` instead of
+            ``Content-Length``.  Defaults to ``0.0`` (every response counted).
+        chunk_size: ``(min, max)`` bytes per chunk, before the last.  Sizes are
+            drawn uniformly from this range, so the default of ``(8, 32)``
+            splits the generated JSON bodies into several chunks — a
+            single-chunk body does not distinguish a decoder that walks the
+            size lines from one that reads to the end.  Raise it for larger
+            bodies.
+        trailer_rate: Probability (0.0–1.0) that a chunked body is followed by
+            a trailer section, announced by a ``Trailer`` header.  Legal per
+            RFC 7230 4.4 and widely forgotten by decoders.  Defaults to
+            ``0.0``.  Has no effect unless *chunked_rate* is non-zero.
 
     """
 
@@ -80,6 +109,9 @@ class HTTPRestConfig:
     hosts: tuple[str, ...] = _HOSTS
     base_path: str = "/api/v1"
     error_rate: float = 0.1
+    chunked_rate: float = 0.0
+    chunk_size: tuple[int, int] = (8, 32)
+    trailer_rate: float = 0.0
 
 
 def _token(rng: random.Random, length: int = 16) -> str:
@@ -160,6 +192,54 @@ def _pick_status(rng: random.Random, method: str, error_rate: float) -> tuple[in
     return (200, "OK")
 
 
+def _chunk_body(
+    body: bytes,
+    rng: random.Random,
+    chunk_size: tuple[int, int],
+    trailers: dict[str, str],
+) -> bytes:
+    """Frame *body* as an HTTP/1.1 chunked message body (RFC 7230 4.1).
+
+    Each chunk is a hex size line, the chunk data, and CRLF; the body ends
+    with a zero-size chunk, an optional trailer section, and a final CRLF.
+    Chunk sizes are drawn from *chunk_size*, so a body longer than the maximum
+    is split across several chunks.
+
+    Args:
+        body: The payload bytes to frame.
+        rng: Seeded random generator, used for the chunk sizes.
+        chunk_size: ``(min, max)`` bytes per chunk, before the last.
+        trailers: Trailer fields to emit after the terminating chunk.  Empty
+            for no trailer section.
+
+    Returns:
+        The chunk-framed body, ready to be used as
+        :attr:`~packeteer.generate.http.HTTPResponse.body` alongside a
+        ``Transfer-Encoding: chunked`` header.
+
+    """
+    low, high = chunk_size
+    out = bytearray()
+    pos = 0
+    while pos < len(body):
+        size = min(rng.randint(low, high), len(body) - pos)
+        out += f"{size:x}\r\n".encode("latin-1")
+        out += body[pos:pos + size]
+        out += b"\r\n"
+        pos += size
+    out += b"0\r\n"
+    for name, value in trailers.items():
+        out += f"{name}: {value}\r\n".encode("latin-1")
+    out += b"\r\n"
+    return bytes(out)
+
+
+def _pick_trailers(rng: random.Random) -> dict[str, str]:
+    """Return one or two trailer fields drawn from :data:`_TRAILERS`."""
+    chosen = rng.sample(_TRAILERS, rng.randint(1, 2))
+    return {name: make(rng) for name, make in chosen}
+
+
 def generate_http_conversation(
     rng: random.Random, *, transactions: int, keepalive: bool, config: HTTPRestConfig,
 ) -> list[AppMessage]:
@@ -194,10 +274,24 @@ def generate_http_conversation(
 
         status, reason = _pick_status(rng, method, config.error_rate)
         resp_has_body = 200 <= status < 300 and status != 204
+        # Header set before body, matching the evaluation order of the keyword
+        # arguments this replaced, so a given seed still draws in the same order.
+        headers = _response_headers(rng, resp_has_body, persist)
+        body = _random_json(rng) if resp_has_body else b""
+
+        # Chunk the body for a share of the responses that have one.  The draws
+        # are guarded so that a zero rate consumes no randomness, keeping output
+        # for a given seed identical to a run with the framing knobs untouched.
+        if body and config.chunked_rate and rng.random() < config.chunked_rate:
+            trailers: dict[str, str] = {}
+            if config.trailer_rate and rng.random() < config.trailer_rate:
+                trailers = _pick_trailers(rng)
+                headers["Trailer"] = ", ".join(trailers)
+            headers["Transfer-Encoding"] = "chunked"
+            body = _chunk_body(body, rng, config.chunk_size, trailers)
+
         resp = HTTPResponse(
-            status_code=status, reason=reason,
-            headers=_response_headers(rng, resp_has_body, persist),
-            body=_random_json(rng) if resp_has_body else b"",
+            status_code=status, reason=reason, headers=headers, body=body,
         )
         messages.append(AppMessage("s2c", encode_http_message(resp), f"{status} {reason}"))
     return messages
@@ -225,6 +319,10 @@ def generate_http_stream(
     config: HTTPRestConfig | None = None,
 ) -> CombinedStream:
     """Simulate a REST client and return the traffic as a merged stream.
+
+    Responses are framed with ``Content-Length`` unless
+    :attr:`HTTPRestConfig.chunked_rate` asks for chunked framing on a share of
+    them.
 
     *requests* request/response transactions are spread across connections of
     *requests_per_connection* each (``None`` = all in one keep-alive
@@ -262,8 +360,9 @@ def generate_http_stream(
 
     Raises:
         ValueError: If *requests* or *requests_per_connection* is below 1, the
-            client/server IP ranges overlap, or a connection's client port
-            exceeds 65535.
+            client/server IP ranges overlap, a connection's client port exceeds
+            65535, or ``config.chunk_size`` is not a range with
+            ``1 <= min <= max``.
 
     """
     if requests < 1:
@@ -275,6 +374,14 @@ def generate_http_stream(
         )
     if config is None:
         config = HTTPRestConfig()
+    low, high = config.chunk_size
+    if low < 1 or high < low:
+        # A zero-size chunk would emit "0\r\n" mid-body, which is the
+        # terminator: the message would end early and silently.
+        raise ValueError(
+            f"chunk_size must be a (min, max) range with 1 <= min <= max, "
+            f"got {config.chunk_size!r}"
+        )
 
     connections = math.ceil(requests / per_conn)
     if client_port + connections - 1 > 65535:
