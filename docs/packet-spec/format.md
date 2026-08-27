@@ -970,7 +970,13 @@ The `type` field selects between request and response:
 | `body` | `""` | Response body encoded as a hex string |
 
 `Content-Length` is added automatically by the builder when `body` is
-non-empty and the header is not already present.
+non-empty and the message does not already frame itself — that is, when
+neither `Content-Length` nor `Transfer-Encoding` is present.  Header names are
+matched case-insensitively.
+
+A message carrying `Transfer-Encoding: chunked` therefore gets no
+`Content-Length`, and its `body` must already be chunk-framed: the builder
+writes the body out verbatim and never chunks it itself.
 
 ---
 

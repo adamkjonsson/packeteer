@@ -8,7 +8,9 @@ Only HTTP/1.0 and HTTP/1.1 are supported.  HTTP/2 binary framing is out
 of scope.
 
 The encoder adds a ``Content-Length`` header automatically when the body
-is non-empty and the caller has not already set it.
+is non-empty and the message does not already frame itself — that is, when
+neither ``Content-Length`` nor ``Transfer-Encoding`` is present.  Header
+names are matched case-insensitively, per RFC 7230 §3.2.
 
 Supported usage::
 
@@ -46,7 +48,8 @@ class HTTPRequest:
             ``"1.1"``.
         headers: Ordered mapping of header name to header value.
             ``Content-Length`` is added automatically by the encoder when
-            the body is non-empty and this key is absent.
+            the body is non-empty and neither ``Content-Length`` nor
+            ``Transfer-Encoding`` is present (matched case-insensitively).
         body: Optional request body bytes (e.g. a POST body).
 
     """
@@ -71,7 +74,8 @@ class HTTPResponse:
             ``"Not Found"``).
         headers: Ordered mapping of header name to header value.
             ``Content-Length`` is added automatically by the encoder when
-            the body is non-empty and this key is absent.
+            the body is non-empty and neither ``Content-Length`` nor
+            ``Transfer-Encoding`` is present (matched case-insensitively).
         body: Optional response body bytes.
 
     """
@@ -93,7 +97,16 @@ def _build_http_message(msg: HTTPMessage) -> bytes:  # type: ignore[valid-type]
     r"""Encode an :class:`HTTPRequest` or :class:`HTTPResponse` to wire bytes.
 
     ``Content-Length`` is added automatically when the body is non-empty
-    and the caller has not already set it.
+    and the message does not already frame itself.  A message carrying
+    ``Transfer-Encoding`` frames itself by chunk sizes, so no
+    ``Content-Length`` is added to it — RFC 7230 §3.3.3 requires a recipient
+    to ignore ``Content-Length`` when both are present, and the two together
+    are the classic request-smuggling construction.  Header names are matched
+    case-insensitively, per RFC 7230 §3.2.
+
+    The body is written out verbatim; the encoder never chunks it.  A caller
+    who sets ``Transfer-Encoding: chunked`` is responsible for supplying an
+    already-chunked body.
 
     Args:
         msg: The HTTP message to encode.
@@ -124,7 +137,8 @@ def _build_http_message(msg: HTTPMessage) -> bytes:  # type: ignore[valid-type]
 
     """
     headers = dict(msg.headers)
-    if msg.body and "Content-Length" not in headers:
+    present = {name.lower() for name in headers}
+    if msg.body and "content-length" not in present and "transfer-encoding" not in present:
         headers["Content-Length"] = str(len(msg.body))
 
     if isinstance(msg, HTTPRequest):
@@ -141,7 +155,9 @@ def encode_http_message(msg: HTTPMessage) -> bytes:  # type: ignore[valid-type]
     """Encode an :class:`HTTPRequest` or :class:`HTTPResponse` to wire bytes.
 
     ``Content-Length`` is added automatically when the body is non-empty and
-    the caller has not already set it.
+    the message does not already frame itself with ``Content-Length`` or
+    ``Transfer-Encoding`` (matched case-insensitively).  The body is written
+    out verbatim; the encoder never chunks it.
 
     Args:
         msg: The HTTP message to encode.

@@ -25,7 +25,33 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
-_Nothing yet._
+### Fixed
+
+- **`encode_http_message` no longer adds `Content-Length` beside
+  `Transfer-Encoding`** (#81) — the encoder added the header whenever the body
+  was non-empty and `Content-Length` was absent, without looking at
+  `Transfer-Encoding`.  A caller hand-building a chunked message got both
+  headers, which is the shape RFC 7230 §3.3.3 exists to resolve and the classic
+  request-smuggling construction: two recipients that disagree about which
+  header wins disagree about where the message ends.
+
+  The added value was also wrong on its own terms.  `Content-Length` counts the
+  payload body, but the encoder counted the *encoded* body — chunk sizes,
+  CRLFs and terminator included.  A 4-byte payload framed as
+  `4\r\nabcd\r\n0\r\n\r\n` was announced as 14 bytes, which is the length
+  of nothing a recipient would reconstruct.
+
+  The header is now added only when the message does not already frame itself,
+  making a well-formed chunked message reachable through the encoder for the
+  first time.  The encoder still never chunks a body itself: a caller who sets
+  `Transfer-Encoding: chunked` supplies an already-chunked body.
+
+- **Header names are matched case-insensitively when encoding** (#81) — the
+  guard against overwriting a caller's `Content-Length` was a case-sensitive
+  lookup on a plain dict, so a caller who wrote `content-length` got the header
+  **twice**.  HTTP field names are case-insensitive per RFC 7230 §3.2 and are
+  now treated as such.  The caller's own spelling is preserved on the wire;
+  only the matching changed.
 
 ---
 
