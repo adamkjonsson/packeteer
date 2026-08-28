@@ -1121,12 +1121,8 @@ def _packet_to_spec(pkt: ParsedPacket) -> dict[str, Any]:
         apply_tunneled(cfg, pkt)
     elif pkt.transport is not None:
         update_config(cfg, pkt.transport)
-        if pkt.dns is not None:
-            update_config(cfg, pkt.dns)
-        elif pkt.dhcp is not None:
-            update_config(cfg, pkt.dhcp)
-        elif pkt.http is not None:
-            update_config(cfg, pkt.http)
+        if pkt.app is not None:
+            update_config(cfg, pkt.app)
         elif pkt.payload:
             update_config(cfg, pkt.payload)
     elif pkt.payload:

@@ -162,3 +162,53 @@ class TestTheBuiltinPortsDoNotOverlap(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRegisteredProtocolsReachTheSpec(unittest.TestCase):
+    """Object → packet spec, through the registry rather than an isinstance ladder (#99)."""
+
+    def setUp(self) -> None:
+        protocols.register(_sensor())
+        self.addCleanup(protocols.unregister, "sensor")
+
+    def test_update_config_writes_a_section_named_after_the_protocol(self) -> None:
+        from packeteer.parse.to_config import update_config
+
+        self.assertEqual(update_config({}, Reading(258)), {"sensor": {"value": 258}})
+
+    def test_a_parsed_packet_carries_the_section(self) -> None:
+        from packeteer.parse.core import _packet_to_spec
+
+        spec = _packet_to_spec(parse_packet(_udp(b"\x01\x02")))
+        self.assertEqual(spec["sensor"], {"value": 258})
+        self.assertNotIn("payload", spec)
+
+    def test_an_undecoded_payload_still_becomes_a_payload_section(self) -> None:
+        from packeteer.parse.core import _packet_to_spec
+
+        spec = _packet_to_spec(parse_packet(_udp(b"three")))
+        self.assertNotIn("sensor", spec)
+        self.assertIn("payload", spec)
+
+    def test_an_unregistered_type_still_raises_typeerror(self) -> None:
+        from packeteer.parse.to_config import update_config
+
+        with self.assertRaises(TypeError) as ctx:
+            update_config({}, object())
+        self.assertIn("object", str(ctx.exception))
+
+    def test_headers_are_matched_before_the_registry(self) -> None:
+        """A header must never resolve through `for_message`."""
+        from packeteer.generate.udp import UDPHeader
+        from packeteer.parse.to_config import update_config
+
+        self.assertIn("transport", update_config({}, UDPHeader(1, 2)))
+        self.assertIsNone(protocols.for_message(UDPHeader(1, 2)))
+
+    def test_built_ins_still_reach_their_own_sections(self) -> None:
+        from packeteer.parse.to_config import update_config
+
+        msg = DNSMessage(id=1, questions=[
+            DNSQuestion(name="example.com.", qtype=DNS_TYPE_A, qclass=1)])
+        self.assertIn("dns", update_config({}, msg))
+        self.assertIn("http", update_config({}, HTTPRequest()))

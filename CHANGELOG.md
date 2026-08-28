@@ -77,6 +77,15 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   before.  No built-in changes behaviour: their ports do not overlap, so the
   single lookup resolves exactly as the three attempts did.
 
+- **A parsed application message reaches the packet spec through the registry**
+  (#99) — `update_config` resolves the message type against
+  `packeteer.protocols` instead of testing for `DNSMessage`, `DHCPMessage` and
+  `HTTPRequest`/`HTTPResponse` by name, and writes the section named after
+  whichever protocol owns it.  Header types are still matched first, and an
+  unrecognised object still raises `TypeError`.  With #98 this completes the
+  path from capture to spec for a registered protocol: `packeteer parse` now
+  emits a section for one.
+
 ---
 
 ## [0.9.1] - 2026-08-28
