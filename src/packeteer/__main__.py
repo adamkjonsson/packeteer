@@ -42,8 +42,8 @@ import json
 import sys
 from importlib.metadata import PackageNotFoundError as _PkgNotFoundError
 from importlib.metadata import version as _pkg_version
-from typing import Callable
 
+from packeteer import app
 from packeteer.filter import PacketFilter
 from packeteer.fuzz import (
     ALL_MUTATION_NAMES,
@@ -54,48 +54,7 @@ from packeteer.fuzz import (
     fuzz_bytes,
 )
 from packeteer.generate import PacketBuilder
-from packeteer.generate.dhcp import (
-    DHCP_OPT_CLIENT_ID,
-    DHCP_OPT_DNS_SERVER,
-    DHCP_OPT_DOMAIN_NAME,
-    DHCP_OPT_HOSTNAME,
-    DHCP_OPT_LEASE_TIME,
-    DHCP_OPT_MESSAGE_TYPE,
-    DHCP_OPT_PARAM_REQUEST_LIST,
-    DHCP_OPT_REQUESTED_IP,
-    DHCP_OPT_ROUTER,
-    DHCP_OPT_SERVER_ID,
-    DHCP_OPT_SUBNET_MASK,
-    DHCP_OPT_VENDOR_CLASS_ID,
-    DHCPMessage,
-    DHCPOpt,
-    DHCPOptClientID,
-    DHCPOptDNSServer,
-    DHCPOptDomainName,
-    DHCPOptHostname,
-    DHCPOptLeaseTime,
-    DHCPOptMessageType,
-    DHCPOptParamRequestList,
-    DHCPOptRaw,
-    DHCPOptRequestedIP,
-    DHCPOptRouter,
-    DHCPOptServerID,
-    DHCPOptSubnetMask,
-    DHCPOptVendorClassID,
-)
 from packeteer.generate.dns import (
-    DNS_CLASS_IN,
-    DNS_TYPE_A,
-    DNS_TYPE_AAAA,
-    DNS_TYPE_CNAME,
-    DNS_TYPE_MX,
-    DNS_TYPE_NS,
-    DNS_TYPE_PTR,
-    DNS_TYPE_SOA,
-    DNS_TYPE_TXT,
-    DNSFlags,
-    DNSMessage,
-    DNSQuestion,
     DNSRDataA,
     DNSRDataAAAA,
     DNSRDataCNAME,
@@ -105,11 +64,9 @@ from packeteer.generate.dns import (
     DNSRDataRaw,
     DNSRDataSOA,
     DNSRDataTXT,
-    DNSResourceRecord,
 )
 from packeteer.generate.geneve import GENEVE_PORT, GeneveOption
 from packeteer.generate.gtpu import GTPU_MSG_G_PDU, GTPU_PORT, GTPUExtensionHeader
-from packeteer.generate.http import HTTPMessage, HTTPRequest, HTTPResponse
 from packeteer.generate.impairments import ImpairmentConfig
 from packeteer.generate.payloads.http import HTTPRestConfig, generate_http_stream
 from packeteer.generate.payloads.vpn import VPNConfig, generate_vpn_stream
@@ -176,157 +133,6 @@ _DNSRData = (
     DNSRDataA | DNSRDataAAAA | DNSRDataCNAME | DNSRDataNS | DNSRDataPTR
     | DNSRDataMX | DNSRDataSOA | DNSRDataTXT | DNSRDataRaw
 )
-
-
-def _build_dns_rdata(rtype: int, rdata: dict) -> _DNSRData:  # type: ignore[valid-type]
-    if rtype == DNS_TYPE_A:
-        return DNSRDataA(address=rdata.get("address", "0.0.0.0"))
-    if rtype == DNS_TYPE_AAAA:
-        return DNSRDataAAAA(address=rdata.get("address", "::"))
-    if rtype == DNS_TYPE_CNAME:
-        return DNSRDataCNAME(name=rdata.get("name", "."))
-    if rtype == DNS_TYPE_NS:
-        return DNSRDataNS(name=rdata.get("name", "."))
-    if rtype == DNS_TYPE_PTR:
-        return DNSRDataPTR(name=rdata.get("name", "."))
-    if rtype == DNS_TYPE_MX:
-        return DNSRDataMX(
-            preference=rdata.get("preference", 0),
-            exchange=rdata.get("exchange", "."),
-        )
-    if rtype == DNS_TYPE_SOA:
-        return DNSRDataSOA(
-            mname=rdata.get("mname", "."),
-            rname=rdata.get("rname", "."),
-            serial=rdata.get("serial", 0),
-            refresh=rdata.get("refresh", 0),
-            retry=rdata.get("retry", 0),
-            expire=rdata.get("expire", 0),
-            minimum=rdata.get("minimum", 0),
-        )
-    if rtype == DNS_TYPE_TXT:
-        strings = [
-            s.encode("utf-8") if isinstance(s, str) else s
-            for s in rdata.get("strings", [])
-        ]
-        return DNSRDataTXT(strings=strings)
-    return DNSRDataRaw(rtype=rtype, data=bytes.fromhex(rdata.get("data", "")))
-
-
-def _build_dns_from_spec(spec: dict) -> DNSMessage:
-    """Convert a ``dns`` packet spec dict to a :class:`DNSMessage`."""
-    flags_d = spec.get("flags", {})
-    flags = DNSFlags(
-        qr=flags_d.get("qr", False),
-        opcode=flags_d.get("opcode", 0),
-        aa=flags_d.get("aa", False),
-        tc=flags_d.get("tc", False),
-        rd=flags_d.get("rd", True),
-        ra=flags_d.get("ra", False),
-        rcode=flags_d.get("rcode", 0),
-    )
-    questions = [
-        DNSQuestion(
-            name=q["name"],
-            qtype=q.get("qtype", DNS_TYPE_A),
-            qclass=q.get("qclass", DNS_CLASS_IN),
-            unicast_response=q.get("unicast_response", False),
-        )
-        for q in spec.get("questions", [])
-    ]
-
-    def _rrs(section: str) -> list[DNSResourceRecord]:
-        return [
-            DNSResourceRecord(
-                name=rr["name"],
-                rtype=rr["rtype"],
-                rclass=rr.get("rclass", DNS_CLASS_IN),
-                ttl=rr.get("ttl", 0),
-                rdata=_build_dns_rdata(rr["rtype"], rr.get("rdata", {})),
-                cache_flush=rr.get("cache_flush", False),
-            )
-            for rr in spec.get(section, [])
-        ]
-
-    return DNSMessage(
-        id=spec.get("id", 0),
-        flags=flags,
-        questions=questions,
-        answers=_rrs("answers"),
-        authority=_rrs("authority"),
-        additional=_rrs("additional"),
-    )
-
-
-_DHCP_OPTION_BUILDERS: dict[int, Callable[[dict], DHCPOpt]] = {  # type: ignore[valid-type]
-    DHCP_OPT_MESSAGE_TYPE:       lambda d: DHCPOptMessageType(mtype=d.get("mtype", 1)),
-    DHCP_OPT_SUBNET_MASK:        lambda d: DHCPOptSubnetMask(mask=d.get("mask", "255.255.255.0")),
-    DHCP_OPT_ROUTER:             lambda d: DHCPOptRouter(routers=d.get("routers", [])),
-    DHCP_OPT_DNS_SERVER:         lambda d: DHCPOptDNSServer(servers=d.get("servers", [])),
-    DHCP_OPT_HOSTNAME:           lambda d: DHCPOptHostname(hostname=d.get("hostname", "")),
-    DHCP_OPT_DOMAIN_NAME:        lambda d: DHCPOptDomainName(domain=d.get("domain", "")),
-    DHCP_OPT_REQUESTED_IP:       lambda d: DHCPOptRequestedIP(address=d.get("address", "0.0.0.0")),
-    DHCP_OPT_LEASE_TIME:         lambda d: DHCPOptLeaseTime(seconds=d.get("seconds", 86400)),
-    DHCP_OPT_SERVER_ID:          lambda d: DHCPOptServerID(address=d.get("address", "0.0.0.0")),
-    DHCP_OPT_PARAM_REQUEST_LIST: lambda d: DHCPOptParamRequestList(codes=d.get("codes", [])),
-    DHCP_OPT_VENDOR_CLASS_ID: lambda d: DHCPOptVendorClassID(data=bytes.fromhex(d.get("data", ""))),
-    DHCP_OPT_CLIENT_ID:          lambda d: DHCPOptClientID(data=bytes.fromhex(d.get("data", ""))),
-}
-
-
-def _build_dhcp_option(d: dict) -> DHCPOpt:  # type: ignore[valid-type]
-    """Convert one ``options`` entry from a packet spec dict to a DHCPOpt."""
-    code = d.get("code", 0)
-    fn = _DHCP_OPTION_BUILDERS.get(code)
-    if fn is not None:
-        return fn(d)
-    return DHCPOptRaw(code=code, data=bytes.fromhex(d.get("data", "")))
-
-
-def _build_dhcp_from_spec(spec: dict) -> DHCPMessage:
-    """Convert a ``dhcp`` packet spec dict to a :class:`DHCPMessage`."""
-    chaddr_hex = spec.get("chaddr", "00" * 16)
-    chaddr = bytes.fromhex(chaddr_hex).ljust(16, b"\x00")[:16]
-    sname_str = spec.get("sname", "")
-    file_str  = spec.get("file", "")
-    return DHCPMessage(
-        op=spec.get("op", 1),
-        htype=spec.get("htype", 1),
-        hlen=spec.get("hlen", 6),
-        hops=spec.get("hops", 0),
-        xid=spec.get("xid", 0),
-        secs=spec.get("secs", 0),
-        flags=spec.get("flags", 0),
-        ciaddr=spec.get("ciaddr", "0.0.0.0"),
-        yiaddr=spec.get("yiaddr", "0.0.0.0"),
-        siaddr=spec.get("siaddr", "0.0.0.0"),
-        giaddr=spec.get("giaddr", "0.0.0.0"),
-        chaddr=chaddr,
-        sname=sname_str.encode("ascii")[:64].ljust(64, b"\x00"),
-        file=file_str.encode("ascii")[:128].ljust(128, b"\x00"),
-        options=[_build_dhcp_option(o) for o in spec.get("options", [])],
-    )
-
-
-def _build_http_from_spec(spec: dict) -> HTTPMessage:  # type: ignore[valid-type]
-    """Convert an ``http`` packet spec dict to an HTTP message object."""
-    headers = spec.get("headers", {})
-    body = bytes.fromhex(spec.get("body", ""))
-    if spec.get("type") == "response":
-        return HTTPResponse(
-            version=spec.get("version", "1.1"),
-            status_code=spec.get("status_code", 200),
-            reason=spec.get("reason", "OK"),
-            headers=headers,
-            body=body,
-        )
-    return HTTPRequest(
-        method=spec.get("method", "GET"),
-        path=spec.get("path", "/"),
-        version=spec.get("version", "1.1"),
-        headers=headers,
-        body=body,
-    )
 
 
 def _parse_sctp_chunk(spec: dict, packet_num: int) -> SCTPChunk:
@@ -648,11 +454,11 @@ def _apply_ip_chain(
 
     b = _dispatch_transport(b, proto_lower, spec.get("transport", {}), packet_num, "ipip inner ")
     if "dns" in spec:
-        return b.dns(_build_dns_from_spec(spec["dns"]), tcp=(proto_lower == "tcp"))
+        return b.dns(app.dns.from_spec(spec["dns"]), tcp=(proto_lower == "tcp"))
     if "dhcp" in spec:
-        return b.dhcp(_build_dhcp_from_spec(spec["dhcp"]))
+        return b.dhcp(app.dhcp.from_spec(spec["dhcp"]))
     if "http" in spec:
-        return b.http(_build_http_from_spec(spec["http"]))
+        return b.http(app.http.from_spec(spec["http"]))
     return _apply_payload_spec(b, spec.get("payload", {}), packet_num, "ipip inner ")
 
 
@@ -949,11 +755,11 @@ def _apply_spec_to_builder(
 
     b = _dispatch_transport(b, proto_lower, spec.get("transport", {}), packet_num)
     if "dns" in spec:
-        b = b.dns(_build_dns_from_spec(spec["dns"]), tcp=(proto_lower == "tcp"))
+        b = b.dns(app.dns.from_spec(spec["dns"]), tcp=(proto_lower == "tcp"))
     elif "dhcp" in spec:
-        b = b.dhcp(_build_dhcp_from_spec(spec["dhcp"]))
+        b = b.dhcp(app.dhcp.from_spec(spec["dhcp"]))
     elif "http" in spec:
-        b = b.http(_build_http_from_spec(spec["http"]))
+        b = b.http(app.http.from_spec(spec["http"]))
     else:
         b = _apply_payload_spec(b, spec.get("payload", {}), packet_num)
     return b, False

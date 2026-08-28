@@ -41,7 +41,26 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   value, naming what collided in each case.
 
   Nothing dispatches through the registry yet — DNS, DHCP and HTTP keep their
-  existing hardwired paths until #97 onwards.
+  existing hardwired paths until #98 onwards.
+
+- **`packeteer.app` — DNS, DHCP and HTTP as registry entries** (#97) — each
+  assembles one `AppProtocol` from the encoder in `packeteer.generate` and the
+  decoder in `packeteer.parse`, and owns the packet-spec mapping in both
+  directions: `packeteer.app.dns.to_spec` / `from_spec`, and the same for
+  `dhcp` and `http`.
+
+  `from_spec` **moved out of `packeteer.__main__`**, where a caller holding a
+  packet spec could not reach it without importing the CLI.  The three
+  `_build_*_from_spec` helpers are gone from the CLI, which now calls the
+  public functions.
+
+  Importing `packeteer.parse` or `packeteer.app` registers the three.
+  `packeteer.generate` deliberately does not import `packeteer.app` — the
+  modules there import `packeteer.generate.*`, so the reverse would be a
+  cycle — and importing it alone therefore leaves the registry empty.
+
+  Still nothing dispatches through the registry; DNS, DHCP and HTTP keep their
+  existing decode, spec and sanitise paths until #98 onwards.
 
 ---
 
