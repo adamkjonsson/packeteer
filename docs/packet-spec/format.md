@@ -25,6 +25,13 @@ object per packet, and a mandatory top-level `metadata` block.
 All packets in a multi-packet file must use the same link-layer type: either
 all with `ethernet` or all with `ethernet.enabled: false`.
 
+Every `##` heading below is a **reserved** section name: it describes how a
+packet is structured, and
+{func}`packeteer.protocols.register` refuses a protocol that asks for one.  An
+application protocol registered there contributes a section of its own, named
+after it, beside `transport` — `dns`, `dhcp` and `http` are simply the three
+that packeteer registers for you.  See {doc}`../guide/adding-a-protocol`.
+
 ---
 
 (packet-spec-ethernet)=

@@ -133,6 +133,20 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   `total_length` lies sets it with no snaplen involved.  `false` for an IPv6
   jumbogram (RFC 2675), whose header states no payload length to compare.
 
+### Documentation
+
+- **A guide to adding an application protocol** (#103) — the `AppProtocol`
+  contract, a worked example from message class to registered protocol, and
+  what you get once it is registered: `parse` decodes it, the packet spec
+  carries a section named after it, `build` reconstructs it, and `sanitise`
+  redacts it.  Also covers replacing a built-in, and the limits — one message
+  per packet payload, one application section per spec, and ports as the only
+  trigger.
+- The packet-spec format reference now says that its `##` headings are
+  reserved names and that a registered protocol contributes a section of its
+  own, and the API reference documents `packeteer.protocols` and
+  `packeteer.app`.
+
 ---
 
 ## [0.9.1] - 2026-08-28
