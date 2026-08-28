@@ -6,6 +6,7 @@ sphinx-autodoc-typehints>=2.0
 
 # Testing
 pytest>=8.0
+PyYAML>=6          # the 'yaml' extra, exercised by the spec loader tests
 pytest-cov>=4.0
 
 # Code standard

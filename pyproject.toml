@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "packeteer"
-version = "0.10.0"
+version = "0.11.0.dev0"
 requires-python = ">=3.10"
 description = "Pure-Python library for building, parsing, and sanitising raw network packets"
 authors = [ { name = "Adam Jonsson", email = "adam.jonsson@live.se"} ]
@@ -22,6 +22,11 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13" ]
+
+[project.optional-dependencies]
+# Only needed to read a YAML spec.  JSON specs load from the standard library,
+# and a module compiled from either imports nothing but packeteer and stdlib.
+yaml = ["PyYAML>=6"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

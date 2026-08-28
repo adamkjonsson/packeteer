@@ -25,7 +25,29 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
-_Nothing yet._
+### Added
+
+- **`packeteer.protospec` — the shape of a protocol spec, and how to read one**
+  (#105) — `Spec`, `Unit`, `Field` and the type, size and repeat variants,
+  plus `load`, `loads` and `from_mapping` to build them from YAML or JSON.
+  Nothing compiles a `Spec` yet.
+
+  The dialect is a **superset of
+  [kober](https://github.com/adamkjonsson/zipline-kober)'s**: kober's keys
+  keep kober's meaning, and packeteer adds `over:`, `ports:`, `const:`,
+  `derive:` and `sensitive:` — the four a spec needs in order to describe an
+  *encoder*, which kober never had to.  `input:` (the stream shape) and
+  `over:` (the transport) are independent, which is what lets DNS be
+  `input: datagram, over: udp` over UDP and `input: stream, over: tcp` over
+  TCP.
+
+  A construct kober has that packeteer does not yet implement — `pointer`,
+  `select`, `computed`, delimiter-framed sizes, `until` and `to_end` repeats,
+  unit parameters — is **recorded rather than refused**, so the checker can
+  report it as "not supported yet" rather than "unknown key".
+
+  JSON specs load from the standard library; YAML needs the new optional
+  `yaml` extra (`pip install packeteer[yaml]`), and is only needed to compile.
 
 ---
 

@@ -358,7 +358,7 @@ units:
     fields:
       - {name: kind,     type: {int: {bits: 8, enum: kind}}}
       - {name: length,   type: {int: {bits: 8}}, derive: {size_of: value}}
-      - {name: value,    type: {bytes: {size: length}}, sensitive: true}
+      - {name: value,    type: {bytes: {size: {expr: "length"}}}, sensitive: true}
       - {name: reading,  type: {int: {bits: 32, signed: true, endian: little}}}
 ```
 
