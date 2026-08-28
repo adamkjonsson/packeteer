@@ -59,8 +59,23 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   modules there import `packeteer.generate.*`, so the reverse would be a
   cycle — and importing it alone therefore leaves the registry empty.
 
-  Still nothing dispatches through the registry; DNS, DHCP and HTTP keep their
-  existing decode, spec and sanitise paths until #98 onwards.
+  Still nothing dispatched through the registry when this landed; the parser
+  started doing so in #98.
+
+- **`ParsedPacket.app` and `.app_protocol`** (#98) — the decoded
+  application-layer message and the name of the protocol that produced it.
+  Any registered protocol lands here; `dns`, `dhcp` and `http` are set in
+  addition, and remain part of the public API.
+
+### Changed
+
+- **Application decode goes through the registry** (#98) — `parse` looks the
+  transport ports up in `packeteer.protocols` instead of trying DNS, then
+  DHCP, then HTTP in turn, so a registered protocol is decoded on the same
+  footing as a built-in.  The destination port is consulted before the source
+  port, and a decoder that rejects the bytes leaves them in `payload` as
+  before.  No built-in changes behaviour: their ports do not overlap, so the
+  single lookup resolves exactly as the three attempts did.
 
 ---
 
