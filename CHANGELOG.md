@@ -114,6 +114,25 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   length prefix without a `tcp=` keyword.  `dns`, `dhcp` and `http` are
   unchanged and keep their own signatures.
 
+- **`ParsedPacket.datagram_truncated` and `packet_metadata.truncated`** (#94)
+  — `true` when the IP header declares more payload than the packet holds, as
+  after a capture taken with a snaplen.
+
+  This is what 0.9.1 left missing.  Clearing `transport.checksum` on a
+  truncated capture (#92) removed a false positive on every packet, but it
+  merged two outcomes: an absent `checksum` came to mean "a rebuild can derive
+  it" **or** "nobody can check it".  The flag separates them, and the spec
+  marker carries the same answer through `packeteer parse` output.
+
+  It is the *datagram* sense of truncation, not the capture's — what `parse`
+  itself can see, available on every entry point including `parse_packet` on
+  raw bytes.  Whether the **capture** was cut is a different question,
+  answered by `ParsedPacket.source_records` where those exist.  The two
+  disagree in both directions: a snaplen that cut only link-layer padding past
+  the end of the datagram leaves this `false`, and an IPv4 header whose
+  `total_length` lies sets it with no snaplen involved.  `false` for an IPv6
+  jumbogram (RFC 2675), whose header states no payload length to compare.
+
 ---
 
 ## [0.9.1] - 2026-08-28

@@ -261,6 +261,24 @@ class ParsedPacket:
         app_protocol: The :attr:`~packeteer.protocols.AppProtocol.name` of the
             protocol that decoded :attr:`app` — also the packet-spec section
             it is written to — or ``None`` alongside an ``None`` :attr:`app`.
+        datagram_truncated: ``True`` when the IP header declares more payload
+            than the packet holds, as after a capture taken with a snaplen.
+            This is the *datagram* sense of truncation, not the capture's: it
+            is what ``parse`` itself can see, and it is available on every
+            entry point including :func:`parse_packet` on raw bytes.  Whether
+            the **capture** was cut is a different question, answered by
+            :attr:`source_records` — ``len(rec.data) < rec.orig_len`` — where
+            those are available.  The two disagree in both directions: a
+            snaplen that cut only link-layer padding past the end of the
+            datagram leaves this ``False``, and an IPv4 header whose
+            ``total_length`` lies sets it with no snaplen involved.
+
+            When it is ``True``, ``transport.length`` and
+            ``transport.checksum`` are cleared rather than recorded, because
+            neither can be checked against bytes that are not in the file —
+            so a cleared checksum means "derivable **or** unknowable", and
+            this is what tells the two apart.  ``False`` for an IPv6 jumbogram
+            (RFC 2675), whose payload length the header does not state.
         payload: Bytes remaining after all parsed headers.
         payload_offset: Index of ``payload[0]`` within the frame passed to
             :func:`parse_packet`, or ``None`` when :attr:`payload` is empty.
@@ -311,6 +329,7 @@ class ParsedPacket:
     app_protocol: str | None = None
     payload:   bytes = field(default=b"")
     payload_offset: int | None = None
+    datagram_truncated: bool = False
     ts_sec:    int = 0
     ts_frac:   int = 0
     tick_hz:   int = _US_PER_SECOND
@@ -1036,6 +1055,7 @@ def parse_packet(
     # captured byte instead.
     declared = _ip_payload_size(ip_hdr, ip_size)
     truncated = declared is not None and declared > len(remaining)
+    pkt.datagram_truncated = truncated
     if declared is not None and declared < len(remaining):
         remaining = remaining[:declared]
 
@@ -1235,6 +1255,10 @@ def parse_pcap_file(
                 "timestamp_s": pkt.ts_sec,
                 ts_frac_key: pkt.ts_frac * spec_hz // tick_hz,
             }
+            if pkt.datagram_truncated:
+                # Only when set: absent means whole, which is the common case
+                # and not worth a key on every packet.
+                cfg["packet_metadata"]["truncated"] = True
             if packet_filter is None or packet_filter.matches(cfg):
                 packet_configs.append(cfg)
 
