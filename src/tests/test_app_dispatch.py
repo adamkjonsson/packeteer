@@ -48,6 +48,12 @@ def _udp(payload: bytes, *, src_port: int = 1234, dst_port: int = 9000) -> bytes
             .payload(data=payload).build())
 
 
+def _dns_base(tcp: bool) -> PacketBuilder:
+    """Return a builder up to the transport layer, on port 53."""
+    b = PacketBuilder().ethernet(**_MACS).ip(src="10.0.0.1", dst="10.0.0.2")
+    return b.tcp(dst_port=53) if tcp else b.udp(dst_port=53)
+
+
 class TestBuiltinsStillLandOnTheirOwnAttributes(unittest.TestCase):
     """`.dns` / `.dhcp` / `.http` are public API and keep working."""
 
@@ -310,3 +316,91 @@ class TestBuildFromSpec(unittest.TestCase):
         spec["transport"] = {"dst_port": 4444}
         b, _ = cli._apply_spec_to_builder(PacketBuilder(), spec, 1)
         self.assertEqual(parse_packet(b.build()).payload, b"\xaa\xbb")
+
+
+class TestPacketBuilderApp(unittest.TestCase):
+    """`PacketBuilder.app` — the generic form of `.dns()` / `.dhcp()` / `.http()` (#102)."""
+
+    def setUp(self) -> None:
+        protocols.register(_sensor())
+        self.addCleanup(protocols.unregister, "sensor")
+
+    def test_a_registered_protocol_round_trips(self) -> None:
+        frame = (PacketBuilder().ethernet(**_MACS)
+                 .ip(src="10.0.0.1", dst="10.0.0.2").udp(dst_port=9000)
+                 .app(Reading(258)).build())
+        self.assertEqual(parse_packet(frame).app, Reading(258))
+
+    def test_it_agrees_with_the_named_method(self) -> None:
+        msg = DNSMessage(id=1, questions=[
+            DNSQuestion(name="example.com.", qtype=DNS_TYPE_A, qclass=1)])
+        for transport, tcp in (("udp", False), ("tcp", True)):
+            with self.subTest(transport=transport):
+                self.assertEqual(_dns_base(tcp).app(msg).build(),
+                                 _dns_base(tcp).dns(msg, tcp=tcp).build())
+
+    def test_transport_is_taken_from_the_layer_stack(self) -> None:
+        """The TCP encoding carries a 2-byte length prefix the UDP one does not."""
+        msg = DNSMessage(id=1, questions=[
+            DNSQuestion(name="example.com.", qtype=DNS_TYPE_A, qclass=1)])
+        base = PacketBuilder().ethernet(**_MACS).ip(src="10.0.0.1", dst="10.0.0.2")
+        over_udp = len(base.udp(dst_port=53).app(msg)._payload_bytes)
+        base = PacketBuilder().ethernet(**_MACS).ip(src="10.0.0.1", dst="10.0.0.2")
+        over_tcp = len(base.tcp(dst_port=53).app(msg)._payload_bytes)
+        self.assertEqual(over_tcp - over_udp, 2)
+
+    def test_the_innermost_transport_wins(self) -> None:
+        """A tunnelled stack has more than one; the last one added is the one."""
+        msg = DNSMessage(id=1)
+        b = (PacketBuilder().ethernet(**_MACS)
+             .ip(src="10.0.0.1", dst="10.0.0.2").udp(dst_port=4789)
+             .vxlan(vni=7).ethernet(**_MACS)
+             .ip(src="192.168.1.1", dst="192.168.1.2").tcp(dst_port=53))
+        self.assertEqual(b._transport_name(protocols.for_section("dns")), "tcp")
+        self.assertEqual(b.app(msg)._payload_bytes[:2], b"\x00\x0c")
+
+    def test_an_unregistered_type_raises_typeerror_naming_it(self) -> None:
+        with self.assertRaises(TypeError) as ctx:
+            PacketBuilder().ethernet(**_MACS).app(object())
+        self.assertIn("object", str(ctx.exception))
+
+    def test_either_transport_with_no_transport_layer_raises(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            PacketBuilder().ethernet(**_MACS).app(DNSMessage())
+        self.assertIn("dns", str(ctx.exception))
+
+    def test_a_single_transport_protocol_needs_no_layer_to_infer_from(self) -> None:
+        """`over` already answers the question for all but DNS."""
+        b = PacketBuilder().ethernet(**_MACS).app(Reading(258))
+        self.assertEqual(b._payload_bytes, b"\x01\x02")
+
+    def test_named_methods_are_unchanged(self) -> None:
+        """`.dns()` and friends keep their own signatures and are not wrappers."""
+        for name in ("dns", "dhcp", "http"):
+            with self.subTest(method=name):
+                self.assertTrue(callable(getattr(PacketBuilder, name)))
+
+
+class TestBuilderRegistersLazily(unittest.TestCase):
+    """`import packeteer.generate` alone leaves the registry empty until `.app()`."""
+
+    def test_app_works_after_importing_only_generate(self) -> None:
+        import pathlib
+        import subprocess
+        import sys
+
+        src = str(pathlib.Path(protocols.__file__).parent.parent)
+        code = f"""
+import sys
+sys.path.insert(0, {src!r})
+from packeteer import protocols
+from packeteer.generate import PacketBuilder
+from packeteer.generate.dns import DNSMessage
+before = len(protocols.registered())
+frame = (PacketBuilder().ethernet().ip(src="10.0.0.1", dst="10.0.0.2")
+         .udp(dst_port=53).app(DNSMessage(id=1)).build())
+print(before, len(protocols.registered()), len(frame) > 0)
+"""
+        out = subprocess.run([sys.executable, "-c", code],
+                             capture_output=True, text=True, check=True)
+        self.assertEqual(out.stdout.strip(), "0 3 True")

@@ -107,6 +107,13 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   specifically a protocol nobody taught it about is a leak rather than a
   missing feature.
 
+- **`PacketBuilder.app`** (#102) — the generic form of `dns`, `dhcp` and
+  `http`: it resolves the message type against the registry and encodes it
+  with whichever protocol owns it.  The transport comes from the layer stack —
+  the last `tcp()` or `udp()` call — which is what lets DNS decide about its
+  length prefix without a `tcp=` keyword.  `dns`, `dhcp` and `http` are
+  unchanged and keep their own signatures.
+
 ---
 
 ## [0.9.1] - 2026-08-28

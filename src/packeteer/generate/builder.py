@@ -175,6 +175,8 @@ import os
 import socket
 import struct
 
+from packeteer import protocols
+
 from .arp import ARP_HW_ETHERNET, ARP_OP_REQUEST, ARPHeader, _build_arp_header
 from .dhcp import DHCPMessage, _build_dhcp_message
 from .dns import DNSMessage, _build_dns_message, _build_dns_message_tcp
@@ -1376,6 +1378,72 @@ class PacketBuilder:
 
         """
         return self.payload(data=_build_http_message(msg))
+
+    def app(self, msg: object) -> "PacketBuilder":
+        """Set the payload to a serialised message of any registered protocol.
+
+        The generic form of :meth:`dns`, :meth:`dhcp` and :meth:`http`: it
+        looks *msg*'s type up in :mod:`packeteer.protocols` and encodes it with
+        whichever protocol owns it, so a protocol registered with
+        :func:`packeteer.protocols.register` is built exactly like a built-in.
+
+        The transport comes from the layer stack — the last :meth:`tcp` or
+        :meth:`udp` call before this one — which is what lets DNS decide about
+        its length prefix without a keyword argument.  Call it after the
+        transport layer.
+
+        Args:
+            msg: A message of a registered protocol.
+
+        Returns:
+            This builder, for chaining.
+
+        Raises:
+            TypeError: If no registered protocol owns *msg*'s type.
+            ValueError: If the protocol runs over either transport and no
+                transport layer has been added, so there is nothing to infer
+                from.
+
+        Example::
+
+            pkt = (PacketBuilder()
+                .ethernet()
+                .ip(src="10.0.0.1", dst="10.0.0.2")
+                .udp(dst_port=9000)
+                .app(Reading(value=258))
+                .build()
+            )
+
+        """
+        # Imported here: packeteer.app imports packeteer.generate.dns and
+        # friends, so importing it from this package is a cycle.  Importing it
+        # is also what registers the built-ins, which `import packeteer.generate`
+        # alone does not do.
+        from packeteer.app import register_builtins
+
+        register_builtins()
+
+        proto = protocols.for_message(msg)
+        if proto is None:
+            raise TypeError(
+                f"no registered protocol handles {type(msg).__name__!r}; "
+                "register one with packeteer.protocols.register"
+            )
+        return self.payload(data=proto.encode(msg, self._transport_name(proto)))
+
+    def _transport_name(self, proto: "protocols.AppProtocol") -> str:
+        """Return the transport *proto* should encode for, from the layer stack."""
+        for layer in reversed(self._layers):
+            if isinstance(layer, TCPHeader):
+                return "tcp"
+            if isinstance(layer, UDPHeader):
+                return "udp"
+        if proto.over != "either":
+            return proto.over
+        raise ValueError(
+            f"{proto.name!r} runs over either transport, so .app() needs a "
+            ".tcp() or .udp() layer before it to know which to encode for"
+        )
 
     def payload(self, *, size: int = 0, data: bytes | None = None) -> "PacketBuilder":
         """Set the packet payload.
