@@ -712,6 +712,15 @@ Reassembling first, with `packeteer parse --defragment` or
 reassembled datagram's header describes exactly the bytes beside it, so neither
 key is emitted.
 
+**A truncated capture emits neither key, and so cannot report corruption.**
+When a snaplen cut the payload short, the bytes the sender checksummed are not
+in the file, and a value derived from the bytes that are would differ from the
+capture's for every packet — which would say "wrong on the wire" about all of
+them.  `parse` clears both instead, so a surviving `checksum` keeps its
+meaning; the cost is that a corrupt packet in a truncated capture is
+indistinguishable from a clean one.  Capture without a snaplen when detecting
+corruption is the point.
+
 ---
 
 (packet-spec-sctp)=

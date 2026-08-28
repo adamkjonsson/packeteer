@@ -182,3 +182,105 @@ class TestIPv6Fragment(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _snaplen(frame: bytes, cut: int) -> bytes:
+    """Return *frame* as a capture taken with a snaplen would have held it."""
+    return frame[:len(frame) - cut]
+
+
+def _payload_frame(version: int, transport: str, size: int = 200) -> bytes:
+    """Build an Ethernet frame carrying *size* payload bytes over *transport*."""
+    b = (PacketBuilder()
+         .ethernet(src_mac="00:00:00:00:00:01", dst_mac="00:00:00:00:00:02")
+         .ip(src="10.0.0.1" if version == 4 else "2001:db8::1",
+             dst="10.0.0.2" if version == 4 else "2001:db8::2"))
+    b = b.udp(dst_port=9999) if transport == "udp" else b.tcp(dst_port=80)
+    return b.payload(data=b"A" * size).build()
+
+
+class TestTruncatedCaptureClearsBoth(unittest.TestCase):
+    """A snaplen must not read as corruption on every packet (#92).
+
+    The keys mean "a rebuild could not work this out for itself", which a
+    consumer reads as "this was wrong on the wire".  A truncated payload
+    derives a different value from fewer bytes than the sender used, so
+    keeping the captured one would make that reading false everywhere.
+    """
+
+    def test_neither_key_appears_for_any_transport_or_version(self) -> None:
+        for version in (4, 6):
+            for transport in ("udp", "tcp"):
+                with self.subTest(version=version, transport=transport):
+                    frame = _payload_frame(version, transport)
+                    section = _spec(_snaplen(frame, 100))
+                    self.assertNotIn("checksum", section)
+                    self.assertNotIn("length", section)
+
+    def test_parsed_header_fields_are_none(self) -> None:
+        for version in (4, 6):
+            for transport in ("udp", "tcp"):
+                with self.subTest(version=version, transport=transport):
+                    hdr = parse_packet(
+                        _snaplen(_payload_frame(version, transport), 100)
+                    ).transport
+                    self.assertIsNone(hdr.checksum)
+                    if isinstance(hdr, UDPHeader):
+                        self.assertIsNone(hdr.length)
+
+    def test_the_same_packets_captured_whole_also_have_neither(self) -> None:
+        """The control: the test above must be measuring truncation."""
+        for version in (4, 6):
+            for transport in ("udp", "tcp"):
+                with self.subTest(version=version, transport=transport):
+                    section = _spec(_payload_frame(version, transport))
+                    self.assertNotIn("checksum", section)
+                    self.assertNotIn("length", section)
+
+    def test_payload_keeps_the_bytes_that_were_captured(self) -> None:
+        """Clearing the header fields must not disturb the payload itself."""
+        pkt = parse_packet(_snaplen(_payload_frame(4, "udp"), 100))
+        self.assertEqual(pkt.payload, b"A" * 100)
+
+    def test_truncation_inside_the_transport_header_parses_nothing(self) -> None:
+        frame = _payload_frame(4, "tcp")
+        cut = len(frame) - (_TCP_OFF + 10)      # 10 bytes into the TCP header
+        self.assertIsNone(parse_packet(_snaplen(frame, cut)).transport)
+
+
+class TestTruncationHidesCorruption(unittest.TestCase):
+    """The cost of the fix, pinned so it is a decision rather than a surprise."""
+
+    def _corrupt(self, frame: bytes) -> bytes:
+        raw = bytearray(frame)
+        raw[_UDP_OFF + 6:_UDP_OFF + 8] = b"\xde\xad"
+        return bytes(raw)
+
+    def test_corrupt_and_whole_is_still_reported(self) -> None:
+        frame = self._corrupt(_payload_frame(4, "udp"))
+        self.assertEqual(_spec(frame)["checksum"], 0xDEAD)
+
+    def test_corrupt_and_truncated_reports_nothing(self) -> None:
+        """The sender's bytes are not in the file, so "unknown" is the answer."""
+        frame = self._corrupt(_payload_frame(4, "udp"))
+        self.assertNotIn("checksum", _spec(_snaplen(frame, 100)))
+
+
+class TestFragmentsAreNotTruncated(unittest.TestCase):
+    """A fragment carries exactly what its IP header declares (#68 stands)."""
+
+    def test_ipv4_first_fragment_still_records_both(self) -> None:
+        section = _spec(_fragments()[0])
+        self.assertEqual(section["length"], 1032)
+        self.assertIn("checksum", section)
+
+    def test_ipv6_first_fragment_still_records_its_length(self) -> None:
+        frags = (
+            PacketBuilder()
+            .ethernet(src_mac="00:00:00:00:00:01", dst_mac="00:00:00:00:00:02")
+            .ip(src="2001:db8::1", dst="2001:db8::2")
+            .udp(dst_port=9999)
+            .payload(data=b"B" * 2048)
+            .fragment(mtu=800)
+        )
+        self.assertEqual(parse_packet(frags[0]).transport.length, 2048 + 8)
