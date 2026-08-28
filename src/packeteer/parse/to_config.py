@@ -232,6 +232,10 @@ def _apply_ethernet(config: dict[str, Any], hdr: EthernetHeader) -> None:
         "dst_mac": hdr.dst_mac,
         "enabled": True,
     }
+    if not hdr.pad:
+        # Only written when the captured frame was below the Ethernet minimum;
+        # a rebuild pads by default, which would lengthen it.
+        section["pad"] = False
     if hdr.vlan_tag is not None:
         section["vlan"] = {
             "id": hdr.vlan_tag.vid,

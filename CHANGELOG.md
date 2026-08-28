@@ -126,6 +126,26 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ### Fixed
 
+- **Short Ethernet frames keep their captured length through a round trip**
+  (#86) — `packeteer build` pads a frame to the 60-byte Ethernet minimum, and
+  `packeteer parse` recorded nothing about whether the frame it read was
+  padded, so a captured 54-byte frame rebuilt as a 60-byte one.  Every original
+  byte was reproduced correctly and six zeros were appended.
+
+  Padding is added by the network hardware, so a capture taken above the driver
+  never sees it — and the frames it affects are the ordinary TCP control
+  packets, which is most of the short traffic in a typical capture.
+
+  `parse` now writes `"pad": false` in the `ethernet` section when the captured
+  frame was below the minimum, and omits the key otherwise; the build side
+  already honoured it.  A tunnelled inner frame is never marked, since padding
+  describes what went out on the wire.
+
+  **With this and #68, every packet in every shipped `testcases/*.pcap` capture
+  now rebuilds byte-for-byte** — `fragmentation.pcap` 115 → 287 of 287,
+  `no_errors.pcap` 100 → 207 of 207 — and a test asserts it across the whole
+  corpus so it stays that way.
+
 - **A fragmented capture's first fragment now rebuilds byte-for-byte** (#68) —
   a transport header travels once, in the first fragment, and its length field
   describes the **whole** datagram rather than the bytes in that fragment.

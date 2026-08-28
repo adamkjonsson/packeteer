@@ -46,6 +46,17 @@ packet with no layer-2 framing.
 Call `.vlan()` twice in the builder (or nest two `vlan` keys) for QinQ
 (IEEE 802.1ad) double-tagged frames.
 
+`packeteer parse` writes `"pad": false` when the captured frame was **shorter
+than 60 bytes**, and omits the key otherwise.  Padding is added by the network
+hardware, so a capture taken above the driver holds unpadded frames — the
+common TCP control packets (SYN, bare ACK, FIN) are 54 bytes there.  Without
+the key a rebuild would pad them out and produce frames six bytes longer than
+the ones captured.
+
+The key describes the **outer** frame only.  An encapsulated frame is often
+under 60 bytes and is not padded by anything, so `parse` never marks a
+tunnelled inner frame unpadded.
+
 ---
 
 (packet-spec-arp)=

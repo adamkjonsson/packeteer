@@ -341,6 +341,13 @@ def _shift_offsets(pkt: ParsedPacket, delta: int) -> None:
     start at zero.  Adding the inner frame's position within the outer one
     makes every offset relative to the outermost frame, at any nesting depth.
 
+    Also clears the inner frame's ``pad`` mark.  Padding to the 60-byte
+    minimum is a property of what went out on the wire, which is the *outer*
+    frame; an encapsulated frame shorter than that is ordinary and is not
+    padded by the sender or by a rebuild.  The Ethernet parser cannot tell the
+    two apart — it is handed a frame and measures it — so the correction
+    belongs here, at the one point that knows a frame was nested.
+
     Args:
         pkt: Packet parsed from the inner frame.
         delta: Offset of that inner frame within the enclosing frame.
@@ -349,6 +356,8 @@ def _shift_offsets(pkt: ParsedPacket, delta: int) -> None:
     while pkt is not None:
         if pkt.payload_offset is not None:
             pkt.payload_offset += delta
+        if pkt.ethernet is not None:
+            pkt.ethernet.pad = True
         pkt = pkt.tunneled
 
 
