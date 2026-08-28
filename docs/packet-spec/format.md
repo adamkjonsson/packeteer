@@ -638,10 +638,44 @@ in order:
 | `code` | `0` | ICMP/ICMPv6 sub-type code |
 | `identifier` | `1` | ICMP/ICMPv6 16-bit identifier |
 | `sequence` | `1` | ICMP/ICMPv6 16-bit sequence number |
+| `length` | derived | UDP Length field, overriding the derived `8 + len(payload)` (see below) |
+| `checksum` | derived | TCP/UDP checksum, overriding the computed one (see below) |
 
 TCP flag bit values: `TCP_FIN`=1, `TCP_SYN`=2, `TCP_RST`=4, `TCP_PSH`=8,
 `TCP_ACK`=16, `TCP_URG`=32, `TCP_ECE`=64, `TCP_CWR`=128.  Add values to
 combine (e.g. `24` for PSH+ACK).
+
+(packet-spec-transport-overrides)=
+### `length` and `checksum` — when the header describes other bytes
+
+Both are normally derived from the payload beside them, and `parse` omits them
+from a spec when the derived value is what the capture held.  They appear only
+where a rebuild could not work the value out for itself, which is two cases:
+
+**A fragmented datagram's first fragment.** The transport header travels once,
+in the first fragment, and its Length covers the *whole* datagram — not the
+bytes in that fragment.  A 1032-byte UDP datagram split at an MTU of 576 puts
+552 bytes in fragment 0, so:
+
+```json
+"transport": { "src_port": 12345, "dst_port": 9999, "length": 1032, "checksum": 2577 }
+```
+
+Without the two keys a rebuild derives `length` 552 and a checksum over 552
+bytes, and the capture no longer replays as valid traffic — a receiver
+reassembling it computes a different datagram and rejects the checksum.  TCP
+has no length field of its own, so a TCP first fragment needs only `checksum`;
+the pseudo-header length used to compute it is what would otherwise be wrong.
+
+**A checksum that was wrong on the wire.** An explicit `checksum` is written
+out exactly as given, including `0`, so a corrupt packet survives a
+parse → build round trip.  This is the only way a spec can express a bad
+checksum; the fuzzer could previously only do it at the byte level.
+
+Reassembling first, with `packeteer parse --defragment` or
+{func}`~packeteer.parse.defragment`, side-steps the fragment case entirely: a
+reassembled datagram's header describes exactly the bytes beside it, so neither
+key is emitted.
 
 ---
 

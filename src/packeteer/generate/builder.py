@@ -1218,21 +1218,37 @@ class PacketBuilder:
         urgent_ptr: int = 0,
         reserved: int = 0,
         options: TCPOptions | None = None,
+        checksum: int | None = None,
     ) -> "PacketBuilder":
-        """Append a TCP transport header layer."""
+        """Append a TCP transport header layer.
+
+        *checksum* overrides the computed one when set; see
+        :class:`~packeteer.generate.tcp.TCPHeader`.
+        """
         self._layers.append(TCPHeader(
             src_port, dst_port,
             seq=seq, ack=ack, flags=flags,
             window=window, urgent_ptr=urgent_ptr,
-            reserved=reserved, options=options,
+            reserved=reserved, options=options, checksum=checksum,
         ))
         return self
 
     def udp(
-        self, *, src_port: int = 12345, dst_port: int = _DEFAULT_UDP_DST_PORT,
+        self,
+        *,
+        src_port: int = 12345,
+        dst_port: int = _DEFAULT_UDP_DST_PORT,
+        length: int | None = None,
+        checksum: int | None = None,
     ) -> "PacketBuilder":
-        """Append a UDP transport header layer."""
-        self._layers.append(UDPHeader(src_port, dst_port))
+        """Append a UDP transport header layer.
+
+        *length* and *checksum* override the derived values when set; see
+        :class:`~packeteer.generate.udp.UDPHeader`.
+        """
+        self._layers.append(UDPHeader(
+            src_port, dst_port, length=length, checksum=checksum,
+        ))
         return self
 
     def icmp(

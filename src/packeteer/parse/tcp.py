@@ -119,7 +119,7 @@ def packet_parser(data: bytes) -> tuple[int, int | None, TCPHeader | None]:
         data_offset = (data[12] >> 4) & 0xF
         reserved = data[12] & 0x0F
         flags = data[13]
-        window, _, urgent_ptr = struct.unpack("!HHH", data[14:20])
+        window, checksum, urgent_ptr = struct.unpack("!HHH", data[14:20])
 
         if data_offset < 5:
             return (0, None, None)
@@ -134,6 +134,9 @@ def packet_parser(data: bytes) -> tuple[int, int | None, TCPHeader | None]:
             reserved=reserved, flags=flags,
             window=window, urgent_ptr=urgent_ptr,
             options=_parse_options(data[20:header_size]),
+            # Cleared by parse.core when it matches the computed checksum; see
+            # the note in the UDP parser.
+            checksum=checksum,
         )
 
     except struct.error:

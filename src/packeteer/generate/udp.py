@@ -34,11 +34,22 @@ class UDPHeader:
     Attributes:
         src_port: Source port number (0-65535).
         dst_port: Destination port number (0-65535).
+        length: Explicit Length field, overriding the derived
+            ``8 + len(payload)``.  ``None`` (the default) derives it.  Set this
+            only when the header describes something other than the bytes
+            beside it — the first fragment of a fragmented datagram, whose
+            Length covers the **whole** datagram rather than the fragment.
+        checksum: Explicit checksum, overriding the computed one.  ``None``
+            (the default) computes it.  Setting it reproduces a checksum that
+            was wrong on the wire, or one computed over a whole datagram that
+            has since been fragmented.
 
     """
 
     src_port: int
     dst_port: int
+    length:   int | None = None
+    checksum: int | None = None
 
 
 def _pseudo_header_v4(src_ip: str, dst_ip: str, udp_length: int) -> bytes:
@@ -89,9 +100,15 @@ def _build_udp_header(
 ) -> bytes:
     """Build an 8-byte UDP header with a correct checksum.
 
-    The *length* field is set to ``8 + len(payload)``.  The checksum covers
+    The *length* field is set to ``8 + len(payload)`` and the checksum covers
     the pseudo-header, the UDP header, and *payload*.  If the computed
     checksum is ``0x0000`` it is replaced with ``0xFFFF`` per RFC 768.
+
+    Both are overridden when ``hdr.length`` / ``hdr.checksum`` are set, which
+    is how a header describing more than the bytes beside it — the first
+    fragment of a fragmented datagram — is reproduced faithfully.  An explicit
+    checksum is written out as given, including a zero, so a capture's wrong
+    checksum survives a rebuild.
 
     Args:
         hdr: A :class:`UDPHeader` instance with the desired port values.
@@ -111,8 +128,11 @@ def _build_udp_header(
             specified *ip_version*.
 
     """
-    udp_length = 8 + len(payload)
+    udp_length = hdr.length if hdr.length is not None else 8 + len(payload)
     raw = struct.pack('!HHHH', hdr.src_port, hdr.dst_port, udp_length, 0)
+
+    if hdr.checksum is not None:
+        return raw[:6] + struct.pack('!H', hdr.checksum)
 
     if ip_version == 6:
         pseudo = _pseudo_header_v6(src_ip, dst_ip, udp_length)

@@ -490,11 +490,14 @@ def _dispatch_transport(
             urgent_ptr=transport.get("urgent_ptr", 0),
             reserved=transport.get("reserved", 0),
             options=_parse_tcp_options(transport.get("options")),
+            checksum=transport.get("checksum"),
         )
     if proto_lower == "udp":
         return b.udp(
             src_port=transport.get("src_port", 12345),
             dst_port=transport.get("dst_port", 80),
+            length=transport.get("length"),
+            checksum=transport.get("checksum"),
         )
     if proto_lower == "icmp":
         return b.icmp(

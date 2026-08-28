@@ -27,6 +27,24 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ### Added
 
+- **`transport.length` and `transport.checksum` in a packet spec** (#68) — two
+  optional keys that override the derived values, absent from a spec whenever
+  the derived value is what the capture held.
+
+  - `UDPHeader` gains `length` and `checksum`; `TCPHeader` gains `checksum`
+    (TCP has no length field of its own).  `PacketBuilder.udp()` and
+    `.tcp()` take them as keyword arguments.  All default to `None`, meaning
+    derive as before.
+  - `packeteer parse` records them only where a rebuild could not work the
+    value out for itself, so ordinary traffic is unaffected: across the test
+    corpus the keys appear on 59 of 287 packets in `fragmentation.pcap` — its
+    first fragments — on 11 of 218 in `payload_corruption.pcap` — the packets
+    whose checksum was wrong on the wire — and on none at all in the other
+    eleven captures.
+  - An explicit checksum is written out exactly as given, including `0`, so a
+    spec can now express a checksum that was wrong on the wire.  Previously
+    only the byte-level fuzzer could do that.
+
 - **Wire impairments work with `--payload http` and `--payload vpn`** (#83) —
   every TCP anomaly option was discarded with a warning when a payload type was
   given, so impaired *application* traffic — the case a protocol decoder is
@@ -107,6 +125,26 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   added random draws are skipped entirely when their rate is zero.
 
 ### Fixed
+
+- **A fragmented capture's first fragment now rebuilds byte-for-byte** (#68) —
+  a transport header travels once, in the first fragment, and its length field
+  describes the **whole** datagram rather than the bytes in that fragment.
+  `packeteer build` derived both length and checksum from the bytes it was
+  given, so rebuilding a first fragment produced different values than the
+  capture had: for a 1032-byte UDP datagram fragmented at an MTU of 576, a UDP
+  Length of `552` instead of `1032`, and a checksum over the fragment instead
+  of the datagram.
+
+  The rebuilt fragment was self-consistent but not what was on the wire, so a
+  receiver reassembling the rebuilt capture computed a different datagram and
+  rejected the checksum — a `parse` → edit → `build` cycle over a fragmented
+  capture did not replay as valid traffic.  Later fragments were never
+  affected, since they carry no transport header at all.
+
+  Round-tripping `testcases/fragmentation.pcap` now reproduces 174 of its 287
+  packets byte-for-byte, up from 115 — the 59 first fragments it previously
+  got wrong.  Reassembling first with `--defragment` remains the recommended
+  path when faithful datagrams matter, and is unaffected.
 
 - **`--server-rst` combined with `--packet-loss` kept the wrong
   acknowledgements** (#83) — when both were used together, the RST pass decided

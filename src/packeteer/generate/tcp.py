@@ -140,6 +140,12 @@ class TCPHeader:
         options: Optional TCP header options.  When set, the Data Offset field
             is adjusted automatically to reflect the extended header length.
             Defaults to ``None`` (no options, 20-byte header).
+        checksum: Explicit checksum, overriding the computed one.  ``None``
+            (the default) computes it.  TCP has no length field of its own, so
+            this is the only field a fragmented datagram's first fragment needs
+            recorded: the pseudo-header length used for the checksum covers the
+            whole datagram, not the fragment.  Setting it also reproduces a
+            checksum that was wrong on the wire.
 
     """
 
@@ -152,6 +158,7 @@ class TCPHeader:
     window: int = 65535
     urgent_ptr: int = 0
     options: TCPOptions | None = None
+    checksum: int | None = None
 
 
 def _pseudo_header_v4(src_ip: str, dst_ip: str, tcp_length: int) -> bytes:
@@ -206,7 +213,8 @@ def _build_tcp_header(
     TCP options are present in *hdr*, the data offset and total header length
     are adjusted accordingly (maximum 60 bytes per RFC 9293).  The checksum
     is computed over the appropriate pseudo-header (IPv4 or IPv6) concatenated
-    with the TCP header and *payload*, as required by RFC 793 / RFC 8200.
+    with the TCP header and *payload*, as required by RFC 793 / RFC 8200 —
+    unless ``hdr.checksum`` is set, in which case it is written out as given.
 
     Args:
         hdr: A :class:`TCPHeader` instance with the desired field values.
@@ -245,6 +253,9 @@ def _build_tcp_header(
         0,                  # checksum placeholder
         hdr.urgent_ptr,
     ) + options_bytes
+
+    if hdr.checksum is not None:
+        return raw[:16] + struct.pack('!H', hdr.checksum) + raw[18:]
 
     if ip_version == 6:
         pseudo = _pseudo_header_v6(src_ip, dst_ip, tcp_length)

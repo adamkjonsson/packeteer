@@ -363,11 +363,17 @@ def _apply_transport(
             opts = _tcp_options_section(hdr.options)
             if opts:
                 section["options"] = opts
+        if hdr.checksum is not None:
+            section["checksum"] = hdr.checksum
     elif isinstance(hdr, UDPHeader):
         section = {
             "src_port": hdr.src_port,
             "dst_port": hdr.dst_port,
         }
+        if hdr.length is not None:
+            section["length"] = hdr.length
+        if hdr.checksum is not None:
+            section["checksum"] = hdr.checksum
     elif isinstance(hdr, SCTPHeader):
         section = {
             "src_port":         hdr.src_port,
