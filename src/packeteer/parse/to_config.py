@@ -343,6 +343,11 @@ def _tcp_options_section(opts: TCPOptions) -> dict[str, Any]:
         section["unknown"] = [
             {"kind": kind, "data": value.hex()} for kind, value in opts.unknown
         ]
+    if opts.raw is not None:
+        # Present only when the captured layout differs from what the encoder
+        # would produce; it is written verbatim and overrides the fields above,
+        # which are kept for readability.
+        section["raw"] = opts.raw.hex()
     return section
 
 

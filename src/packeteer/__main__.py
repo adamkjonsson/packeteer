@@ -395,7 +395,12 @@ def _parse_sctp_chunk(spec: dict, packet_num: int) -> SCTPChunk:
 
 
 def _parse_tcp_options(spec: dict | None) -> TCPOptions | None:
-    """Convert a JSON ``transport.options`` object to a :class:`TCPOptions`."""
+    """Convert a JSON ``transport.options`` object to a :class:`TCPOptions`.
+
+    A ``raw`` key carries the option region as captured and is written out
+    verbatim, overriding the decoded fields beside it — see
+    :class:`~packeteer.generate.tcp.TCPOptions`.
+    """
     if not spec:
         return None
     sack_raw = spec.get("sack", [])
@@ -408,6 +413,7 @@ def _parse_tcp_options(spec: dict | None) -> TCPOptions | None:
         unknown=[
             (o["kind"], bytes.fromhex(o["data"])) for o in spec.get("unknown", [])
         ],
+        raw=bytes.fromhex(spec["raw"]) if "raw" in spec else None,
     )
 
 

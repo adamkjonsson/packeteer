@@ -126,6 +126,31 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ### Fixed
 
+- **A capture's TCP option layout survives a round trip** (#87) — the option
+  region was re-encoded in a canonical order with NOP padding appended, while
+  senders put the padding ahead of the option it aligns.  The rebuilt region
+  decoded to identical values, so nothing downstream of a parse noticed, but
+  the bytes differed:
+
+  ```
+  captured: 0101080a21c6e61e65f1e0d5     NOP, NOP, Timestamps
+  rebuilt : 080a21c6e61e65f1e0d50101     Timestamps, then NOP, NOP
+  ```
+
+  This was documented behaviour rather than an oversight, and no canonical
+  order could have fixed it — Linux and macOS lay out a SYN's options
+  differently, so matching one breaks the other.  `parse` now records the
+  region as captured in `transport.options.raw` when re-encoding would not
+  reproduce it, and `build` writes it verbatim.  `TCPOptions` gains a matching
+  `raw` field, which **takes precedence over the decoded fields**: clear it
+  before editing `mss` or `timestamps` on an instance that has one.
+
+  Ordinary specs are unaffected — the key appears only where the layout is one
+  the encoder does not produce.
+
+  **With #68 and #86, every shipped capture now rebuilds byte-for-byte**,
+  `testcases/*.pcapng` included.  A test asserts it across the whole corpus.
+
 - **Short Ethernet frames keep their captured length through a round trip**
   (#86) — `packeteer build` pads a frame to the 60-byte Ethernet minimum, and
   `packeteer parse` recorded nothing about whether the frame it read was

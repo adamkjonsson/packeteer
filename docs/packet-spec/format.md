@@ -645,6 +645,7 @@ in order:
 | `options.sack` | `[]` | TCP SACK blocks — array of `[left_edge, right_edge]` pairs |
 | `options.timestamps` | — | TCP Timestamps option — `[TSval, TSecr]` array (RFC 7323) |
 | `options.unknown` | `[]` | TCP options packeteer does not model, as `{"kind": N, "data": "<hex>"}` objects.  `data` excludes the kind and length bytes.  Emitted by `parse` and re-encoded by `build`, so an unrecognised option survives a round trip |
+| `options.raw` | derived | The option region as captured, hex-encoded, written out verbatim (see below) |
 | `type` | `8` / `128` | ICMP type (`8`=Echo Request) or ICMPv6 type (`128`=Echo Request) |
 | `code` | `0` | ICMP/ICMPv6 sub-type code |
 | `identifier` | `1` | ICMP/ICMPv6 16-bit identifier |
@@ -655,6 +656,29 @@ in order:
 TCP flag bit values: `TCP_FIN`=1, `TCP_SYN`=2, `TCP_RST`=4, `TCP_PSH`=8,
 `TCP_ACK`=16, `TCP_URG`=32, `TCP_ECE`=64, `TCP_CWR`=128.  Add values to
 combine (e.g. `24` for PSH+ACK).
+
+(packet-spec-tcp-options-raw)=
+### `options.raw` — when the layout matters
+
+The other `options` keys say *what* was sent.  They do not say what order the
+options were in, or where the sender put its NOP padding, and those are the
+sender's choice: a stack writes `NOP, NOP, Timestamps` so that the option
+lands aligned, where `build` would write `Timestamps, NOP, NOP`.  Both decode
+to the same values; only the bytes differ.  Stacks do not agree with each other
+either — Linux writes `MSS, SACK-perm, TS, NOP, WS` on a SYN, macOS writes
+`MSS, NOP, WS, NOP, NOP, TS, SACK-perm, EOL` — so there is no single layout
+that reproduces them all.
+
+`parse` therefore writes `options.raw` when re-encoding the decoded options
+would *not* reproduce the captured region, and omits it otherwise:
+
+```json
+"options": { "timestamps": [566683166, 1710350549], "raw": "0101080a21c6e61e65f1e0d5" }
+```
+
+The decoded keys stay beside it so the spec is still readable, but **`raw`
+wins**: when it is present the other `options` keys are ignored.  Delete it if
+you want to edit `mss` or `timestamps` by hand and have the change take effect.
 
 (packet-spec-transport-overrides)=
 ### `length` and `checksum` — when the header describes other bytes

@@ -42,7 +42,7 @@ class TCPOptions:
     to a non-None / non-False value to include that option in the header.
     Options are encoded in the order MSS → Window Scale → SACK Permitted →
     Timestamps → SACK, followed by NOP (0x01) padding to the nearest 4-byte
-    boundary.
+    boundary — unless *raw* holds the bytes to write instead.
 
     Attributes:
         mss: Maximum Segment Size (kind 2, length 4).  16-bit value in bytes.
@@ -67,6 +67,17 @@ class TCPOptions:
             the builder re-emits them, so an option survives a parse → build
             round trip even when packeteer does not understand it.  Defaults
             to an empty list.
+        raw: The option region exactly as captured, written out verbatim in
+            place of a re-encoding.  The parser sets it only when re-encoding
+            the decoded options would *not* reproduce the captured bytes —
+            different option order, or NOP padding in a different place — so it
+            is ``None`` for options the encoder round-trips on its own, and
+            ordinary specs never carry it.
+
+            **It takes precedence over every other attribute.**  Editing
+            ``mss`` or ``timestamps`` on an instance whose *raw* is set has no
+            effect on the encoded header; clear *raw* first when changing a
+            field.
 
     """
 
@@ -76,19 +87,35 @@ class TCPOptions:
     sack_blocks: list[tuple[int, int]] = field(default_factory=list)
     timestamps: tuple[int, int] | None = None
     unknown: list[tuple[int, bytes]] = field(default_factory=list)
+    raw: bytes | None = None
 
 
 def _build_options(opts: TCPOptions) -> bytes:
     """Encode *opts* as bytes padded to a 4-byte boundary with NOP (0x01).
 
-    Options are emitted in the order:
+    When ``opts.raw`` is set it is returned verbatim.  That is how a capture's
+    own option layout survives a parse → build round trip: senders order
+    options differently and place NOP padding ahead of the option it aligns,
+    whereas the encoding below is canonical, so re-encoding preserves every
+    option's presence and value but not the original bytes.  Stacks disagree
+    with each other too — Linux and macOS lay out a SYN's options differently
+    — so replaying what was captured is the only thing that reproduces them in
+    general.
+
+    Otherwise options are emitted in the order:
     MSS (2) → Window Scale (3) → SACK Permitted (4) → Timestamps (8) →
     SACK (5) → anything in ``unknown``.
 
-    The order is canonical rather than a replay of whatever a capture
-    contained, so a parse → build round trip preserves every option's
-    presence and value but not necessarily its original byte layout.
+    Args:
+        opts: The options to encode.
+
+    Returns:
+        The encoded option region, a multiple of 4 bytes long.
+
     """
+    if opts.raw is not None:
+        return opts.raw
+
     raw = b""
     if opts.mss is not None:
         raw += struct.pack("!BBH", 2, 4, opts.mss)
