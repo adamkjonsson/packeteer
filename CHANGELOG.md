@@ -126,6 +126,38 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ### Fixed
 
+- **Packet loss no longer leaves acknowledgements for segments that were never
+  delivered** (#85) — loss was applied to each packet independently, after the
+  whole conversation had been assembled, so a capture could acknowledge a
+  segment it did not contain.  A lost packet is lost *on the wire*: neither the
+  capture point nor the far end sees it, and a receiver cannot acknowledge what
+  it never got.
+
+  Three things follow, and all three were wrong:
+
+  - **A lost segment triggered an acknowledgement.**  It no longer does — there
+    is nothing at the far end to answer.
+  - **Every later acknowledgement was overstated.**  Acknowledgements are
+    cumulative, so with a segment missing, the ones after it claimed bytes that
+    never arrived.  The receiver's acknowledgement number now stops advancing
+    at the gap, so the segments after it are answered with **duplicate ACKs** —
+    the signal an analyser looks for around a loss event, and one packeteer
+    could not previously produce.
+  - **Losing a SYN produced an impossible capture**, in which the peers had
+    never learnt each other's initial sequence numbers yet went on exchanging
+    data with an acknowledgement number of zero.  The SYNs are now exempt from
+    loss.  Modelling the real outcome — a connection that never establishes —
+    needs setup retransmission the generator does not have.
+
+  Nothing retransmits, so a lost segment still leaves a permanent hole in the
+  byte range.  That is deliberate for now: it is the harsher input to test a
+  decoder against, and giving a lossy stream real recovery is a separate
+  question.
+
+  **`--packet-loss` therefore produces different captures for a given seed.**
+  Every other option is unaffected — verified across 112 seed and option
+  combinations, of which the 32 involving loss moved and the other 80 did not.
+
 - **A capture's TCP option layout survives a round trip** (#87) — the option
   region was re-encoded in a canonical order with NOP padding appended, while
   senders put the padding ahead of the option it aligns.  The rebuilt region

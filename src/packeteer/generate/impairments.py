@@ -15,8 +15,9 @@ the two emit paths label packets differently: a data segment is ``DATA[3]`` on
 the low-level path and ``GET /api/v1/orders [2/5]`` on the HTTP path.
 
 Packet loss is the exception.  It is applied at emission time via
-:func:`drop_packet`, because a stream generator has to decide whether a packet
-exists before it assigns the next capture timestamp.
+:func:`drop_packet`, because on a connection the loss of a segment decides
+whether an acknowledgement follows it and what that acknowledgement covers —
+neither of which a pass over a finished list can work out.
 
 Ordering matters and is fixed: RST, then retransmission, then corruption, then
 stray injection.  Each pass consumes randomness, so the order is part of what a
@@ -49,8 +50,11 @@ class ImpairmentConfig:
     from its seed exactly as it did before this module existed.
 
     Attributes:
-        packet_loss_probability: Probability (0.0–1.0) that any individual
-            packet is silently dropped, simulating loss on the wire.
+        packet_loss_probability: Probability (0.0–1.0) that a packet is lost
+            on the wire.  On a connection, a lost segment is never
+            acknowledged and does not advance the receiver's acknowledgement
+            number, so the segments after it draw duplicate ACKs; the SYNs are
+            exempt.  Nothing retransmits, so the gap is permanent.
         retransmission_probability: Probability (0.0–1.0) that each data
             segment triggers a spurious retransmission.
         retransmission_timeout: Seconds after the original send time at which
@@ -205,9 +209,12 @@ def drop_packet(rng: Random, probability: float) -> bool:
     """Whether the packet about to be emitted should be dropped.
 
     Called from a generator's emit loop rather than as a pass, so that the
-    packet never enters the stream.  The sequence number has already been
-    advanced by the sender, which is what makes the loss visible downstream as
-    a gap rather than as a renumbered stream.
+    packet never enters the stream.  The sender's sequence number has already
+    been advanced — it sent those bytes — which is what makes the loss visible
+    downstream as a gap rather than as a renumbered stream.  The caller is
+    responsible for the rest of what a loss means on a connection: the receiver
+    does not acknowledge what it never got, and its acknowledgement number
+    stops advancing at the gap.
 
     Args:
         rng: Seeded random generator.
@@ -221,26 +228,28 @@ def drop_packet(rng: Random, probability: float) -> bool:
     return bool(probability) and rng.random() < probability
 
 
-def apply_packet_loss(
+def _drop_datagrams(
     packets: list, *, rng: Random, probability: float,
 ) -> list:
     """Drop a share of *packets* after the fact.
 
-    Equivalent to dropping them as they are emitted, because both emit paths
-    derive a packet's capture timestamp from its position in the emission
-    sequence rather than from the packets that survived: removing one afterwards
-    leaves the same gap in the timeline that never emitting it would have.
+    Correct for a **connectionless** flow and nothing else.  A datagram that
+    never arrives has no further consequence — nothing acknowledges it, and the
+    timeline is unchanged because a capture timestamp comes from a packet's
+    position in the emission sequence.
 
-    Used by the generators that assemble a whole conversation before impairing
-    it — the application-payload paths — where there is no emit loop to hook.
+    On a TCP connection the loss of a segment also decides whether an
+    acknowledgement is sent and what it acknowledges, which a pass over the
+    finished list cannot know.  There it is applied in the emit loop instead —
+    see :func:`drop_packet`.
 
     Args:
-        packets: The packets to thin out.
+        packets: The datagrams to thin out.
         rng: Seeded random generator.
         probability: Loss probability (0.0–1.0).  Zero draws no randomness.
 
     Returns:
-        The surviving packets, in their original order.
+        The surviving datagrams, in their original order.
 
     """
     if not probability:
@@ -269,7 +278,7 @@ def apply_datagram_impairments(
         The impaired datagram list.
 
     """
-    packets = apply_packet_loss(
+    packets = _drop_datagrams(
         packets, rng=rng, probability=config.packet_loss_probability,
     )
     if config.payload_corruption_probability:

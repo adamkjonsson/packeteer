@@ -15,14 +15,19 @@ from packeteer.generate.impairments import (
     ImpairmentConfig,
     _ack_positions,
     _derive_label,
-    apply_packet_loss,
+    _drop_datagrams,
     drop_packet,
 )
 from packeteer.generate.payloads.http import HTTPRestConfig, generate_http_stream
 from packeteer.generate.payloads.vpn import VPNConfig, generate_vpn_stream
 from packeteer.generate.session_mix import CombinedStream
-from packeteer.generate.tcp import TCP_ACK, TCP_PSH
-from packeteer.generate.tcp_stream import TCPStreamPacket
+from packeteer.generate.tcp import TCP_ACK, TCP_FIN, TCP_PSH, TCP_SYN
+from packeteer.generate.tcp_stream import (
+    TCPStream,
+    TCPStreamConfig,
+    TCPStreamPacket,
+    generate_tcp_stream,
+)
 
 _BASE_TIME = 1_700_000_000.0
 
@@ -73,10 +78,10 @@ class TestImpairmentConfig(unittest.TestCase):
             self.assertFalse(drop_packet(rng, 0.0))
         self.assertEqual(rng.random(), random.Random(0).random())
 
-    def test_loss_probability_one_drops_everything(self) -> None:
+    def test_loss_probability_one_drops_every_datagram(self) -> None:
         packets = [object()] * 10
         self.assertEqual(
-            apply_packet_loss(packets, rng=random.Random(0), probability=1.0), []
+            _drop_datagrams(packets, rng=random.Random(0), probability=1.0), []
         )
 
 
@@ -214,6 +219,97 @@ class TestHTTPImpairments(unittest.TestCase):
                 if 0 < len(arrived) < total:
                     return      # a message arrived in pieces, with a hole
         self.fail("no partially delivered message across 12 seeds")
+
+
+class TestLossSemantics(unittest.TestCase):
+    """A lost packet is lost on the wire: the receiver never got it (#85)."""
+
+    @staticmethod
+    def _low_level(seed: int, loss: float, n: int = 8) -> TCPStream:
+        return generate_tcp_stream(
+            client_ip="10.0.0.1", server_ip="10.0.0.2", server_port=443,
+            num_data_packets=n, min_payload=100, max_payload=100,
+            config=TCPStreamConfig(seed=seed, base_time=1000.0,
+                                   psh_probability=0.0,
+                                   packet_loss_probability=loss),
+        )
+
+    @staticmethod
+    def _reachable_acks(packets: list, direction: str) -> set[int]:
+        """Acknowledgement numbers justified by what arrived from *direction*.
+
+        For each delivered packet, the next sequence number its receiver would
+        expect: past its payload, plus one for a SYN or FIN, each of which
+        consumes a sequence number of its own.
+        """
+        return {
+            (p.seq + p.payload_len + (1 if p.flags & (TCP_SYN | TCP_FIN) else 0))
+            % 2 ** 32
+            for p in packets if p.direction == direction
+        }
+
+    def _assert_acks_are_justified(self, packets: list) -> None:
+        """No acknowledgement names a byte the capture never carried."""
+        reachable = {
+            "s2c": self._reachable_acks(packets, "c2s"),
+            "c2s": self._reachable_acks(packets, "s2c"),
+        }
+        for pkt in packets:
+            if pkt.flags & TCP_ACK and pkt.ack:
+                self.assertIn(pkt.ack, reachable[pkt.direction], pkt.label)
+
+    def test_no_ack_names_bytes_the_capture_never_carried(self) -> None:
+        """The invariant this issue is, stated over the whole stream."""
+        for seed in range(25):
+            with self.subTest(seed=seed):
+                self._assert_acks_are_justified(
+                    self._low_level(seed, 0.3, n=20).packets
+                )
+
+    def test_a_lost_segment_is_never_acknowledged(self) -> None:
+        packets = self._low_level(3, 0.25).packets
+        sent = {p.label[5:-1] for p in packets if p.label.startswith("DATA[")}
+        acked = {p.label[4:-1] for p in packets if p.label.startswith("ACK[")}
+        self.assertTrue(acked <= sent, f"acks without segments: {acked - sent}")
+
+    def test_acknowledgements_repeat_after_a_gap(self) -> None:
+        """A receiver with a hole re-sends its last in-order value."""
+        for seed in range(25):
+            acks = [p.ack for p in self._low_level(seed, 0.3, n=20).packets
+                    if p.label.startswith("ACK[")]
+            if len(acks) > len(set(acks)):
+                return                      # duplicate ACKs produced
+        self.fail("no duplicate ACKs across 25 seeds")
+
+    def test_acknowledgements_never_go_backwards(self) -> None:
+        for seed in range(25):
+            with self.subTest(seed=seed):
+                acks = [p.ack for p in self._low_level(seed, 0.3, n=20).packets
+                        if p.label.startswith("ACK[")]
+                self.assertEqual(acks, sorted(acks))
+
+    def test_syn_is_never_lost(self) -> None:
+        """Losing one would leave every later segment acknowledging nothing."""
+        labels = [p.label for p in self._low_level(1, 1.0).packets]
+        self.assertEqual(labels, ["SYN", "SYN-ACK"])
+
+    def test_zero_loss_is_untouched(self) -> None:
+        clean = self._low_level(4, 0.0)
+        self.assertEqual(len(clean.packets), 2 * 8 + 7)
+        self.assertTrue(all(p.ack for p in clean.packets
+                            if p.label.startswith("ACK[")))
+
+    def test_payload_path_holds_the_same_invariant(self) -> None:
+        """Bidirectional traffic, so acknowledgements are checked both ways."""
+        for seed in range(10):
+            with self.subTest(seed=seed):
+                self._assert_acks_are_justified(
+                    _http(seed=seed, requests=4,
+                          packet_loss_probability=0.3).packets
+                )
+
+    def test_payload_path_zero_loss_is_untouched(self) -> None:
+        self.assertEqual(_raws(_http(packet_loss_probability=0.0)), _raws(_http()))
 
 
 class TestVPNImpairments(unittest.TestCase):

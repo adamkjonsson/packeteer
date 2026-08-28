@@ -241,11 +241,15 @@ gap_jitter = 0.0
 psh_probability = 0.5
 
 # packet_loss  (default: 0.0)  [TCP only]
-#   Probability (0.0–1.0) that any individual packet is silently omitted from
-#   the capture, simulating loss on the wire.  Sequence and acknowledgement
-#   numbers are computed as if every packet was transmitted, so gaps in sequence
-#   numbers remain visible to analysers — exactly as with real packet loss.
-#   Example: 0.02 drops roughly 2 % of packets.
+#   Probability (0.0–1.0) that a packet is lost on the wire.  Neither the
+#   capture point nor the far end sees it, so a lost segment is never
+#   acknowledged, and the receiver's acknowledgement number stops advancing at
+#   the gap: the segments after it are answered with duplicate ACKs, which is
+#   what an analyser looks for around a loss event.  A sender's own sequence
+#   numbers are unaffected — it sent those bytes — so the gap stays visible.
+#   The SYNs are exempt, since each side learns the other's initial sequence
+#   number from them.  Nothing retransmits, so the gap is permanent.
+#   Example: 0.02 loses roughly 2 % of packets.
 packet_loss = 0.0
 
 # retransmission_probability  (default: 0.0)  [TCP only]

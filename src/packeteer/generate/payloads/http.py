@@ -27,12 +27,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from ..http import HTTPRequest, HTTPResponse, encode_http_message
-from ..impairments import (
-    FlowEndpoints,
-    ImpairmentConfig,
-    apply_impairments,
-    apply_packet_loss,
-)
+from ..impairments import FlowEndpoints, ImpairmentConfig, apply_impairments
 from ..session_mix import CombinedStream, _assign_endpoints, merge_streams
 from ..stream_encap import (  # noqa: F401  (StreamEncap needed for Sphinx type resolution)
     EncapSpec,
@@ -333,17 +328,14 @@ def _impair(
     inter_packet_gap: float,
     encap: EncapSpec,
 ) -> TCPStream:
-    """Apply *impairments* to one rendered connection.
+    """Apply the post-pass impairments to one rendered connection.
 
-    Loss goes first, matching the low-level generator where it is applied as
-    each packet is emitted; the remaining passes then work on what survived.
+    Loss is not among them — it is applied as the connection is emitted, by
+    :func:`~packeteer.generate.payloads.base.render_tcp_session`, so that a
+    lost segment also suppresses its acknowledgement.
     """
-    packets = apply_packet_loss(
-        stream.packets, rng=rng,
-        probability=impairments.packet_loss_probability,
-    )
     packets = apply_impairments(
-        packets,
+        stream.packets,
         rng=rng,
         config=impairments,
         flow=FlowEndpoints(
@@ -484,6 +476,15 @@ def generate_http_stream(
                 encap=encap,
                 client_isn=rng.randint(0, _WRAP - 1),
                 server_isn=rng.randint(0, _WRAP - 1),
+                # Loss is applied here rather than as a pass over the finished
+                # connection: a lost segment must also suppress the
+                # acknowledgement it would have triggered, which only the emit
+                # loop can do.
+                packet_loss_probability=(
+                    config.impairments.packet_loss_probability
+                    if config.impairments is not None else 0.0
+                ),
+                loss_rng=rng,
             )
             if config.impairments is not None:
                 stream = _impair(

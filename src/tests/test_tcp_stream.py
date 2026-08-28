@@ -394,9 +394,15 @@ class TestPacketLoss(unittest.TestCase):
         stream = _stream(num_data_packets=n, packet_loss_probability=0.0)
         self.assertEqual(len(stream.packets), 2 * n + 7)
 
-    def test_full_loss_no_packets_remain(self):
+    def test_full_loss_leaves_only_the_handshake_syns(self):
+        """A SYN is never dropped, so the peers still learn each other's ISN.
+
+        Losing one would leave every later segment carrying an
+        acknowledgement number of zero — a capture that could not have
+        happened.  Everything after the SYNs is subject to loss.
+        """
         stream = _stream(num_data_packets=10, packet_loss_probability=1.0)
-        self.assertEqual(len(stream.packets), 0)
+        self.assertEqual([p.label for p in stream.packets], ["SYN", "SYN-ACK"])
 
     def test_partial_loss_reduces_packet_count(self):
         # At 50 % loss over 200 data packets the chance of ending up with the
@@ -405,8 +411,9 @@ class TestPacketLoss(unittest.TestCase):
         self.assertLess(len(stream.packets), 2 * 100 + 7)
 
     def test_seq_numbers_unaffected_by_loss(self):
-        # With 100 % loss the stream is empty, but with 0 % loss seq numbers
-        # must still be correct — check they are not disturbed by the loss path.
+        # A sender's sequence numbers do not depend on what arrived, so the
+        # loss path must not disturb them.  Checked at 0 % loss, where every
+        # value is known.
         stream = _stream(
             num_data_packets=3,
             payload_sizes=[100, 200, 300],

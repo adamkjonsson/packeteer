@@ -14,6 +14,7 @@ other types plug in by producing their own :class:`AppMessage` lists.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from random import Random
 from typing import Literal
 
 from ..session import TCPSession, UDPSession
@@ -61,6 +62,8 @@ def render_tcp_session(
     encap: EncapSpec = None,
     client_isn: int | None = None,
     server_isn: int | None = None,
+    packet_loss_probability: float = 0.0,
+    loss_rng: Random | None = None,
 ) -> TCPStream:
     """Render a conversation onto a TCP connection.
 
@@ -84,6 +87,11 @@ def render_tcp_session(
         encap: Optional encapsulation layer(s).
         client_isn: Client initial sequence number (random when ``None``).
         server_isn: Server initial sequence number (random when ``None``).
+        packet_loss_probability: Probability (0.0–1.0) that a packet is lost on
+            the wire.  Applied as the session is emitted rather than to the
+            finished list, because a lost segment must also suppress the
+            acknowledgement it would have triggered.
+        loss_rng: Seeded generator driving the loss draws.
 
     Returns:
         A :class:`~packeteer.generate.tcp_stream.TCPStream` for the connection.
@@ -96,6 +104,7 @@ def render_tcp_session(
         mss=mss, include_ethernet=include_ethernet, ip_ttl=ip_ttl,
         inter_packet_gap=inter_packet_gap, base_time=base_time, encap=encap,
         client_isn=client_isn, server_isn=server_isn,
+        packet_loss_probability=packet_loss_probability, loss_rng=loss_rng,
     )
     for message in messages:
         if message.direction == "c2s":

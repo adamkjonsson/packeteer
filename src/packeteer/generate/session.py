@@ -47,6 +47,7 @@ from collections.abc import Callable
 from random import Random
 
 from ._stream_common import _alloc_usec
+from .impairments import drop_packet
 from .sctp import (
     SCTP_DATA_FLAG_BEGINNING,
     SCTP_DATA_FLAG_ENDING,
@@ -121,6 +122,8 @@ class TCPSession:
         server_isn: int | None = None,
         base_time: float | None = None,
         encap: EncapSpec = None,
+        packet_loss_probability: float = 0.0,
+        loss_rng: Random | None = None,
     ) -> None:
         """Initialise a TCP session builder.
 
@@ -145,6 +148,14 @@ class TCPSession:
             base_time: Unix timestamp for the first packet.  Defaults to
                 the current time.
             encap: Encapsulation layer(s) to wrap every packet in.
+            packet_loss_probability: Probability (0.0–1.0) that a packet is
+                lost on the wire.  A lost segment is never acknowledged and
+                does not advance the receiver's acknowledgement number, so the
+                segments after it are answered with duplicate ACKs.  Defaults
+                to ``0.0``, which draws no randomness at all.
+            loss_rng: Seeded generator driving the loss draws, so a capture
+                with loss reproduces from its seed.  Required when
+                *packet_loss_probability* is non-zero.
 
         """
         self.client_ip = client_ip
@@ -161,6 +172,8 @@ class TCPSession:
         self.server_isn = server_isn
         self.base_time = base_time
         self.encap = encap
+        self.packet_loss_probability = packet_loss_probability
+        self.loss_rng = loss_rng
         self._exchanges: list[tuple[str, bytes, str | None]] = []
 
     def send(self, data: bytes, label: str | None = None) -> TCPSession:
@@ -258,6 +271,7 @@ class TCPSession:
 
         packets: list[TCPStreamPacket] = []
         index = 0
+        loss_rng = self.loss_rng if self.loss_rng is not None else random.Random()
 
         def emit(
             src: _TCPEndpoint,
@@ -266,23 +280,39 @@ class TCPSession:
             payload: bytes,
             direction: str,
             label: str,
-        ) -> None:
+        ) -> bool:
+            """Emit one packet.  Returns whether it reached the far end."""
             nonlocal index
             seq_before = src.seq
             ack_before = src.ack
             raw = _build_packet(src, dst, flags, payload,
                                 self.include_ethernet, self.ip_ttl, None, self.encap)
+            # The sender's sequence number advances whether or not the packet
+            # arrives; the receiver's acknowledgement depends on delivery.
             _advance_seq(src, flags, len(payload))
-            dst.ack = src.seq
-            ts_sec, ts_usec = divmod(base_usec + index * gap_usec, 1_000_000)
-            packets.append(TCPStreamPacket(
-                raw=raw, ts_sec=ts_sec, ts_usec=ts_usec,
-                direction=direction, flags=flags,
-                seq=seq_before,
-                ack=ack_before if (flags & TCP_ACK) else 0,
-                payload_len=len(payload), label=label,
-            ))
+
+            # A SYN is never dropped: each side learns the other's initial
+            # sequence number from it, so losing one would leave every later
+            # segment carrying an acknowledgement number of zero.
+            delivered = bool(flags & TCP_SYN) or not drop_packet(
+                loss_rng, self.packet_loss_probability,
+            )
+            if delivered:
+                # Cumulative: advance only for a segment arriving in order, so
+                # after a loss the value sticks and the segments that follow
+                # are answered with duplicate ACKs.
+                if flags & TCP_SYN or seq_before == dst.ack:
+                    dst.ack = src.seq
+                ts_sec, ts_usec = divmod(base_usec + index * gap_usec, 1_000_000)
+                packets.append(TCPStreamPacket(
+                    raw=raw, ts_sec=ts_sec, ts_usec=ts_usec,
+                    direction=direction, flags=flags,
+                    seq=seq_before,
+                    ack=ack_before if (flags & TCP_ACK) else 0,
+                    payload_len=len(payload), label=label,
+                ))
             index += 1
+            return delivered
 
         # Three-way handshake
         emit(client, server, TCP_SYN,           b"", "c2s", "SYN")
@@ -310,8 +340,10 @@ class TCPSession:
                     seg_label = label
                 else:
                     seg_label = f"{label} [{seg_num + 1}/{len(segments)}]"
-                emit(sender, receiver, flags, chunk, send_dir, seg_label)
-                emit(receiver, sender, TCP_ACK, b"", ack_dir, f"ACK[{seg_idx}]")
+                # A segment that never arrived triggers no acknowledgement.
+                if emit(sender, receiver, flags, chunk, send_dir, seg_label):
+                    emit(receiver, sender, TCP_ACK, b"", ack_dir,
+                         f"ACK[{seg_idx}]")
                 seg_idx += 1
 
         # Four-way teardown

@@ -149,9 +149,14 @@ class TCPStreamConfig:
         client_options: TCP options encoded on the client SYN only (e.g. MSS,
             window scale, SACK permitted).  ``None`` means no options.
         server_options: TCP options encoded on the server SYN-ACK only.
-        packet_loss_probability: Probability (0.0–1.0) that any individual
-            packet is silently dropped, simulating packet loss on the wire.
-            Defaults to ``0.0`` (no loss).
+        packet_loss_probability: Probability (0.0–1.0) that a packet is lost
+            on the wire.  Neither the capture point nor the far end sees it, so
+            a lost segment is never acknowledged and does not advance the
+            receiver's acknowledgement number: the segments after it are
+            answered with duplicate ACKs until the gap is filled.  The SYNs are
+            exempt — each side learns the other's initial sequence number from
+            them.  Nothing retransmits, so a lost segment leaves a permanent
+            hole in the byte range.  Defaults to ``0.0`` (no loss).
         retransmission_probability: Probability (0.0–1.0) that each data
             segment triggers a spurious retransmission.  Defaults to ``0.0``.
         retransmission_timeout: Seconds after the original send time at which
@@ -457,15 +462,18 @@ def generate_tcp_stream(
         direction: str,
         label: str,
         options: TCPOptions | None = None,
-    ) -> None:
+    ) -> bool:
+        """Emit one packet.  Returns whether it reached the far end."""
         nonlocal global_index
 
         seq_before = src.seq
         ack_before = src.ack
 
         raw = _build_packet(src, dst, flags, payload, include_ethernet, ip_ttl, options, encap)
+        # The sender's sequence number advances whether or not the packet
+        # arrives — it sent those bytes.  The receiver's acknowledgement is
+        # what depends on delivery, and is updated below only if it arrives.
         _advance_seq(src, flags, len(payload))
-        dst.ack = src.seq
 
         delay_usec = rng.randint(0, jitter_usec) if jitter_usec else 0
         ts_sec, ts_usec = divmod(base_usec + global_index * gap_usec + delay_usec, 1_000_000)
@@ -481,7 +489,28 @@ def generate_tcp_stream(
             label=label,
         )
 
-        if drop_packet(rng, packet_loss_probability):
+        # A SYN is never dropped.  Each side learns the other's initial
+        # sequence number from it, so losing one leaves the peer unable to
+        # acknowledge anything for the rest of the connection — a capture whose
+        # segments carry an acknowledgement number of zero, which is not
+        # traffic that could have happened.  Modelling the real outcome, a
+        # connection that never establishes, needs setup retransmission the
+        # generator does not have.  Everything after the handshake, teardown
+        # included, is subject to loss.
+        delivered = bool(flags & TCP_SYN) or not drop_packet(
+            rng, packet_loss_probability,
+        )
+        if delivered:
+            # Acknowledgements are cumulative, so the receiver's ack number
+            # advances only for a segment that arrives *in order* — one
+            # starting exactly where the last one ended.  After a loss it stops
+            # advancing, and every later acknowledgement repeats the last
+            # in-order value, which is what a duplicate ACK is.  A SYN
+            # establishes the initial value, there being nothing to follow on
+            # from.
+            if flags & TCP_SYN or seq_before == dst.ack:
+                dst.ack = src.seq
+        else:
             pkt = None
 
         if packet_hooks:
@@ -493,6 +522,7 @@ def generate_tcp_stream(
         global_index += 1
         if pkt is not None:
             packets.append(pkt)
+        return delivered
 
     # ── Three-way handshake ───────────────────────────────────────────────────
     emit(client, server, TCP_SYN,           b"", "c2s", "SYN",     options=client_options)
@@ -505,8 +535,12 @@ def generate_tcp_stream(
         payload_distribution, payload_sizes, rng,
     )):
         flags = TCP_ACK | (TCP_PSH if rng.random() < psh_probability else 0)
-        emit(client, server, flags, chunk, "c2s", f"DATA[{i}]")
-        emit(server, client, TCP_ACK, b"", "s2c", f"ACK[{i}]")
+        # A segment that never arrived triggers no acknowledgement: there is
+        # nothing at the far end to answer.  The next segment that does arrive
+        # is answered with the stale acknowledgement number, which is what a
+        # duplicate ACK is.
+        if emit(client, server, flags, chunk, "c2s", f"DATA[{i}]"):
+            emit(server, client, TCP_ACK, b"", "s2c", f"ACK[{i}]")
 
     # ── Four-way teardown ─────────────────────────────────────────────────────
     emit(client, server, TCP_FIN | TCP_ACK, b"", "c2s", "FIN-ACK")

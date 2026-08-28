@@ -65,7 +65,7 @@ Silently ignored for `--protocol udp` and `--protocol sctp`.
 |----------|---------|-------------|
 | `--window BYTES` | `65535` | TCP receive window size |
 | `--psh-probability PROB` | `0.5` | Probability (0–1) PSH is set on each data segment |
-| `--packet-loss PROB` | `0.0` | Probability a packet is dropped from the capture |
+| `--packet-loss PROB` | `0.0` | Probability a packet is lost on the wire (see below) |
 | `--retransmission-probability PROB` | `0.0` | Probability each data segment is retransmitted |
 | `--retransmission-timeout SECONDS` | `0.2` | RTO — seconds after send that the retransmit fires |
 | `--payload-corruption PROB` | `0.0` | Probability a segment payload is corrupted |
@@ -154,6 +154,26 @@ packeteer stream --client-ip 10.0.0.1 --server-ip 10.1.0.1 \
 
 Request bodies are always counted with `Content-Length`; the framing knobs
 apply to responses only.
+
+### What packet loss means
+
+`--packet-loss` loses a packet **on the wire**: neither the capture point nor
+the far end sees it.  So a lost segment is never acknowledged, and the
+receiver's acknowledgement number stops advancing at the gap — the segments
+after it are answered with **duplicate ACKs**, which is the signal an analyser
+looks for around a loss event.  A sender's own sequence numbers are unaffected,
+since it sent those bytes, so the hole stays visible.
+
+Two consequences worth knowing:
+
+- **The SYNs are never lost.**  Each side learns the other's initial sequence
+  number from them, so losing one would leave every later segment carrying an
+  acknowledgement number of zero — a capture that could not have happened.
+  Everything after the handshake, teardown included, is subject to loss.
+- **Nothing retransmits.**  A lost segment leaves a permanent hole in the byte
+  range: the stream never recovers, which is the harsher input to test a
+  decoder against.  It is not what a real connection does, which recovers
+  after a timeout.
 
 ### Impairing HTTP traffic
 
