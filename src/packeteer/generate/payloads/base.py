@@ -14,13 +14,16 @@ other types plug in by producing their own :class:`AppMessage` lists.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from random import Random
 from typing import Literal
 
+from ..impairments import ImpairmentConfig
 from ..session import TCPSession, UDPSession
 from ..stream_encap import (  # noqa: F401  (StreamEncap needed for Sphinx type resolution)
     EncapSpec,
     StreamEncap,
 )
+from ..tcp import TCPOptions
 from ..tcp_stream import TCPStream
 from ..udp_stream import UDPStream
 
@@ -61,6 +64,9 @@ def render_tcp_session(
     encap: EncapSpec = None,
     client_isn: int | None = None,
     server_isn: int | None = None,
+    impairments: ImpairmentConfig | None = None,
+    loss_rng: Random | None = None,
+    syn_options: TCPOptions | None = None,
 ) -> TCPStream:
     """Render a conversation onto a TCP connection.
 
@@ -84,6 +90,18 @@ def render_tcp_session(
         encap: Optional encapsulation layer(s).
         client_isn: Client initial sequence number (random when ``None``).
         server_isn: Server initial sequence number (random when ``None``).
+        impairments: Wire impairments
+            (:class:`~packeteer.generate.impairments.ImpairmentConfig`).  Only
+            the two that must be applied as the session is emitted are used
+            here — packet loss, because a lost segment must also suppress the
+            acknowledgement it would have triggered, and the retransmission
+            that recovers it.  The remaining impairments are passes over the
+            finished connection and belong to the caller.
+        loss_rng: Seeded generator driving the loss draws.
+        syn_options: TCP options carried on both ends of the handshake.  One
+            value rather than two: both ends of a generated conversation are
+            ours, and a caller wanting them to differ builds a
+            :class:`~packeteer.generate.session.TCPSession` directly.
 
     Returns:
         A :class:`~packeteer.generate.tcp_stream.TCPStream` for the connection.
@@ -96,6 +114,8 @@ def render_tcp_session(
         mss=mss, include_ethernet=include_ethernet, ip_ttl=ip_ttl,
         inter_packet_gap=inter_packet_gap, base_time=base_time, encap=encap,
         client_isn=client_isn, server_isn=server_isn,
+        impairments=impairments, loss_rng=loss_rng,
+        client_options=syn_options, server_options=syn_options,
     )
     for message in messages:
         if message.direction == "c2s":

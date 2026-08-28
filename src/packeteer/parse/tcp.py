@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import struct
 
-from packeteer.generate.tcp import TCPHeader, TCPOptions
+from packeteer.generate.tcp import TCPHeader, TCPOptions, _build_options
 
 # TCP option kinds (RFC 9293 §3.2 and the IANA registry)
 _OPT_EOL: int = 0             # End of Option List — stop parsing
@@ -26,10 +26,17 @@ def _parse_options(data: bytes) -> TCPOptions | None:
     """Decode the TCP options region into a :class:`TCPOptions`.
 
     Walks the kind/length TLV list.  EOL (kind ``0``) ends the walk and NOP
-    (kind ``1``) is skipped — both are structural padding and are not
-    modelled.  A recognised kind carrying an unexpected length is kept as an
-    unknown option rather than discarded, as are kinds with no dedicated
-    field, so no option bytes are lost.
+    (kind ``1``) is skipped — neither is modelled as an option, since both are
+    structural padding.  A recognised kind carrying an unexpected length is
+    kept as an unknown option rather than discarded, as are kinds with no
+    dedicated field, so no option bytes are lost.
+
+    The decoded options describe *what* was sent, not the byte layout it was
+    sent in: option order and the placement of padding are the sender's
+    choice.  When re-encoding the decoded result would not reproduce the
+    region, :attr:`~packeteer.generate.tcp.TCPOptions.raw` is set to the bytes
+    as captured, so a rebuild reproduces them exactly.  It stays ``None``
+    whenever the encoder's own output already matches.
 
     A malformed list (a length byte below the 2-byte minimum, or one running
     past the end of the region) stops the walk; options decoded up to that
@@ -83,7 +90,17 @@ def _parse_options(data: bytes) -> TCPOptions | None:
         found = True
         i += length
 
-    return opts if found else None
+    if not found:
+        return None
+
+    # Keep the captured bytes when re-encoding would not reproduce them.  The
+    # encoder writes a canonical order and appends its NOP padding, while a
+    # sender chooses its own order and puts padding ahead of the option it
+    # aligns, so the two agree only sometimes.  Storing the region only on
+    # disagreement keeps it out of every spec that does not need it.
+    if _build_options(opts) != data:
+        opts.raw = bytes(data)
+    return opts
 
 
 def packet_parser(data: bytes) -> tuple[int, int | None, TCPHeader | None]:
@@ -119,7 +136,7 @@ def packet_parser(data: bytes) -> tuple[int, int | None, TCPHeader | None]:
         data_offset = (data[12] >> 4) & 0xF
         reserved = data[12] & 0x0F
         flags = data[13]
-        window, _, urgent_ptr = struct.unpack("!HHH", data[14:20])
+        window, checksum, urgent_ptr = struct.unpack("!HHH", data[14:20])
 
         if data_offset < 5:
             return (0, None, None)
@@ -134,6 +151,9 @@ def packet_parser(data: bytes) -> tuple[int, int | None, TCPHeader | None]:
             reserved=reserved, flags=flags,
             window=window, urgent_ptr=urgent_ptr,
             options=_parse_options(data[20:header_size]),
+            # Cleared by parse.core when it matches the computed checksum; see
+            # the note in the UDP parser.
+            checksum=checksum,
         )
 
     except struct.error:

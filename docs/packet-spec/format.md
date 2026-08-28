@@ -46,6 +46,17 @@ packet with no layer-2 framing.
 Call `.vlan()` twice in the builder (or nest two `vlan` keys) for QinQ
 (IEEE 802.1ad) double-tagged frames.
 
+`packeteer parse` writes `"pad": false` when the captured frame was **shorter
+than 60 bytes**, and omits the key otherwise.  Padding is added by the network
+hardware, so a capture taken above the driver holds unpadded frames — the
+common TCP control packets (SYN, bare ACK, FIN) are 54 bytes there.  Without
+the key a rebuild would pad them out and produce frames six bytes longer than
+the ones captured.
+
+The key describes the **outer** frame only.  An encapsulated frame is often
+under 60 bytes and is not padded by anything, so `parse` never marks a
+tunnelled inner frame unpadded.
+
 ---
 
 (packet-spec-arp)=
@@ -634,14 +645,72 @@ in order:
 | `options.sack` | `[]` | TCP SACK blocks — array of `[left_edge, right_edge]` pairs |
 | `options.timestamps` | — | TCP Timestamps option — `[TSval, TSecr]` array (RFC 7323) |
 | `options.unknown` | `[]` | TCP options packeteer does not model, as `{"kind": N, "data": "<hex>"}` objects.  `data` excludes the kind and length bytes.  Emitted by `parse` and re-encoded by `build`, so an unrecognised option survives a round trip |
+| `options.raw` | derived | The option region as captured, hex-encoded, written out verbatim (see below) |
 | `type` | `8` / `128` | ICMP type (`8`=Echo Request) or ICMPv6 type (`128`=Echo Request) |
 | `code` | `0` | ICMP/ICMPv6 sub-type code |
 | `identifier` | `1` | ICMP/ICMPv6 16-bit identifier |
 | `sequence` | `1` | ICMP/ICMPv6 16-bit sequence number |
+| `length` | derived | UDP Length field, overriding the derived `8 + len(payload)` (see below) |
+| `checksum` | derived | TCP/UDP checksum, overriding the computed one (see below) |
 
 TCP flag bit values: `TCP_FIN`=1, `TCP_SYN`=2, `TCP_RST`=4, `TCP_PSH`=8,
 `TCP_ACK`=16, `TCP_URG`=32, `TCP_ECE`=64, `TCP_CWR`=128.  Add values to
 combine (e.g. `24` for PSH+ACK).
+
+(packet-spec-tcp-options-raw)=
+### `options.raw` — when the layout matters
+
+The other `options` keys say *what* was sent.  They do not say what order the
+options were in, or where the sender put its NOP padding, and those are the
+sender's choice: a stack writes `NOP, NOP, Timestamps` so that the option
+lands aligned, where `build` would write `Timestamps, NOP, NOP`.  Both decode
+to the same values; only the bytes differ.  Stacks do not agree with each other
+either — Linux writes `MSS, SACK-perm, TS, NOP, WS` on a SYN, macOS writes
+`MSS, NOP, WS, NOP, NOP, TS, SACK-perm, EOL` — so there is no single layout
+that reproduces them all.
+
+`parse` therefore writes `options.raw` when re-encoding the decoded options
+would *not* reproduce the captured region, and omits it otherwise:
+
+```json
+"options": { "timestamps": [566683166, 1710350549], "raw": "0101080a21c6e61e65f1e0d5" }
+```
+
+The decoded keys stay beside it so the spec is still readable, but **`raw`
+wins**: when it is present the other `options` keys are ignored.  Delete it if
+you want to edit `mss` or `timestamps` by hand and have the change take effect.
+
+(packet-spec-transport-overrides)=
+### `length` and `checksum` — when the header describes other bytes
+
+Both are normally derived from the payload beside them, and `parse` omits them
+from a spec when the derived value is what the capture held.  They appear only
+where a rebuild could not work the value out for itself, which is two cases:
+
+**A fragmented datagram's first fragment.** The transport header travels once,
+in the first fragment, and its Length covers the *whole* datagram — not the
+bytes in that fragment.  A 1032-byte UDP datagram split at an MTU of 576 puts
+552 bytes in fragment 0, so:
+
+```json
+"transport": { "src_port": 12345, "dst_port": 9999, "length": 1032, "checksum": 2577 }
+```
+
+Without the two keys a rebuild derives `length` 552 and a checksum over 552
+bytes, and the capture no longer replays as valid traffic — a receiver
+reassembling it computes a different datagram and rejects the checksum.  TCP
+has no length field of its own, so a TCP first fragment needs only `checksum`;
+the pseudo-header length used to compute it is what would otherwise be wrong.
+
+**A checksum that was wrong on the wire.** An explicit `checksum` is written
+out exactly as given, including `0`, so a corrupt packet survives a
+parse → build round trip.  This is the only way a spec can express a bad
+checksum; the fuzzer could previously only do it at the byte level.
+
+Reassembling first, with `packeteer parse --defragment` or
+{func}`~packeteer.parse.defragment`, side-steps the fragment case entirely: a
+reassembled datagram's header describes exactly the bytes beside it, so neither
+key is emitted.
 
 ---
 
@@ -970,7 +1039,13 @@ The `type` field selects between request and response:
 | `body` | `""` | Response body encoded as a hex string |
 
 `Content-Length` is added automatically by the builder when `body` is
-non-empty and the header is not already present.
+non-empty and the message does not already frame itself — that is, when
+neither `Content-Length` nor `Transfer-Encoding` is present.  Header names are
+matched case-insensitively.
+
+A message carrying `Transfer-Encoding: chunked` therefore gets no
+`Content-Length`, and its `body` must already be chunk-framed: the builder
+writes the body out verbatim and never chunks it itself.
 
 ---
 

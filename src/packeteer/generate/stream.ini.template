@@ -88,6 +88,44 @@ server_mac = 00:00:00:00:00:02
 #   connection per request; omit to put every transaction on one connection.
 # requests_per_connection = 1
 
+# error_rate  (default: 0.1)
+#   http only.  Probability that a response is a 4xx/5xx error rather than a
+#   success correlated to the request method.  0.0 makes every request succeed.
+# error_rate = 0.1
+
+# chunked_rate  (default: 0.0)
+#   http only.  Probability that a response *with a body* is framed with
+#   `Transfer-Encoding: chunked` instead of `Content-Length`.  Chunked is
+#   HTTP/1.1's other framing mechanism and the harder one to decode, since the
+#   body's extent is discovered by walking size lines rather than read from a
+#   header.  Set to a value below 1.0 to make both framings appear in one
+#   capture, which is what a decoder that has to choose between them needs.
+# chunked_rate = 0.5
+
+# min_chunk  (default: 8)
+# max_chunk  (default: 32)
+#   http only.  Bytes per chunk, before the last; each chunk's size is drawn
+#   from this range.  The defaults split the generated JSON bodies (~70 bytes)
+#   into several chunks — a single-chunk body does not distinguish a decoder
+#   that walks the size lines from one that reads to the end.  Raise both for
+#   larger bodies.
+# min_chunk = 8
+# max_chunk = 32
+
+# trailer_rate  (default: 0.0)
+#   http only.  Probability that a chunked body is followed by a trailer
+#   section, announced by a `Trailer` header.  Legal per RFC 7230 4.4 and
+#   widely forgotten by decoders.  Has no effect unless chunked_rate is set.
+# trailer_rate = 0.2
+
+# mss  (default: 1460)
+#   http only.  Maximum segment size used to split a message across TCP
+#   segments.  At the default an entire generated message fits in one segment,
+#   so losing a segment loses a whole request or response; lower it to put a
+#   message on several segments, where a lost or corrupted segment leaves a gap
+#   in the middle of a message a decoder is already part-way through.
+# mss = 128
+
 # vpn_epochs  (default: 4)
 #   vpn only.  Number of key negotiations.  `packets` data packets flow after
 #   each handshake, so a rekey happens every `packets` packets.
@@ -136,6 +174,10 @@ server_mac = 00:00:00:00:00:02
 #   retransmission_timeout, server_rst_probability, rst_propagation_delay,
 #   payload_corruption_probability, stray_packet_count, stray_timing_window,
 #   window) are silently ignored for udp and sctp.
+#
+#   With payload = http they all apply, per connection.  With payload = vpn
+#   (UDP) only packet_loss and payload_corruption apply; the three that
+#   describe TCP connection behaviour are ignored with a warning.
 protocol = tcp
 
 # packets  (default: 10)
@@ -199,12 +241,37 @@ gap_jitter = 0.0
 psh_probability = 0.5
 
 # packet_loss  (default: 0.0)  [TCP only]
-#   Probability (0.0–1.0) that any individual packet is silently omitted from
-#   the capture, simulating loss on the wire.  Sequence and acknowledgement
-#   numbers are computed as if every packet was transmitted, so gaps in sequence
-#   numbers remain visible to analysers — exactly as with real packet loss.
-#   Example: 0.02 drops roughly 2 % of packets.
+#   Probability (0.0–1.0) that a packet is lost on the wire.  Neither the
+#   capture point nor the far end sees it, so a lost segment is never
+#   acknowledged, and the receiver's acknowledgement number stops advancing at
+#   the gap: the segments after it are answered with duplicate ACKs, which is
+#   what an analyser looks for around a loss event.  A sender's own sequence
+#   numbers are unaffected — it sent those bytes — so the gap stays visible.
+#   The SYNs are exempt, since each side learns the other's initial sequence
+#   number from them.  Nothing retransmits, so the gap is permanent.
+#   Example: 0.02 loses roughly 2 % of packets.
 packet_loss = 0.0
+
+# no_tcp_options  (default: false)  [TCP only]
+#   Send a bare SYN with no TCP options.  By default the handshake advertises
+#   what a modern client does -- MSS, SACK permitted and a window scale --
+#   because a SYN carrying no options at all is the most conspicuous mark of
+#   generated traffic in a capture.  The advertised MSS follows `mss` where
+#   that applies, so the capture does not contradict its own segmentation.
+#   Timestamps are deliberately not advertised: a connection that negotiates
+#   them carries one on every segment, and only the handshake carries options.
+# no_tcp_options = true
+
+# retransmit_lost  (default: false)  [TCP only]
+#   Retransmit a lost segment after retransmission_timeout so the connection
+#   recovers, the way a real one does.  Off by default, which leaves a
+#   permanent hole in the byte range -- the harsher input, and the one a
+#   decoder is least likely to survive.  The acknowledgement that follows the
+#   retransmission jumps forward over everything the receiver had been holding,
+#   which is what recovery looks like on the wire.
+#   Distinct from retransmission_probability below, which duplicates a segment
+#   that *did* arrive.
+# retransmit_lost = true
 
 # retransmission_probability  (default: 0.0)  [TCP only]
 #   Probability (0.0–1.0) that each data segment triggers a spurious

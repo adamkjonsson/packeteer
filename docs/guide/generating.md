@@ -164,6 +164,89 @@ write_pcap(mix.to_pcap_tuples(), path="rest.pcap")
 It composes with `sessions` (distinct client/server IP pairs, each running the
 full workload), and is exposed on the CLI as `packeteer stream --payload http`.
 
+Responses are framed with `Content-Length` by default; `chunked_rate` frames
+that proportion of the bodied ones with `Transfer-Encoding: chunked` instead.
+A rate between the extremes puts both framings in one capture, which is what a
+decoder that has to *choose* between them needs:
+
+```python
+from packeteer.generate import HTTPRestConfig, generate_http_stream
+
+mix = generate_http_stream(
+    client_ip="10.0.0.1", server_ip="10.1.0.1", requests=200, seed=42,
+    config=HTTPRestConfig(chunked_rate=0.5, trailer_rate=0.2),
+)
+```
+
+## What the handshake advertises
+
+Every generated TCP handshake carries the options a modern client sends — a
+Maximum Segment Size, SACK permitted, and a window scale — because a SYN with
+no options at all is the most conspicuous mark of generated traffic in a
+capture, and packeteer exists to feed tools that read captures.
+
+The advertised MSS follows the `mss` the traffic is segmented at, so a capture
+does not contradict itself.  Override the set, or pass `None` for a bare SYN:
+
+```python
+from packeteer.generate import TCPStreamConfig, default_syn_options
+
+realistic = TCPStreamConfig()                          # the default set
+custom    = TCPStreamConfig(client_options=default_syn_options(mss=1200))
+bare      = TCPStreamConfig(client_options=None, server_options=None)
+```
+
+Timestamps are deliberately not advertised: only the handshake carries
+options, and a connection that negotiates timestamps carries one on every
+segment, so advertising them without sending them would trade one
+implausibility for another.
+
+## Impairing a generated stream
+
+{class}`~packeteer.generate.impairments.ImpairmentConfig` describes damage done
+to a stream after it is assembled — loss, retransmission, payload corruption, a
+RST mid-connection, and forged stray packets.  The same object drives every
+generator: the low-level path reads the fields off
+{class}`~packeteer.generate.tcp_stream.TCPStreamConfig`, and the payload
+generators take one through `HTTPRestConfig.impairments` or
+`VPNConfig.impairments`, where it is applied to **each connection
+independently**.
+
+Impaired *application* traffic is the combination worth reaching for, because
+it is what a protocol decoder is actually tested against and it is awkward to
+build by hand:
+
+```python
+from packeteer.generate import HTTPRestConfig, ImpairmentConfig, generate_http_stream
+
+mix = generate_http_stream(
+    client_ip="10.0.0.1", server_ip="10.1.0.1", requests=200, seed=42,
+    mss=128,                                   # several segments per message
+    config=HTTPRestConfig(
+        chunked_rate=0.5,
+        impairments=ImpairmentConfig(packet_loss_probability=0.15),
+    ),
+)
+```
+
+`mss` is what makes that interesting.  A generated HTTP message fits inside one
+1460-byte segment, so at the default MSS losing a segment loses a whole request
+or response.  Split across segments, the loss leaves a gap **inside** a message
+a decoder is already part-way through — and a chunk boundary can fall across a
+segment boundary, which is the case a streaming decoder is most likely to get
+wrong.
+
+A lost packet is lost on the wire: it is never acknowledged, and the receiver's
+acknowledgement number stops advancing at the gap, so the segments after it
+draw duplicate ACKs.  Nothing retransmits unless you ask —
+`ImpairmentConfig(retransmit_lost=True)` resends the segment after the
+retransmission timeout, and the acknowledgement that follows jumps forward over
+everything the receiver had been holding.
+
+On a UDP payload path only `packet_loss_probability` and
+`payload_corruption_probability` are read; the rest describe TCP connection
+behaviour and are ignored rather than approximated.
+
 ## Simulating a fictive VPN
 
 {func}`~packeteer.generate.payloads.vpn.generate_vpn_stream` generates a small
@@ -375,8 +458,9 @@ The session builders cover most synthetic-data use cases.  Reach for
 
 - **Statistical random payloads** — `payload_distribution="bimodal"` or
   `"fixed"` draws sizes from a model rather than using exact bytes
-- **Anomaly injection** — packet loss, spurious retransmissions, payload
-  corruption, RST mid-stream, or stray/hijack packets
+- **Statistical anomaly injection** — the impairments above are available on
+  every generator, but `payload_distribution`, `mtu` and `packet_hooks` are
+  not
 - **Timestamp jitter** — `gap_jitter` models capture delay and produces
   genuine out-of-order timestamps
 - **IP fragmentation** — `mtu` splits packets at a simulated middlebox

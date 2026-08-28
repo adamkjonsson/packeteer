@@ -27,41 +27,45 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from random import Random
 
 from ._stream_common import (
+    _advance_seq,
     _alloc_usec,
+    _build_packet,
     _fragment_ip_raw,
     _payload_sizes,
     _pkt_usec,
     _repeat_payload,
+    _TCPEndpoint,
 )
-from .builder import PacketBuilder
+from .impairments import (
+    FlowEndpoints,
+    ImpairmentConfig,
+    apply_impairments,
+    apply_loss_recovery,
+    drop_packet,
+)
 from .stream_encap import (  # noqa: F401  (StreamEncap needed for Sphinx type resolution)
     EncapSpec,
     StreamEncap,
     _apply_encap,
     _encap_ip_start,
 )
-from .tcp import TCP_ACK, TCP_FIN, TCP_PSH, TCP_RST, TCP_SYN, TCPOptions
+from .tcp import (
+    TCP_ACK,
+    TCP_FIN,
+    TCP_PSH,
+    TCP_SYN,
+    TCPOptions,
+    default_syn_options,
+)
 
 _WRAP = 2 ** 32
 
 
 # ── Data model ────────────────────────────────────────────────────────────────
-
-@dataclass
-class _TCPEndpoint:
-    """Mutable per-side connection state (internal only)."""
-
-    ip: str
-    port: int
-    mac: str
-    seq: int    # next sequence number to send
-    ack: int    # next sequence number expected from the peer
-    window: int = 65535
-
 
 @dataclass
 class TCPStreamPacket:
@@ -151,11 +155,21 @@ class TCPStreamConfig:
         window: TCP receive-window size advertised by both endpoints.
             Defaults to ``65535``.
         client_options: TCP options encoded on the client SYN only (e.g. MSS,
-            window scale, SACK permitted).  ``None`` means no options.
-        server_options: TCP options encoded on the server SYN-ACK only.
-        packet_loss_probability: Probability (0.0–1.0) that any individual
-            packet is silently dropped, simulating packet loss on the wire.
-            Defaults to ``0.0`` (no loss).
+            window scale, SACK permitted).  Defaults to
+            :func:`~packeteer.generate.tcp.default_syn_options` — what a
+            plausible modern client advertises — since a SYN carrying no
+            options is the most conspicuous mark of generated traffic.  Pass
+            ``None`` for a bare SYN.
+        server_options: TCP options encoded on the server SYN-ACK only.  Same
+            default, and ``None`` for a bare SYN-ACK.
+        packet_loss_probability: Probability (0.0–1.0) that a packet is lost
+            on the wire.  Neither the capture point nor the far end sees it, so
+            a lost segment is never acknowledged and does not advance the
+            receiver's acknowledgement number: the segments after it are
+            answered with duplicate ACKs until the gap is filled.  The SYNs are
+            exempt — each side learns the other's initial sequence number from
+            them.  Nothing retransmits, so a lost segment leaves a permanent
+            hole in the byte range.  Defaults to ``0.0`` (no loss).
         retransmission_probability: Probability (0.0–1.0) that each data
             segment triggers a spurious retransmission.  Defaults to ``0.0``.
         retransmission_timeout: Seconds after the original send time at which
@@ -169,6 +183,11 @@ class TCPStreamConfig:
             and the client receiving it.  Defaults to ``0.0``.
         stray_packet_count: Number of forged TCP-hijacking packets to inject.
             Defaults to ``0``.
+        retransmit_lost: Whether a lost segment is retransmitted after
+            *retransmission_timeout* and delivered, so the connection recovers.
+            Defaults to ``False``, leaving a permanent hole in the byte range.
+            Distinct from *retransmission_probability*, which duplicates a
+            segment that did arrive.
         stray_timing_window: When set, constrains stray packet timestamps to
             within *N* positions of the stolen reference packet in the
             timestamp-sorted stream.  ``None`` uses the full data-transfer
@@ -195,8 +214,8 @@ class TCPStreamConfig:
     seed: int | None = None
     psh_probability: float = 0.5
     window: int = 65535
-    client_options: TCPOptions | None = None
-    server_options: TCPOptions | None = None
+    client_options: TCPOptions | None = field(default_factory=default_syn_options)
+    server_options: TCPOptions | None = field(default_factory=default_syn_options)
     packet_loss_probability: float = 0.0
     retransmission_probability: float = 0.0
     retransmission_timeout: float = 0.2
@@ -205,57 +224,12 @@ class TCPStreamConfig:
     rst_propagation_delay: float = 0.0
     stray_packet_count: int = 0
     stray_timing_window: int | None = None
+    retransmit_lost: bool = False
     packet_hooks: list[Callable[[TCPStreamPacket, int], TCPStreamPacket | None]] | None = None
     payload_fn: Callable[[int, str], bytes] | None = None
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
-
-def _advance_seq(ep: _TCPEndpoint, flags: int, payload_len: int) -> None:
-    """Advance *ep*.seq by the number of sequence numbers this segment consumes.
-
-    SYN and FIN each consume one sequence number in addition to the payload
-    bytes.  32-bit wrap-around is handled with modulo arithmetic.
-    """
-    consumed = payload_len
-    if flags & TCP_SYN:
-        consumed += 1
-    if flags & TCP_FIN:
-        consumed += 1
-    ep.seq = (ep.seq + consumed) % _WRAP
-
-
-def _build_packet(
-    src: _TCPEndpoint,
-    dst: _TCPEndpoint,
-    flags: int,
-    payload: bytes,
-    include_ethernet: bool,
-    ip_ttl: int,
-    options: TCPOptions | None,
-    encap: EncapSpec = None,
-) -> bytes:
-    """Assemble one raw packet using PacketBuilder."""
-    b = PacketBuilder()
-    if include_ethernet:
-        b = b.ethernet(src_mac=src.mac, dst_mac=dst.mac)
-    b = _apply_encap(b, encap, src.mac, dst.mac)
-    b = (b
-        .ip(src=src.ip, dst=dst.ip, ttl=ip_ttl)
-        .tcp(
-            src_port=src.port,
-            dst_port=dst.port,
-            seq=src.seq,
-            ack=src.ack if (flags & TCP_ACK) else 0,
-            flags=flags,
-            window=src.window,
-            options=options,
-        )
-    )
-    if payload:
-        b = b.payload(data=payload)
-    return b.build()
-
 
 # ── IP fragmentation ─────────────────────────────────────────────────────────
 
@@ -474,6 +448,7 @@ def generate_tcp_stream(
     rst_propagation_delay = config.rst_propagation_delay
     stray_packet_count = config.stray_packet_count
     stray_timing_window = config.stray_timing_window
+    retransmit_lost = config.retransmit_lost
     packet_hooks = config.packet_hooks
     payload_fn = config.payload_fn
     base_time = config.base_time if config.base_time is not None else time.time()
@@ -497,6 +472,7 @@ def generate_tcp_stream(
 
 
     packets: list[TCPStreamPacket] = []
+    lost_segments: list[TCPStreamPacket] = []
     global_index = 0
 
     def emit(
@@ -507,15 +483,18 @@ def generate_tcp_stream(
         direction: str,
         label: str,
         options: TCPOptions | None = None,
-    ) -> None:
+    ) -> bool:
+        """Emit one packet.  Returns whether it reached the far end."""
         nonlocal global_index
 
         seq_before = src.seq
         ack_before = src.ack
 
         raw = _build_packet(src, dst, flags, payload, include_ethernet, ip_ttl, options, encap)
+        # The sender's sequence number advances whether or not the packet
+        # arrives — it sent those bytes.  The receiver's acknowledgement is
+        # what depends on delivery, and is updated below only if it arrives.
         _advance_seq(src, flags, len(payload))
-        dst.ack = src.seq
 
         delay_usec = rng.randint(0, jitter_usec) if jitter_usec else 0
         ts_sec, ts_usec = divmod(base_usec + global_index * gap_usec + delay_usec, 1_000_000)
@@ -531,7 +510,30 @@ def generate_tcp_stream(
             label=label,
         )
 
-        if packet_loss_probability and rng.random() < packet_loss_probability:
+        # A SYN is never dropped.  Each side learns the other's initial
+        # sequence number from it, so losing one leaves the peer unable to
+        # acknowledge anything for the rest of the connection — a capture whose
+        # segments carry an acknowledgement number of zero, which is not
+        # traffic that could have happened.  Modelling the real outcome, a
+        # connection that never establishes, needs setup retransmission the
+        # generator does not have.  Everything after the handshake, teardown
+        # included, is subject to loss.
+        delivered = bool(flags & TCP_SYN) or not drop_packet(
+            rng, packet_loss_probability,
+        )
+        if delivered:
+            # Acknowledgements are cumulative, so the receiver's ack number
+            # advances only for a segment that arrives *in order* — one
+            # starting exactly where the last one ended.  After a loss it stops
+            # advancing, and every later acknowledgement repeats the last
+            # in-order value, which is what a duplicate ACK is.  A SYN
+            # establishes the initial value, there being nothing to follow on
+            # from.
+            if flags & TCP_SYN or seq_before == dst.ack:
+                dst.ack = src.seq
+        else:
+            if payload:
+                lost_segments.append(pkt)
             pkt = None
 
         if packet_hooks:
@@ -543,6 +545,7 @@ def generate_tcp_stream(
         global_index += 1
         if pkt is not None:
             packets.append(pkt)
+        return delivered
 
     # ── Three-way handshake ───────────────────────────────────────────────────
     emit(client, server, TCP_SYN,           b"", "c2s", "SYN",     options=client_options)
@@ -555,8 +558,12 @@ def generate_tcp_stream(
         payload_distribution, payload_sizes, rng,
     )):
         flags = TCP_ACK | (TCP_PSH if rng.random() < psh_probability else 0)
-        emit(client, server, flags, chunk, "c2s", f"DATA[{i}]")
-        emit(server, client, TCP_ACK, b"", "s2c", f"ACK[{i}]")
+        # A segment that never arrived triggers no acknowledgement: there is
+        # nothing at the far end to answer.  The next segment that does arrive
+        # is answered with the stale acknowledgement number, which is what a
+        # duplicate ACK is.
+        if emit(client, server, flags, chunk, "c2s", f"DATA[{i}]"):
+            emit(server, client, TCP_ACK, b"", "s2c", f"ACK[{i}]")
 
     # ── Four-way teardown ─────────────────────────────────────────────────────
     emit(client, server, TCP_FIN | TCP_ACK, b"", "c2s", "FIN-ACK")
@@ -564,192 +571,51 @@ def generate_tcp_stream(
     emit(server, client, TCP_FIN | TCP_ACK, b"", "s2c", "FIN-ACK")
     emit(client, server, TCP_ACK,           b"", "c2s", "ACK")
 
-    # ── Server RST ───────────────────────────────────────────────────────────
-    if server_rst_probability and rng.random() < server_rst_probability:
-        # Choose a split point: the last normally-ACKed data packet index.
-        # Need at least one normal exchange, so k is in [0, n-1).
-        data_pkts = [p for p in packets if p.label.startswith("DATA[")]
-        if len(data_pkts) >= 2:
-            k = rng.randint(0, len(data_pkts) - 2)
-            split_label = data_pkts[k].label   # e.g. "DATA[3]"
-            split_idx   = split_label[5:-1]    # "3"
+    # ── Loss recovery ────────────────────────────────────────────────────────
+    # Before the passes below, so a recovered segment is a candidate for the
+    # same treatment as any other and the timeline is complete when they run.
+    if retransmit_lost and lost_segments:
+        packets = apply_loss_recovery(
+            packets, lost_segments,
+            config=ImpairmentConfig(retransmission_timeout=retransmission_timeout),
+            flow=FlowEndpoints(
+                client_ip=client_ip, client_port=client_port, client_mac=client_mac,
+                server_ip=server_ip, server_port=server_port, server_mac=server_mac,
+                window=window, include_ethernet=include_ethernet, ip_ttl=ip_ttl,
+                encap=encap,
+            ),
+            make=TCPStreamPacket,
+            gap_usec=gap_usec,
+        )
 
-            # Find the last normal ACK (ACK[k]) to get server seq/ack state
-            ack_k = next((p for p in packets if p.label == f"ACK[{split_idx}]"), None)
+    # ── Wire impairments ─────────────────────────────────────────────────────
+    # RST, retransmission, corruption and stray injection, in that order.  The
+    # passes live in impairments.py so the payload generators can apply the
+    # same ones; packet loss is already applied above, inside emit().
+    packets = apply_impairments(
+        packets,
+        rng=rng,
+        config=ImpairmentConfig(
+            retransmission_probability=retransmission_probability,
+            retransmission_timeout=retransmission_timeout,
+            payload_corruption_probability=payload_corruption_probability,
+            server_rst_probability=server_rst_probability,
+            rst_propagation_delay=rst_propagation_delay,
+            stray_packet_count=stray_packet_count,
+            stray_timing_window=stray_timing_window,
+            stray_payload_range=(min_payload, max_payload),
+        ),
+        flow=FlowEndpoints(
+            client_ip=client_ip, client_port=client_port, client_mac=client_mac,
+            server_ip=server_ip, server_port=server_port, server_mac=server_mac,
+            window=window, include_ethernet=include_ethernet, ip_ttl=ip_ttl,
+            encap=encap,
+        ),
+        make=TCPStreamPacket,
+        gap_usec=gap_usec,
+        jitter_usec=jitter_usec,
+    )
 
-            # Remove ACKs after the split point and the entire four-way teardown.
-            # The handshake ACK (label "ACK", direction "c2s") must be kept;
-            # teardown ACKs and FIN-ACKs all come after the first DATA packet.
-            first_data_usec = _pkt_usec(data_pkts[0])
-
-            def _keep(p: TCPStreamPacket) -> bool:
-                if p.label.startswith("ACK["):
-                    return int(p.label[4:-1]) <= k
-                if p.label == "FIN-ACK":
-                    return False
-                return not (p.label == "ACK" and _pkt_usec(p) > first_data_usec)
-
-            packets = [p for p in packets if _keep(p)]
-
-            # Build RST packet: server → client
-            # Use ACK[k] fields to reconstruct server state, or fallback to SYN-ACK
-            ref = ack_k or next(p for p in packets if p.label == "SYN-ACK")
-            rst_src = _TCPEndpoint(
-                ip=server_ip, port=server_port, mac=server_mac,
-                seq=ref.seq, ack=ref.ack, window=window,
-            )
-            rst_dst = _TCPEndpoint(
-                ip=client_ip, port=client_port, mac=client_mac,
-                seq=0, ack=0, window=window,
-            )
-            # RST is sent by the server at the same moment DATA[k+1] is sent.
-            # The client learns about the RST after rst_propagation_delay.
-            next_data = data_pkts[k + 1]
-            rst_send_usec = next_data.ts_sec * 1_000_000 + next_data.ts_usec
-            rst_delay_usec = int(rst_propagation_delay * 1_000_000)
-            client_learns_rst_usec = rst_send_usec + rst_delay_usec
-
-            # Remove DATA packets the client sends after it receives the RST,
-            # and any server packets (ACKs from server after split already gone).
-            packets = [
-                p for p in packets
-                if not (p.label.startswith("DATA[") and _pkt_usec(p) > client_learns_rst_usec)
-            ]
-
-            used_ts_rst: set[int] = {_pkt_usec(p) for p in packets}
-            rst_sec, rst_usec_part = divmod(
-                _alloc_usec(rst_send_usec, used_ts_rst), 1_000_000
-            )
-            rst_raw = _build_packet(rst_src, rst_dst, TCP_RST | TCP_ACK, b"",
-                                    include_ethernet, ip_ttl, None, encap)
-            packets.append(TCPStreamPacket(
-                raw=rst_raw,
-                ts_sec=rst_sec,
-                ts_usec=rst_usec_part,
-                direction="s2c",
-                flags=TCP_RST | TCP_ACK,
-                seq=ref.seq,
-                ack=ref.ack,
-                payload_len=0,
-                label="RST",
-            ))
-
-    rto_usec = int(retransmission_timeout * 1_000_000)
-
-    # ── Spurious retransmissions ──────────────────────────────────────────────
-    if retransmission_probability:
-        retransmits: list[TCPStreamPacket] = []
-        used_ts: set[int] = {_pkt_usec(p) for p in packets}
-        for pkt in packets:
-            if not pkt.label.startswith("DATA["):
-                continue
-            if rng.random() >= retransmission_probability:
-                continue
-            i = pkt.label[5:-1]  # extract index from "DATA[i]"
-            delay_usec = rng.randint(0, jitter_usec) if jitter_usec else 0
-            rt_sec, rt_usec_part = divmod(
-                _alloc_usec(_pkt_usec(pkt) + rto_usec + delay_usec, used_ts),
-                1_000_000,
-            )
-            retransmits.append(replace(pkt, ts_sec=rt_sec, ts_usec=rt_usec_part,
-                                       label=f"RETRANS[{i}]"))
-        packets.extend(retransmits)
-
-    # ── Payload corruption ────────────────────────────────────────────────────
-    if payload_corruption_probability:
-        additions: list[TCPStreamPacket] = []
-        # Build an index of packets by label for O(1) lookup of both packet and position
-        by_label: dict[str, int] = {p.label: idx for idx, p in enumerate(packets)}
-        used_ts = {_pkt_usec(p) for p in packets}
-        for idx, pkt in enumerate(packets):
-            if not pkt.label.startswith("DATA["):
-                continue
-            if rng.random() >= payload_corruption_probability:
-                continue
-            i = pkt.label[5:-1]  # extract index from "DATA[i]"
-
-            # 1. Corrupt: flip the last byte of the payload in the raw frame
-            raw_corrupt = bytearray(pkt.raw)
-            raw_corrupt[-1] ^= 0xFF
-            packets[idx] = replace(pkt, raw=bytes(raw_corrupt), label=f"CORRUPT[{i}]")
-
-            # 2. Retransmit: clean copy of original, timestamped after RTO
-            delay_usec = rng.randint(0, jitter_usec) if jitter_usec else 0
-            rt_usec = _alloc_usec(_pkt_usec(pkt) + rto_usec + delay_usec, used_ts)
-            rt_sec, rt_usec_part = divmod(rt_usec, 1_000_000)
-            additions.append(replace(pkt, ts_sec=rt_sec, ts_usec=rt_usec_part,
-                                     label=f"RETRANS[{i}]"))
-
-            # 3. Shift the server ACK to follow the retransmit
-            ack_label = f"ACK[{i}]"
-            if ack_label in by_label:
-                ack_sec, ack_usec_part = divmod(
-                    _alloc_usec(rt_usec + gap_usec, used_ts), 1_000_000
-                )
-                ack_idx = by_label[ack_label]
-                packets[ack_idx] = replace(packets[ack_idx],
-                                           ts_sec=ack_sec, ts_usec=ack_usec_part)
-        packets.extend(additions)
-
-    # ── Stray packet injection (TCP hijacking simulation) ─────────────────────
-    if stray_packet_count:
-        data_pkts = [p for p in packets if p.label.startswith("DATA[")
-                     or p.label.startswith("CORRUPT[")]
-        if data_pkts:
-            used_ts = {_pkt_usec(p) for p in packets}
-
-            # Sorted view used to resolve the timing window (Option B).
-            # Built once; stray packets added later do not affect these bounds.
-            sorted_pkts: list[TCPStreamPacket] = []
-            ts_index: dict[int, int] = {}
-            if stray_timing_window is not None:
-                sorted_pkts = sorted(packets, key=lambda p: (p.ts_sec, p.ts_usec))
-                ts_index = {_pkt_usec(p): i for i, p in enumerate(sorted_pkts)}
-
-            default_ts_lo = min(_pkt_usec(p) for p in data_pkts)
-            default_ts_hi = max(_pkt_usec(p) for p in data_pkts)
-
-            strays: list[TCPStreamPacket] = []
-            for n in range(stray_packet_count):
-                # Steal seq/ack from a randomly chosen data packet
-                ref = rng.choice(data_pkts)
-                stray_src = _TCPEndpoint(
-                    ip=client_ip, port=client_port, mac=client_mac,
-                    seq=ref.seq, ack=ref.ack, window=window,
-                )
-                stray_dst = _TCPEndpoint(
-                    ip=server_ip, port=server_port, mac=server_mac,
-                    seq=0, ack=0, window=window,
-                )
-
-                if stray_timing_window is not None:
-                    ref_idx = ts_index[_pkt_usec(ref)]
-                    lo_idx = max(0, ref_idx - stray_timing_window)
-                    hi_idx = min(len(sorted_pkts) - 1, ref_idx + stray_timing_window)
-                    ts_lo = _pkt_usec(sorted_pkts[lo_idx])
-                    ts_hi = _pkt_usec(sorted_pkts[hi_idx])
-                else:
-                    ts_lo = default_ts_lo
-                    ts_hi = default_ts_hi
-
-                payload = b'x' * rng.randint(min_payload, max_payload)
-                raw = _build_packet(stray_src, stray_dst, TCP_ACK | TCP_PSH,
-                                    payload, include_ethernet, ip_ttl, None, encap)
-                ts_sec, ts_usec = divmod(
-                    _alloc_usec(rng.randint(ts_lo, ts_hi), used_ts), 1_000_000
-                )
-                strays.append(TCPStreamPacket(
-                    raw=raw,
-                    ts_sec=ts_sec,
-                    ts_usec=ts_usec,
-                    direction="c2s",
-                    flags=TCP_ACK | TCP_PSH,
-                    seq=ref.seq,
-                    ack=ref.ack,
-                    payload_len=len(payload),
-                    label=f"STRAY[{n}]",
-                ))
-            packets.extend(strays)
 
     # ── Middlebox fragmentation ───────────────────────────────────────────────
     if mtu is not None:

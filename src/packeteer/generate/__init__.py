@@ -381,6 +381,7 @@ from .gtpu import (
 from .http import HTTP_ALT_PORT, HTTP_PORT, HTTPRequest, HTTPResponse
 from .icmp import ICMPHeader
 from .icmpv6 import ICMPv6Header
+from .impairments import ImpairmentConfig
 from .ip import IPHeader
 from .ipsec import (
     AH_ICV_LEN_SHA1_96,
@@ -515,6 +516,7 @@ from .tcp import (
     TCP_URG,
     TCPHeader,
     TCPOptions,
+    default_syn_options,
 )
 from .tcp_stream import TCPStream, TCPStreamConfig, TCPStreamPacket, generate_tcp_stream
 from .udp import UDPHeader
@@ -587,6 +589,7 @@ __all__ = [
     "HBH_OPT_JUMBO_PAYLOAD",
     "TCPHeader",
     "TCPOptions",
+    "default_syn_options",
     "TCP_FIN",
     "TCP_SYN",
     "TCP_RST",
@@ -669,6 +672,7 @@ __all__ = [
     "generate_http_stream",
     "generate_http_conversation",
     "HTTPRestConfig",
+    "ImpairmentConfig",
     "generate_vpn_stream",
     "VPNConfig",
     "AppMessage",

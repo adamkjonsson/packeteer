@@ -84,8 +84,10 @@ auto-detected from the file header.
 
 Fragments are **not** reassembled here, unlike `iter_packets`.  A spec is the
 round-trip format: a fragmented capture parses and rebuilds byte-for-byte as
-it is, whereas reassembling first means `packeteer build` emits unfragmented
-packets and the capture no longer round-trips.  Pass `defragment=True` (or
+it is — including a first fragment, whose transport header describes the whole
+datagram rather than the bytes beside it — whereas reassembling first means
+`packeteer build` emits unfragmented packets and the capture no longer
+round-trips.  Pass `defragment=True` (or
 `packeteer parse --defragment`) when you want whole datagrams in the spec and
 do not need to rebuild the original frames.
 
@@ -357,10 +359,21 @@ length — is kept in `opts.unknown` as `(kind, value)` pairs rather than being
 dropped, and the builder re-emits it.  Structural padding (NOP, End of Option
 List) is not modelled.
 
-Options are re-encoded in a canonical order, so a parse → build round trip
-preserves every option's presence and value, but the resulting header is not
-guaranteed byte-identical to a capture that ordered or padded them
-differently.
+A parse → build round trip reproduces the option region byte-for-byte.  The
+encoder writes options in a canonical order, with NOP padding ahead of the
+options whose 32-bit fields need aligning — the layout senders use — so it
+reproduces the common cases on its own.  For anything it would not reproduce,
+a different option order or padding in a different place, the parser records
+the region as captured in `opts.raw` and the builder writes that verbatim:
+
+```python
+opts = parse_packet(frame).transport.options
+opts.raw          # None when the encoder reproduces the layout itself
+```
+
+`raw` **takes precedence over every other field**, so clear it before editing
+`mss` or `timestamps` on an instance that has one, or the edit will not reach
+the wire.
 
 ## Tunnel packets
 

@@ -42,7 +42,7 @@ class TCPOptions:
     to a non-None / non-False value to include that option in the header.
     Options are encoded in the order MSS → Window Scale → SACK Permitted →
     Timestamps → SACK, followed by NOP (0x01) padding to the nearest 4-byte
-    boundary.
+    boundary — unless *raw* holds the bytes to write instead.
 
     Attributes:
         mss: Maximum Segment Size (kind 2, length 4).  16-bit value in bytes.
@@ -67,6 +67,17 @@ class TCPOptions:
             the builder re-emits them, so an option survives a parse → build
             round trip even when packeteer does not understand it.  Defaults
             to an empty list.
+        raw: The option region exactly as captured, written out verbatim in
+            place of a re-encoding.  The parser sets it only when re-encoding
+            the decoded options would *not* reproduce the captured bytes —
+            different option order, or NOP padding in a different place — so it
+            is ``None`` for options the encoder round-trips on its own, and
+            ordinary specs never carry it.
+
+            **It takes precedence over every other attribute.**  Editing
+            ``mss`` or ``timestamps`` on an instance whose *raw* is set has no
+            effect on the encoded header; clear *raw* first when changing a
+            field.
 
     """
 
@@ -76,19 +87,95 @@ class TCPOptions:
     sack_blocks: list[tuple[int, int]] = field(default_factory=list)
     timestamps: tuple[int, int] | None = None
     unknown: list[tuple[int, bytes]] = field(default_factory=list)
+    raw: bytes | None = None
+
+
+#: Window scale a modern client advertises: a 64 KiB window scaled by 2**7.
+DEFAULT_WINDOW_SCALE: int = 7
+
+#: MSS a client advertises on an Ethernet IPv4 path: 1500 - 20 (IP) - 20 (TCP).
+DEFAULT_MSS: int = 1460
+
+
+def default_syn_options(mss: int = DEFAULT_MSS) -> TCPOptions:
+    """Return the TCP options a plausible modern client puts on a SYN.
+
+    Every current stack advertises at least a Maximum Segment Size, and
+    generally SACK-permitted and a window scale beside it.  A SYN carrying no
+    options at all — a bare 20-byte header — is the most conspicuous mark of
+    generated traffic in a TCP capture, which is what this exists to avoid.
+
+    Timestamps are deliberately absent.  A connection that negotiates them
+    carries one on *every* segment, and the generators put options on the
+    handshake only; advertising them and then never sending one would trade
+    one implausibility for another.
+
+    Args:
+        mss: Maximum Segment Size to advertise.  Pass the value the traffic is
+            actually segmented at, so the capture and its own advertisement
+            agree.
+
+    Returns:
+        A fresh :class:`TCPOptions`; callers may modify it freely.
+
+    """
+    return TCPOptions(
+        mss=mss, sack_permitted=True, window_scale=DEFAULT_WINDOW_SCALE,
+    )
+
+
+def _align_nops(offset: int) -> bytes:
+    """NOP padding placing the option that follows on a useful boundary.
+
+    Timestamps and SACK carry 32-bit fields after a two-byte kind and length,
+    so a sender puts NOPs ahead of them until the option starts two bytes short
+    of a four-byte boundary, leaving those fields aligned.  RFC 7323 A.2
+    recommends exactly this for Timestamps — ``NOP, NOP, Timestamp`` — and it
+    is what real senders emit.
+
+    Padding placed *after* an option instead would leave the same option
+    present with the same value, but arranged as no stack arranges it.
+
+    Args:
+        offset: How many option bytes have been written so far.
+
+    Returns:
+        Zero to three NOP bytes.
+
+    """
+    return b"\x01" * ((2 - offset) % 4)
 
 
 def _build_options(opts: TCPOptions) -> bytes:
     """Encode *opts* as bytes padded to a 4-byte boundary with NOP (0x01).
 
-    Options are emitted in the order:
+    When ``opts.raw`` is set it is returned verbatim.  That is how a capture's
+    own option layout survives a parse → build round trip: senders order
+    options differently and place NOP padding ahead of the option it aligns,
+    whereas the encoding below is canonical, so re-encoding preserves every
+    option's presence and value but not the original bytes.  Stacks disagree
+    with each other too — Linux and macOS lay out a SYN's options differently
+    — so replaying what was captured is the only thing that reproduces them in
+    general.
+
+    Otherwise options are emitted in the order:
     MSS (2) → Window Scale (3) → SACK Permitted (4) → Timestamps (8) →
     SACK (5) → anything in ``unknown``.
 
-    The order is canonical rather than a replay of whatever a capture
-    contained, so a parse → build round trip preserves every option's
-    presence and value but not necessarily its original byte layout.
+    NOP padding goes **ahead** of Timestamps and SACK, so that their 32-bit
+    fields land on a four-byte boundary the way a sender aligns them (see
+    :func:`_align_nops`); any remainder pads the tail.
+
+    Args:
+        opts: The options to encode.
+
+    Returns:
+        The encoded option region, a multiple of 4 bytes long.
+
     """
+    if opts.raw is not None:
+        return opts.raw
+
     raw = b""
     if opts.mss is not None:
         raw += struct.pack("!BBH", 2, 4, opts.mss)
@@ -98,10 +185,10 @@ def _build_options(opts: TCPOptions) -> bytes:
         raw += struct.pack("!BB", 4, 2)
     if opts.timestamps is not None:
         tsval, tsecr = opts.timestamps
-        raw += struct.pack("!BBII", 8, 10, tsval, tsecr)
+        raw += _align_nops(len(raw)) + struct.pack("!BBII", 8, 10, tsval, tsecr)
     if opts.sack_blocks:
         sack_len = 2 + 8 * len(opts.sack_blocks)
-        raw += struct.pack("!BB", 5, sack_len)
+        raw += _align_nops(len(raw)) + struct.pack("!BB", 5, sack_len)
         for left, right in opts.sack_blocks:
             raw += struct.pack("!II", left, right)
     for kind, value in opts.unknown:
@@ -140,6 +227,12 @@ class TCPHeader:
         options: Optional TCP header options.  When set, the Data Offset field
             is adjusted automatically to reflect the extended header length.
             Defaults to ``None`` (no options, 20-byte header).
+        checksum: Explicit checksum, overriding the computed one.  ``None``
+            (the default) computes it.  TCP has no length field of its own, so
+            this is the only field a fragmented datagram's first fragment needs
+            recorded: the pseudo-header length used for the checksum covers the
+            whole datagram, not the fragment.  Setting it also reproduces a
+            checksum that was wrong on the wire.
 
     """
 
@@ -152,6 +245,7 @@ class TCPHeader:
     window: int = 65535
     urgent_ptr: int = 0
     options: TCPOptions | None = None
+    checksum: int | None = None
 
 
 def _pseudo_header_v4(src_ip: str, dst_ip: str, tcp_length: int) -> bytes:
@@ -206,7 +300,8 @@ def _build_tcp_header(
     TCP options are present in *hdr*, the data offset and total header length
     are adjusted accordingly (maximum 60 bytes per RFC 9293).  The checksum
     is computed over the appropriate pseudo-header (IPv4 or IPv6) concatenated
-    with the TCP header and *payload*, as required by RFC 793 / RFC 8200.
+    with the TCP header and *payload*, as required by RFC 793 / RFC 8200 —
+    unless ``hdr.checksum`` is set, in which case it is written out as given.
 
     Args:
         hdr: A :class:`TCPHeader` instance with the desired field values.
@@ -245,6 +340,9 @@ def _build_tcp_header(
         0,                  # checksum placeholder
         hdr.urgent_ptr,
     ) + options_bytes
+
+    if hdr.checksum is not None:
+        return raw[:16] + struct.pack('!H', hdr.checksum) + raw[18:]
 
     if ip_version == 6:
         pseudo = _pseudo_header_v6(src_ip, dst_ip, tcp_length)

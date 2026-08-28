@@ -1,17 +1,29 @@
-"""Shared helpers used by all three stream generators (TCP, UDP, SCTP)."""
+"""Shared helpers used by all three stream generators (TCP, UDP, SCTP).
+
+Also holds the TCP endpoint state and packet assembly used by both emit
+paths -- :func:`~packeteer.generate.tcp_stream.generate_tcp_stream` and
+:class:`~packeteer.generate.session.TCPSession` -- and by the impairment
+passes in :mod:`packeteer.generate.impairments`, which need to build RST
+and stray packets of their own.
+"""
 from __future__ import annotations
 
 import socket
 import struct
+from dataclasses import dataclass
 from pathlib import Path
 from random import Random
 
+from .builder import PacketBuilder
 from .fragmentation import fragment_ipv4, fragment_ipv6
 from .ip import IPHeader
 from .ipv6 import IPv6Header
 
 #from .stream_encap import EncapSpec, _encap_ip_start, _fix_encap_prefix
-from .stream_encap import EncapSpec, _fix_encap_prefix
+from .stream_encap import EncapSpec, _apply_encap, _fix_encap_prefix
+from .tcp import TCP_ACK, TCP_FIN, TCP_SYN, TCPOptions
+
+_WRAP = 2 ** 32
 
 _DEFAULT_PAYLOAD = Path(__file__).with_name("default_payload.txt").read_bytes()
 
@@ -36,6 +48,66 @@ def _alloc_usec(start: int, used: set[int]) -> int:
 def _pkt_usec(pkt: object) -> int:
     """Return the packet timestamp as a single microsecond integer."""
     return pkt.ts_sec * 1_000_000 + pkt.ts_usec  # type: ignore[attr-defined]
+
+
+# ── TCP packet assembly ──────────────────────────────────────────────────────
+
+@dataclass
+class _TCPEndpoint:
+    """Mutable per-side connection state (internal only)."""
+
+    ip: str
+    port: int
+    mac: str
+    seq: int    # next sequence number to send
+    ack: int    # next sequence number expected from the peer
+    window: int = 65535
+
+
+def _advance_seq(ep: _TCPEndpoint, flags: int, payload_len: int) -> None:
+    """Advance *ep*.seq by the number of sequence numbers this segment consumes.
+
+    SYN and FIN each consume one sequence number in addition to the payload
+    bytes.  32-bit wrap-around is handled with modulo arithmetic.
+    """
+    consumed = payload_len
+    if flags & TCP_SYN:
+        consumed += 1
+    if flags & TCP_FIN:
+        consumed += 1
+    ep.seq = (ep.seq + consumed) % _WRAP
+
+
+def _build_packet(
+    src: _TCPEndpoint,
+    dst: _TCPEndpoint,
+    flags: int,
+    payload: bytes,
+    include_ethernet: bool,
+    ip_ttl: int,
+    options: TCPOptions | None,
+    encap: EncapSpec = None,
+) -> bytes:
+    """Assemble one raw packet using PacketBuilder."""
+    b = PacketBuilder()
+    if include_ethernet:
+        b = b.ethernet(src_mac=src.mac, dst_mac=dst.mac)
+    b = _apply_encap(b, encap, src.mac, dst.mac)
+    b = (b
+        .ip(src=src.ip, dst=dst.ip, ttl=ip_ttl)
+        .tcp(
+            src_port=src.port,
+            dst_port=dst.port,
+            seq=src.seq,
+            ack=src.ack if (flags & TCP_ACK) else 0,
+            flags=flags,
+            window=src.window,
+            options=options,
+        )
+    )
+    if payload:
+        b = b.payload(data=payload)
+    return b.build()
 
 
 def _payload_sizes(

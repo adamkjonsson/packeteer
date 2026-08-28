@@ -232,6 +232,10 @@ def _apply_ethernet(config: dict[str, Any], hdr: EthernetHeader) -> None:
         "dst_mac": hdr.dst_mac,
         "enabled": True,
     }
+    if not hdr.pad:
+        # Only written when the captured frame was below the Ethernet minimum;
+        # a rebuild pads by default, which would lengthen it.
+        section["pad"] = False
     if hdr.vlan_tag is not None:
         section["vlan"] = {
             "id": hdr.vlan_tag.vid,
@@ -339,6 +343,11 @@ def _tcp_options_section(opts: TCPOptions) -> dict[str, Any]:
         section["unknown"] = [
             {"kind": kind, "data": value.hex()} for kind, value in opts.unknown
         ]
+    if opts.raw is not None:
+        # Present only when the captured layout differs from what the encoder
+        # would produce; it is written verbatim and overrides the fields above,
+        # which are kept for readability.
+        section["raw"] = opts.raw.hex()
     return section
 
 
@@ -363,11 +372,17 @@ def _apply_transport(
             opts = _tcp_options_section(hdr.options)
             if opts:
                 section["options"] = opts
+        if hdr.checksum is not None:
+            section["checksum"] = hdr.checksum
     elif isinstance(hdr, UDPHeader):
         section = {
             "src_port": hdr.src_port,
             "dst_port": hdr.dst_port,
         }
+        if hdr.length is not None:
+            section["length"] = hdr.length
+        if hdr.checksum is not None:
+            section["checksum"] = hdr.checksum
     elif isinstance(hdr, SCTPHeader):
         section = {
             "src_port":         hdr.src_port,

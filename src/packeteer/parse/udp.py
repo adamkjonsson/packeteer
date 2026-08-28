@@ -29,11 +29,17 @@ def packet_parser(data: bytes) -> tuple[int, int | None, UDPHeader | None]:
         return (0, None, None)
 
     try:
-        src_port, dst_port, length, _ = struct.unpack("!HHHH", data[:8])
+        src_port, dst_port, length, checksum = struct.unpack("!HHHH", data[:8])
         if length < 8:
             return (0, None, None)
 
-        hdr = UDPHeader(src_port=src_port, dst_port=dst_port)
+        # Both are recorded as captured.  parse.core then clears whichever
+        # matches the value a builder would derive, so that only a header
+        # describing something other than the bytes beside it keeps them.
+        hdr = UDPHeader(
+            src_port=src_port, dst_port=dst_port,
+            length=length, checksum=checksum,
+        )
 
     except struct.error:
         return (0, None, None)

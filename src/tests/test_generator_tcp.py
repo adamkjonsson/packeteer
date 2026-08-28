@@ -216,10 +216,13 @@ class TestTCPOptions(unittest.TestCase):
     def test_timestamps_encoding(self):
         raw = self._build(TCPOptions(timestamps=(0xDEAD, 0xBEEF)))
         opts = self._options_bytes(raw)
-        self.assertEqual(opts[0], 8)    # kind
-        self.assertEqual(opts[1], 10)   # length
-        tsval = struct.unpack('!I', opts[2:6])[0]
-        tsecr = struct.unpack('!I', opts[6:10])[0]
+        # NOP, NOP, Timestamps — the layout RFC 7323 A.2 recommends, which
+        # leaves TSval and TSecr on a four-byte boundary.
+        self.assertEqual(opts[:2], b"\x01\x01")
+        self.assertEqual(opts[2], 8)    # kind
+        self.assertEqual(opts[3], 10)   # length
+        tsval = struct.unpack('!I', opts[4:8])[0]
+        tsecr = struct.unpack('!I', opts[8:12])[0]
         self.assertEqual(tsval, 0xDEAD)
         self.assertEqual(tsecr, 0xBEEF)
 
@@ -237,18 +240,19 @@ class TestTCPOptions(unittest.TestCase):
     def test_sack_one_block_encoding(self):
         raw = self._build(TCPOptions(sack_blocks=[(100, 200)]))
         opts = self._options_bytes(raw)
-        self.assertEqual(opts[0], 5)    # kind
-        self.assertEqual(opts[1], 10)   # length = 2 + 8*1
-        left  = struct.unpack('!I', opts[2:6])[0]
-        right = struct.unpack('!I', opts[6:10])[0]
+        self.assertEqual(opts[:2], b"\x01\x01")   # aligned like Timestamps
+        self.assertEqual(opts[2], 5)    # kind
+        self.assertEqual(opts[3], 10)   # length = 2 + 8*1
+        left  = struct.unpack('!I', opts[4:8])[0]
+        right = struct.unpack('!I', opts[8:12])[0]
         self.assertEqual(left, 100)
         self.assertEqual(right, 200)
 
     def test_sack_two_blocks_length(self):
         raw = self._build(TCPOptions(sack_blocks=[(0, 100), (200, 300)]))
         opts = self._options_bytes(raw)
-        # kind(1) + len(1) + 2 blocks * 8 = 18 bytes, padded to 20
-        self.assertEqual(opts[1], 18)   # SACK option length field
+        # NOP, NOP, then kind(1) + len(1) + 2 blocks * 8 = 20 bytes
+        self.assertEqual(opts[3], 18)   # SACK option length field
 
     # ── combined options ──────────────────────────────────────────────────────
 

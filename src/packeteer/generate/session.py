@@ -47,6 +47,12 @@ from collections.abc import Callable
 from random import Random
 
 from ._stream_common import _alloc_usec
+from .impairments import (
+    FlowEndpoints,
+    ImpairmentConfig,
+    apply_loss_recovery,
+    drop_packet,
+)
 from .sctp import (
     SCTP_DATA_FLAG_BEGINNING,
     SCTP_DATA_FLAG_ENDING,
@@ -65,7 +71,7 @@ from .stream_encap import (  # noqa: F401  (StreamEncap needed for Sphinx type r
     EncapSpec,
     StreamEncap,
 )
-from .tcp import TCP_ACK, TCP_FIN, TCP_PSH, TCP_SYN
+from .tcp import TCP_ACK, TCP_FIN, TCP_PSH, TCP_SYN, TCPOptions
 from .tcp_stream import (
     TCPStream,
     TCPStreamPacket,
@@ -121,6 +127,10 @@ class TCPSession:
         server_isn: int | None = None,
         base_time: float | None = None,
         encap: EncapSpec = None,
+        impairments: ImpairmentConfig | None = None,
+        loss_rng: Random | None = None,
+        client_options: TCPOptions | None = None,
+        server_options: TCPOptions | None = None,
     ) -> None:
         """Initialise a TCP session builder.
 
@@ -145,6 +155,21 @@ class TCPSession:
             base_time: Unix timestamp for the first packet.  Defaults to
                 the current time.
             encap: Encapsulation layer(s) to wrap every packet in.
+            impairments: Wire impairments
+                (:class:`~packeteer.generate.impairments.ImpairmentConfig`).
+                Only the two that must be applied as the session is emitted are
+                read here: ``packet_loss_probability``, since a lost segment
+                has to suppress the acknowledgement it would have triggered,
+                and ``retransmit_lost``.  The rest are passes over the finished
+                connection and are applied by the caller.  ``None`` (the
+                default) draws no randomness at all.
+            loss_rng: Seeded generator driving the loss draws, so a capture
+                with loss reproduces from its seed.
+            client_options: TCP options carried on the client SYN, as on the
+                low-level path.  ``None`` (the default) sends a bare SYN, which
+                no modern stack does — callers wanting plausible traffic pass
+                :func:`~packeteer.generate.tcp.default_syn_options`.
+            server_options: TCP options carried on the server SYN-ACK.
 
         """
         self.client_ip = client_ip
@@ -161,6 +186,10 @@ class TCPSession:
         self.server_isn = server_isn
         self.base_time = base_time
         self.encap = encap
+        self.impairments = impairments
+        self.loss_rng = loss_rng
+        self.client_options = client_options
+        self.server_options = server_options
         self._exchanges: list[tuple[str, bytes, str | None]] = []
 
     def send(self, data: bytes, label: str | None = None) -> TCPSession:
@@ -257,7 +286,11 @@ class TCPSession:
         )
 
         packets: list[TCPStreamPacket] = []
+        lost_segments: list[TCPStreamPacket] = []
         index = 0
+        loss_rng = self.loss_rng if self.loss_rng is not None else random.Random()
+        impairments = self.impairments or ImpairmentConfig()
+        loss_probability = impairments.packet_loss_probability
 
         def emit(
             src: _TCPEndpoint,
@@ -266,27 +299,56 @@ class TCPSession:
             payload: bytes,
             direction: str,
             label: str,
-        ) -> None:
+            options: TCPOptions | None = None,
+        ) -> bool:
+            """Emit one packet.  Returns whether it reached the far end."""
             nonlocal index
             seq_before = src.seq
             ack_before = src.ack
             raw = _build_packet(src, dst, flags, payload,
-                                self.include_ethernet, self.ip_ttl, None, self.encap)
+                                self.include_ethernet, self.ip_ttl, options,
+                                self.encap)
+            # The sender's sequence number advances whether or not the packet
+            # arrives; the receiver's acknowledgement depends on delivery.
             _advance_seq(src, flags, len(payload))
-            dst.ack = src.seq
-            ts_sec, ts_usec = divmod(base_usec + index * gap_usec, 1_000_000)
-            packets.append(TCPStreamPacket(
-                raw=raw, ts_sec=ts_sec, ts_usec=ts_usec,
-                direction=direction, flags=flags,
-                seq=seq_before,
-                ack=ack_before if (flags & TCP_ACK) else 0,
-                payload_len=len(payload), label=label,
-            ))
+
+            # A SYN is never dropped: each side learns the other's initial
+            # sequence number from it, so losing one would leave every later
+            # segment carrying an acknowledgement number of zero.
+            delivered = bool(flags & TCP_SYN) or not drop_packet(
+                loss_rng, loss_probability,
+            )
+            if delivered:
+                # Cumulative: advance only for a segment arriving in order, so
+                # after a loss the value sticks and the segments that follow
+                # are answered with duplicate ACKs.
+                if flags & TCP_SYN or seq_before == dst.ack:
+                    dst.ack = src.seq
+                ts_sec, ts_usec = divmod(base_usec + index * gap_usec, 1_000_000)
+                packets.append(TCPStreamPacket(
+                    raw=raw, ts_sec=ts_sec, ts_usec=ts_usec,
+                    direction=direction, flags=flags,
+                    seq=seq_before,
+                    ack=ack_before if (flags & TCP_ACK) else 0,
+                    payload_len=len(payload), label=label,
+                ))
+            elif payload:
+                lost_segments.append(TCPStreamPacket(
+                    raw=raw,
+                    ts_sec=(base_usec + index * gap_usec) // 1_000_000,
+                    ts_usec=(base_usec + index * gap_usec) % 1_000_000,
+                    direction=direction, flags=flags, seq=seq_before,
+                    ack=ack_before if (flags & TCP_ACK) else 0,
+                    payload_len=len(payload), label=label,
+                ))
             index += 1
+            return delivered
 
         # Three-way handshake
-        emit(client, server, TCP_SYN,           b"", "c2s", "SYN")
-        emit(server, client, TCP_SYN | TCP_ACK, b"", "s2c", "SYN-ACK")
+        emit(client, server, TCP_SYN, b"", "c2s", "SYN",
+             options=self.client_options)
+        emit(server, client, TCP_SYN | TCP_ACK, b"", "s2c", "SYN-ACK",
+             options=self.server_options)
         emit(client, server, TCP_ACK,           b"", "c2s", "ACK")
 
         # Data exchanges
@@ -310,8 +372,10 @@ class TCPSession:
                     seg_label = label
                 else:
                     seg_label = f"{label} [{seg_num + 1}/{len(segments)}]"
-                emit(sender, receiver, flags, chunk, send_dir, seg_label)
-                emit(receiver, sender, TCP_ACK, b"", ack_dir, f"ACK[{seg_idx}]")
+                # A segment that never arrived triggers no acknowledgement.
+                if emit(sender, receiver, flags, chunk, send_dir, seg_label):
+                    emit(receiver, sender, TCP_ACK, b"", ack_dir,
+                         f"ACK[{seg_idx}]")
                 seg_idx += 1
 
         # Four-way teardown
@@ -319,6 +383,20 @@ class TCPSession:
         emit(server, client, TCP_ACK,           b"", "s2c", "ACK")
         emit(server, client, TCP_FIN | TCP_ACK, b"", "s2c", "FIN-ACK")
         emit(client, server, TCP_ACK,           b"", "c2s", "ACK")
+
+        if impairments.retransmit_lost and lost_segments:
+            packets = apply_loss_recovery(
+                packets, lost_segments, config=impairments,
+                flow=FlowEndpoints(
+                    client_ip=self.client_ip, client_port=self.client_port,
+                    client_mac=self.client_mac, server_ip=self.server_ip,
+                    server_port=self.server_port, server_mac=self.server_mac,
+                    include_ethernet=self.include_ethernet, ip_ttl=self.ip_ttl,
+                    encap=self.encap,
+                ),
+                make=TCPStreamPacket, gap_usec=gap_usec,
+            )
+            packets.sort(key=lambda p: (p.ts_sec, p.ts_usec))
 
         return TCPStream(packets=packets)
 

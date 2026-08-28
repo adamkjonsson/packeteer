@@ -81,6 +81,76 @@ class TestHTTPEncode(unittest.TestCase):
         assert host_pos < accept_pos < cookie_pos
 
 
+class TestHTTPSelfFramingMessages(unittest.TestCase):
+    """A message that frames itself gets no automatic ``Content-Length`` (#81)."""
+
+    def test_chunked_response_gets_no_content_length(self):
+        wire = _build_http_message(HTTPResponse(
+            headers={"Transfer-Encoding": "chunked"},
+            body=b"4\r\nabcd\r\n0\r\n\r\n",
+        ))
+        assert b"Content-Length" not in wire
+        assert b"Transfer-Encoding: chunked\r\n" in wire
+
+    def test_chunked_request_gets_no_content_length(self):
+        wire = _build_http_message(HTTPRequest(
+            method="POST", path="/upload",
+            headers={"Host": "example.com", "Transfer-Encoding": "chunked"},
+            body=b"3\r\nabc\r\n0\r\n\r\n",
+        ))
+        assert b"Content-Length" not in wire
+
+    def test_lowercase_transfer_encoding_suppresses_content_length(self):
+        wire = _build_http_message(HTTPResponse(
+            headers={"transfer-encoding": "chunked"}, body=b"0\r\n\r\n",
+        ))
+        assert b"Content-Length" not in wire
+
+    def test_lowercase_content_length_not_duplicated(self):
+        wire = _build_http_message(HTTPResponse(
+            headers={"content-length": "5"}, body=b"hello",
+        ))
+        assert wire.lower().count(b"content-length") == 1
+
+    def test_mixed_case_content_length_not_duplicated(self):
+        wire = _build_http_message(HTTPResponse(
+            headers={"Content-length": "5"}, body=b"hello",
+        ))
+        assert wire.lower().count(b"content-length") == 1
+
+    def test_caller_header_spelling_is_preserved(self):
+        """Matching is case-insensitive; the caller's own spelling is kept."""
+        wire = _build_http_message(HTTPResponse(
+            headers={"content-length": "5"}, body=b"hello",
+        ))
+        assert b"content-length: 5\r\n" in wire
+
+    def test_chunked_body_written_verbatim(self):
+        """The encoder frames nothing itself: a chunked body passes through."""
+        body = b"4\r\nabcd\r\n0\r\n\r\n"
+        wire = _build_http_message(HTTPResponse(
+            headers={"Transfer-Encoding": "chunked"}, body=body,
+        ))
+        assert wire.endswith(b"\r\n\r\n" + body)
+
+    def test_counted_body_still_gets_content_length(self):
+        """The ordinary case is unchanged."""
+        wire = _build_http_message(HTTPResponse(
+            headers={"Content-Type": "text/plain"}, body=b"hello",
+        ))
+        assert b"Content-Length: 5\r\n" in wire
+
+    def test_chunked_response_roundtrips_through_parser(self):
+        """parse_http does not de-chunk, so the framed body survives intact."""
+        body = b"4\r\nabcd\r\n0\r\n\r\n"
+        msg = parse_http(_build_http_message(HTTPResponse(
+            headers={"Transfer-Encoding": "chunked"}, body=body,
+        )))
+        assert msg.headers["Transfer-Encoding"] == "chunked"
+        assert "Content-Length" not in msg.headers
+        assert msg.body == body
+
+
 class TestHTTPDecodeRoundTrip(unittest.TestCase):
     def _rt_req(self, req: HTTPRequest) -> HTTPRequest:
         return parse_http(_build_http_message(req))  # type: ignore[return-value]

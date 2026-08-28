@@ -66,8 +66,8 @@ from packeteer.generate.pppoe import ETHERTYPE_PPPOE_DISCOVERY, ETHERTYPE_PPPOE_
 from packeteer.generate.pseudowire import ETHERTYPE_PW_CW, PseudowireHeader
 from packeteer.generate.sctp import SCTPHeader
 from packeteer.generate.sll import SLL2Header, SLLHeader
-from packeteer.generate.tcp import TCPHeader
-from packeteer.generate.udp import UDPHeader
+from packeteer.generate.tcp import TCPHeader, _build_tcp_header
+from packeteer.generate.udp import UDPHeader, _build_udp_header
 from packeteer.generate.vxlan import VXLAN_PORT, VXLANHeader
 from packeteer.pcap import (
     LINKTYPE_ETHERNET,
@@ -341,6 +341,13 @@ def _shift_offsets(pkt: ParsedPacket, delta: int) -> None:
     start at zero.  Adding the inner frame's position within the outer one
     makes every offset relative to the outermost frame, at any nesting depth.
 
+    Also clears the inner frame's ``pad`` mark.  Padding to the 60-byte
+    minimum is a property of what went out on the wire, which is the *outer*
+    frame; an encapsulated frame shorter than that is ordinary and is not
+    padded by the sender or by a rebuild.  The Ethernet parser cannot tell the
+    two apart — it is handed a frame and measures it — so the correction
+    belongs here, at the one point that knows a frame was nested.
+
     Args:
         pkt: Packet parsed from the inner frame.
         delta: Offset of that inner frame within the enclosing frame.
@@ -349,6 +356,8 @@ def _shift_offsets(pkt: ParsedPacket, delta: int) -> None:
     while pkt is not None:
         if pkt.payload_offset is not None:
             pkt.payload_offset += delta
+        if pkt.ethernet is not None:
+            pkt.ethernet.pad = True
         pkt = pkt.tunneled
 
 
@@ -739,6 +748,57 @@ def _ip_payload_size(ip_hdr: IPHeader | IPv6Header | None, ip_size: int) -> int 
     return None
 
 
+def _clear_derivable_transport_fields(
+    pkt: ParsedPacket, hdr: object, payload: bytes,
+) -> None:
+    """Drop a captured length or checksum that a rebuild would derive anyway.
+
+    ``TCPHeader.checksum`` and ``UDPHeader.length`` / ``UDPHeader.checksum``
+    are overrides: set, they are written out verbatim; ``None``, they are
+    computed from the bytes beside them.  The parser captures both
+    unconditionally, and this clears whichever the builder would have arrived
+    at on its own.
+
+    What survives is exactly what a rebuild could not work out for itself — a
+    checksum that was wrong on the wire, and the length and checksum of a
+    fragmented datagram's first fragment, which describe the whole datagram
+    rather than the fragment carrying them.  Keeping the fields only in that
+    case is what stops every packet spec growing two redundant keys.
+
+    Does nothing when the IP header is missing or the payload is truncated,
+    since the derived values would then be computed from bytes that are not
+    the ones the sender used.
+    """
+    if not isinstance(hdr, (TCPHeader, UDPHeader)) or pkt.ip is None:
+        return
+    src, dst = pkt.ip.src, pkt.ip.dst
+    version = 6 if isinstance(pkt.ip, IPv6Header) else 4
+
+    if isinstance(hdr, UDPHeader):
+        captured_length, captured_checksum = hdr.length, hdr.checksum
+        hdr.length = hdr.checksum = None
+        if captured_length != 8 + len(payload):
+            hdr.length = captured_length
+        try:
+            derived = _build_udp_header(hdr, payload, src, dst, version)
+        except OSError:
+            hdr.length, hdr.checksum = captured_length, captured_checksum
+            return
+        if captured_checksum != struct.unpack("!H", derived[6:8])[0]:
+            hdr.checksum = captured_checksum
+        return
+
+    captured_checksum = hdr.checksum
+    hdr.checksum = None
+    try:
+        derived = _build_tcp_header(hdr, payload, src, dst, version)
+    except OSError:
+        hdr.checksum = captured_checksum
+        return
+    if captured_checksum != struct.unpack("!H", derived[16:18])[0]:
+        hdr.checksum = captured_checksum
+
+
 def _parse_ip_protocol(
     pkt: ParsedPacket, remaining: bytes, ip_proto: int | None, decode_app: bool = True,
     base: int = 0,
@@ -767,6 +827,7 @@ def _parse_ip_protocol(
         t_size, _, t_hdr = transport_parser(remaining)
         if t_size > 0:
             pkt.transport = t_hdr
+            _clear_derivable_transport_fields(pkt, t_hdr, remaining[t_size:])
             remaining = remaining[t_size:]
             base += t_size
             if _try_parse_vxlan(pkt, remaining, decode_app, base):

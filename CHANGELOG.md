@@ -29,6 +29,295 @@ _Nothing yet._
 
 ---
 
+## [0.9.0] - 2026-08-28
+
+### Added
+
+- **`transport.length` and `transport.checksum` in a packet spec** (#68) — two
+  optional keys that override the derived values, absent from a spec whenever
+  the derived value is what the capture held.
+
+  - `UDPHeader` gains `length` and `checksum`; `TCPHeader` gains `checksum`
+    (TCP has no length field of its own).  `PacketBuilder.udp()` and
+    `.tcp()` take them as keyword arguments.  All default to `None`, meaning
+    derive as before.
+  - `packeteer parse` records them only where a rebuild could not work the
+    value out for itself, so ordinary traffic is unaffected: across the test
+    corpus the keys appear on 59 of 287 packets in `fragmentation.pcap` — its
+    first fragments — on 11 of 218 in `payload_corruption.pcap` — the packets
+    whose checksum was wrong on the wire — and on none at all in the other
+    eleven captures.
+  - An explicit checksum is written out exactly as given, including `0`, so a
+    spec can now express a checksum that was wrong on the wire.  Previously
+    only the byte-level fuzzer could do that.
+
+- **Wire impairments work with `--payload http` and `--payload vpn`** (#83) —
+  every TCP anomaly option was discarded with a warning when a payload type was
+  given, so impaired *application* traffic — the case a protocol decoder is
+  actually tested against — could not be generated at all.  It was reachable
+  only by running `packeteer fuzz` over an existing capture, which mutates
+  rather than generates and needs a capture to start from.
+
+  - `--packet-loss`, `--retransmission-probability`, `--payload-corruption`,
+    `--server-rst` and `--stray-packets` now all apply to `--payload http`, and
+    the warning is gone.
+  - They are applied **per connection**, so a RST cuts one connection short
+    instead of reaching across a capture that `--sessions` and
+    `--requests-per-connection` may have spread over many.
+  - `--payload vpn` is UDP, which splits the options in two.  `--packet-loss`
+    and `--payload-corruption` describe what a wire does to a datagram and now
+    apply there too; `--retransmission-probability`, `--server-rst` and
+    `--stray-packets` describe TCP connection behaviour and are still ignored,
+    but the warning now names only those three instead of all five.
+  - The passes moved to a new `packeteer.generate.impairments` module and are
+    shared by every generator rather than living on one path.
+    `ImpairmentConfig` is public and reachable as
+    `from packeteer.generate import ImpairmentConfig`; the payload generators
+    take one through `HTTPRestConfig.impairments` / `VPNConfig.impairments`.
+  - A damaged segment's label names the message it came from, so
+    `CORRUPT[GET /api/v1/orders [2/5]]` reads as "the second of five segments
+    carrying that request".
+
+- **`--mss` for `packeteer stream --payload http`** (#83) — `mss` was a
+  parameter of `generate_http_stream` that the CLI never passed, so it was
+  stuck at 1460 and unreachable from the command line or a config file.
+
+  It matters most alongside the impairments above.  A generated HTTP message
+  fits inside one 1460-byte segment, so at the default MSS losing a segment
+  loses a whole request or response.  Lower it and a message spans several
+  segments, where loss or corruption leaves a gap *inside* a message a decoder
+  is already part-way through — and after the chunked support below, a chunk
+  boundary can fall across a segment boundary, which is the case a streaming
+  decoder is most likely to get wrong.
+
+- **Chunked responses from `packeteer stream --payload http`** (#82) — every
+  generated response was framed with `Content-Length`; `Transfer-Encoding:
+  chunked` appeared nowhere in the generator, so no combination of options
+  produced one.  Chunked is HTTP/1.1's other framing mechanism and the harder
+  one to implement — the body's extent is not in a header, it is discovered by
+  walking hex size lines — so a decoder that reads counted bodies correctly can
+  still be completely wrong about chunked, and a corpus of only counted bodies
+  will not say so.
+
+  - `HTTPRestConfig.chunked_rate` (CLI `--chunked-rate P`) frames that
+    proportion of the responses *with a body* as chunked.  A rate between the
+    extremes puts both framings in one capture, which is what a decoder that
+    has to choose between them needs.
+  - `HTTPRestConfig.chunk_size` (CLI `--min-chunk` / `--max-chunk`) sets the
+    bytes per chunk before the last, defaulting to `(8, 32)`.  The default is
+    deliberately small relative to the generated JSON bodies (~70 bytes) so
+    that bodies split into several chunks: a single-chunk body does not
+    distinguish a decoder that walks the size lines from one that reads to the
+    end.  A range with `min < 1` is rejected, since a zero-size chunk *is* the
+    terminator and would end the body early and silently.
+  - `HTTPRestConfig.trailer_rate` (CLI `--trailer-rate P`) adds a trailer
+    section after the terminating chunk on that proportion of chunked bodies,
+    announced by a `Trailer` header.  Legal per RFC 7230 §4.4 and widely
+    forgotten by decoders.
+  - Request bodies stay counted; the framing knobs apply to responses only.
+
+  Chunked framing depends on the `Content-Length` fix below: without it every
+  generated chunked message would have carried both headers.
+
+- **TCP options on the application-payload paths** (#88) — `TCPSession` passed
+  `None` unconditionally and had no parameter for them, so `--payload http`
+  could never produce a realistic handshake.  It and `render_tcp_session` now
+  take them, matching the low-level path.
+
+- **`--error-rate` exposes the response-error knob on the CLI** (#82) —
+  `HTTPRestConfig.error_rate` has existed since 0.7, but
+  `packeteer stream --payload http` constructed `HTTPRestConfig()` with no
+  arguments, so no HTTP content knob was reachable from the CLI at all.  All
+  five are now settable as flags and as `[stream]` config-file keys, and appear
+  in `--write-config` output.
+
+  Captures generated with the new knobs left at their defaults are
+  byte-identical to captures from previous versions with the same seed: the
+  added random draws are skipped entirely when their rate is zero.
+
+### Changed
+
+- **Breaking: generated TCP handshakes now advertise TCP options** (#88) — a
+  generated SYN carried none at all.  Across the shipped synthetic captures,
+  **0 of 1 314 TCP packets carried any option**, where the one real capture has
+  them on all 13.  Every modern stack advertises at least a Maximum Segment
+  Size, so a bare 20-byte header is the most conspicuous mark of generated
+  traffic in a TCP capture — and packeteer exists to feed tools that read
+  captures.
+
+  `TCPStreamConfig.client_options` / `server_options` and the new
+  `HTTPRestConfig.syn_options` now default to
+  `packeteer.generate.tcp.default_syn_options()`: MSS, SACK permitted and a
+  window scale.  `--no-tcp-options` (config key `no_tcp_options`), or passing
+  `None`, restores a bare SYN.
+
+  **Captures generated with the defaults differ from previous versions for the
+  same seed**, on every TCP-carrying generator.  This is the widest behaviour
+  change in the release; pass `--no-tcp-options` to reproduce the old bytes.
+
+  Timestamps are deliberately not advertised: only the handshake carries
+  options, and a connection that negotiates timestamps carries one on every
+  segment, so advertising them without sending them would trade one
+  implausibility for another.  Carrying them properly is #90.
+
+
+### Fixed
+
+- **Packet loss no longer leaves acknowledgements for segments that were never
+  delivered** (#85) — loss was applied to each packet independently, after the
+  whole conversation had been assembled, so a capture could acknowledge a
+  segment it did not contain.  A lost packet is lost *on the wire*: neither the
+  capture point nor the far end sees it, and a receiver cannot acknowledge what
+  it never got.
+
+  Three things follow, and all three were wrong:
+
+  - **A lost segment triggered an acknowledgement.**  It no longer does — there
+    is nothing at the far end to answer.
+  - **Every later acknowledgement was overstated.**  Acknowledgements are
+    cumulative, so with a segment missing, the ones after it claimed bytes that
+    never arrived.  The receiver's acknowledgement number now stops advancing
+    at the gap, so the segments after it are answered with **duplicate ACKs** —
+    the signal an analyser looks for around a loss event, and one packeteer
+    could not previously produce.
+  - **Losing a SYN produced an impossible capture**, in which the peers had
+    never learnt each other's initial sequence numbers yet went on exchanging
+    data with an acknowledgement number of zero.  The SYNs are now exempt from
+    loss.  Modelling the real outcome — a connection that never establishes —
+    needs setup retransmission the generator does not have.
+
+  By default nothing retransmits, so a lost segment leaves a permanent hole in
+  the byte range — the harsher input to test a decoder against.
+  `--retransmit-lost` (`ImpairmentConfig.retransmit_lost`) resends it after the
+  retransmission timeout instead, and the acknowledgement that follows jumps
+  forward over everything the receiver had been holding, which is what recovery
+  looks like on the wire.  It is a separate knob from
+  `--retransmission-probability`, which duplicates a segment that *did* arrive:
+  one models recovery, the other a spurious retransmission, and a capture can
+  carry both.
+
+  **`--packet-loss` therefore produces different captures for a given seed.**
+  Every other option is unaffected — verified across 112 seed and option
+  combinations, of which the 32 involving loss moved and the other 80 did not.
+
+- **TCP option padding is placed where senders put it** (#88) — NOP padding was
+  appended after every option; a sender puts it *ahead* of an option whose
+  32-bit fields need aligning, which is the layout RFC 7323 §A.2 recommends for
+  Timestamps and what real stacks emit.
+
+  This also makes #87's replay rarer: with the padding in the right place the
+  encoder reproduces the common layout on its own, so `options.raw` stops
+  appearing on ordinary traffic.  Across the one real capture in the test
+  corpus it went from 13 of 13 packets to none.
+
+- **A capture's TCP option layout survives a round trip** (#87) — the option
+  region was re-encoded in a canonical order with NOP padding appended, while
+  senders put the padding ahead of the option it aligns.  The rebuilt region
+  decoded to identical values, so nothing downstream of a parse noticed, but
+  the bytes differed:
+
+  ```
+  captured: 0101080a21c6e61e65f1e0d5     NOP, NOP, Timestamps
+  rebuilt : 080a21c6e61e65f1e0d50101     Timestamps, then NOP, NOP
+  ```
+
+  This was documented behaviour rather than an oversight, and no canonical
+  order could have fixed it — Linux and macOS lay out a SYN's options
+  differently, so matching one breaks the other.  `parse` now records the
+  region as captured in `transport.options.raw` when re-encoding would not
+  reproduce it, and `build` writes it verbatim.  `TCPOptions` gains a matching
+  `raw` field, which **takes precedence over the decoded fields**: clear it
+  before editing `mss` or `timestamps` on an instance that has one.
+
+  Ordinary specs are unaffected — the key appears only where the layout is one
+  the encoder does not produce.
+
+  **With #68 and #86, every shipped capture now rebuilds byte-for-byte**,
+  `testcases/*.pcapng` included.  A test asserts it across the whole corpus.
+
+- **Short Ethernet frames keep their captured length through a round trip**
+  (#86) — `packeteer build` pads a frame to the 60-byte Ethernet minimum, and
+  `packeteer parse` recorded nothing about whether the frame it read was
+  padded, so a captured 54-byte frame rebuilt as a 60-byte one.  Every original
+  byte was reproduced correctly and six zeros were appended.
+
+  Padding is added by the network hardware, so a capture taken above the driver
+  never sees it — and the frames it affects are the ordinary TCP control
+  packets, which is most of the short traffic in a typical capture.
+
+  `parse` now writes `"pad": false` in the `ethernet` section when the captured
+  frame was below the minimum, and omits the key otherwise; the build side
+  already honoured it.  A tunnelled inner frame is never marked, since padding
+  describes what went out on the wire.
+
+  **With this and #68, every packet in every shipped `testcases/*.pcap` capture
+  now rebuilds byte-for-byte** — `fragmentation.pcap` 115 → 287 of 287,
+  `no_errors.pcap` 100 → 207 of 207 — and a test asserts it across the whole
+  corpus so it stays that way.
+
+- **A fragmented capture's first fragment now rebuilds byte-for-byte** (#68) —
+  a transport header travels once, in the first fragment, and its length field
+  describes the **whole** datagram rather than the bytes in that fragment.
+  `packeteer build` derived both length and checksum from the bytes it was
+  given, so rebuilding a first fragment produced different values than the
+  capture had: for a 1032-byte UDP datagram fragmented at an MTU of 576, a UDP
+  Length of `552` instead of `1032`, and a checksum over the fragment instead
+  of the datagram.
+
+  The rebuilt fragment was self-consistent but not what was on the wire, so a
+  receiver reassembling the rebuilt capture computed a different datagram and
+  rejected the checksum — a `parse` → edit → `build` cycle over a fragmented
+  capture did not replay as valid traffic.  Later fragments were never
+  affected, since they carry no transport header at all.
+
+  Round-tripping `testcases/fragmentation.pcap` now reproduces 174 of its 287
+  packets byte-for-byte, up from 115 — the 59 first fragments it previously
+  got wrong.  Reassembling first with `--defragment` remains the recommended
+  path when faithful datagrams matter, and is unaffected.
+
+- **`--server-rst` combined with `--packet-loss` kept the wrong
+  acknowledgements** (#83) — when both were used together, the RST pass decided
+  which ACKs to keep by comparing the segment number in an ACK's label against
+  a position in the list of segments that survived loss.  Those two numbers
+  agree only when nothing has been dropped, so with loss the pass discarded
+  acknowledgements for segments that had been delivered before the connection
+  was reset, and kept some that came after it.  An ACK whose own segment was
+  lost was mistaken for part of the teardown.
+
+  Acknowledgements are now cut at the split point by time, which does not
+  depend on any segment numbering.  **Captures generated with both
+  `--server-rst` and `--packet-loss` set will differ from previous versions for
+  the same seed.**  Every other combination, impaired or not, reproduces
+  byte-for-byte — verified across 112 seed and option combinations.
+
+- **`encode_http_message` no longer adds `Content-Length` beside
+  `Transfer-Encoding`** (#81) — the encoder added the header whenever the body
+  was non-empty and `Content-Length` was absent, without looking at
+  `Transfer-Encoding`.  A caller hand-building a chunked message got both
+  headers, which is the shape RFC 7230 §3.3.3 exists to resolve and the classic
+  request-smuggling construction: two recipients that disagree about which
+  header wins disagree about where the message ends.
+
+  The added value was also wrong on its own terms.  `Content-Length` counts the
+  payload body, but the encoder counted the *encoded* body — chunk sizes,
+  CRLFs and terminator included.  A 4-byte payload framed as
+  `4\r\nabcd\r\n0\r\n\r\n` was announced as 14 bytes, which is the length
+  of nothing a recipient would reconstruct.
+
+  The header is now added only when the message does not already frame itself,
+  making a well-formed chunked message reachable through the encoder for the
+  first time.  The encoder still never chunks a body itself: a caller who sets
+  `Transfer-Encoding: chunked` supplies an already-chunked body.
+
+- **Header names are matched case-insensitively when encoding** (#81) — the
+  guard against overwriting a caller's `Content-Length` was a case-sensitive
+  lookup on a plain dict, so a caller who wrote `content-length` got the header
+  **twice**.  HTTP field names are case-insensitive per RFC 7230 §3.2 and are
+  now treated as such.  The caller's own spelling is preserved on the wire;
+  only the matching changed.
+
+---
+
 ## [0.8.0] - 2026-08-15
 
 ### Added
@@ -1817,6 +2106,7 @@ the exhaustive API reference.
      tagged with names that predate this convention, so only the entries below
      carry compare links. -->
 
-[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/adamkjonsson/packeteer/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/adamkjonsson/packeteer/compare/v0.7...v0.8.0
 [0.7.0]: https://github.com/adamkjonsson/packeteer/compare/v0.6.0...v0.7
