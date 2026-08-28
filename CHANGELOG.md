@@ -57,6 +57,24 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   `True` before the loader can object; that is repaired narrowly, exactly as
   kober repairs it.
 
+- **`packeteer.protospec.expr` — the expression language** (#106) — field
+  references, integer arithmetic, bitwise operators, comparison and boolean
+  operators, with `parse`, `references`, `type_of` and `unparse`.  Nothing
+  consumes it yet; the checker does in #107.
+
+  Four types and no coercion: `int`, `str`, `bytes`, `bool`.  Arithmetic and
+  ordering are integer-only, equality needs both sides to be the same type,
+  and `and` / `or` / `not` need booleans — there is no truthiness, and the
+  error says so.  `/` floors, and a float literal is refused rather than
+  truncated.
+
+  The parser is Python's `ast.parse` in expression mode against a whitelist,
+  so "no calls, no loops, no indexing" holds by construction — and a refused
+  construct is named the way a spec author would say it (*a comprehension is
+  not allowed in an expression*) rather than by leaking an AST class.  A
+  function call is reported as **not supported yet**, naming it, since kober
+  has a closed table of three and a spec written for kober may use one.
+
 ---
 
 ## [0.10.0] - 2026-08-28
