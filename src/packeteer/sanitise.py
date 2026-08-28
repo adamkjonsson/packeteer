@@ -51,6 +51,8 @@ import warnings
 from dataclasses import dataclass, field
 from typing import Any
 
+from packeteer import protocols
+
 __all__ = ["sanitise", "SanitiseOptions", "PersonalDataWarning"]
 
 
@@ -561,13 +563,16 @@ def _sanitise_payloads(pkt: dict, opts: SanitiseOptions) -> None:
 
 
 def _sanitise_app_layers(pkt: dict, r: _Replacer, opts: SanitiseOptions) -> None:
-    """Sanitise DNS, DHCP, and HTTP sections of *pkt* in-place."""
-    if "dns" in pkt:
-        _sanitise_dns(pkt["dns"], r, opts)
-    if "dhcp" in pkt:
-        _sanitise_dhcp(pkt["dhcp"], r, opts)
-    if "http" in pkt:
-        _sanitise_http(pkt["http"], opts)
+    """Redact each registered protocol's section of *pkt* in-place.
+
+    A protocol registered without a
+    :attr:`~packeteer.protocols.AppProtocol.sanitise` callable is skipped, and
+    its section passes through untouched — which is why the registry treats
+    that as a deliberate choice rather than a default worth having.
+    """
+    for proto in protocols.registered():
+        if proto.sanitise is not None and proto.name in pkt:
+            proto.sanitise(pkt[proto.name], r, opts)
 
 
 def _maybe_scan_pii(pkt: dict, packet_num: int) -> None:
@@ -666,6 +671,17 @@ def sanitise(
 
     if options is None:
         options = SanitiseOptions()
+
+    # Imported here rather than at module level, and this is load-bearing.
+    # packeteer.app pulls in packeteer.generate, which this module otherwise
+    # does not need — it is stdlib-only and works on spec dicts.  But importing
+    # it is also what registers DNS, DHCP and HTTP, so without this call a
+    # caller who imported only packeteer.sanitise would find an empty registry
+    # and silently redact no application sections at all.  See the isolation
+    # test in src/tests/test_sanitise_registry.py.
+    from packeteer.app import register_builtins
+
+    register_builtins()
 
     result = copy.deepcopy(config)
     r = _Replacer()

@@ -98,6 +98,15 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   spec with two was always a mistake; it now fails naming both sections.
   Callers with such a spec should delete the section they did not mean.
 
+- **`sanitise` redacts every registered protocol's section** (#101) — it
+  looped over `dns`, `dhcp` and `http` by name, so a registered protocol's
+  section passed through untouched.  It now calls each registered protocol's
+  own `sanitise` callable.  A protocol registered without one is still skipped
+  and its section still passes through: that is a deliberate choice by whoever
+  registered it, and the one worth knowing about, since for `sanitise`
+  specifically a protocol nobody taught it about is a leak rather than a
+  missing feature.
+
 ---
 
 ## [0.9.1] - 2026-08-28
