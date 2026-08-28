@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from packeteer.app import register_builtins
 from packeteer.filter import PacketFilter
 
 from .arp import packet_parser as arp_packet_parser
@@ -39,6 +40,11 @@ from .to_config import apply_tunneled, to_json_string, to_packet_spec, update_co
 from .udp import packet_parser as udp_packet_parser
 from .vlan import packet_parser as vlan_packet_parser
 from .vxlan import packet_parser as vxlan_packet_parser
+
+# DNS, DHCP and HTTP have to be in the registry before anything parses a
+# packet.  Importing packeteer.app is what registers them; the call is what
+# says so, and is a no-op when they already are.
+register_builtins()
 
 __all__ = [
     "iter_packets",

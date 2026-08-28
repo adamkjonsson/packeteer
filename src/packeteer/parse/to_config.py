@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING, Any, Callable
 if TYPE_CHECKING:
     from .core import ParsedPacket
 
+from packeteer import protocols
 from packeteer.generate.arp import ARP_HW_ETHERNET, ARPHeader
 from packeteer.generate.dhcp import (
     DHCP_OPT_CLIENT_ID,
@@ -91,7 +92,7 @@ from packeteer.generate.ethernet import ETHERTYPE_IPV4, EthernetHeader
 from packeteer.generate.geneve import GeneveHeader
 from packeteer.generate.gre import GREHeader
 from packeteer.generate.gtpu import GTPU_MSG_G_PDU, GTPUHeader
-from packeteer.generate.http import HTTPMessage, HTTPRequest, HTTPResponse
+from packeteer.generate.http import HTTPMessage, HTTPRequest
 from packeteer.generate.icmp import ICMPHeader
 from packeteer.generate.icmpv6 import ICMPv6Header
 from packeteer.generate.ip import IPHeader
@@ -812,7 +813,10 @@ def update_config(
         EthernetHeader | SLLHeader | SLL2Header | ARPHeader | PPPoEHeader
         | MPLSLabel | IPHeader | IPv6Header
         | TCPHeader | UDPHeader | ICMPHeader | ICMPv6Header | SCTPHeader
-        | DNSMessage | DHCPMessage | HTTPMessage | bytes  # type: ignore[valid-type]
+        # Plus the message type of any registered protocol, which cannot be
+        # named here — DNSMessage, DHCPMessage and HTTPRequest/HTTPResponse
+        # arrive that way too.
+        | object
     ),
 ) -> dict[str, Any]:
     """Add a parsed protocol layer to *config* and return it.
@@ -836,10 +840,12 @@ def update_config(
     - :class:`~packeteer.generate.udp.UDPHeader` → ``transport`` section (UDP fields)
     - :class:`~packeteer.generate.icmp.ICMPHeader` /
       :class:`~packeteer.generate.icmpv6.ICMPv6Header` → ``transport`` section (ICMP fields)
-    - :class:`~packeteer.generate.dns.DNSMessage` → ``dns`` section
-    - :class:`~packeteer.generate.dhcp.DHCPMessage` → ``dhcp`` section
-    - :class:`~packeteer.generate.http.HTTPRequest` /
-      :class:`~packeteer.generate.http.HTTPResponse` → ``http`` section
+    - Any message of a protocol registered with
+      :func:`packeteer.protocols.register` → a section named after that
+      protocol.  This is how :class:`~packeteer.generate.dns.DNSMessage`
+      reaches ``dns``, :class:`~packeteer.generate.dhcp.DHCPMessage` reaches
+      ``dhcp``, and :class:`~packeteer.generate.http.HTTPRequest` /
+      :class:`~packeteer.generate.http.HTTPResponse` reach ``http``.
     - :class:`bytes` → ``payload`` section (encoded as a hex string)
 
     Modifies *config* in-place and returns it so calls can be chained::
@@ -871,16 +877,19 @@ def update_config(
         _apply_ip(config, layer)
     elif isinstance(layer, (TCPHeader, UDPHeader, ICMPHeader, ICMPv6Header, SCTPHeader)):
         _apply_transport(config, layer)
-    elif isinstance(layer, DNSMessage):
-        _apply_dns(config, layer)
-    elif isinstance(layer, DHCPMessage):
-        _apply_dhcp(config, layer)
-    elif isinstance(layer, (HTTPRequest, HTTPResponse)):
-        _apply_http(config, layer)
     elif isinstance(layer, bytes):
         _apply_payload(config, layer)
     else:
-        raise TypeError(f"update_config: unrecognised layer type {type(layer).__name__!r}")
+        # Every header type is handled above, so anything left is either an
+        # application message or nothing we know.  The lookup has to come last:
+        # a header must never be resolvable through the registry, which is what
+        # `register` refusing a claimed message type keeps true.
+        proto = protocols.for_message(layer)
+        if proto is None:
+            raise TypeError(
+                f"update_config: unrecognised layer type {type(layer).__name__!r}"
+            )
+        config[proto.name] = proto.to_spec(layer)
     return config
 
 

@@ -5,7 +5,7 @@ task-oriented chapters.  Each chapter shows how to accomplish a common goal
 without exhaustive parameter lists — those live in {doc}`../api/index` and
 {doc}`../packet-spec/format`.
 
-All public names are importable from six top-level packages:
+All public names are importable from seven top-level packages:
 
 | Package | What it contains |
 |---------|-----------------|
@@ -15,6 +15,7 @@ All public names are importable from six top-level packages:
 | `packeteer.sanitise` | `sanitise`, `SanitiseOptions` |
 | `packeteer.fuzz` | `fuzz`, `fuzz_bytes`, `FuzzOptions`, `FuzzVariant` |
 | `packeteer.pcap` | `write_pcap`, `write_pcapng`, `read_pcap`, `open_pcap`, link-type constants |
+| `packeteer.protocols` | `AppProtocol`, `register`, `registered` — see {doc}`adding-a-protocol` |
 
 ```{toctree}
 :maxdepth: 1
@@ -26,4 +27,5 @@ sanitising
 generating
 pcap
 fuzzing
+adding-a-protocol
 ```

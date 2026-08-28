@@ -41,6 +41,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
+from packeteer import protocols
 from packeteer.filter import PacketFilter
 from packeteer.generate.arp import ARPHeader
 from packeteer.generate.dhcp import DHCPMessage
@@ -84,8 +85,6 @@ from packeteer.pcap import (
 
 from .arp import packet_parser as _arp_parser
 from .defragment import Defragmenter, IncompleteDatagram
-from .dns import parse_dns_tcp as _parse_dns_tcp
-from .dns import parse_dns_udp as _parse_dns_udp
 from .etherip import packet_parser as _etherip_parser
 from .ethernet import packet_parser as _ethernet_parser
 from .geneve import packet_parser as _geneve_parser
@@ -253,6 +252,33 @@ class ParsedPacket:
         http: Parsed HTTP/1.x request or response when the transport is TCP
             on port 80 or 8080, otherwise ``None``.  On parse failure the
             raw bytes remain in :attr:`payload` and this field is ``None``.
+        app: The decoded application-layer message, whichever protocol
+            produced it — including the three above, which are also set.  A
+            protocol registered with :func:`packeteer.protocols.register`
+            lands here and nowhere else.  ``None`` when no registered protocol
+            claimed the transport ports, when the one that did rejected the
+            bytes, or when ``decode_app`` was ``False``.
+        app_protocol: The :attr:`~packeteer.protocols.AppProtocol.name` of the
+            protocol that decoded :attr:`app` — also the packet-spec section
+            it is written to — or ``None`` alongside an ``None`` :attr:`app`.
+        datagram_truncated: ``True`` when the IP header declares more payload
+            than the packet holds, as after a capture taken with a snaplen.
+            This is the *datagram* sense of truncation, not the capture's: it
+            is what ``parse`` itself can see, and it is available on every
+            entry point including :func:`parse_packet` on raw bytes.  Whether
+            the **capture** was cut is a different question, answered by
+            :attr:`source_records` — ``len(rec.data) < rec.orig_len`` — where
+            those are available.  The two disagree in both directions: a
+            snaplen that cut only link-layer padding past the end of the
+            datagram leaves this ``False``, and an IPv4 header whose
+            ``total_length`` lies sets it with no snaplen involved.
+
+            When it is ``True``, ``transport.length`` and
+            ``transport.checksum`` are cleared rather than recorded, because
+            neither can be checked against bytes that are not in the file —
+            so a cleared checksum means "derivable **or** unknowable", and
+            this is what tells the two apart.  ``False`` for an IPv6 jumbogram
+            (RFC 2675), whose payload length the header does not state.
         payload: Bytes remaining after all parsed headers.
         payload_offset: Index of ``payload[0]`` within the frame passed to
             :func:`parse_packet`, or ``None`` when :attr:`payload` is empty.
@@ -299,8 +325,11 @@ class ParsedPacket:
     dns:       DNSMessage | None = None
     dhcp:      DHCPMessage | None = None
     http:      HTTPMessage | None = None  # type: ignore[valid-type]
+    app:          object | None = None
+    app_protocol: str | None = None
     payload:   bytes = field(default=b"")
     payload_offset: int | None = None
+    datagram_truncated: bool = False
     ts_sec:    int = 0
     ts_frac:   int = 0
     tick_hz:   int = _US_PER_SECOND
@@ -489,74 +518,50 @@ def _parse_pppoe_and_mpls(
 _IPV6_FIXED_HEADER_LEN: int = 40
 
 
-_DNS_PORTS:  frozenset[int] = frozenset({53, 5353})
-_DHCP_PORTS: frozenset[int] = frozenset({67, 68})
-_HTTP_PORTS: frozenset[int] = frozenset({80, 8080})
+# ParsedPacket.dns / .dhcp / .http predate the registry and remain part of the
+# public API, so a built-in lands on its own attribute as well as on .app.
+# Nothing else does; drop this at 1.0.
+_LEGACY_APP_ATTRS: frozenset[str] = frozenset({"dns", "dhcp", "http"})
 
 
-def _try_parse_dns(pkt: ParsedPacket, payload: bytes) -> bytes:
-    """Attempt to decode *payload* as DNS/mDNS if the transport port is 53 or 5353.
+def _try_parse_app(pkt: ParsedPacket, payload: bytes) -> bytes:
+    """Attempt to decode *payload* as whichever protocol claims the port.
 
-    On success, sets ``pkt.dns`` and returns ``b""``.
-    On failure (wrong port or parse error), returns *payload* unchanged.
+    Looks the transport ports up in :mod:`packeteer.protocols`, destination
+    first.  On success sets :attr:`ParsedPacket.app` and
+    :attr:`ParsedPacket.app_protocol` — and, for a built-in, the attribute
+    named after it — then returns ``b""`` because the payload has been
+    consumed.
+
+    A port claim is a weak signal, so a decoder that rejects the bytes is not
+    an error: the payload is returned unchanged and stays an opaque payload.
+    That is what makes it safe for a caller to claim a port someone else uses.
+
+    Args:
+        pkt: Packet to fill in.  Its transport header supplies the ports.
+        payload: Bytes after the transport header.
+
+    Returns:
+        ``b""`` when a protocol decoded *payload*, otherwise *payload*.
+
     """
     t = pkt.transport
-    if t is None or not isinstance(t, (TCPHeader, UDPHeader)):
+    if not isinstance(t, (TCPHeader, UDPHeader)) or not payload:
         return payload
-    if t.src_port not in _DNS_PORTS and t.dst_port not in _DNS_PORTS:
-        return payload
-    if not payload:
+    transport = "tcp" if isinstance(t, TCPHeader) else "udp"
+    proto = (protocols.for_port(t.dst_port, transport)
+             or protocols.for_port(t.src_port, transport))
+    if proto is None:
         return payload
     try:
-        if isinstance(t, TCPHeader):
-            pkt.dns = _parse_dns_tcp(payload)
-        else:
-            pkt.dns = _parse_dns_udp(payload)
-        return b""
+        message = proto.decode(payload, transport)
     except (ValueError, struct.error):
         return payload
-
-
-def _try_parse_dhcp(pkt: ParsedPacket, payload: bytes) -> bytes:
-    """Attempt to decode *payload* as DHCP if the transport is UDP on port 67/68.
-
-    On success, sets ``pkt.dhcp`` and returns ``b""``.
-    On failure (wrong port/protocol or parse error), returns *payload* unchanged.
-    """
-    t = pkt.transport
-    if not isinstance(t, UDPHeader):
-        return payload
-    if t.src_port not in _DHCP_PORTS and t.dst_port not in _DHCP_PORTS:
-        return payload
-    if not payload:
-        return payload
-    try:
-        from .dhcp import parse_dhcp
-        pkt.dhcp = parse_dhcp(payload)
-        return b""
-    except (ValueError, struct.error):
-        return payload
-
-
-def _try_parse_http(pkt: ParsedPacket, payload: bytes) -> bytes:
-    """Attempt to decode *payload* as HTTP if the transport is TCP on port 80/8080.
-
-    On success, sets ``pkt.http`` and returns ``b""``.
-    On failure (wrong port/protocol or parse error), returns *payload* unchanged.
-    """
-    t = pkt.transport
-    if not isinstance(t, TCPHeader):
-        return payload
-    if t.src_port not in _HTTP_PORTS and t.dst_port not in _HTTP_PORTS:
-        return payload
-    if not payload:
-        return payload
-    try:
-        from .http import parse_http
-        pkt.http = parse_http(payload)
-        return b""
-    except (ValueError, UnicodeDecodeError):
-        return payload
+    pkt.app = message
+    pkt.app_protocol = proto.name
+    if proto.name in _LEGACY_APP_ATTRS:
+        setattr(pkt, proto.name, message)
+    return b""
 
 
 def _try_parse_vxlan(
@@ -865,9 +870,7 @@ def _parse_ip_protocol(
             if gtpu_result is not None:
                 return gtpu_result
             if decode_app:
-                remaining = _try_parse_dns(pkt, remaining)
-                remaining = _try_parse_dhcp(pkt, remaining)
-                remaining = _try_parse_http(pkt, remaining)
+                remaining = _try_parse_app(pkt, remaining)
     elif ip_proto in (4, 41):
         pkt.ipip = True
         inner = parse_packet(remaining, link_type=LINKTYPE_RAW, decode_app=decode_app)
@@ -1052,6 +1055,7 @@ def parse_packet(
     # captured byte instead.
     declared = _ip_payload_size(ip_hdr, ip_size)
     truncated = declared is not None and declared > len(remaining)
+    pkt.datagram_truncated = truncated
     if declared is not None and declared < len(remaining):
         remaining = remaining[:declared]
 
@@ -1137,12 +1141,8 @@ def _packet_to_spec(pkt: ParsedPacket) -> dict[str, Any]:
         apply_tunneled(cfg, pkt)
     elif pkt.transport is not None:
         update_config(cfg, pkt.transport)
-        if pkt.dns is not None:
-            update_config(cfg, pkt.dns)
-        elif pkt.dhcp is not None:
-            update_config(cfg, pkt.dhcp)
-        elif pkt.http is not None:
-            update_config(cfg, pkt.http)
+        if pkt.app is not None:
+            update_config(cfg, pkt.app)
         elif pkt.payload:
             update_config(cfg, pkt.payload)
     elif pkt.payload:
@@ -1255,6 +1255,10 @@ def parse_pcap_file(
                 "timestamp_s": pkt.ts_sec,
                 ts_frac_key: pkt.ts_frac * spec_hz // tick_hz,
             }
+            if pkt.datagram_truncated:
+                # Only when set: absent means whole, which is the common case
+                # and not worth a key on every packet.
+                cfg["packet_metadata"]["truncated"] = True
             if packet_filter is None or packet_filter.matches(cfg):
                 packet_configs.append(cfg)
 

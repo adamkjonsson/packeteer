@@ -23,6 +23,12 @@ to the packet spec dict format.
 {class}`~packeteer.sanitise.SanitiseOptions` for stripping sensitive data from a config
 before sharing or archiving.
 
+**`packeteer.protocols`** is the registry of application-layer protocols —
+{class}`~packeteer.protocols.AppProtocol` and
+{func}`~packeteer.protocols.register`.  DNS, DHCP and HTTP are entries in it,
+and a caller's own protocol registered there is decoded, built, serialised and
+redacted on the same footing.
+
 **`packeteer.fuzz`** provides {func}`~packeteer.fuzz.fuzz` and
 {func}`~packeteer.fuzz.fuzz_bytes` for generating adversarial packet variants, controlled
 by {class}`~packeteer.fuzz.FuzzOptions`.
@@ -39,4 +45,5 @@ parser
 fragmentation
 sanitiser
 fuzzer
+protocols
 ```

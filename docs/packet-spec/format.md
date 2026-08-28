@@ -25,6 +25,13 @@ object per packet, and a mandatory top-level `metadata` block.
 All packets in a multi-packet file must use the same link-layer type: either
 all with `ethernet` or all with `ethernet.enabled: false`.
 
+Every `##` heading below is a **reserved** section name: it describes how a
+packet is structured, and
+{func}`packeteer.protocols.register` refuses a protocol that asks for one.  An
+application protocol registered there contributes a section of its own, named
+after it, beside `transport` — `dns`, `dhcp` and `http` are simply the three
+that packeteer registers for you.  See {doc}`../guide/adding-a-protocol`.
+
 ---
 
 (packet-spec-ethernet)=
@@ -721,6 +728,11 @@ meaning; the cost is that a corrupt packet in a truncated capture is
 indistinguishable from a clean one.  Capture without a snaplen when detecting
 corruption is the point.
 
+Which of the two an absent `checksum` means is answered by
+`packet_metadata.truncated`, written whenever the datagram was cut — and by
+{attr}`~packeteer.parse.core.ParsedPacket.datagram_truncated` on the parsed
+packet.
+
 ---
 
 (packet-spec-sctp)=
@@ -1113,6 +1125,7 @@ Always present in configs produced by `packeteer parse` and
 |-------|---------|-------------|
 | `mtu` | — | Fragment the packet so each IP datagram is at most this many bytes — see {doc}`../api/fragmentation` |
 | `packet_num` | — | 1-based position of this packet in the capture file.  Written automatically by `packeteer parse`; used in PII warnings to identify which packets contain a finding.  Ignored by `packeteer build`. |
+| `truncated` | — | `true` when the IP header declares more payload than the capture holds, as after a snaplen.  Written by `packeteer parse` only when set; ignored by `packeteer build`.  It is what distinguishes a `transport.checksum` absent because a rebuild can derive it from one absent because nobody can check it — see [`length` and `checksum`](packet-spec-transport-overrides). |
 | `timestamp_s` | `0` | Capture timestamp — whole seconds |
 | `timestamp_us` | `0` | Microsecond fraction (0–999999); used when `metadata.nanoseconds` is `false` |
 | `timestamp_ns` | `0` | Nanosecond fraction (0–999999999); used when `metadata.nanoseconds` is `true` |

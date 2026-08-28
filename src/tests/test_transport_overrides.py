@@ -284,3 +284,114 @@ class TestFragmentsAreNotTruncated(unittest.TestCase):
             .fragment(mtu=800)
         )
         self.assertEqual(parse_packet(frags[0]).transport.length, 2048 + 8)
+
+
+class TestDatagramTruncated(unittest.TestCase):
+    """The signal that tells a clean checksum from an unknowable one (#94).
+
+    #92 clears `transport.checksum` on a truncated capture, which removed a
+    false positive on every packet but merged "derivable" and "unknowable"
+    into one absent key.  This is what separates them again.
+    """
+
+    def test_set_for_every_transport_and_version_when_truncated(self) -> None:
+        for version in (4, 6):
+            for transport in ("udp", "tcp"):
+                with self.subTest(version=version, transport=transport):
+                    frame = _payload_frame(version, transport)
+                    self.assertTrue(
+                        parse_packet(_snaplen(frame, 100)).datagram_truncated)
+
+    def test_clear_for_the_same_packets_captured_whole(self) -> None:
+        for version in (4, 6):
+            for transport in ("udp", "tcp"):
+                with self.subTest(version=version, transport=transport):
+                    frame = _payload_frame(version, transport)
+                    self.assertFalse(parse_packet(frame).datagram_truncated)
+
+    def test_clear_for_every_fragment(self) -> None:
+        """A fragment carries exactly what its own IP header declares."""
+        for i, frag in enumerate(_fragments()):
+            with self.subTest(fragment=i):
+                self.assertFalse(parse_packet(frag).datagram_truncated)
+
+    def test_a_short_padded_frame_is_not_truncated(self) -> None:
+        """Ethernet padding makes the frame longer than the datagram, not shorter."""
+        frame = (PacketBuilder()
+                 .ethernet(src_mac="00:00:00:00:00:01", dst_mac="00:00:00:00:00:02")
+                 .ip(src="10.0.0.1", dst="10.0.0.2").udp(dst_port=9999)
+                 .payload(data=b"hi").build())
+        self.assertEqual(len(frame), 60)
+        self.assertFalse(parse_packet(frame).datagram_truncated)
+
+    def test_false_for_an_ipv6_jumbogram(self) -> None:
+        """A documented limit: the header states no payload length to compare.
+
+        RFC 2675 encodes a jumbogram as Payload Length ``0`` plus a Jumbo
+        Payload hop-by-hop option, so the two bytes are zeroed here rather
+        than allocating an actual 64 KiB-plus datagram.
+        """
+        from packeteer.generate.ipv6 import JumboPayloadOption
+
+        frame = bytearray(
+            PacketBuilder()
+            .ethernet(src_mac="00:00:00:00:00:01", dst_mac="00:00:00:00:00:02")
+            .ip(src="2001:db8::1", dst="2001:db8::2")
+            .hop_by_hop_options([JumboPayloadOption(jumbo_length=70000)])
+            .udp(dst_port=9999).payload(data=b"A" * 200).build()
+        )
+        frame[14 + 4:14 + 6] = b"\x00\x00"          # IPv6 Payload Length
+        pkt = parse_packet(_snaplen(bytes(frame), 100))
+        self.assertIsNotNone(pkt.ip)
+        self.assertFalse(pkt.datagram_truncated)
+
+    def test_the_inner_packet_of_a_tunnel_answers_for_itself(self) -> None:
+        frame = (PacketBuilder()
+                 .ethernet(src_mac="00:00:00:00:00:01", dst_mac="00:00:00:00:00:02")
+                 .ip(src="10.0.0.1", dst="10.0.0.2")
+                 .ip(src="192.168.1.1", dst="192.168.1.2")
+                 .udp(dst_port=9999).payload(data=b"A" * 200).build())
+        pkt = parse_packet(_snaplen(frame, 100))
+        self.assertTrue(pkt.datagram_truncated)
+        self.assertIsNotNone(pkt.tunneled)
+        self.assertTrue(pkt.tunneled.datagram_truncated)
+
+    def test_a_whole_tunnel_is_clear_at_both_depths(self) -> None:
+        frame = (PacketBuilder()
+                 .ethernet(src_mac="00:00:00:00:00:01", dst_mac="00:00:00:00:00:02")
+                 .ip(src="10.0.0.1", dst="10.0.0.2")
+                 .ip(src="192.168.1.1", dst="192.168.1.2")
+                 .udp(dst_port=9999).payload(data=b"A" * 200).build())
+        pkt = parse_packet(frame)
+        self.assertFalse(pkt.datagram_truncated)
+        self.assertFalse(pkt.tunneled.datagram_truncated)
+
+
+class TestTruncatedReachesTheSpec(unittest.TestCase):
+    """Without a marker, `packeteer parse` output stays ambiguous."""
+
+    def _spec_metadata(self, frame: bytes) -> dict:
+        import io
+        import json
+
+        from packeteer.parse import parse_pcap_file
+        from packeteer.pcap import LINKTYPE_ETHERNET, write_pcap
+
+        buf = io.BytesIO()
+        write_pcap([(frame, 1, 0)], file_object=buf, link_type=LINKTYPE_ETHERNET)
+        buf.seek(0)
+        spec = json.loads(parse_pcap_file(file_object=buf))
+        return spec["packets"][0]["packet_metadata"]
+
+    def test_present_only_when_truncated(self) -> None:
+        frame = _payload_frame(4, "tcp")
+        self.assertNotIn("truncated", self._spec_metadata(frame))
+        # write_pcap records incl_len from the bytes it is given, so a short
+        # frame is a truncated datagram as far as the IP header is concerned.
+        self.assertTrue(self._spec_metadata(_snaplen(frame, 100))["truncated"])
+
+    def test_the_checksum_key_is_absent_either_way(self) -> None:
+        """Which is exactly why the marker is needed to tell them apart."""
+        frame = _payload_frame(4, "tcp")
+        self.assertNotIn("checksum", _spec(frame))
+        self.assertNotIn("checksum", _spec(_snaplen(frame, 100)))

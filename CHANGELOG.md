@@ -29,6 +29,132 @@ _Nothing yet._
 
 ---
 
+## [0.10.0] - 2026-08-28
+
+### Added
+
+- **`packeteer.protocols` — a registry for application-layer protocols**
+  (#96) — `AppProtocol` is the contract an application protocol satisfies:
+  the ports and transport that identify it, the message types it decodes to,
+  and callables for `decode`, `encode`, `to_spec`, `from_spec` and an optional
+  `sanitise`.  `register`, `unregister`, `registered`, `for_port`,
+  `for_section` and `for_message` are the registry around it.
+
+  A protocol's `name` doubles as its packet-spec section key, so registering
+  one makes `parse` emit a section named after it and `build` read it back.
+  `register` refuses a name that collides with a structural packet-spec key,
+  a name, port or message type already claimed, or an unrecognised `over`
+  value, naming what collided in each case.
+
+  Nothing dispatches through the registry yet — DNS, DHCP and HTTP keep their
+  existing hardwired paths until #98 onwards.
+
+- **`packeteer.app` — DNS, DHCP and HTTP as registry entries** (#97) — each
+  assembles one `AppProtocol` from the encoder in `packeteer.generate` and the
+  decoder in `packeteer.parse`, and owns the packet-spec mapping in both
+  directions: `packeteer.app.dns.to_spec` / `from_spec`, and the same for
+  `dhcp` and `http`.
+
+  `from_spec` **moved out of `packeteer.__main__`**, where a caller holding a
+  packet spec could not reach it without importing the CLI.  The three
+  `_build_*_from_spec` helpers are gone from the CLI, which now calls the
+  public functions.
+
+  Importing `packeteer.parse` or `packeteer.app` registers the three.
+  `packeteer.generate` deliberately does not import `packeteer.app` — the
+  modules there import `packeteer.generate.*`, so the reverse would be a
+  cycle — and importing it alone therefore leaves the registry empty.
+
+  Still nothing dispatched through the registry when this landed; the parser
+  started doing so in #98.
+
+- **`ParsedPacket.app` and `.app_protocol`** (#98) — the decoded
+  application-layer message and the name of the protocol that produced it.
+  Any registered protocol lands here; `dns`, `dhcp` and `http` are set in
+  addition, and remain part of the public API.
+
+### Changed
+
+- **Application decode goes through the registry** (#98) — `parse` looks the
+  transport ports up in `packeteer.protocols` instead of trying DNS, then
+  DHCP, then HTTP in turn, so a registered protocol is decoded on the same
+  footing as a built-in.  The destination port is consulted before the source
+  port, and a decoder that rejects the bytes leaves them in `payload` as
+  before.  No built-in changes behaviour: their ports do not overlap, so the
+  single lookup resolves exactly as the three attempts did.
+
+- **A parsed application message reaches the packet spec through the registry**
+  (#99) — `update_config` resolves the message type against
+  `packeteer.protocols` instead of testing for `DNSMessage`, `DHCPMessage` and
+  `HTTPRequest`/`HTTPResponse` by name, and writes the section named after
+  whichever protocol owns it.  Header types are still matched first, and an
+  unrecognised object still raises `TypeError`.  With #98 this completes the
+  path from capture to spec for a registered protocol: `packeteer parse` now
+  emits a section for one.
+
+- **A packet spec's application section is built through the registry** (#100)
+  — `packeteer.app.apply_app_section` replaces the `dns`/`dhcp`/`http` ladder
+  that the CLI carried twice, so `packeteer build` constructs a registered
+  protocol's payload the same way it constructs a built-in's.  With #99 this
+  closes the `parse` → edit → `build` round trip for a registered protocol.
+
+- **Breaking: a packet spec carrying two application sections is now an
+  error.**  Previously the first of `dns`, `dhcp`, `http` present was used and
+  the others ignored silently.  A packet has one application payload, so a
+  spec with two was always a mistake; it now fails naming both sections.
+  Callers with such a spec should delete the section they did not mean.
+
+- **`sanitise` redacts every registered protocol's section** (#101) — it
+  looped over `dns`, `dhcp` and `http` by name, so a registered protocol's
+  section passed through untouched.  It now calls each registered protocol's
+  own `sanitise` callable.  A protocol registered without one is still skipped
+  and its section still passes through: that is a deliberate choice by whoever
+  registered it, and the one worth knowing about, since for `sanitise`
+  specifically a protocol nobody taught it about is a leak rather than a
+  missing feature.
+
+- **`PacketBuilder.app`** (#102) — the generic form of `dns`, `dhcp` and
+  `http`: it resolves the message type against the registry and encodes it
+  with whichever protocol owns it.  The transport comes from the layer stack —
+  the last `tcp()` or `udp()` call — which is what lets DNS decide about its
+  length prefix without a `tcp=` keyword.  `dns`, `dhcp` and `http` are
+  unchanged and keep their own signatures.
+
+- **`ParsedPacket.datagram_truncated` and `packet_metadata.truncated`** (#94)
+  — `true` when the IP header declares more payload than the packet holds, as
+  after a capture taken with a snaplen.
+
+  This is what 0.9.1 left missing.  Clearing `transport.checksum` on a
+  truncated capture (#92) removed a false positive on every packet, but it
+  merged two outcomes: an absent `checksum` came to mean "a rebuild can derive
+  it" **or** "nobody can check it".  The flag separates them, and the spec
+  marker carries the same answer through `packeteer parse` output.
+
+  It is the *datagram* sense of truncation, not the capture's — what `parse`
+  itself can see, available on every entry point including `parse_packet` on
+  raw bytes.  Whether the **capture** was cut is a different question,
+  answered by `ParsedPacket.source_records` where those exist.  The two
+  disagree in both directions: a snaplen that cut only link-layer padding past
+  the end of the datagram leaves this `false`, and an IPv4 header whose
+  `total_length` lies sets it with no snaplen involved.  `false` for an IPv6
+  jumbogram (RFC 2675), whose header states no payload length to compare.
+
+### Documentation
+
+- **A guide to adding an application protocol** (#103) — the `AppProtocol`
+  contract, a worked example from message class to registered protocol, and
+  what you get once it is registered: `parse` decodes it, the packet spec
+  carries a section named after it, `build` reconstructs it, and `sanitise`
+  redacts it.  Also covers replacing a built-in, and the limits — one message
+  per packet payload, one application section per spec, and ports as the only
+  trigger.
+- The packet-spec format reference now says that its `##` headings are
+  reserved names and that a registered protocol contributes a section of its
+  own, and the API reference documents `packeteer.protocols` and
+  `packeteer.app`.
+
+---
+
 ## [0.9.1] - 2026-08-28
 
 ### Fixed
@@ -2127,7 +2253,8 @@ the exhaustive API reference.
      tagged with names that predate this convention, so only the entries below
      carry compare links. -->
 
-[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/adamkjonsson/packeteer/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/adamkjonsson/packeteer/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/adamkjonsson/packeteer/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/adamkjonsson/packeteer/compare/v0.7...v0.8.0
