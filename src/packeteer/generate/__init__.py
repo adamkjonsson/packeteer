@@ -516,6 +516,7 @@ from .tcp import (
     TCP_URG,
     TCPHeader,
     TCPOptions,
+    default_syn_options,
 )
 from .tcp_stream import TCPStream, TCPStreamConfig, TCPStreamPacket, generate_tcp_stream
 from .udp import UDPHeader
@@ -588,6 +589,7 @@ __all__ = [
     "HBH_OPT_JUMBO_PAYLOAD",
     "TCPHeader",
     "TCPOptions",
+    "default_syn_options",
     "TCP_FIN",
     "TCP_SYN",
     "TCP_RST",

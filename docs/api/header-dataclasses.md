@@ -320,6 +320,14 @@ Hop-by-Hop constants:
    :members:
 ```
 
+The stream generators put a plausible option set on the handshake by default,
+since a SYN carrying none at all is the most conspicuous mark of generated
+traffic.  That set comes from:
+
+```{eval-rst}
+.. autofunction:: packeteer.generate.tcp.default_syn_options
+```
+
 TCP flag constants:
 
 | Constant | Value | Description |
