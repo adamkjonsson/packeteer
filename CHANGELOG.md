@@ -149,10 +149,15 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
     loss.  Modelling the real outcome — a connection that never establishes —
     needs setup retransmission the generator does not have.
 
-  Nothing retransmits, so a lost segment still leaves a permanent hole in the
-  byte range.  That is deliberate for now: it is the harsher input to test a
-  decoder against, and giving a lossy stream real recovery is a separate
-  question.
+  By default nothing retransmits, so a lost segment leaves a permanent hole in
+  the byte range — the harsher input to test a decoder against.
+  `--retransmit-lost` (`ImpairmentConfig.retransmit_lost`) resends it after the
+  retransmission timeout instead, and the acknowledgement that follows jumps
+  forward over everything the receiver had been holding, which is what recovery
+  looks like on the wire.  It is a separate knob from
+  `--retransmission-probability`, which duplicates a segment that *did* arrive:
+  one models recovery, the other a spurious retransmission, and a capture can
+  carry both.
 
   **`--packet-loss` therefore produces different captures for a given seed.**
   Every other option is unaffected — verified across 112 seed and option

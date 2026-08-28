@@ -76,6 +76,15 @@ class ImpairmentConfig:
             window.
         stray_payload_range: ``(min, max)`` payload size for injected stray
             packets.
+        retransmit_lost: Whether a lost segment is retransmitted after
+            *retransmission_timeout* and delivered, so the connection recovers
+            the way a real one does.  Defaults to ``False``, which leaves a
+            permanent hole in the byte range — the harsher input, and the one
+            a decoder is least likely to survive.
+
+            Distinct from *retransmission_probability*, which duplicates a
+            segment that **did** arrive.  One models recovery, the other models
+            a spurious retransmission; a capture can contain both.
 
     """
 
@@ -88,6 +97,7 @@ class ImpairmentConfig:
     stray_packet_count: int = 0
     stray_timing_window: int | None = None
     stray_payload_range: tuple[int, int] = (40, 1460)
+    retransmit_lost: bool = False
 
     @property
     def any_post_pass(self) -> bool:
@@ -291,6 +301,122 @@ def apply_datagram_impairments(
                 pkt, raw=bytes(raw), label=_derive_label("CORRUPT", pkt.label),
             )
     return packets
+
+
+# ── Loss recovery ────────────────────────────────────────────────────────────
+
+def _contiguous_ack(
+    packets: list["TCPStreamPacket"], direction: str, upto_usec: int, start: int,
+) -> int:
+    """Return the acknowledgement number for what arrived by *upto_usec*.
+
+    Walks the byte ranges that actually arrived and returns the end of the
+    unbroken run beginning at *start*.  A segment that arrived after a gap
+    counts only once the gap ahead of it is filled — which is what makes a
+    recovering receiver jump forward over everything it had been holding.
+    """
+    ranges = sorted(
+        ((p.seq, (p.seq + p.payload_len) % _WRAP) for p in packets
+         if p.direction == direction and p.payload_len
+         and _pkt_usec(p) <= upto_usec),
+    )
+    edge = start
+    advanced = True
+    while advanced:
+        advanced = False
+        for begin, end in ranges:
+            if begin <= edge < end:
+                edge = end
+                advanced = True
+    return edge
+
+
+def apply_loss_recovery(
+    packets: list["TCPStreamPacket"],
+    lost: list["TCPStreamPacket"],
+    *,
+    config: ImpairmentConfig,
+    flow: FlowEndpoints,
+    make: Callable[..., "TCPStreamPacket"],
+    gap_usec: int,
+) -> list["TCPStreamPacket"]:
+    """Retransmit segments that were lost, and acknowledge what that recovers.
+
+    Appends only; the duplicate ACKs already emitted while the gap was open are
+    part of the record and stay.  Each retransmission is followed by an
+    acknowledgement covering everything contiguous the receiver holds by then,
+    so a receiver that had been repeating itself jumps forward in one step.
+
+    Args:
+        packets: The connection's packets, in emission order.
+        lost: The data segments that were dropped, as they would have been
+            emitted.
+        config: Impairments; ``retransmission_timeout`` sets the delay.
+        flow: The connection's endpoints, for building the acknowledgements.
+        make: Constructor for a new stream packet.
+        gap_usec: Inter-packet gap, used to place an ACK after its segment.
+
+    Returns:
+        The packet list with the retransmissions and their ACKs appended.
+
+    """
+    if not lost:
+        return packets
+
+    rto_usec = int(config.retransmission_timeout * 1_000_000)
+    used_ts = {_pkt_usec(p) for p in packets}
+    out = list(packets)
+
+    # Where each side's byte stream begins, from the SYN it sent.
+    starts = {
+        p.direction: (p.seq + 1) % _WRAP
+        for p in packets if p.flags & TCP_SYN and not (p.flags & TCP_ACK)
+    }
+    for p in packets:
+        if p.flags & TCP_SYN and p.flags & TCP_ACK:
+            starts[p.direction] = (p.seq + 1) % _WRAP
+
+    for pkt in sorted(lost, key=_pkt_usec):
+        rt_usec = _alloc_usec(_pkt_usec(pkt) + rto_usec, used_ts)
+        rt_sec, rt_frac = divmod(rt_usec, 1_000_000)
+        recovered = replace(
+            pkt, ts_sec=rt_sec, ts_usec=rt_frac,
+            label=_derive_label("RETRANS", pkt.label),
+        )
+        out.append(recovered)
+
+        ack_dir = "s2c" if pkt.direction == "c2s" else "c2s"
+        ack_value = _contiguous_ack(
+            out, pkt.direction, rt_usec, starts.get(pkt.direction, pkt.seq),
+        )
+        reference = max(
+            (p for p in out if p.direction == ack_dir and p.flags & TCP_ACK
+             and _pkt_usec(p) <= rt_usec),
+            key=_pkt_usec, default=None,
+        )
+        if reference is None:
+            continue
+        if ack_dir == "s2c":
+            src_ip, src_port, src_mac = flow.server_ip, flow.server_port, flow.server_mac
+            dst_ip, dst_port, dst_mac = flow.client_ip, flow.client_port, flow.client_mac
+        else:
+            src_ip, src_port, src_mac = flow.client_ip, flow.client_port, flow.client_mac
+            dst_ip, dst_port, dst_mac = flow.server_ip, flow.server_port, flow.server_mac
+        src = _TCPEndpoint(ip=src_ip, port=src_port, mac=src_mac,
+                           seq=reference.seq, ack=ack_value, window=flow.window)
+        dst = _TCPEndpoint(ip=dst_ip, port=dst_port, mac=dst_mac,
+                           seq=0, ack=0, window=flow.window)
+        ack_sec, ack_frac = divmod(
+            _alloc_usec(rt_usec + gap_usec, used_ts), 1_000_000,
+        )
+        out.append(make(
+            raw=_build_packet(src, dst, TCP_ACK, b"", flow.include_ethernet,
+                              flow.ip_ttl, None, flow.encap),
+            ts_sec=ack_sec, ts_usec=ack_frac, direction=ack_dir, flags=TCP_ACK,
+            seq=reference.seq, ack=ack_value, payload_len=0,
+            label=_derive_label("ACK-RECOVER", pkt.label),
+        ))
+    return out
 
 
 # ── The passes ───────────────────────────────────────────────────────────────

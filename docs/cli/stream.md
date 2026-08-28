@@ -66,6 +66,7 @@ Silently ignored for `--protocol udp` and `--protocol sctp`.
 | `--window BYTES` | `65535` | TCP receive window size |
 | `--psh-probability PROB` | `0.5` | Probability (0–1) PSH is set on each data segment |
 | `--packet-loss PROB` | `0.0` | Probability a packet is lost on the wire (see below) |
+| `--retransmit-lost` | off | Retransmit a lost segment so the connection recovers |
 | `--retransmission-probability PROB` | `0.0` | Probability each data segment is retransmitted |
 | `--retransmission-timeout SECONDS` | `0.2` | RTO — seconds after send that the retransmit fires |
 | `--payload-corruption PROB` | `0.0` | Probability a segment payload is corrupted |
@@ -170,10 +171,16 @@ Two consequences worth knowing:
   number from them, so losing one would leave every later segment carrying an
   acknowledgement number of zero — a capture that could not have happened.
   Everything after the handshake, teardown included, is subject to loss.
-- **Nothing retransmits.**  A lost segment leaves a permanent hole in the byte
-  range: the stream never recovers, which is the harsher input to test a
-  decoder against.  It is not what a real connection does, which recovers
-  after a timeout.
+- **Nothing retransmits by default.**  A lost segment leaves a permanent hole
+  in the byte range: the stream never recovers, which is the harsher input to
+  test a decoder against.  `--retransmit-lost` turns that off — the segment is
+  resent after `--retransmission-timeout` and delivered, and the
+  acknowledgement that follows jumps forward over everything the receiver had
+  been holding, which is what recovery looks like on the wire.
+
+  Do not confuse it with `--retransmission-probability`, which duplicates a
+  segment that **did** arrive.  One models recovery, the other a spurious
+  retransmission; a capture can contain both.
 
 ### Impairing HTTP traffic
 

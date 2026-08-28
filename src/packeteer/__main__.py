@@ -1366,6 +1366,7 @@ _STREAM_PARAMS: dict[str, tuple[str, object, object]] = {
     "mtu":      ("mtu",                   int,   None),
     "stray_packet_count": ("stray_packet_count",              int,   0),
     "stray_timing_window":("stray_timing_window",             int,   None),
+    "retransmit_lost":    ("retransmit_lost",                  bool,  False),
     "no_ethernet":        ("no_ethernet",                     bool,  False),
     "seed":               ("seed",                            int,   None),
     "pcap":               ("pcap",                            str,   None),
@@ -1721,6 +1722,7 @@ def _impairments_from_args(args: argparse.Namespace) -> ImpairmentConfig | None:
         stray_packet_count=args.stray_packet_count,
         stray_timing_window=args.stray_timing_window,
         stray_payload_range=(args.min_payload, args.max_payload),
+        retransmit_lost=args.retransmit_lost,
     )
     return config if (config.packet_loss_probability or config.any_post_pass) else None
 
@@ -2416,8 +2418,21 @@ def main() -> None:
         "--packet-loss", type=float, default=None, metavar="PROB",
         dest="packet_loss_probability",
         help=(
-            "Probability (0.0-1.0) that any packet is dropped from the capture"
-            " (default: 0.0)"
+            "Probability (0.0-1.0) that a packet is lost on the wire (default: "
+            "0.0). A lost segment is never acknowledged and the receiver's "
+            "acknowledgement number stops advancing, so the segments after it "
+            "draw duplicate ACKs. The SYNs are exempt. Nothing retransmits "
+            "unless --retransmit-lost is given"
+        ),
+    )
+    stream_parser.add_argument(
+        "--retransmit-lost", action="store_true", default=None,
+        help=(
+            "Retransmit a lost segment after --retransmission-timeout so the "
+            "connection recovers, instead of leaving a permanent hole in the "
+            "byte range (default: off). Distinct from "
+            "--retransmission-probability, which duplicates a segment that did "
+            "arrive"
         ),
     )
     stream_parser.add_argument(

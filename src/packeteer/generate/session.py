@@ -47,7 +47,12 @@ from collections.abc import Callable
 from random import Random
 
 from ._stream_common import _alloc_usec
-from .impairments import drop_packet
+from .impairments import (
+    FlowEndpoints,
+    ImpairmentConfig,
+    apply_loss_recovery,
+    drop_packet,
+)
 from .sctp import (
     SCTP_DATA_FLAG_BEGINNING,
     SCTP_DATA_FLAG_ENDING,
@@ -122,7 +127,7 @@ class TCPSession:
         server_isn: int | None = None,
         base_time: float | None = None,
         encap: EncapSpec = None,
-        packet_loss_probability: float = 0.0,
+        impairments: ImpairmentConfig | None = None,
         loss_rng: Random | None = None,
     ) -> None:
         """Initialise a TCP session builder.
@@ -148,14 +153,16 @@ class TCPSession:
             base_time: Unix timestamp for the first packet.  Defaults to
                 the current time.
             encap: Encapsulation layer(s) to wrap every packet in.
-            packet_loss_probability: Probability (0.0–1.0) that a packet is
-                lost on the wire.  A lost segment is never acknowledged and
-                does not advance the receiver's acknowledgement number, so the
-                segments after it are answered with duplicate ACKs.  Defaults
-                to ``0.0``, which draws no randomness at all.
+            impairments: Wire impairments
+                (:class:`~packeteer.generate.impairments.ImpairmentConfig`).
+                Only the two that must be applied as the session is emitted are
+                read here: ``packet_loss_probability``, since a lost segment
+                has to suppress the acknowledgement it would have triggered,
+                and ``retransmit_lost``.  The rest are passes over the finished
+                connection and are applied by the caller.  ``None`` (the
+                default) draws no randomness at all.
             loss_rng: Seeded generator driving the loss draws, so a capture
-                with loss reproduces from its seed.  Required when
-                *packet_loss_probability* is non-zero.
+                with loss reproduces from its seed.
 
         """
         self.client_ip = client_ip
@@ -172,7 +179,7 @@ class TCPSession:
         self.server_isn = server_isn
         self.base_time = base_time
         self.encap = encap
-        self.packet_loss_probability = packet_loss_probability
+        self.impairments = impairments
         self.loss_rng = loss_rng
         self._exchanges: list[tuple[str, bytes, str | None]] = []
 
@@ -270,8 +277,11 @@ class TCPSession:
         )
 
         packets: list[TCPStreamPacket] = []
+        lost_segments: list[TCPStreamPacket] = []
         index = 0
         loss_rng = self.loss_rng if self.loss_rng is not None else random.Random()
+        impairments = self.impairments or ImpairmentConfig()
+        loss_probability = impairments.packet_loss_probability
 
         def emit(
             src: _TCPEndpoint,
@@ -295,7 +305,7 @@ class TCPSession:
             # sequence number from it, so losing one would leave every later
             # segment carrying an acknowledgement number of zero.
             delivered = bool(flags & TCP_SYN) or not drop_packet(
-                loss_rng, self.packet_loss_probability,
+                loss_rng, loss_probability,
             )
             if delivered:
                 # Cumulative: advance only for a segment arriving in order, so
@@ -308,6 +318,15 @@ class TCPSession:
                     raw=raw, ts_sec=ts_sec, ts_usec=ts_usec,
                     direction=direction, flags=flags,
                     seq=seq_before,
+                    ack=ack_before if (flags & TCP_ACK) else 0,
+                    payload_len=len(payload), label=label,
+                ))
+            elif payload:
+                lost_segments.append(TCPStreamPacket(
+                    raw=raw,
+                    ts_sec=(base_usec + index * gap_usec) // 1_000_000,
+                    ts_usec=(base_usec + index * gap_usec) % 1_000_000,
+                    direction=direction, flags=flags, seq=seq_before,
                     ack=ack_before if (flags & TCP_ACK) else 0,
                     payload_len=len(payload), label=label,
                 ))
@@ -351,6 +370,20 @@ class TCPSession:
         emit(server, client, TCP_ACK,           b"", "s2c", "ACK")
         emit(server, client, TCP_FIN | TCP_ACK, b"", "s2c", "FIN-ACK")
         emit(client, server, TCP_ACK,           b"", "c2s", "ACK")
+
+        if impairments.retransmit_lost and lost_segments:
+            packets = apply_loss_recovery(
+                packets, lost_segments, config=impairments,
+                flow=FlowEndpoints(
+                    client_ip=self.client_ip, client_port=self.client_port,
+                    client_mac=self.client_mac, server_ip=self.server_ip,
+                    server_port=self.server_port, server_mac=self.server_mac,
+                    include_ethernet=self.include_ethernet, ip_ttl=self.ip_ttl,
+                    encap=self.encap,
+                ),
+                make=TCPStreamPacket, gap_usec=gap_usec,
+            )
+            packets.sort(key=lambda p: (p.ts_sec, p.ts_usec))
 
         return TCPStream(packets=packets)
 

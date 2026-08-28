@@ -476,14 +476,11 @@ def generate_http_stream(
                 encap=encap,
                 client_isn=rng.randint(0, _WRAP - 1),
                 server_isn=rng.randint(0, _WRAP - 1),
-                # Loss is applied here rather than as a pass over the finished
-                # connection: a lost segment must also suppress the
-                # acknowledgement it would have triggered, which only the emit
-                # loop can do.
-                packet_loss_probability=(
-                    config.impairments.packet_loss_probability
-                    if config.impairments is not None else 0.0
-                ),
+                # Loss and its recovery are applied here rather than as a
+                # pass over the finished connection: a lost segment must also
+                # suppress the acknowledgement it would have triggered, which
+                # only the emit loop can do.
+                impairments=config.impairments,
                 loss_rng=rng,
             )
             if config.impairments is not None:

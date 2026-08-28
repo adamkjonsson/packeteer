@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from random import Random
 from typing import Literal
 
+from ..impairments import ImpairmentConfig
 from ..session import TCPSession, UDPSession
 from ..stream_encap import (  # noqa: F401  (StreamEncap needed for Sphinx type resolution)
     EncapSpec,
@@ -62,7 +63,7 @@ def render_tcp_session(
     encap: EncapSpec = None,
     client_isn: int | None = None,
     server_isn: int | None = None,
-    packet_loss_probability: float = 0.0,
+    impairments: ImpairmentConfig | None = None,
     loss_rng: Random | None = None,
 ) -> TCPStream:
     """Render a conversation onto a TCP connection.
@@ -87,10 +88,13 @@ def render_tcp_session(
         encap: Optional encapsulation layer(s).
         client_isn: Client initial sequence number (random when ``None``).
         server_isn: Server initial sequence number (random when ``None``).
-        packet_loss_probability: Probability (0.0–1.0) that a packet is lost on
-            the wire.  Applied as the session is emitted rather than to the
-            finished list, because a lost segment must also suppress the
-            acknowledgement it would have triggered.
+        impairments: Wire impairments
+            (:class:`~packeteer.generate.impairments.ImpairmentConfig`).  Only
+            the two that must be applied as the session is emitted are used
+            here — packet loss, because a lost segment must also suppress the
+            acknowledgement it would have triggered, and the retransmission
+            that recovers it.  The remaining impairments are passes over the
+            finished connection and belong to the caller.
         loss_rng: Seeded generator driving the loss draws.
 
     Returns:
@@ -104,7 +108,7 @@ def render_tcp_session(
         mss=mss, include_ethernet=include_ethernet, ip_ttl=ip_ttl,
         inter_packet_gap=inter_packet_gap, base_time=base_time, encap=encap,
         client_isn=client_isn, server_isn=server_isn,
-        packet_loss_probability=packet_loss_probability, loss_rng=loss_rng,
+        impairments=impairments, loss_rng=loss_rng,
     )
     for message in messages:
         if message.direction == "c2s":

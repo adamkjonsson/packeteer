@@ -44,6 +44,7 @@ from .impairments import (
     FlowEndpoints,
     ImpairmentConfig,
     apply_impairments,
+    apply_loss_recovery,
     drop_packet,
 )
 from .stream_encap import (  # noqa: F401  (StreamEncap needed for Sphinx type resolution)
@@ -170,6 +171,11 @@ class TCPStreamConfig:
             and the client receiving it.  Defaults to ``0.0``.
         stray_packet_count: Number of forged TCP-hijacking packets to inject.
             Defaults to ``0``.
+        retransmit_lost: Whether a lost segment is retransmitted after
+            *retransmission_timeout* and delivered, so the connection recovers.
+            Defaults to ``False``, leaving a permanent hole in the byte range.
+            Distinct from *retransmission_probability*, which duplicates a
+            segment that did arrive.
         stray_timing_window: When set, constrains stray packet timestamps to
             within *N* positions of the stolen reference packet in the
             timestamp-sorted stream.  ``None`` uses the full data-transfer
@@ -206,6 +212,7 @@ class TCPStreamConfig:
     rst_propagation_delay: float = 0.0
     stray_packet_count: int = 0
     stray_timing_window: int | None = None
+    retransmit_lost: bool = False
     packet_hooks: list[Callable[[TCPStreamPacket, int], TCPStreamPacket | None]] | None = None
     payload_fn: Callable[[int, str], bytes] | None = None
 
@@ -429,6 +436,7 @@ def generate_tcp_stream(
     rst_propagation_delay = config.rst_propagation_delay
     stray_packet_count = config.stray_packet_count
     stray_timing_window = config.stray_timing_window
+    retransmit_lost = config.retransmit_lost
     packet_hooks = config.packet_hooks
     payload_fn = config.payload_fn
     base_time = config.base_time if config.base_time is not None else time.time()
@@ -452,6 +460,7 @@ def generate_tcp_stream(
 
 
     packets: list[TCPStreamPacket] = []
+    lost_segments: list[TCPStreamPacket] = []
     global_index = 0
 
     def emit(
@@ -511,6 +520,8 @@ def generate_tcp_stream(
             if flags & TCP_SYN or seq_before == dst.ack:
                 dst.ack = src.seq
         else:
+            if payload:
+                lost_segments.append(pkt)
             pkt = None
 
         if packet_hooks:
@@ -547,6 +558,23 @@ def generate_tcp_stream(
     emit(server, client, TCP_ACK,           b"", "s2c", "ACK")
     emit(server, client, TCP_FIN | TCP_ACK, b"", "s2c", "FIN-ACK")
     emit(client, server, TCP_ACK,           b"", "c2s", "ACK")
+
+    # ── Loss recovery ────────────────────────────────────────────────────────
+    # Before the passes below, so a recovered segment is a candidate for the
+    # same treatment as any other and the timeline is complete when they run.
+    if retransmit_lost and lost_segments:
+        packets = apply_loss_recovery(
+            packets, lost_segments,
+            config=ImpairmentConfig(retransmission_timeout=retransmission_timeout),
+            flow=FlowEndpoints(
+                client_ip=client_ip, client_port=client_port, client_mac=client_mac,
+                server_ip=server_ip, server_port=server_port, server_mac=server_mac,
+                window=window, include_ethernet=include_ethernet, ip_ttl=ip_ttl,
+                encap=encap,
+            ),
+            make=TCPStreamPacket,
+            gap_usec=gap_usec,
+        )
 
     # ── Wire impairments ─────────────────────────────────────────────────────
     # RST, retransmission, corruption and stray injection, in that order.  The

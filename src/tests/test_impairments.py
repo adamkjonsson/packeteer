@@ -32,6 +32,10 @@ from packeteer.generate.tcp_stream import (
 _BASE_TIME = 1_700_000_000.0
 
 
+def _usec(pkt: TCPStreamPacket) -> int:
+    return pkt.ts_sec * 1_000_000 + pkt.ts_usec
+
+
 def _http(seed: int = 1, requests: int = 8, **over: object) -> CombinedStream:
     """Generate an HTTP stream, with impairment keywords passed through."""
     impairments = ImpairmentConfig(**over) if over else None
@@ -310,6 +314,82 @@ class TestLossSemantics(unittest.TestCase):
 
     def test_payload_path_zero_loss_is_untouched(self) -> None:
         self.assertEqual(_raws(_http(packet_loss_probability=0.0)), _raws(_http()))
+
+
+class TestLossRecovery(unittest.TestCase):
+    """A lost segment can be retransmitted so the connection recovers (#85)."""
+
+    @staticmethod
+    def _stream(seed: int, recover: bool, loss: float = 0.25) -> TCPStream:
+        return generate_tcp_stream(
+            client_ip="10.0.0.1", server_ip="10.0.0.2", server_port=443,
+            num_data_packets=8, min_payload=100, max_payload=100,
+            config=TCPStreamConfig(seed=seed, base_time=1000.0,
+                                   psh_probability=0.0,
+                                   packet_loss_probability=loss,
+                                   retransmit_lost=recover),
+        )
+
+    def test_off_by_default(self) -> None:
+        self.assertFalse(ImpairmentConfig().retransmit_lost)
+        self.assertFalse(TCPStreamConfig().retransmit_lost)
+
+    def test_no_recovery_leaves_a_permanent_hole(self) -> None:
+        labels = [p.label for p in self._stream(3, recover=False).packets]
+        self.assertFalse(any(lbl.startswith(("RETRANS[", "ACK-RECOVER["))
+                             for lbl in labels))
+
+    def test_recovery_retransmits_each_lost_segment(self) -> None:
+        plain = self._stream(3, recover=False).packets
+        recovered = self._stream(3, recover=True).packets
+        sent = {p.seq for p in plain if p.payload_len}
+        retrans = [p for p in recovered if p.label.startswith("RETRANS[")]
+        self.assertTrue(retrans)
+        for pkt in retrans:
+            self.assertNotIn(pkt.seq, sent)   # it is the one that went missing
+
+    def test_recovery_only_adds_packets(self) -> None:
+        """The duplicate ACKs sent while the gap was open are part of the record."""
+        plain = self._stream(3, recover=False).packets
+        recovered = self._stream(3, recover=True).packets
+        keep = [p for p in recovered
+                if not p.label.startswith(("RETRANS[", "ACK-RECOVER["))]
+        self.assertEqual([p.raw for p in keep], [p.raw for p in plain])
+
+    def test_retransmission_follows_the_timeout(self) -> None:
+        recovered = self._stream(3, recover=True).packets
+        first_data = min((p for p in recovered if p.payload_len), key=_usec)
+        for pkt in recovered:
+            if pkt.label.startswith("RETRANS["):
+                self.assertGreater(_usec(pkt), _usec(first_data))
+
+    def test_recovery_ack_jumps_over_what_was_held(self) -> None:
+        """After the gap is filled the receiver acknowledges in one step."""
+        recovered = self._stream(3, recover=True).packets
+        acks = [p for p in recovered if p.label.startswith("ACK-RECOVER[")]
+        self.assertTrue(acks)
+        stalled = max(p.ack for p in recovered if p.label.startswith("ACK["))
+        for pkt in acks:
+            self.assertGreater(pkt.ack, stalled)
+
+    def test_recovered_stream_still_acknowledges_only_what_arrived(self) -> None:
+        for seed in range(15):
+            with self.subTest(seed=seed):
+                TestLossSemantics()._assert_acks_are_justified(
+                    self._stream(seed, recover=True, loss=0.3).packets
+                )
+
+    def test_payload_path_recovers_too(self) -> None:
+        stream = _http(seed=5, requests=4, packet_loss_probability=0.3,
+                       retransmit_lost=True)
+        self.assertTrue(any(p.label.startswith("RETRANS[")
+                            for p in stream.packets))
+
+    def test_recovery_without_loss_changes_nothing(self) -> None:
+        self.assertEqual(
+            [p.raw for p in self._stream(3, recover=True, loss=0.0).packets],
+            [p.raw for p in self._stream(3, recover=False, loss=0.0).packets],
+        )
 
 
 class TestVPNImpairments(unittest.TestCase):
