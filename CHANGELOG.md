@@ -25,7 +25,23 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
-_Nothing yet._
+### Added
+
+- **`packeteer.protocols` — a registry for application-layer protocols**
+  (#96) — `AppProtocol` is the contract an application protocol satisfies:
+  the ports and transport that identify it, the message types it decodes to,
+  and callables for `decode`, `encode`, `to_spec`, `from_spec` and an optional
+  `sanitise`.  `register`, `unregister`, `registered`, `for_port`,
+  `for_section` and `for_message` are the registry around it.
+
+  A protocol's `name` doubles as its packet-spec section key, so registering
+  one makes `parse` emit a section named after it and `build` read it back.
+  `register` refuses a name that collides with a structural packet-spec key,
+  a name, port or message type already claimed, or an unrecognised `over`
+  value, naming what collided in each case.
+
+  Nothing dispatches through the registry yet — DNS, DHCP and HTTP keep their
+  existing hardwired paths until #97 onwards.
 
 ---
 
