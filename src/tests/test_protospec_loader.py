@@ -488,3 +488,80 @@ class TestUnknownConstructsAreStillErrors(unittest.TestCase):
                       - {name: v, type: {int: {bits: 8}}, repeat: {twice: true}}
             """)
         self.assertIn("count", str(ctx.exception))
+
+
+class TestYAMLImplicitTyping(unittest.TestCase):
+    """YAML 1.1 mangles `on`, `yes`, `no` and `1.10`; say so, do not guess.
+
+    packeteer reads specs as ordinary YAML rather than reinterpreting the
+    document, because a spec has to mean the same thing to every YAML tool
+    that opens it.  So a coerced value is named and the author is told to
+    quote it — kober's approach, and the messages are deliberately alike.
+    """
+
+    def _load(self, body: str) -> object:
+        return loads(textwrap.dedent(body), fmt="yaml")
+
+    def test_a_unit_named_on_is_refused_with_the_reason(self) -> None:
+        with self.assertRaises(SpecError) as ctx:
+            self._load("""
+                name: t
+                version: "1"
+                entry: "on"
+                units:
+                  on:
+                    fields:
+                      - {name: v, type: {int: {bits: 8}}}
+            """)
+        self.assertIn("quote it", str(ctx.exception))
+
+    def test_a_field_named_no_is_refused_with_the_reason(self) -> None:
+        with self.assertRaises(SpecError) as ctx:
+            self._load("""
+                name: t
+                version: "1"
+                entry: m
+                units:
+                  m:
+                    fields:
+                      - {name: no, type: {int: {bits: 8}}}
+            """)
+        self.assertIn("booleans", str(ctx.exception))
+
+    def test_an_unquoted_version_is_refused_rather_than_truncated(self) -> None:
+        """`version: 1.10` is the float 1.1, which is not the string "1.10"."""
+        with self.assertRaises(SpecError) as ctx:
+            self._load("""
+                name: t
+                version: 1.10
+                entry: m
+                units:
+                  m:
+                    fields:
+                      - {name: v, type: {int: {bits: 8}}}
+            """)
+        self.assertIn("quote it", str(ctx.exception))
+
+    def test_quoting_is_all_it_takes(self) -> None:
+        spec = self._load("""
+            name: t
+            version: "1.10"
+            entry: m
+            units:
+              m:
+                fields:
+                  - {name: "no", type: {int: {bits: 8}}}
+        """)
+        self.assertEqual(spec.version, "1.10")
+        self.assertEqual(spec.units["m"].fields[0].name, "no")
+
+    def test_json_is_unaffected(self) -> None:
+        """JSON has no implicit typing, so none of this applies to it."""
+        spec = from_mapping({
+            "name": "t", "version": "1.10", "entry": "m",
+            "units": {"m": {"fields": [
+                {"name": "no", "type": {"int": {"bits": 8}}},
+            ]}},
+        })
+        self.assertEqual(spec.version, "1.10")
+        self.assertEqual(spec.units["m"].fields[0].name, "no")

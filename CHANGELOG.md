@@ -49,6 +49,14 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   JSON specs load from the standard library; YAML needs the new optional
   `yaml` extra (`pip install packeteer[yaml]`), and is only needed to compile.
 
+  YAML 1.1 reads `on`, `off`, `yes` and `no` as booleans and `1.10` as a
+  number, so a spec that meant any of them as text gets something else.  The
+  loader names the coercion and says to quote it rather than reinterpreting
+  the document — a spec has to mean the same thing to every YAML tool that
+  opens it.  The one exception is a switch's `on:` key, which YAML turns into
+  `True` before the loader can object; that is repaired narrowly, exactly as
+  kober repairs it.
+
 ---
 
 ## [0.10.0] - 2026-08-28

@@ -187,6 +187,23 @@ def _at(loc: Location, value: Any) -> Location:
     return loc.at_line(line) if line is not None else loc
 
 
+def _yaml_hint(value: Any) -> str:
+    """Explain a value YAML's implicit typing has probably mangled.
+
+    YAML 1.1 reads ``on``, ``off``, ``yes`` and ``no`` as booleans and
+    ``1.10`` as a number, so an author who wrote either as text gets something
+    else.  packeteer reads specs as ordinary YAML 1.1 rather than reinterpreting
+    the document — a spec has to mean the same thing to every YAML tool that
+    opens it — so the answer is to name the coercion and say to quote it.  This
+    is kober's approach, and the message is deliberately close to kober's.
+    """
+    if isinstance(value, bool):
+        return " (YAML reads on/off/yes/no/true/false as booleans; quote it)"
+    if isinstance(value, float):
+        return " (YAML reads 1.10 as a number, not a string; quote it)"
+    return ""
+
+
 def _require(data: Any, key: str, loc: Location) -> Any:
     """Return ``data[key]``, or raise naming what is missing."""
     if not isinstance(data, dict) or key not in data:
@@ -197,21 +214,30 @@ def _require(data: Any, key: str, loc: Location) -> Any:
 def _as_mapping(value: Any, loc: Location, what: str) -> dict[str, Any]:
     """Return *value* as a mapping, or raise naming what it should have been."""
     if not isinstance(value, dict):
-        raise SpecError(f"{what} must be a mapping, not {type(value).__name__}", loc)
+        raise SpecError(
+            f"{what} must be a mapping, not {type(value).__name__}"
+            f"{_yaml_hint(value)}", loc,
+        )
     return value
 
 
 def _as_str(value: Any, loc: Location, what: str) -> str:
     """Return *value* as a string, or raise naming what it should have been."""
     if not isinstance(value, str):
-        raise SpecError(f"{what} must be a string, not {type(value).__name__}", loc)
+        raise SpecError(
+            f"{what} must be a string, not {type(value).__name__}"
+            f"{_yaml_hint(value)}", loc,
+        )
     return value
 
 
 def _as_int(value: Any, loc: Location, what: str) -> int:
     """Return *value* as an integer, or raise naming what it should have been."""
     if isinstance(value, bool) or not isinstance(value, int):
-        raise SpecError(f"{what} must be an integer, not {type(value).__name__}", loc)
+        raise SpecError(
+            f"{what} must be an integer, not {type(value).__name__}"
+            f"{_yaml_hint(value)}", loc,
+        )
     return value
 
 
@@ -255,15 +281,17 @@ def from_mapping(data: Any, *, source: str | None = None) -> Spec:
     units_data = _as_mapping(_require(data, "units", root), root.child("units"), "units")
     units: dict[str, Unit] = {}
     for unit_name, unit_data in units_data.items():
-        loc = _at(root.child("units").child(str(unit_name)), unit_data)
-        units[str(unit_name)] = _unit(str(unit_name), unit_data, loc, unsupported)
+        loc = _at(root.child("units"), unit_data)
+        name = _as_str(unit_name, loc, "a unit name")
+        units[name] = _unit(name, unit_data, loc.child(name), unsupported)
 
     enums: dict[str, EnumDef] = {}
     for enum_name, members in _as_mapping(
         data.get("enums", {}), root.child("enums"), "enums",
     ).items():
-        loc = _at(root.child("enums").child(str(enum_name)), members)
-        enums[str(enum_name)] = _enum_def(str(enum_name), members, loc)
+        loc = _at(root.child("enums"), members)
+        name = _as_str(enum_name, loc, "an enum name")
+        enums[name] = _enum_def(name, members, loc.child(name))
 
     ports = data.get("ports", [])
     if not isinstance(ports, (list, tuple)):
@@ -271,7 +299,8 @@ def from_mapping(data: Any, *, source: str | None = None) -> Spec:
 
     return Spec(
         name=_as_str(_require(data, "name", root), root.child("name"), "name"),
-        version=str(_require(data, "version", root)),
+        version=_as_str(_require(data, "version", root),
+                        root.child("version"), "version"),
         entry=_as_str(_require(data, "entry", root), root.child("entry"), "entry"),
         units=units,
         over=_enum_value(Transport, data.get("over", "either"),
@@ -466,7 +495,10 @@ def _int_key(value: Any, loc: Location, what: str) -> int:
             return int(value, 0)
         except ValueError as exc:
             raise SpecError(f"{what} must be an integer, not {value!r}", loc) from exc
-    raise SpecError(f"{what} must be an integer, not {type(value).__name__}", loc)
+    raise SpecError(
+            f"{what} must be an integer, not {type(value).__name__}"
+            f"{_yaml_hint(value)}", loc,
+        )
 
 
 def _restore_on_key(mapping: dict[str, Any], loc: Location) -> dict[str, Any]:
