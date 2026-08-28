@@ -25,6 +25,12 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
+_Nothing yet._
+
+---
+
+## [0.9.1] - 2026-08-28
+
 ### Fixed
 
 - **Truncated captures no longer read as corruption** (#92) — a capture taken
@@ -2121,7 +2127,8 @@ the exhaustive API reference.
      tagged with names that predate this convention, so only the entries below
      carry compare links. -->
 
-[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/adamkjonsson/packeteer/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/adamkjonsson/packeteer/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/adamkjonsson/packeteer/compare/v0.7...v0.8.0
 [0.7.0]: https://github.com/adamkjonsson/packeteer/compare/v0.6.0...v0.7
