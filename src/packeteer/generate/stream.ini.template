@@ -252,6 +252,16 @@ psh_probability = 0.5
 #   Example: 0.02 loses roughly 2 % of packets.
 packet_loss = 0.0
 
+# no_tcp_options  (default: false)  [TCP only]
+#   Send a bare SYN with no TCP options.  By default the handshake advertises
+#   what a modern client does -- MSS, SACK permitted and a window scale --
+#   because a SYN carrying no options at all is the most conspicuous mark of
+#   generated traffic in a capture.  The advertised MSS follows `mss` where
+#   that applies, so the capture does not contradict its own segmentation.
+#   Timestamps are deliberately not advertised: a connection that negotiates
+#   them carries one on every segment, and only the handshake carries options.
+# no_tcp_options = true
+
 # retransmit_lost  (default: false)  [TCP only]
 #   Retransmit a lost segment after retransmission_timeout so the connection
 #   recovers, the way a real one does.  Off by default, which leaves a

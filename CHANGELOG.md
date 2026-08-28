@@ -113,6 +113,11 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   Chunked framing depends on the `Content-Length` fix below: without it every
   generated chunked message would have carried both headers.
 
+- **TCP options on the application-payload paths** (#88) — `TCPSession` passed
+  `None` unconditionally and had no parameter for them, so `--payload http`
+  could never produce a realistic handshake.  It and `render_tcp_session` now
+  take them, matching the low-level path.
+
 - **`--error-rate` exposes the response-error knob on the CLI** (#82) —
   `HTTPRestConfig.error_rate` has existed since 0.7, but
   `packeteer stream --payload http` constructed `HTTPRestConfig()` with no
@@ -123,6 +128,32 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   Captures generated with the new knobs left at their defaults are
   byte-identical to captures from previous versions with the same seed: the
   added random draws are skipped entirely when their rate is zero.
+
+### Changed
+
+- **Breaking: generated TCP handshakes now advertise TCP options** (#88) — a
+  generated SYN carried none at all.  Across the shipped synthetic captures,
+  **0 of 1 314 TCP packets carried any option**, where the one real capture has
+  them on all 13.  Every modern stack advertises at least a Maximum Segment
+  Size, so a bare 20-byte header is the most conspicuous mark of generated
+  traffic in a TCP capture — and packeteer exists to feed tools that read
+  captures.
+
+  `TCPStreamConfig.client_options` / `server_options` and the new
+  `HTTPRestConfig.syn_options` now default to
+  `packeteer.generate.tcp.default_syn_options()`: MSS, SACK permitted and a
+  window scale.  `--no-tcp-options` (config key `no_tcp_options`), or passing
+  `None`, restores a bare SYN.
+
+  **Captures generated with the defaults differ from previous versions for the
+  same seed**, on every TCP-carrying generator.  This is the widest behaviour
+  change in the release; pass `--no-tcp-options` to reproduce the old bytes.
+
+  Timestamps are deliberately not advertised: only the handshake carries
+  options, and a connection that negotiates timestamps carries one on every
+  segment, so advertising them without sending them would trade one
+  implausibility for another.  Carrying them properly is #90.
+
 
 ### Fixed
 
@@ -162,6 +193,16 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   **`--packet-loss` therefore produces different captures for a given seed.**
   Every other option is unaffected — verified across 112 seed and option
   combinations, of which the 32 involving loss moved and the other 80 did not.
+
+- **TCP option padding is placed where senders put it** (#88) — NOP padding was
+  appended after every option; a sender puts it *ahead* of an option whose
+  32-bit fields need aligning, which is the layout RFC 7323 §A.2 recommends for
+  Timestamps and what real stacks emit.
+
+  This also makes #87's replay rarer: with the padding in the right place the
+  encoder reproduces the common layout on its own, so `options.raw` stops
+  appearing on ordinary traffic.  Across the one real capture in the test
+  corpus it went from 13 of 13 packets to none.
 
 - **A capture's TCP option layout survives a round trip** (#87) — the option
   region was re-encoded in a canonical order with NOP padding appended, while

@@ -67,6 +67,7 @@ Silently ignored for `--protocol udp` and `--protocol sctp`.
 | `--psh-probability PROB` | `0.5` | Probability (0–1) PSH is set on each data segment |
 | `--packet-loss PROB` | `0.0` | Probability a packet is lost on the wire (see below) |
 | `--retransmit-lost` | off | Retransmit a lost segment so the connection recovers |
+| `--no-tcp-options` | off | Send a bare SYN with no TCP options (see below) |
 | `--retransmission-probability PROB` | `0.0` | Probability each data segment is retransmitted |
 | `--retransmission-timeout SECONDS` | `0.2` | RTO — seconds after send that the retransmit fires |
 | `--payload-corruption PROB` | `0.0` | Probability a segment payload is corrupted |
@@ -155,6 +156,26 @@ packeteer stream --client-ip 10.0.0.1 --server-ip 10.1.0.1 \
 
 Request bodies are always counted with `Content-Length`; the framing knobs
 apply to responses only.
+
+### The handshake
+
+The generated handshake advertises what a modern client does: a Maximum
+Segment Size, SACK permitted, and a window scale.  A SYN carrying **no**
+options at all — a bare 20-byte header — is the most conspicuous mark of
+generated traffic in a TCP capture, and packeteer exists to feed tools that
+read captures.
+
+The advertised MSS follows `--mss` where that applies, so a capture does not
+contradict its own segmentation: `--mss 512` both splits the payload at 512
+bytes and says so on the SYN.
+
+`--no-tcp-options` sends a bare SYN instead, for a test that wants one.
+
+Timestamps are deliberately not advertised.  A connection that negotiates them
+carries one on **every** segment, and only the handshake carries options, so
+advertising them and then never sending one would be a worse inconsistency than
+leaving them out.  Carrying them properly is
+[#90](https://github.com/adamkjonsson/packeteer/issues/90).
 
 ### What packet loss means
 

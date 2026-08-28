@@ -71,7 +71,7 @@ from .stream_encap import (  # noqa: F401  (StreamEncap needed for Sphinx type r
     EncapSpec,
     StreamEncap,
 )
-from .tcp import TCP_ACK, TCP_FIN, TCP_PSH, TCP_SYN
+from .tcp import TCP_ACK, TCP_FIN, TCP_PSH, TCP_SYN, TCPOptions
 from .tcp_stream import (
     TCPStream,
     TCPStreamPacket,
@@ -129,6 +129,8 @@ class TCPSession:
         encap: EncapSpec = None,
         impairments: ImpairmentConfig | None = None,
         loss_rng: Random | None = None,
+        client_options: TCPOptions | None = None,
+        server_options: TCPOptions | None = None,
     ) -> None:
         """Initialise a TCP session builder.
 
@@ -163,6 +165,11 @@ class TCPSession:
                 default) draws no randomness at all.
             loss_rng: Seeded generator driving the loss draws, so a capture
                 with loss reproduces from its seed.
+            client_options: TCP options carried on the client SYN, as on the
+                low-level path.  ``None`` (the default) sends a bare SYN, which
+                no modern stack does — callers wanting plausible traffic pass
+                :func:`~packeteer.generate.tcp.default_syn_options`.
+            server_options: TCP options carried on the server SYN-ACK.
 
         """
         self.client_ip = client_ip
@@ -181,6 +188,8 @@ class TCPSession:
         self.encap = encap
         self.impairments = impairments
         self.loss_rng = loss_rng
+        self.client_options = client_options
+        self.server_options = server_options
         self._exchanges: list[tuple[str, bytes, str | None]] = []
 
     def send(self, data: bytes, label: str | None = None) -> TCPSession:
@@ -290,13 +299,15 @@ class TCPSession:
             payload: bytes,
             direction: str,
             label: str,
+            options: TCPOptions | None = None,
         ) -> bool:
             """Emit one packet.  Returns whether it reached the far end."""
             nonlocal index
             seq_before = src.seq
             ack_before = src.ack
             raw = _build_packet(src, dst, flags, payload,
-                                self.include_ethernet, self.ip_ttl, None, self.encap)
+                                self.include_ethernet, self.ip_ttl, options,
+                                self.encap)
             # The sender's sequence number advances whether or not the packet
             # arrives; the receiver's acknowledgement depends on delivery.
             _advance_seq(src, flags, len(payload))
@@ -334,8 +345,10 @@ class TCPSession:
             return delivered
 
         # Three-way handshake
-        emit(client, server, TCP_SYN,           b"", "c2s", "SYN")
-        emit(server, client, TCP_SYN | TCP_ACK, b"", "s2c", "SYN-ACK")
+        emit(client, server, TCP_SYN, b"", "c2s", "SYN",
+             options=self.client_options)
+        emit(server, client, TCP_SYN | TCP_ACK, b"", "s2c", "SYN-ACK",
+             options=self.server_options)
         emit(client, server, TCP_ACK,           b"", "c2s", "ACK")
 
         # Data exchanges

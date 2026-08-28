@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from random import Random
 
 from ._stream_common import (
@@ -53,7 +53,14 @@ from .stream_encap import (  # noqa: F401  (StreamEncap needed for Sphinx type r
     _apply_encap,
     _encap_ip_start,
 )
-from .tcp import TCP_ACK, TCP_FIN, TCP_PSH, TCP_SYN, TCPOptions
+from .tcp import (
+    TCP_ACK,
+    TCP_FIN,
+    TCP_PSH,
+    TCP_SYN,
+    TCPOptions,
+    default_syn_options,
+)
 
 _WRAP = 2 ** 32
 
@@ -148,8 +155,13 @@ class TCPStreamConfig:
         window: TCP receive-window size advertised by both endpoints.
             Defaults to ``65535``.
         client_options: TCP options encoded on the client SYN only (e.g. MSS,
-            window scale, SACK permitted).  ``None`` means no options.
-        server_options: TCP options encoded on the server SYN-ACK only.
+            window scale, SACK permitted).  Defaults to
+            :func:`~packeteer.generate.tcp.default_syn_options` — what a
+            plausible modern client advertises — since a SYN carrying no
+            options is the most conspicuous mark of generated traffic.  Pass
+            ``None`` for a bare SYN.
+        server_options: TCP options encoded on the server SYN-ACK only.  Same
+            default, and ``None`` for a bare SYN-ACK.
         packet_loss_probability: Probability (0.0–1.0) that a packet is lost
             on the wire.  Neither the capture point nor the far end sees it, so
             a lost segment is never acknowledged and does not advance the
@@ -202,8 +214,8 @@ class TCPStreamConfig:
     seed: int | None = None
     psh_probability: float = 0.5
     window: int = 65535
-    client_options: TCPOptions | None = None
-    server_options: TCPOptions | None = None
+    client_options: TCPOptions | None = field(default_factory=default_syn_options)
+    server_options: TCPOptions | None = field(default_factory=default_syn_options)
     packet_loss_probability: float = 0.0
     retransmission_probability: float = 0.0
     retransmission_timeout: float = 0.2

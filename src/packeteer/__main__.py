@@ -149,7 +149,7 @@ from packeteer.generate.stream_encap import (
     VXLANEncap,
 )
 from packeteer.generate.stream_template import stream_config_template
-from packeteer.generate.tcp import TCP_SYN, TCPOptions
+from packeteer.generate.tcp import TCP_SYN, TCPOptions, default_syn_options
 from packeteer.generate.tcp_stream import TCPStreamConfig, generate_tcp_stream
 from packeteer.generate.udp_stream import UDPStreamConfig, generate_udp_stream
 from packeteer.generate.vxlan import VXLAN_FLAG_VALID_VNI, VXLAN_PORT
@@ -1367,6 +1367,7 @@ _STREAM_PARAMS: dict[str, tuple[str, object, object]] = {
     "stray_packet_count": ("stray_packet_count",              int,   0),
     "stray_timing_window":("stray_timing_window",             int,   None),
     "retransmit_lost":    ("retransmit_lost",                  bool,  False),
+    "no_tcp_options":     ("no_tcp_options",                   bool,  False),
     "no_ethernet":        ("no_ethernet",                     bool,  False),
     "seed":               ("seed",                            int,   None),
     "pcap":               ("pcap",                            str,   None),
@@ -1676,6 +1677,8 @@ def _build_stream_config(
     """Build the protocol-specific stream config from parsed CLI args."""
     if protocol == "tcp":
         return TCPStreamConfig(
+            client_options=None if args.no_tcp_options else default_syn_options(),
+            server_options=None if args.no_tcp_options else default_syn_options(),
             gap_jitter=args.gap_jitter,
             window=args.window,
             psh_probability=args.psh_probability,
@@ -1757,6 +1760,7 @@ def _generate_http_payload_stream(
                 chunked_rate=args.chunked_rate,
                 chunk_size=(args.min_chunk, args.max_chunk),
                 trailer_rate=args.trailer_rate,
+                syn_options=None if args.no_tcp_options else default_syn_options(),
                 impairments=_impairments_from_args(args),
             ),
         )
@@ -2423,6 +2427,15 @@ def main() -> None:
             "acknowledgement number stops advancing, so the segments after it "
             "draw duplicate ACKs. The SYNs are exempt. Nothing retransmits "
             "unless --retransmit-lost is given"
+        ),
+    )
+    stream_parser.add_argument(
+        "--no-tcp-options", action="store_true", default=None,
+        help=(
+            "Send a bare SYN with no TCP options. By default the handshake "
+            "advertises what a modern client does (MSS, SACK permitted, window "
+            "scale), since a SYN carrying no options is the most conspicuous "
+            "mark of generated traffic"
         ),
     )
     stream_parser.add_argument(

@@ -90,6 +90,62 @@ class TCPOptions:
     raw: bytes | None = None
 
 
+#: Window scale a modern client advertises: a 64 KiB window scaled by 2**7.
+DEFAULT_WINDOW_SCALE: int = 7
+
+#: MSS a client advertises on an Ethernet IPv4 path: 1500 - 20 (IP) - 20 (TCP).
+DEFAULT_MSS: int = 1460
+
+
+def default_syn_options(mss: int = DEFAULT_MSS) -> TCPOptions:
+    """Return the TCP options a plausible modern client puts on a SYN.
+
+    Every current stack advertises at least a Maximum Segment Size, and
+    generally SACK-permitted and a window scale beside it.  A SYN carrying no
+    options at all — a bare 20-byte header — is the most conspicuous mark of
+    generated traffic in a TCP capture, which is what this exists to avoid.
+
+    Timestamps are deliberately absent.  A connection that negotiates them
+    carries one on *every* segment, and the generators put options on the
+    handshake only; advertising them and then never sending one would trade
+    one implausibility for another.
+
+    Args:
+        mss: Maximum Segment Size to advertise.  Pass the value the traffic is
+            actually segmented at, so the capture and its own advertisement
+            agree.
+
+    Returns:
+        A fresh :class:`TCPOptions`; callers may modify it freely.
+
+    """
+    return TCPOptions(
+        mss=mss, sack_permitted=True, window_scale=DEFAULT_WINDOW_SCALE,
+    )
+
+
+def _align_nops(offset: int) -> bytes:
+    """NOP padding placing the option that follows on a useful boundary.
+
+    Timestamps and SACK carry 32-bit fields after a two-byte kind and length,
+    so a sender puts NOPs ahead of them until the option starts two bytes short
+    of a four-byte boundary, leaving those fields aligned.  RFC 7323 A.2
+    recommends exactly this for Timestamps — ``NOP, NOP, Timestamp`` — and it
+    is what real senders emit.
+
+    Padding placed *after* an option instead would leave the same option
+    present with the same value, but arranged as no stack arranges it.
+
+    Args:
+        offset: How many option bytes have been written so far.
+
+    Returns:
+        Zero to three NOP bytes.
+
+    """
+    return b"\x01" * ((2 - offset) % 4)
+
+
 def _build_options(opts: TCPOptions) -> bytes:
     """Encode *opts* as bytes padded to a 4-byte boundary with NOP (0x01).
 
@@ -105,6 +161,10 @@ def _build_options(opts: TCPOptions) -> bytes:
     Otherwise options are emitted in the order:
     MSS (2) → Window Scale (3) → SACK Permitted (4) → Timestamps (8) →
     SACK (5) → anything in ``unknown``.
+
+    NOP padding goes **ahead** of Timestamps and SACK, so that their 32-bit
+    fields land on a four-byte boundary the way a sender aligns them (see
+    :func:`_align_nops`); any remainder pads the tail.
 
     Args:
         opts: The options to encode.
@@ -125,10 +185,10 @@ def _build_options(opts: TCPOptions) -> bytes:
         raw += struct.pack("!BB", 4, 2)
     if opts.timestamps is not None:
         tsval, tsecr = opts.timestamps
-        raw += struct.pack("!BBII", 8, 10, tsval, tsecr)
+        raw += _align_nops(len(raw)) + struct.pack("!BBII", 8, 10, tsval, tsecr)
     if opts.sack_blocks:
         sack_len = 2 + 8 * len(opts.sack_blocks)
-        raw += struct.pack("!BB", 5, sack_len)
+        raw += _align_nops(len(raw)) + struct.pack("!BB", 5, sack_len)
         for left, right in opts.sack_blocks:
             raw += struct.pack("!II", left, right)
     for kind, value in opts.unknown:

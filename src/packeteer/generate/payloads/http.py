@@ -24,7 +24,7 @@ import math
 import random
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 
 from ..http import HTTPRequest, HTTPResponse, encode_http_message
 from ..impairments import FlowEndpoints, ImpairmentConfig, apply_impairments
@@ -33,6 +33,7 @@ from ..stream_encap import (  # noqa: F401  (StreamEncap needed for Sphinx type 
     EncapSpec,
     StreamEncap,
 )
+from ..tcp import DEFAULT_MSS, TCPOptions, default_syn_options
 from ..tcp_stream import TCPStream, TCPStreamPacket
 from .base import AppMessage, render_tcp_session
 
@@ -107,6 +108,10 @@ class HTTPRestConfig:
             a trailer section, announced by a ``Trailer`` header.  Legal per
             RFC 7230 4.4 and widely forgotten by decoders.  Defaults to
             ``0.0``.  Has no effect unless *chunked_rate* is non-zero.
+        syn_options: TCP options carried on the handshake.  Defaults to
+            :func:`~packeteer.generate.tcp.default_syn_options`, with the MSS
+            replaced by the *mss* the traffic is segmented at so the capture
+            and its own advertisement agree.  Pass ``None`` for a bare SYN.
         impairments: Wire impairments
             (:class:`~packeteer.generate.impairments.ImpairmentConfig`) applied
             to each connection independently, so a lost segment or a RST
@@ -126,6 +131,7 @@ class HTTPRestConfig:
     chunked_rate: float = 0.0
     chunk_size: tuple[int, int] = (8, 32)
     trailer_rate: float = 0.0
+    syn_options: TCPOptions | None = field(default_factory=default_syn_options)
     impairments: ImpairmentConfig | None = None
 
 
@@ -445,6 +451,12 @@ def generate_http_stream(
         )
     client_ips, server_ips = _assign_endpoints(client_ip, server_ip, sessions)
 
+    # The advertised MSS should be the one the traffic is actually segmented
+    # at, or the capture contradicts itself.
+    syn_options = config.syn_options
+    if syn_options is not None and syn_options.mss == DEFAULT_MSS:
+        syn_options = replace(syn_options, mss=mss)
+
     rng = random.Random(seed)
     start = base_time if base_time is not None else time.time()
 
@@ -482,6 +494,7 @@ def generate_http_stream(
                 # only the emit loop can do.
                 impairments=config.impairments,
                 loss_rng=rng,
+                syn_options=syn_options,
             )
             if config.impairments is not None:
                 stream = _impair(

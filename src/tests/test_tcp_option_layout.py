@@ -17,9 +17,14 @@ from packeteer.pcap import LINKTYPE_ETHERNET, read_pcap, write_pcap
 
 _TESTCASES = Path(__file__).resolve().parents[2] / "testcases"
 
-#: NOP, NOP, Timestamps — what essentially every modern data segment carries,
-#: and what the canonical encoder would write as Timestamps, NOP, NOP.
+#: NOP, NOP, Timestamps — what essentially every modern data segment carries.
+#: Since #88 the encoder writes exactly this, so it needs no replay.
 _SENDER_LAYOUT = bytes.fromhex("0101080a21c6e61e65f1e0d5")
+
+#: SACK-permitted before MSS, then NOP padding to the four-byte boundary the
+#: Data Offset field counts in.  A legal layout the encoder does not produce,
+#: since it emits MSS first — so this one has to be replayed verbatim.
+_UNUSUAL_LAYOUT = bytes.fromhex("0402020405b40101")
 
 
 def _tmp(suffix: str = ".pcap") -> str:
@@ -54,10 +59,17 @@ def _roundtrip(frames: list[bytes]) -> list[bytes]:
 
 class TestRawCapturedOnlyWhenNeeded(unittest.TestCase):
 
-    def test_sender_layout_is_captured(self) -> None:
+    def test_unusual_layout_is_captured(self) -> None:
+        opts = _parse_options(_UNUSUAL_LAYOUT)
+        self.assertEqual(opts.raw, _UNUSUAL_LAYOUT)
+        self.assertEqual((opts.mss, opts.sack_permitted), (1460, True))
+
+    def test_sender_layout_needs_no_replay_since_88(self) -> None:
+        """The encoder writes NOP, NOP, Timestamps itself, so raw stays unset."""
         opts = _parse_options(_SENDER_LAYOUT)
-        self.assertEqual(opts.raw, _SENDER_LAYOUT)
+        self.assertIsNone(opts.raw)
         self.assertEqual(opts.timestamps, (0x21C6E61E, 0x65F1E0D5))
+        self.assertEqual(_build_options(opts), _SENDER_LAYOUT)
 
     def test_canonical_layouts_do_not_set_raw(self) -> None:
         """Anything the encoder itself produces needs no replay."""
@@ -80,21 +92,21 @@ class TestRawWins(unittest.TestCase):
 
     def test_encoder_returns_raw_verbatim(self) -> None:
         self.assertEqual(
-            _build_options(TCPOptions(raw=_SENDER_LAYOUT)), _SENDER_LAYOUT,
+            _build_options(TCPOptions(raw=_UNUSUAL_LAYOUT)), _UNUSUAL_LAYOUT,
         )
 
     def test_raw_overrides_the_decoded_fields(self) -> None:
         """Documented precedence: editing a field with raw set does nothing."""
-        opts = _parse_options(_SENDER_LAYOUT)
-        opts.timestamps = (0, 0)
-        self.assertEqual(_build_options(opts), _SENDER_LAYOUT)
+        opts = _parse_options(_UNUSUAL_LAYOUT)
+        opts.mss = 1
+        self.assertEqual(_build_options(opts), _UNUSUAL_LAYOUT)
 
     def test_clearing_raw_re_enables_the_fields(self) -> None:
-        opts = _parse_options(_SENDER_LAYOUT)
+        opts = _parse_options(_UNUSUAL_LAYOUT)
         opts.raw = None
-        opts.timestamps = (1, 2)
+        opts.mss = 1400
         self.assertEqual(_build_options(opts), _build_options(
-            TCPOptions(timestamps=(1, 2)),
+            TCPOptions(mss=1400, sack_permitted=True),
         ))
 
 
@@ -109,22 +121,24 @@ class TestSpecRoundTrip(unittest.TestCase):
             os.remove(src)
 
     def test_spec_carries_raw_as_hex(self) -> None:
-        spec = self._spec(_frame_with_options(_SENDER_LAYOUT))
+        spec = self._spec(_frame_with_options(_UNUSUAL_LAYOUT))
         self.assertEqual(spec["transport"]["options"]["raw"],
-                         _SENDER_LAYOUT.hex())
+                         _UNUSUAL_LAYOUT.hex())
 
     def test_spec_keeps_the_decoded_fields_beside_raw(self) -> None:
         """The readable fields stay, so a spec is still legible by eye."""
-        spec = self._spec(_frame_with_options(_SENDER_LAYOUT))
-        self.assertIn("timestamps", spec["transport"]["options"])
+        spec = self._spec(_frame_with_options(_UNUSUAL_LAYOUT))
+        self.assertIn("mss", spec["transport"]["options"])
 
     def test_canonical_options_gain_no_raw_key(self) -> None:
         frame = _frame_with_options(_build_options(TCPOptions(mss=1460)))
         self.assertNotIn("raw", self._spec(frame)["transport"]["options"])
 
     def test_frame_rebuilds_byte_for_byte(self) -> None:
-        original = _frame_with_options(_SENDER_LAYOUT)
-        self.assertEqual(_roundtrip([original]), [original])
+        for layout in (_SENDER_LAYOUT, _UNUSUAL_LAYOUT):
+            with self.subTest(layout=layout.hex()):
+                original = _frame_with_options(layout)
+                self.assertEqual(_roundtrip([original]), [original])
 
     def test_parsed_header_is_unchanged_in_meaning(self) -> None:
         """Replaying bytes must not change what a parse reports."""
