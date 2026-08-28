@@ -292,12 +292,19 @@ packeteer stream --client-ip 10.0.0.1 --server-ip 10.1.0.1 \
 Layers are applied in the order VLAN/QinQ → MPLS → PPPoE → tunnel.
 At most one of `--vlan` / `--qinq` may be given; at most one tunnel type.
 
+The `--vlan-*` flags apply to a single tag and the `--qinq-*` flags name which
+of the two tags they set, so `--vlan-pcp` has no effect alongside `--qinq`.
+
 | Flag | Description |
 |------|-------------|
 | `--vlan VID` | Single 802.1Q VLAN tag |
 | `--vlan-pcp N` | Priority Code Point (0–7, default 0) |
 | `--vlan-dei N` | Drop Eligible Indicator (0 or 1, default 0) |
 | `--qinq OUTER INNER` | QinQ double VLAN (outer VID then inner VID) |
+| `--qinq-outer-pcp N` | Outer tag's Priority Code Point (0–7, default 0) |
+| `--qinq-outer-dei N` | Outer tag's Drop Eligible Indicator (0 or 1, default 0) |
+| `--qinq-inner-pcp N` | Inner tag's Priority Code Point (0–7, default 0) |
+| `--qinq-inner-dei N` | Inner tag's Drop Eligible Indicator (0 or 1, default 0) |
 | `--mpls LABEL…` | MPLS label stack, outermost first |
 | `--mpls-tc N` | Traffic Class for all labels (0–7, default 0) |
 | `--mpls-ttl N` | TTL for all labels (default 64) |
