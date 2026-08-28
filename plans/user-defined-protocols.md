@@ -18,13 +18,17 @@ it is first.
 
 | Milestone | What lands | Size |
 |---|---|---|
-| **v0.10.0** | The app-protocol registry. DNS/DHCP/HTTP stop being hardwired and become the first three entries in a table. No YAML anywhere. | ~800 changed, ~400 new |
-| **v0.11.0** | The spec language, the checker, and the compiler. `packeteer protocol check\|show\|compile`. Binary datagram protocols only. | ~3,300 new |
+| **v0.10.0** | The app-protocol registry. DNS/DHCP/HTTP stop being hardwired and become the first three entries in a table. No YAML anywhere. | **Shipped in 0.10.0** |
+| **v0.11.0** | The spec language, the checker, and the compiler. `packeteer protocol check\|show\|compile`. Binary protocols, datagram or length-prefixed stream. | ~4,300 new |
 | **v0.12.0** | Compiled protocols become first-class: sanitisation, `stream --payload`, CLI loading, docs, conformance suite. | ~1,800 new |
 
-Roughly **6,000 lines net new against a 22k-line library** — the largest
+Roughly **7,000 lines net new against a 22k-line library** — the largest
 feature the project has taken on. The milestone split exists so that each one
 is independently defensible if the next never happens.
+
+*Updated 2026-08-28, when the open questions were settled. v0.10.0 shipped;
+[Q6](#q6) put length-prefixed stream framing into v0.11.0, which the original
+estimate excluded — see [the subset](#the-subset-chosen-deliberately).*
 
 ---
 
@@ -296,24 +300,37 @@ about producing something the v0.10.0 contract already accepts.
 | `bytes` / `string` — fixed size, or sized by an earlier field | **delimiter framing** (`until b"\r\n\r\n"`) — the text-protocol path, and half of HTTP |
 | `unit` — nested, no recursion in v1 | **`select`** — a question asked across a repeated field; HTTP's chunked-vs-length framing needs it |
 | `repeat: {count: <field>}` | **checksum derivations** — needs a pluggable algorithm table and a coverage expression |
-| `switch` on an earlier field, no default → the region stays `payload` | **messages spanning TCP segments** — see below |
+| `switch` on an earlier field, no default → the region stays `payload` | **delimiter-framed streams** — a message whose end is a byte sequence rather than a declared length; the HTTP shape |
 | `const:` — encode writes it, decode checks it | recursion, `params:`, `pointer`, `to_end` repeats |
 | `derive: {size_of: …}` / `{count_of: …}` | |
 | `sensitive:` (consumed in v0.12.0) | |
 
-**The TCP limitation is the one to state loudest.** v1 protocols are
-**datagram-shaped: one message per packet payload**. That is what
-`parse_packet` hands to a decoder, and reassembling a message across segments
-means teaching the decoder to be a stream consumer — a different and larger
-feature. UDP request/response protocols work fully; TCP works only when each
-segment carries a whole message. `check` should warn when `over: tcp` is
-declared without a self-delimiting length prefix at the front of the entry
-unit, because that is the shape that will disappoint someone.
+**Framing is the axis that decides the milestone's size**, and it is settled
+in [Q6](#q6): v1 supports **datagram** protocols and **length-prefixed stream**
+protocols, and refuses delimiter-framed ones.
 
-The subset is chosen against the actual user story — *"our telemetry protocol
-on UDP 9000"* — and against a useful honesty test: **DNS and HTTP are not
-expressible in it.** If that ever stops being true, the built-ins can be
-reconsidered. Until then they stay hand-written, as stated up front.
+- `input: datagram` — one message per packet payload, which is what
+  `parse_packet` already hands a decoder. Nothing new is needed.
+- `input: stream` — accepted **only** when the entry unit's framing length is
+  readable from a fixed position at the front of the message. That is enough
+  to know where a message ends without having seen it all, which is what makes
+  reassembly possible without the decoder becoming a general stream consumer.
+  DNS-over-TCP is exactly this shape; so is most binary RPC.
+- Anything else `input: stream` — refused by `check` with *not supported yet*,
+  naming the missing construct.
+
+The second bullet is new work with no precedent in packeteer except
+`Defragmenter`, and it brings a consequence to design rather than discover:
+**a length-prefixed protocol cannot be decoded from a single frame.**
+`parse_packet` sees one packet and has no flow state, exactly as it cannot
+defragment. So such a protocol decodes through the reassembling front door and
+`parse_packet` leaves its payload alone — the same split #73 settled for
+fragments, and it needs the same care in the docs.
+
+The honesty test the subset was chosen against still holds, and is now
+sharper: **DNS-over-TCP becomes expressible, DNS-over-UDP does not** (it needs
+compression pointers), **and HTTP does not** (delimiter framing, and a
+question asked across repeated headers). The built-ins stay hand-written.
 
 ### The spec
 
@@ -388,6 +405,7 @@ compiler instead of by hand.
 | `protospec/expr.py` | The expression language: field refs, arithmetic, comparison. Deliberately smaller than kober's 1,039 lines — no function table in v1 | 350 |
 | `protospec/check.py` | Static validation before any data exists, in **both** directions | 700 |
 | `protospec/codegen.py` | `Spec` → Python source | 1,300 |
+| `protospec/framing.py` | Sequence-aware per-flow reassembly for length-prefixed streams ([Q6](#q6), [Q8](#q8), [Q9](#q9)) | 700 |
 | `protospec/errors.py` | `SpecError`, `CheckError`, `CompileError` | 100 |
 | `__main__.py` | Three verbs | 200 |
 
@@ -555,8 +573,10 @@ it too, which is what stops the two mechanisms from drifting.
 
 ## Open questions
 
-None block v0.10.0. Q1 and Q5 should be settled before it ships; Q2, Q3, Q6
-before v0.11.0 starts.
+**All settled.** Q1 and Q5 were decided for v0.10.0 and are now shipped; Q2,
+Q3, Q6 and Q7 were decided on 2026-08-28 before the v0.11.0 plan was written,
+and Q6's answer raised Q8 and Q9, settled the same day. Only Q4 remains open,
+and it belongs to v0.12.0.
 
 <a id="q1"></a>
 **Q1 — Do the built-ins' *implementations* move into `app/`, or only their
@@ -564,9 +584,13 @@ dispatch?** Moving `_apply_dns` out of `to_config.py` and `_sanitise_dns` out
 of `sanitise.py` gives one file per protocol and a clean model, at the cost of
 ~400 lines of churn in two of the most carefully tested modules in the project,
 and a possible import cycle with `sanitise`'s `_Replacer`.
-*Recommendation: dispatch only in v0.10.0.* `app/dns.py` references the
-existing private helpers and owns just `from_spec` (which has to move
-regardless). Revisit once a generated protocol exists to compare against.
+**Decided (Adam, 2026-08-28): dispatch only.** Shipped in 0.10.0.
+`app/dns.py` references the existing private helpers and owns just
+`from_spec`, which had to move regardless. `sanitise.py` turning out to be
+stdlib-only made the case stronger than the plan knew: relocating
+`_sanitise_dns` would have dragged `_Replacer` across a boundary nothing
+crosses. Worth revisiting once a generated protocol exists to compare
+against.
 
 <a id="q2"></a>
 **Q2 — Compile only, or also interpret?** kober compiles for a ~20× decode
@@ -576,10 +600,11 @@ a readable, reviewable, vendorable artifact whose dataclasses users construct
 directly, which is exactly how packeteer's app layers already feel. An
 interpreter (`--protocol sensor.yaml`, no compile step) would be a genuinely
 nicer first five minutes.
-*Recommendation: compile only in v0.11.0.* An interpreter is a second
+**Decided (Adam, 2026-08-28): compile only.** An interpreter is a second
 implementation of the same semantics and the place where the two silently
 diverge. If the ergonomics prove to matter, `--protocol sensor.yaml` can
-compile to a cache directory instead.
+compile to a cache directory later without changing what the semantics are
+defined by.
 
 <a id="q3"></a>
 **Q3 — Superset of kober's dialect, or deliberately distinct?** A superset
@@ -587,9 +612,21 @@ means a kober spec decodes in packeteer unchanged and gains encoding with a
 `derive:` line — attractive, given the two projects already trade issues in
 both directions (#81–#83 came from kober). The risk is two dialects that look
 identical and differ in semantics, which is worse than either alone.
-*Recommendation: superset, and say so in the docs*, with `check` reporting
-kober constructs that v1 does not implement as "not supported yet" rather than
-"unknown key".
+**Decided (Adam, 2026-08-28): superset, documented as such.** kober's keys
+keep kober's meaning; packeteer adds `over:`, `ports:`, `const:`, `derive:`
+and `sensitive:`. `check` reports kober constructs v1 does not implement as
+*not supported yet* rather than *unknown key*, which is the difference between
+"this will work later" and "you typed something wrong".
+
+Vendoring kober's example specs as test fixtures was offered and **not**
+taken: the copies would drift. The compatibility claim is therefore
+documented and reasoned, not enforced in CI — worth knowing when it is
+eventually wrong.
+
+Note the two projects use `input:` for the same thing already, and it is a
+different axis from packeteer's `over:`. `input:` is the stream *shape*
+(`stream` / `datagram` / `either`); `over:` is which transport carries it. A
+packeteer spec declares both.
 
 <a id="q4"></a>
 **Q4 — What does `sanitise` do with unannotated fields of a generated
@@ -597,29 +634,79 @@ protocol?** Options: nothing (silent, dangerous); zero everything not marked
 safe (safe, and makes the command useless on the protocol you added precisely
 to see it); or annotate-and-warn.
 *Recommendation: annotate, plus a one-shot warning when a spec carries no
-annotations at all.* Decide before v0.12.0, but land the `sensitive:` grammar
-in v0.11.0 either way.
+annotations at all.* **Still open** — decide before v0.12.0. The `sensitive:`
+grammar lands in v0.11.0 either way, so nothing is blocked. 0.10.0 settled the
+same question for hand-written protocols: an `AppProtocol` without a
+`sanitise` callable passes through untouched, documented as a deliberate
+choice.
 
 <a id="q5"></a>
 **Q5 — Does a user protocol get its own `ParsedPacket` attribute?** `pkt.app`
 is honest and statically typed; `pkt.sensor` is what people will try first, and
 costs a `__getattr__` on a frozen-ish dataclass plus a hole in the type
 annotations.
-*Recommendation: `pkt.app` only.* `pkt.app_protocol == "sensor"` is the
-discriminator, and it keeps `ParsedPacket` fully annotated as CLAUDE.md
-requires.
+**Decided (Adam, 2026-08-28): `pkt.app` only.** Shipped in 0.10.0.
+`pkt.app_protocol == "sensor"` is the discriminator, and it keeps
+`ParsedPacket` fully annotated as CLAUDE.md requires.
 
 <a id="q6"></a>
-**Q6 — Is one-message-per-packet acceptable for v1?** It rules out any TCP
-protocol whose messages span segments. Stated up front so nobody discovers it
-after writing a spec.
+**Q6 — What message framing does v1 support?**
+
+**Decided (Adam, 2026-08-28): datagram, plus length-prefixed streams.** Not
+the recommendation, which was datagram only. A stream protocol whose entry
+unit declares its own length at a fixed position at the front is in scope, and
+is reassembled across segments; a delimiter-framed one is refused by `check`.
+
+This is the decision that sets the milestone's size. It brings TCP reassembly
+into packeteer, which has nothing like it today except
+`~packeteer.parse.defragment.Defragmenter` for IP fragments, and it forces the
+same entry-point split #73 settled for fragments: a length-prefixed protocol
+cannot be decoded from a single frame, so `parse_packet` leaves its payload
+alone and the reassembling front door does the work.
+
+It also buys something real: DNS-over-TCP becomes expressible, which is the
+first case where a generated protocol could stand beside a built-in rather
+than only beside a proprietary one.
+
+<a id="q8"></a>
+**Q8 — How does the length-prefixed reassembler handle disordered TCP?**
+Raised by [Q6](#q6)'s answer, which brought reassembly into scope at all.
+
+**Decided (Adam, 2026-08-28): sequence-aware.** Bytes are placed by TCP
+sequence number; duplicates and overlaps are dropped, and a gap is detected
+and refused rather than spliced into a corrupt message.
+
+The alternative — buffering in arrival order — is a third of the code and
+silently wrong on any capture carrying a retransmission. That is not a
+hypothetical: `packeteer stream` with
+{class}`~packeteer.generate.impairments.ImpairmentOptions` deliberately emits
+spurious retransmissions and leaves permanent gaps where a segment was lost,
+so an in-order reader would mis-decode **packeteer's own generated corpus**,
+which is the first thing anyone would test a new spec against.
+
+<a id="q9"></a>
+**Q9 — Where does reassembly plug in, and is it on by default?**
+
+**Decided (Adam, 2026-08-28): mirror defragmentation.** A `Reassembler`
+shaped like {class}`~packeteer.parse.defragment.Defragmenter` — `feed()`
+returning what completed, and an `incomplete` list for what was abandoned —
+on by default in `iter_packets`, off in `parse_pcap_file` and
+`packeteer parse`.
+
+That is the split #73 settled for fragments, and it is settled here for the
+same reason rather than by analogy: **the spec path is the round-trip path.**
+`parse` → edit → `build` reproduces a capture byte for byte, and a capture
+whose messages were reassembled rebuilds as whole messages rather than as the
+segments that carried them. Reassembly therefore cannot be on where a spec is
+produced.
 
 <a id="q7"></a>
 **Q7 — Where do compiled modules go by default?** `--out` only, or a
 packeteer-managed cache?
-*Recommendation: `--out` only, defaulting to `./<name>.py`.* The generated
-file is meant to be committed and reviewed; hiding it in a cache works against
-that.
+**Decided (Adam, 2026-08-28): beside the spec.** `--out` is optional and
+defaults to `sensor.py` next to `sensor.yaml`. The generated file is meant to
+be committed and reviewed, so it lands where the author is already looking; a
+cache would hide it.
 
 ---
 
