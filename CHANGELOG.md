@@ -25,7 +25,22 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
-_Nothing yet._
+### Fixed
+
+- **Truncated captures no longer read as corruption** (#92) — a capture taken
+  with a snaplen kept `transport.checksum` (and `transport.length` for UDP) on
+  every packet whose payload was cut, because the derived value was computed
+  over the bytes that were kept rather than the ones the sender used.  Since
+  the keys appear only where a rebuild could not derive them, a consumer reads
+  a surviving `checksum` as "this was wrong on the wire" — and truncation made
+  that false for every packet of the capture.
+
+  `parse` now clears both when the IP header declares more bytes than the
+  capture holds, on IPv4 and IPv6 and for both TCP and UDP.  The consequence,
+  which is a limitation rather than a bug: **corruption cannot be reported at
+  all in a truncated capture**, because the bytes the sender checksummed are
+  not in the file.  A fragmented datagram's first fragment is unaffected — it
+  carries exactly what its IP header declares — and still records both values.
 
 ---
 

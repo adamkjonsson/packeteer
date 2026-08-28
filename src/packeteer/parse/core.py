@@ -749,7 +749,7 @@ def _ip_payload_size(ip_hdr: IPHeader | IPv6Header | None, ip_size: int) -> int 
 
 
 def _clear_derivable_transport_fields(
-    pkt: ParsedPacket, hdr: object, payload: bytes,
+    pkt: ParsedPacket, hdr: object, payload: bytes, truncated: bool = False,
 ) -> None:
     """Drop a captured length or checksum that a rebuild would derive anyway.
 
@@ -765,11 +765,33 @@ def _clear_derivable_transport_fields(
     rather than the fragment carrying them.  Keeping the fields only in that
     case is what stops every packet spec growing two redundant keys.
 
-    Does nothing when the IP header is missing or the payload is truncated,
-    since the derived values would then be computed from bytes that are not
-    the ones the sender used.
+    A *truncated* payload clears both instead of comparing them.  The derived
+    values would be computed from fewer bytes than the sender used, so keeping
+    the captured ones would say "wrong on the wire" about every packet of a
+    snaplen-limited capture; and a rebuild of a truncated packet does not
+    reproduce the original either way, so there is nothing for them to
+    preserve.  The cost is that corruption cannot be reported at all in a
+    truncated capture — the bytes the sender checksummed are not in the file,
+    so "unknown" is the only honest answer.
+
+    Does nothing when the IP header is missing, since the derived values
+    cannot be computed at all.
+
+    Args:
+        pkt: Packet the header belongs to; supplies the IP addresses the
+            transport checksum's pseudo-header needs.
+        hdr: Parsed transport header, modified in place.
+        payload: Bytes after the transport header, as captured.
+        truncated: Whether *payload* is shorter than the IP header declares —
+            see :func:`_ip_payload_size`.
+
     """
     if not isinstance(hdr, (TCPHeader, UDPHeader)) or pkt.ip is None:
+        return
+    if truncated:
+        hdr.checksum = None
+        if isinstance(hdr, UDPHeader):
+            hdr.length = None
         return
     src, dst = pkt.ip.src, pkt.ip.dst
     version = 6 if isinstance(pkt.ip, IPv6Header) else 4
@@ -801,7 +823,7 @@ def _clear_derivable_transport_fields(
 
 def _parse_ip_protocol(
     pkt: ParsedPacket, remaining: bytes, ip_proto: int | None, decode_app: bool = True,
-    base: int = 0,
+    base: int = 0, truncated: bool = False,
 ) -> tuple[bytes, int]:
     """Parse the IP protocol layer (transport or tunnel).
 
@@ -816,6 +838,9 @@ def _parse_ip_protocol(
             transport payload is returned as it appeared on the wire.  See
             :func:`parse_packet`.
         base: Offset of *remaining* within the frame being parsed.
+        truncated: Whether the capture holds fewer bytes than the IP header
+            declares, as from a snaplen.  Passed to
+            :func:`_clear_derivable_transport_fields`.
 
     Returns:
         ``(payload, offset)`` — the bytes after every consumed header, and the
@@ -827,7 +852,9 @@ def _parse_ip_protocol(
         t_size, _, t_hdr = transport_parser(remaining)
         if t_size > 0:
             pkt.transport = t_hdr
-            _clear_derivable_transport_fields(pkt, t_hdr, remaining[t_size:])
+            _clear_derivable_transport_fields(
+                pkt, t_hdr, remaining[t_size:], truncated,
+            )
             remaining = remaining[t_size:]
             base += t_size
             if _try_parse_vxlan(pkt, remaining, decode_app, base):
@@ -875,6 +902,7 @@ def _parse_ip_protocol(
             # AH is transparent: continue parsing the protected content.
             return _parse_ip_protocol(
                 pkt, remaining[ah_size:], next_header, decode_app, base + ah_size,
+                truncated,
             )
     elif ip_proto == IPPROTO_ESP:
         e_size, _, e_hdr = _esp_parser(remaining)
@@ -1023,6 +1051,7 @@ def parse_packet(
     # size exceeds what was captured (a snaplen-truncated record) keep every
     # captured byte instead.
     declared = _ip_payload_size(ip_hdr, ip_size)
+    truncated = declared is not None and declared > len(remaining)
     if declared is not None and declared < len(remaining):
         remaining = remaining[:declared]
 
@@ -1033,7 +1062,7 @@ def parse_packet(
         return pkt
 
     payload, payload_at = _parse_ip_protocol(
-        pkt, remaining, ip_proto, decode_app, offset,
+        pkt, remaining, ip_proto, decode_app, offset, truncated,
     )
     _set_payload(pkt, payload, payload_at)
     return pkt
