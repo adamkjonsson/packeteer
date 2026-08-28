@@ -86,6 +86,18 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   path from capture to spec for a registered protocol: `packeteer parse` now
   emits a section for one.
 
+- **A packet spec's application section is built through the registry** (#100)
+  — `packeteer.app.apply_app_section` replaces the `dns`/`dhcp`/`http` ladder
+  that the CLI carried twice, so `packeteer build` constructs a registered
+  protocol's payload the same way it constructs a built-in's.  With #99 this
+  closes the `parse` → edit → `build` round trip for a registered protocol.
+
+- **Breaking: a packet spec carrying two application sections is now an
+  error.**  Previously the first of `dns`, `dhcp`, `http` present was used and
+  the others ignored silently.  A packet has one application payload, so a
+  spec with two was always a mistake; it now fails naming both sections.
+  Callers with such a spec should delete the section they did not mean.
+
 ---
 
 ## [0.9.1] - 2026-08-28

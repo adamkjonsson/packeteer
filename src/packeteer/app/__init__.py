@@ -27,11 +27,16 @@ packeteer.app``, or calling anything that needs it fills it in.
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 from packeteer import protocols
 
 from . import dhcp, dns, http
 
-__all__ = ["dns", "dhcp", "http", "register_builtins"]
+if TYPE_CHECKING:
+    from packeteer.generate.builder import PacketBuilder
+
+__all__ = ["dns", "dhcp", "http", "apply_app_section", "register_builtins"]
 
 
 def register_builtins() -> None:
@@ -48,3 +53,43 @@ def register_builtins() -> None:
 
 
 register_builtins()
+
+
+def apply_app_section(
+    b: PacketBuilder, spec: dict[str, Any], transport: str,
+) -> PacketBuilder | None:
+    """Encode whichever registered protocol's section *spec* carries.
+
+    The packet-spec counterpart to :func:`packeteer.parse.to_config.update_config`:
+    it finds the one section naming a registered protocol, builds the message
+    from it, and sets it as the packet payload.
+
+    Args:
+        b: The builder to append to.  Its transport layer must already be set.
+        spec: One packet's spec — the object holding ``network``,
+            ``transport`` and at most one application section.
+        transport: ``"tcp"`` or ``"udp"``, which is what lets DNS decide
+            whether to add its length prefix.
+
+    Returns:
+        *b* with the payload set, or ``None`` when *spec* carries no
+        application section, so the caller can fall back to ``payload``.
+
+    Raises:
+        ValueError: If *spec* carries more than one application section.  A
+            packet has one application payload, and silently preferring
+            whichever registered first would make the choice arbitrary as
+            well as invisible.
+
+    """
+    found = [proto for proto in protocols.registered() if proto.name in spec]
+    if not found:
+        return None
+    if len(found) > 1:
+        names = ", ".join(sorted(proto.name for proto in found))
+        raise ValueError(
+            f"a packet spec may carry at most one application section, "
+            f"but this one has {len(found)}: {names}"
+        )
+    proto = found[0]
+    return b.payload(data=proto.encode(proto.from_spec(spec[proto.name]), transport))

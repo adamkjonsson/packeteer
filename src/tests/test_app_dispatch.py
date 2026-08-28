@@ -212,3 +212,101 @@ class TestRegisteredProtocolsReachTheSpec(unittest.TestCase):
             DNSQuestion(name="example.com.", qtype=DNS_TYPE_A, qclass=1)])
         self.assertIn("dns", update_config({}, msg))
         self.assertIn("http", update_config({}, HTTPRequest()))
+
+
+class TestApplyAppSection(unittest.TestCase):
+    """Packet spec → payload, through the registry (#100)."""
+
+    def setUp(self) -> None:
+        protocols.register(_sensor())
+        self.addCleanup(protocols.unregister, "sensor")
+
+    def _builder(self) -> PacketBuilder:
+        return (PacketBuilder().ethernet(**_MACS)
+                .ip(src="10.0.0.1", dst="10.0.0.2").udp(dst_port=9000))
+
+    def test_no_application_section_returns_none(self) -> None:
+        from packeteer.app import apply_app_section
+
+        self.assertIsNone(apply_app_section(self._builder(), {"payload": {}}, "udp"))
+
+    def test_a_registered_section_becomes_the_payload(self) -> None:
+        from packeteer.app import apply_app_section
+
+        b = apply_app_section(self._builder(), {"sensor": {"value": 258}}, "udp")
+        self.assertIsNotNone(b)
+        self.assertEqual(parse_packet(b.build()).app, Reading(258))
+
+    def test_transport_reaches_the_encoder(self) -> None:
+        """DNS over TCP needs the 2-byte length prefix; over UDP it must not."""
+        from packeteer.app import apply_app_section
+
+        section = {"dns": {"id": 1, "questions": [
+            {"name": "example.com.", "qtype": DNS_TYPE_A}]}}
+        over_tcp = apply_app_section(
+            PacketBuilder().ethernet(**_MACS)
+            .ip(src="10.0.0.1", dst="10.0.0.2").tcp(dst_port=53),
+            section, "tcp").build()
+        over_udp = apply_app_section(
+            PacketBuilder().ethernet(**_MACS)
+            .ip(src="10.0.0.1", dst="10.0.0.2").udp(dst_port=53),
+            section, "udp").build()
+        self.assertEqual(len(over_tcp) - len(over_udp), 20 - 8 + 2)
+
+    def test_two_application_sections_is_an_error_naming_both(self) -> None:
+        from packeteer.app import apply_app_section
+
+        with self.assertRaises(ValueError) as ctx:
+            apply_app_section(self._builder(), {"dns": {}, "http": {}}, "tcp")
+        self.assertIn("dns", str(ctx.exception))
+        self.assertIn("http", str(ctx.exception))
+
+
+class TestBuildFromSpec(unittest.TestCase):
+    """The CLI path, which had the same ladder twice."""
+
+    def setUp(self) -> None:
+        protocols.register(_sensor())
+        self.addCleanup(protocols.unregister, "sensor")
+
+    def _spec(self, **extra: Any) -> dict[str, Any]:
+        spec: dict[str, Any] = {
+            "ethernet": dict(_MACS),
+            "network": {"src": "10.0.0.1", "dst": "10.0.0.2", "protocol": "udp"},
+            "transport": {"dst_port": 9000},
+        }
+        spec.update(extra)
+        return spec
+
+    def test_a_registered_protocol_builds(self) -> None:
+        import packeteer.__main__ as cli
+
+        b, _ = cli._apply_spec_to_builder(
+            PacketBuilder(), self._spec(sensor={"value": 258}), 1)
+        self.assertEqual(parse_packet(b.build()).app, Reading(258))
+
+    def test_round_trip_through_the_spec(self) -> None:
+        import packeteer.__main__ as cli
+        from packeteer.parse.core import _packet_to_spec
+
+        original = _udp(b"\x01\x02")
+        spec = _packet_to_spec(parse_packet(original))
+        b, _ = cli._apply_spec_to_builder(PacketBuilder(), spec, 1)
+        self.assertEqual(b.build(), original)
+
+    def test_two_sections_exits_with_a_message(self) -> None:
+        import packeteer.__main__ as cli
+
+        spec = self._spec(sensor={"value": 1}, dns={"id": 1})
+        with self.assertRaises(SystemExit) as ctx:
+            cli._apply_spec_to_builder(PacketBuilder(), spec, 7)
+        self.assertEqual(ctx.exception.code, 1)
+
+    def test_no_section_still_falls_back_to_payload(self) -> None:
+        import packeteer.__main__ as cli
+
+        # Port 4444 so the payload is not a sensor reading on the way back.
+        spec = self._spec(payload={"data": "aabb"})
+        spec["transport"] = {"dst_port": 4444}
+        b, _ = cli._apply_spec_to_builder(PacketBuilder(), spec, 1)
+        self.assertEqual(parse_packet(b.build()).payload, b"\xaa\xbb")

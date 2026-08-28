@@ -343,6 +343,24 @@ def _dispatch_transport(
     sys.exit(1)
 
 
+def _apply_app_spec(
+    b: "PacketBuilder",
+    spec: dict,
+    transport: str,
+    packet_num: int,
+    context: str = "",
+) -> "PacketBuilder | None":
+    """Append the application section of *spec*, reporting a bad spec cleanly.
+
+    *context* is a short prefix (e.g. ``"ipip inner "``) used in error messages.
+    """
+    try:
+        return app.apply_app_section(b, spec, transport)
+    except ValueError as exc:
+        print(f"Error: packet {packet_num} {context}{exc}", file=sys.stderr)
+        sys.exit(1)
+
+
 def _apply_payload_spec(
     b: "PacketBuilder",
     payload_spec: dict,
@@ -453,12 +471,9 @@ def _apply_ip_chain(
         return _apply_ip_chain(b, gre_inner, packet_num)
 
     b = _dispatch_transport(b, proto_lower, spec.get("transport", {}), packet_num, "ipip inner ")
-    if "dns" in spec:
-        return b.dns(app.dns.from_spec(spec["dns"]), tcp=(proto_lower == "tcp"))
-    if "dhcp" in spec:
-        return b.dhcp(app.dhcp.from_spec(spec["dhcp"]))
-    if "http" in spec:
-        return b.http(app.http.from_spec(spec["http"]))
+    applied = _apply_app_spec(b, spec, proto_lower, packet_num, "ipip inner ")
+    if applied is not None:
+        return applied
     return _apply_payload_spec(b, spec.get("payload", {}), packet_num, "ipip inner ")
 
 
@@ -754,14 +769,9 @@ def _apply_spec_to_builder(
         return _apply_payload_spec(b, spec.get("payload", {}), packet_num), False
 
     b = _dispatch_transport(b, proto_lower, spec.get("transport", {}), packet_num)
-    if "dns" in spec:
-        b = b.dns(app.dns.from_spec(spec["dns"]), tcp=(proto_lower == "tcp"))
-    elif "dhcp" in spec:
-        b = b.dhcp(app.dhcp.from_spec(spec["dhcp"]))
-    elif "http" in spec:
-        b = b.http(app.http.from_spec(spec["http"]))
-    else:
-        b = _apply_payload_spec(b, spec.get("payload", {}), packet_num)
+    applied = _apply_app_spec(b, spec, proto_lower, packet_num)
+    b = (applied if applied is not None
+         else _apply_payload_spec(b, spec.get("payload", {}), packet_num))
     return b, False
 
 
