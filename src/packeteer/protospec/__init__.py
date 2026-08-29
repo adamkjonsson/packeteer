@@ -17,6 +17,7 @@ from __future__ import annotations
 from packeteer.protospec.check import CheckResult, Diagnostic, check
 from packeteer.protospec.errors import SpecError
 from packeteer.protospec.loader import from_mapping, load, loads
+from packeteer.protospec.show import render
 from packeteer.protospec.spec import Spec
 
 __all__ = [
@@ -25,6 +26,7 @@ __all__ = [
     "CheckResult",
     "Diagnostic",
     "check",
+    "render",
     "load",
     "loads",
     "from_mapping",

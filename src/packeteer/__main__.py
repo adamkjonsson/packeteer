@@ -823,6 +823,18 @@ def _run_multi_packet(
         print(f"Wrote {len(collected)} packet(s) to {pcapng_path} (link type: {link_type})")
 
 
+def _cmd_protocol_show(args: argparse.Namespace) -> None:
+    """Print the field tree a protocol spec describes."""
+    from packeteer import protospec
+
+    try:
+        spec = protospec.load(args.spec)
+    except protospec.SpecError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    print(protospec.render(spec, docs=not args.no_docs))
+
+
 def _cmd_protocol_check(args: argparse.Namespace) -> None:
     """Validate a protocol spec, printing every fault it has."""
     from packeteer import protospec
@@ -1792,6 +1804,22 @@ def main() -> None:
         help="Fail on warnings as well as errors",
     )
     check_parser.set_defaults(func=_cmd_protocol_check)
+
+    show_parser = protocol_verbs.add_parser(
+        "show",
+        help="Print the field tree a protocol spec describes",
+        description=(
+            "Print the field tree a spec describes, expanding nested units in "
+            "place.  Works on a spec that does not yet check, which is when it "
+            "is most useful."
+        ),
+    )
+    show_parser.add_argument("spec", metavar="FILE", help="Protocol spec file")
+    show_parser.add_argument(
+        "--no-docs", action="store_true",
+        help="Omit each field's doc text",
+    )
+    show_parser.set_defaults(func=_cmd_protocol_show)
 
     # ── build subcommand ──────────────────────────────────────────────────────
     build_parser = subparsers.add_parser(

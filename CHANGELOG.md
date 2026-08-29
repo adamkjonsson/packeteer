@@ -92,6 +92,19 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   message ends before it has one.  A spec that cannot be proved is refused
   naming the field that made the prefix variable.
 
+- **`packeteer protocol show` and `packeteer.protospec.render`** (#108) —
+  prints the field tree a spec describes, expanding nested units in place, with
+  enums, constants, derived fields, repeat counts and `sensitive` markers.
+  `--no-docs` leaves out the prose.
+
+  It deliberately does not require the spec to check: an undefined unit or
+  enum, a recursive one, and an expression that does not parse are all marked
+  in place rather than raised, because a spec that is wrong is exactly when a
+  reader wants to see what it currently says.  A construct this version cannot
+  compile is marked too — the loader stands something in for one, so without
+  the marker a `pointer` field would print as `bytes[rest]` and the tree would
+  quietly misreport the spec.
+
 ---
 
 ## [0.10.0] - 2026-08-28
