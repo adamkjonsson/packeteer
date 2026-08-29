@@ -61,11 +61,12 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ### Changed
 
-- **A truncated packet keeps its `transport.length` and `transport.checksum`**
-  (#126) — 0.9.1 cleared both (#92) so that a snaplen would not read as
-  corruption on every packet.  Half of that reasoning was that a truncated
-  packet could not be rebuilt as itself anyway; #126 makes it possible, and
-  these are two of the values it needs.
+- **Breaking: a truncated packet keeps its `transport.length` and
+  `transport.checksum`** (#126) — 0.9.1 cleared both (#92) so that a snaplen
+  would not read as corruption on every packet.  Half of that reasoning was
+  that a truncated
+  packet could not be rebuilt as itself anyway; #126 makes it
+  possible, and these are two of the values it needs.
 
   A recorded checksum therefore no longer means "wrong on the wire" on its
   own: on a packet with `packet_metadata.truncated` set it is the captured
@@ -73,8 +74,8 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   file.  Consumers that read a recorded checksum as corruption should test
   `truncated` alongside it.
 
-- **`PcapFile.packets` holds `PcapRecord` objects** rather than plain
-  `(data, ts_sec, ts_frac)` tuples (#126).  A record unpacks, indexes and
+- **Breaking: `PcapFile.packets` holds `PcapRecord` objects** rather than
+  plain `(data, ts_sec, ts_frac)` tuples (#126).  A record unpacks, indexes and
   measures as that tuple, so `for data, ts_sec, ts_frac in result.packets`
   and `packets[0][0]` are unaffected; what it adds is the rest of the record,
   `orig_len` above all, which is the only place a truncated packet's real
