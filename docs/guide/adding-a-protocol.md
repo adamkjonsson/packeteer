@@ -10,6 +10,14 @@ There is nothing privileged about the three built-ins.  They are registered
 through the same interface described here, in
 {mod}`packeteer.app`.
 
+```{note}
+**There are two routes, and this is the second one.**  Most protocols are
+easier to describe in YAML and compile — see {doc}`../protocols/index`.  Write
+one by hand when the spec language cannot express yours: delimiter framing,
+compression pointers, a message spanning packets, or anything needing code.
+The two produce the same thing, and packeteer cannot tell them apart.
+```
+
 ## The contract
 
 An application protocol is a {class}`~packeteer.protocols.AppProtocol`: what

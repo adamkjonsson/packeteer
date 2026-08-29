@@ -823,6 +823,84 @@ def _run_multi_packet(
         print(f"Wrote {len(collected)} packet(s) to {pcapng_path} (link type: {link_type})")
 
 
+def _package_version() -> str:
+    """Return the installed packeteer version, or ``"unknown"``."""
+    try:
+        return _pkg_version("packeteer")
+    except _PkgNotFoundError:
+        return "unknown"
+
+
+def _cmd_protocol_compile(args: argparse.Namespace) -> None:
+    """Compile a protocol spec to a Python module."""
+    import pathlib
+
+    from packeteer import protospec
+
+    try:
+        spec = protospec.load(args.spec)
+    except protospec.SpecError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    # Compiling a spec that does not check would emit code built on faults the
+    # checker already knows about, so the check is not optional here.
+    result = protospec.check(spec)
+    for diagnostic in result.diagnostics:
+        print(diagnostic, file=sys.stderr)
+    if not result.ok(strict=args.strict):
+        print(result.summary(), file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        code = protospec.compile_spec(
+            spec,
+            source=pathlib.Path(args.spec).name,
+            generator=f"packeteer {_package_version()}",
+        )
+    except protospec.SpecError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    # Beside the spec by default: the generated file is meant to be committed
+    # and reviewed, so it lands where the author is already looking.
+    out = pathlib.Path(args.out) if args.out else \
+        pathlib.Path(args.spec).with_suffix(".py")
+    out.write_text(code, encoding="utf-8")
+    print(f"Wrote {out} ({spec.name} {spec.version}, "
+          f"packeteer {_package_version()})")
+
+
+def _cmd_protocol_show(args: argparse.Namespace) -> None:
+    """Print the field tree a protocol spec describes."""
+    from packeteer import protospec
+
+    try:
+        spec = protospec.load(args.spec)
+    except protospec.SpecError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    print(protospec.render(spec, docs=not args.no_docs))
+
+
+def _cmd_protocol_check(args: argparse.Namespace) -> None:
+    """Validate a protocol spec, printing every fault it has."""
+    from packeteer import protospec
+
+    try:
+        spec = protospec.load(args.spec)
+    except protospec.SpecError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    result = protospec.check(spec)
+    for diagnostic in result.diagnostics:
+        print(diagnostic, file=sys.stderr)
+    print(result.summary())
+    if not result.ok(strict=args.strict):
+        sys.exit(1)
+
+
 def _cmd_build(args: argparse.Namespace) -> None:
     try:
         with open(args.config) as f:
@@ -1751,6 +1829,65 @@ def main() -> None:
     parser.add_argument("--version", action="version", version=f"packeteer {_version}")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # ── protocol subcommand ───────────────────────────────────────────────────
+    protocol_parser = subparsers.add_parser(
+        "protocol",
+        help="Work with protocol specs",
+        description="Check, show and compile application-protocol specs",
+    )
+    protocol_verbs = protocol_parser.add_subparsers(dest="protocol_command",
+                                                    required=True)
+    check_parser = protocol_verbs.add_parser(
+        "check",
+        help="Validate a protocol spec",
+        description=(
+            "Validate a protocol spec and type every expression in it, before "
+            "any data exists.  Every fault is reported, not just the first."
+        ),
+    )
+    check_parser.add_argument("spec", metavar="FILE", help="Protocol spec file")
+    check_parser.add_argument(
+        "--strict", action="store_true",
+        help="Fail on warnings as well as errors",
+    )
+    check_parser.set_defaults(func=_cmd_protocol_check)
+
+    show_parser = protocol_verbs.add_parser(
+        "show",
+        help="Print the field tree a protocol spec describes",
+        description=(
+            "Print the field tree a spec describes, expanding nested units in "
+            "place.  Works on a spec that does not yet check, which is when it "
+            "is most useful."
+        ),
+    )
+    show_parser.add_argument("spec", metavar="FILE", help="Protocol spec file")
+    show_parser.add_argument(
+        "--no-docs", action="store_true",
+        help="Omit each field's doc text",
+    )
+    show_parser.set_defaults(func=_cmd_protocol_show)
+
+    compile_parser = protocol_verbs.add_parser(
+        "compile",
+        help="Compile a protocol spec to a Python module",
+        description=(
+            "Compile a protocol spec to a Python module that registers an "
+            "AppProtocol.  The spec is checked first; a spec with errors is "
+            "not compiled."
+        ),
+    )
+    compile_parser.add_argument("spec", metavar="FILE", help="Protocol spec file")
+    compile_parser.add_argument(
+        "-o", "--out", metavar="FILE", default=None,
+        help="Where to write the module (default: beside the spec)",
+    )
+    compile_parser.add_argument(
+        "--strict", action="store_true",
+        help="Refuse to compile a spec with warnings",
+    )
+    compile_parser.set_defaults(func=_cmd_protocol_compile)
 
     # ── build subcommand ──────────────────────────────────────────────────────
     build_parser = subparsers.add_parser(

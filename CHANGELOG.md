@@ -29,6 +29,160 @@ _Nothing yet._
 
 ---
 
+## [0.11.0] - 2026-08-29
+
+### Added
+
+- **`packeteer.protospec` — the shape of a protocol spec, and how to read one**
+  (#105) — `Spec`, `Unit`, `Field` and the type, size and repeat variants,
+  plus `load`, `loads` and `from_mapping` to build them from YAML or JSON.
+  Nothing compiles a `Spec` yet.
+
+  The dialect is a **superset of
+  [kober](https://github.com/adamkjonsson/zipline-kober)'s**: kober's keys
+  keep kober's meaning, and packeteer adds `over:`, `ports:`, `const:`,
+  `derive:` and `sensitive:` — the four a spec needs in order to describe an
+  *encoder*, which kober never had to.  `input:` (the stream shape) and
+  `over:` (the transport) are independent, which is what lets DNS be
+  `input: datagram, over: udp` over UDP and `input: stream, over: tcp` over
+  TCP.
+
+  A construct kober has that packeteer does not yet implement — `pointer`,
+  `select`, `computed`, delimiter-framed sizes, `until` and `to_end` repeats,
+  unit parameters — is **recorded rather than refused**, so the checker can
+  report it as "not supported yet" rather than "unknown key".
+
+  JSON specs load from the standard library; YAML needs the new optional
+  `yaml` extra (`pip install packeteer[yaml]`), and is only needed to compile.
+
+  YAML 1.1 reads `on`, `off`, `yes` and `no` as booleans and `1.10` as a
+  number, so a spec that meant any of them as text gets something else.  The
+  loader names the coercion and says to quote it rather than reinterpreting
+  the document — a spec has to mean the same thing to every YAML tool that
+  opens it.  The one exception is a switch's `on:` key, which YAML turns into
+  `True` before the loader can object; that is repaired narrowly, exactly as
+  kober repairs it.
+
+- **`packeteer.protospec.expr` — the expression language** (#106) — field
+  references, integer arithmetic, bitwise operators, comparison and boolean
+  operators, with `parse`, `references`, `type_of` and `unparse`.  Nothing
+  consumes it yet; the checker does in #107.
+
+  Four types and no coercion: `int`, `str`, `bytes`, `bool`.  Arithmetic and
+  ordering are integer-only, equality needs both sides to be the same type,
+  and `and` / `or` / `not` need booleans — there is no truthiness, and the
+  error says so.  `/` floors, and a float literal is refused rather than
+  truncated.
+
+  The parser is Python's `ast.parse` in expression mode against a whitelist,
+  so "no calls, no loops, no indexing" holds by construction — and a refused
+  construct is named the way a spec author would say it (*a comprehension is
+  not allowed in an expression*) rather than by leaking an AST class.  A
+  function call is reported as **not supported yet**, naming it, since kober
+  has a closed table of three and a spec written for kober may use one.
+
+- **`packeteer protocol check` and `packeteer.protospec.check`** (#107) —
+  validates a spec and types every expression in it before any data exists,
+  reporting **every** fault rather than stopping at the first, each with its
+  line.  `--strict` fails on warnings too.
+
+  Beyond what a decode-only checker would do, it refuses specs that decode but
+  cannot **encode**: a `derive` naming a field it does not size or count, a
+  `const` a field's type cannot hold, `size_of` on a repeating field.  A
+  length that nothing derives is a warning rather than an error, with the fix
+  in the message — such a capture still round-trips, but building a message by
+  hand means keeping the length right yourself.
+
+  For `input: stream` it proves the entry unit is length-prefixed and reports
+  the prefix size, which is what a reassembler needs in order to know where a
+  message ends before it has one.  A spec that cannot be proved is refused
+  naming the field that made the prefix variable.
+
+- **`packeteer protocol show` and `packeteer.protospec.render`** (#108) —
+  prints the field tree a spec describes, expanding nested units in place, with
+  enums, constants, derived fields, repeat counts and `sensitive` markers.
+  `--no-docs` leaves out the prose.
+
+  It deliberately does not require the spec to check: an undefined unit or
+  enum, a recursive one, and an expression that does not parse are all marked
+  in place rather than raised, because a spec that is wrong is exactly when a
+  reader wants to see what it currently says.  A construct this version cannot
+  compile is marked too — the loader stands something in for one, so without
+  the marker a `pointer` field would print as `bytes[rest]` and the tree would
+  quietly misreport the spec.
+
+- **`packeteer protocol compile` and `packeteer.protospec.compile_spec`**
+  (#109) — compiles a datagram spec to a Python module: a dataclass per unit,
+  `encode`, `decode`, `to_spec`, `from_spec`, and an `AppProtocol` registered
+  at import.  Everything 0.10.0 shipped then works on it — `PacketBuilder.app`,
+  `ParsedPacket.app`, a section in `packeteer parse` output, and
+  `packeteer build` reading it back to byte-identical frames.
+
+  The module is written beside the spec unless `--out` says otherwise, since
+  it is meant to be committed and reviewed.  The spec is checked first and one
+  with errors is not compiled.
+
+  A generated module imports only `packeteer` and the standard library, which
+  is what makes it safe to vendor.  Names are validated rather than silently
+  renamed — a field that is not a Python identifier, or that collides with a
+  name the module uses, is refused — author text is escaped rather than
+  interpolated, and the generated source is parsed before it is written, so a
+  bug in the compiler is a refusal rather than a broken file.
+
+- **`packeteer.protospec.runtime`** (#109) — the `Reader` and `Writer` a
+  compiled protocol uses, handling byte- and bit-level fields in either byte
+  order.  A read past the end raises `ValueError`, which is what makes a
+  decoder refuse a truncated or mismatched payload.
+
+- **Derived fields and constants in a compiled protocol** (#110) — a field
+  with `derive: {size_of: …}` or `{count_of: …}` compiles to `int | None`,
+  where `None` means "compute it".  On encode it is computed unless the object
+  overrides it; on decode it is cleared when the capture agrees with the
+  derivation and kept when it does not; and `to_spec` omits it when it is
+  `None`.
+
+  So a well-formed capture produces a spec with no redundant lengths and
+  counts, and a capture whose length disagrees with its data records the
+  disagreement and rebuilds byte-for-byte.  That is the rule
+  `transport.length` and `transport.checksum` have followed since #68, applied
+  by the compiler to every derived field.
+
+  A `const:` field takes the constant as its default and raises on decode when
+  the bytes disagree — which is what leaves another protocol's traffic on a
+  shared port as an opaque payload.  An explicit override is still written, so
+  deliberately malformed traffic can be built.
+
+- **A spec declaring `input: stream` is refused rather than compiled** (#114) —
+  a stream protocol's messages span packets, and packeteer decodes one packet
+  at a time.  The error names
+  [kober](https://github.com/adamkjonsson/zipline-kober), which decodes
+  stream-shaped protocols, and says that a spec whose messages each fit in one
+  packet should declare `input: datagram`.
+
+  `check` still proves such a spec is length-prefixed and reports the prefix
+  size, so nothing is lost if the decision is revisited.
+
+- **An unknown key in a spec is refused rather than ignored** (#113) — at the
+  spec, unit and field level, listing what is known.  A misspelled key that
+  loads and does nothing produces a decoder that silently does the wrong
+  thing.  kober's constructs this version does not implement — `params`,
+  `emit` — are still recorded and reported as "not supported yet", since a
+  spec written for kober carries them legitimately.
+
+### Documentation
+
+- **A protocol spec format reference and a walkthrough** (#113) — every key,
+  what the subset can and cannot describe, the relationship to kober's
+  dialect, and a spec-to-pcap walkthrough from `check` through `show`,
+  `compile` and into `PacketBuilder.app`.  A second example spec,
+  `examples/protocols/rpc.yaml`, exercises bit fields, an enum on a sub-byte
+  field, a nested unit and a `switch`.
+- {doc}`guide/adding-a-protocol` now opens by saying there are two routes and
+  when each is right — compile a spec unless the language cannot express your
+  protocol.
+
+---
+
 ## [0.10.0] - 2026-08-28
 
 ### Added
@@ -306,7 +460,6 @@ _Nothing yet._
   options, and a connection that negotiates timestamps carries one on every
   segment, so advertising them without sending them would trade one
   implausibility for another.  Carrying them properly is #90.
-
 
 ### Fixed
 
@@ -2253,7 +2406,8 @@ the exhaustive API reference.
      tagged with names that predate this convention, so only the entries below
      carry compare links. -->
 
-[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/adamkjonsson/packeteer/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/adamkjonsson/packeteer/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/adamkjonsson/packeteer/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/adamkjonsson/packeteer/compare/v0.8.0...v0.9.0
