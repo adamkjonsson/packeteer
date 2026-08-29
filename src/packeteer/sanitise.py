@@ -207,32 +207,50 @@ def _scan_utf8_payload(pl: dict[str, Any], packet_num: int) -> None:
         )
 
 
+#: Kinds that are a *finding* — something identifying was located in the data.
+#: Anything else is a report that something could not be checked, and keeps the
+#: wording whoever raised it chose.
+_FINDING_KINDS: dict[str, str] = {"email": "email address", "name": "name"}
+
+
 def _consolidate_pii_warnings(caught: list, path: str | None = None) -> None:
-    """Re-emit non-PII warnings unchanged; consolidate PII warnings into one per finding."""
-    # groups maps (kind, text) -> [first_excerpt, [packet_num, ...]]
+    """Re-emit non-PII warnings unchanged; consolidate the rest, one per finding.
+
+    Consolidation is per ``(kind, text)``, so a capture with the same finding
+    in ninety packets reports it once, naming them.  A ``kind`` that is not a
+    finding — ``"unredacted"``, meaning something could not be checked —
+    keeps its own message, because a description written for a specific
+    situation says more than a template can.
+    """
+    # groups maps (kind, text) -> [first_excerpt, [packet_num, ...], message]
     groups: dict[tuple[str, str], list] = {}
     for w in caught:
         if issubclass(w.category, PersonalDataWarning):
             assert isinstance(w.message, PersonalDataWarning)
             key = (w.message.kind, w.message.text)
             if key not in groups:
-                groups[key] = [w.message.match, []]
+                groups[key] = [w.message.match, [], str(w.message)]
             groups[key][1].append(w.message.packet_num)
         else:
             warnings.warn_explicit(
                 w.message, w.category, w.filename, w.lineno, source=w.source,
             )
     file_hint = f" in {path!r}" if path is not None else ""
-    for (kind, text), (first_excerpt, packet_nums) in sorted(groups.items()):
+    for (kind, text), (first_excerpt, packet_nums, message) in sorted(groups.items()):
         unique_nums = sorted(set(packet_nums))
         n = len(unique_nums)
         pkt_str = ", ".join(str(p) for p in unique_nums)
-        kind_str = "email address" if kind == "email" else "name"
         count_str = f"{n} packet{'s' if n != 1 else ''}"
+        if kind in _FINDING_KINDS:
+            summary = (f"Possible {_FINDING_KINDS[kind]} found in "
+                       f"{count_str}{file_hint} (packet_num {pkt_str}): "
+                       f"{first_excerpt!r}")
+        else:
+            summary = f"{message}  Affects {count_str}{file_hint} " \
+                      f"(packet_num {pkt_str})."
         warnings.warn(
             PersonalDataWarning(
-                f"Possible {kind_str} found in {count_str}{file_hint} "
-                f"(packet_num {pkt_str}): {first_excerpt!r}",
+                summary,
                 kind=kind,
                 match=first_excerpt,
                 text=text,
@@ -747,11 +765,10 @@ def _warn_unknown_icmp(family: str, icmp_type: int, packet_num: int) -> None:
     carry an address, and passing it through quietly is indistinguishable from
     having redacted it.
     """
-    where = f" in packet {packet_num}" if packet_num else ""
     what = f"{family} type {icmp_type}"
     warnings.warn(
         PersonalDataWarning(
-            f"{what}{where} is not one this version knows how to redact; if it "
+            f"{what} is not one this version knows how to redact; if it "
             f"carries addresses they are still in the output.  Use "
             f"SanitiseOptions(payload=True) to zero it.",
             kind="unredacted",
@@ -826,6 +843,40 @@ def _sanitise_app_layers(pkt: dict, r: _Replacer, opts: SanitiseOptions) -> None
             proto.sanitise(pkt[proto.name], r, opts)
 
 
+#: Keys that mean at least part of a packet was understood.  A packet with a
+#: payload and none of these is a frame the parser could not decode — an
+#: unsupported link type — so nothing in it has been redacted.
+_STRUCTURAL_KEYS: frozenset[str] = frozenset({
+    "ethernet", "sll", "sll2", "loopback", "arp", "network", "transport",
+    "mpls", "pppoe", "ipip", "gre", "etherip", "pseudowire", "ah", "esp",
+    "vxlan", "geneve", "gtpu",
+})
+
+
+def _warn_undecoded(pkt: dict, packet_num: int) -> None:
+    """Say when a packet was never decoded, so nothing in it was redacted.
+
+    An unsupported link type turns a whole frame into an opaque payload.  That
+    is indistinguishable, in a spec, from a packet that genuinely carried only
+    bytes — and the difference is the difference between a sanitised file and
+    one that merely looks sanitised.
+    """
+    if "payload" not in pkt or any(key in pkt for key in _STRUCTURAL_KEYS):
+        return
+    warnings.warn(
+        PersonalDataWarning(
+            "A packet was not decoded — most likely an unsupported link type — "
+            "so the whole frame is one opaque payload and nothing in it has "
+            "been redacted.  Use SanitiseOptions(payload=True) to zero it.",
+            kind="unredacted",
+            match="undecoded frame",
+            text="undecoded frame",
+            packet_num=packet_num,
+        ),
+        stacklevel=2,
+    )
+
+
 def _maybe_scan_pii(pkt: dict, packet_num: int) -> None:
     """Scan *pkt*'s UTF-8 payload for PII if present."""
     pl = pkt.get("payload")
@@ -859,6 +910,8 @@ def _sanitise_packet(
             t["src_port"] = r.port(t["src_port"])
         if "dst_port" in t:
             t["dst_port"] = r.port(t["dst_port"])
+
+    _warn_undecoded(pkt, packet_num)
 
     # Before _sanitise_payloads, which may zero the bytes this reads.
     _sanitise_icmp(pkt, r, opts, packet_num)

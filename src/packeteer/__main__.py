@@ -666,8 +666,22 @@ def _apply_spec_to_builder(
 
     if not is_pppoe_discovery and not is_etherip and not is_ipip and not is_gre and \
             not is_pseudowire and not is_arp and (not src or not dst or not protocol_str):
+        # A packet with only a payload was never decoded — almost always an
+        # unsupported link type — and saying which key is missing sends the
+        # reader looking in the wrong place.
+        undecoded = "payload" in spec and not any(
+            key in spec for key in
+            ("ethernet", "sll", "sll2", "loopback", "arp", "network")
+        )
+        detail = (
+            " was not decoded when it was parsed, most likely because its "
+            "capture used a link type packeteer does not support; there is "
+            "nothing to rebuild from"
+            if undecoded else
+            " missing network.src, network.dst, or network.protocol"
+        )
         print(
-            f"Error: packet {packet_num} missing network.src, network.dst, or network.protocol",
+            f"Error: packet {packet_num}{detail}",
             file=sys.stderr,
         )
         sys.exit(1)

@@ -27,6 +27,25 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ### Fixed
 
+- **An unsupported link type no longer passes in silence** (#123) — it made
+  the whole frame an opaque payload with no warning at all, which in a packet
+  spec is indistinguishable from a packet that genuinely carried only bytes.
+  `sanitise` then reported success on a file where every address, port and MAC
+  was still present, and the failure surfaced later as
+  `missing network.src`, which names a symptom rather than the cause.
+
+  `parse` now raises `UnsupportedLinkTypeWarning`, once per file; `sanitise`
+  warns that a packet was never decoded and so has not been redacted; and
+  `build` says the packet was not decoded rather than naming the key that is
+  missing because of it.
+
+- **A `sanitise` warning that could not be checked was reported as a name**
+  (#123) — warning consolidation rewrote every `PersonalDataWarning` with a
+  template assuming `kind` was `"email"` or `"name"`, so the `"unredacted"`
+  reports added in 0.12.0 came out as "Possible name found in…".  Findings and
+  reports are now distinguished; a report keeps its own wording and is still
+  consolidated across packets.
+
 - **`sanitise` now redacts the addresses inside ICMP and ICMPv6 payloads**
   (#122) — it had no ICMP handling at all, so a Neighbour Discovery capture
   came out with its Ethernet and IPv6 headers replaced and the same addresses

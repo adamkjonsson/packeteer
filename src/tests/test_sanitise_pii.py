@@ -35,10 +35,19 @@ def _spec(*payloads: str) -> dict:
 
 
 def _pii_warnings(spec: dict, **opts_kwargs: Any) -> list[warnings.WarningMessage]:
+    """Return the *findings* — personal data located in the data itself.
+
+    `PersonalDataWarning` also carries reports of things that could not be
+    checked (``kind="unredacted"``), which are not findings: a spec that is
+    only an opaque payload raises one, and several of the specs below are
+    exactly that.
+    """
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         sanitise(spec, SanitiseOptions(scan_pii=True, **opts_kwargs))
-    return [w for w in caught if issubclass(w.category, PersonalDataWarning)]
+    return [w for w in caught
+            if issubclass(w.category, PersonalDataWarning)
+            and w.message.kind in ("email", "name")]
 
 
 # ── PersonalDataWarning class ─────────────────────────────────────────────────

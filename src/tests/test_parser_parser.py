@@ -674,11 +674,25 @@ class TestParsePacketFailures(unittest.TestCase):
         self.assertIsNone(pkt.ip)
 
     def test_unknown_link_type_returns_empty_ip_and_transport(self):
+        import warnings
+
+        from packeteer.parse import UnsupportedLinkTypeWarning
+
         raw = _tcp()
-        pkt = parse_packet(raw, link_type=999)
+        # It warns as well as returning nothing (#123).  Silence here used to
+        # be indistinguishable from a packet that really did carry only bytes,
+        # which is what let an unsanitised file report success.
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            pkt = parse_packet(raw, link_type=999)
         self.assertIsNone(pkt.ethernet)
         self.assertIsNone(pkt.ip)
         self.assertIsNone(pkt.transport)
+        self.assertEqual(pkt.payload, raw)
+        warned = [w for w in caught
+                  if issubclass(w.category, UnsupportedLinkTypeWarning)]
+        self.assertEqual(len(warned), 1)
+        self.assertEqual(warned[0].message.link_type, 999)
 
     def test_non_ip_ethertype_stops_after_ethernet(self):
         # ARP EtherType (0x0806) — not IPv4 or IPv6

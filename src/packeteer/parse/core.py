@@ -111,6 +111,46 @@ from .udp import packet_parser as _udp_parser
 from .vxlan import packet_parser as _vxlan_parser
 
 
+class UnsupportedLinkTypeWarning(UserWarning):
+    """Emitted when a capture's link type is not one the parser knows.
+
+    Nothing above the link layer can be decoded, so the whole frame becomes an
+    opaque payload — no addresses, no ports, no protocol.  Without this warning
+    that is indistinguishable from a packet that genuinely carried only bytes,
+    and the difference matters: :func:`packeteer.sanitise.sanitise` cannot
+    redact what it cannot see, so it would report success on a file whose every
+    address is still in it.
+
+    The numeric link type is on the :attr:`link_type` attribute, so a caller
+    can act on it without reading the message.
+
+    Attributes:
+        link_type: The unrecognised link type, as recorded in the capture.
+
+    Example:
+
+        .. code-block:: python
+
+            import warnings
+            from packeteer.parse import parse_pcap_file, UnsupportedLinkTypeWarning
+
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                spec = parse_pcap_file(path="capture.pcap")
+
+            for w in caught:
+                if issubclass(w.category, UnsupportedLinkTypeWarning):
+                    print("cannot decode link type", w.message.link_type)
+
+    """
+
+    link_type: int
+
+    def __init__(self, message: str, link_type: int) -> None:
+        super().__init__(message)
+        self.link_type = link_type
+
+
 class UnsupportedIPProtocolWarning(UserWarning):
     """Emitted when an IP protocol number is not recognised by the parser.
 
@@ -454,6 +494,15 @@ def _parse_link_layer(
         return _after_l2(l_size, ethertype)
     if link_type == LINKTYPE_RAW:
         return data, None   # raw IP — skip MPLS loop below
+    warnings.warn(
+        UnsupportedLinkTypeWarning(
+            f"link type {link_type} is not supported; the whole frame is "
+            f"stored in the payload field, so no addresses, ports or protocol "
+            f"were decoded from it",
+            link_type,
+        ),
+        stacklevel=3,
+    )
     _set_payload(pkt, data, 0)
     return None
 
@@ -1259,6 +1308,7 @@ def parse_pcap_file(
 
     packet_configs: list[dict[str, Any]] = []
     unsupported: Counter[int] = Counter()
+    unsupported_links: set[int] = set()
 
     records: Iterable[tuple[bytes, int, int]] = pcap.packets
     if defragment:
@@ -1266,6 +1316,7 @@ def parse_pcap_file(
 
     with warnings.catch_warnings(record=True) as _caught:
         warnings.filterwarnings("always", category=UnsupportedIPProtocolWarning)
+        warnings.filterwarnings("always", category=UnsupportedLinkTypeWarning)
         for packet_num, record in enumerate(records, 1):
             pkt = parse_pcap_packet(record, pcap.header, decode_app=decode_app)
             cfg = _packet_to_spec(pkt)
@@ -1282,6 +1333,12 @@ def parse_pcap_file(
                 packet_configs.append(cfg)
 
     for w in _caught:
+        if issubclass(w.category, UnsupportedLinkTypeWarning):
+            # One per file rather than one per packet: the link type is a
+            # property of the capture, and every packet in it is affected.
+            assert isinstance(w.message, UnsupportedLinkTypeWarning)
+            unsupported_links.add(w.message.link_type)
+            continue
         if issubclass(w.category, UnsupportedIPProtocolWarning):
             assert isinstance(w.message, UnsupportedIPProtocolWarning)
             unsupported[w.message.protocol] += 1
@@ -1289,6 +1346,19 @@ def parse_pcap_file(
             warnings.warn_explicit(
                 w.message, w.category, w.filename, w.lineno, source=w.source,
             )
+
+    for unknown in sorted(unsupported_links):
+        file_hint = f" in {str(path)!r}" if path is not None else ""
+        warnings.warn(
+            UnsupportedLinkTypeWarning(
+                f"link type {unknown} is not supported{file_hint}; every "
+                f"frame is stored whole in its payload field, so nothing above "
+                f"the link layer was decoded — and 'packeteer sanitise' cannot "
+                f"redact addresses it did not parse",
+                unknown,
+            ),
+            stacklevel=2,
+        )
 
     if unsupported:
         file_hint = f" in {str(path)!r}" if path is not None else ""
