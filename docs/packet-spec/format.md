@@ -772,6 +772,24 @@ out exactly as given, including `0`, so a corrupt packet survives a
 parse → build round trip.  This is the only way a spec can express a bad
 checksum; the fuzzer could previously only do it at the byte level.
 
+```{note}
+**Checksum offload is the commonest reason a real capture has one**, and it is
+not corruption.  Modern stacks leave the transport checksum to the network
+card, so a packet captured on the way *out* often carries a placeholder — very
+often the segment length — rather than a computed value.  Loopback captures
+have it on nearly every packet, because nothing ever transmits them and so
+nothing ever fills the field in.
+
+Wireshark reports these as checksum errors, and turns its own validation off
+by default for the same reason.  packeteer records the value it found, which
+is what lets such a capture rebuild byte for byte — recomputing would silently
+produce a file that differs from the one you parsed.
+
+Packets a capture *received* have correct checksums, because they really were
+transmitted.  So a capture of a remote host's replies is the one to use when
+valid checksums matter.
+```
+
 Reassembling first, with `packeteer parse --defragment` or
 {func}`~packeteer.parse.defragment`, side-steps the fragment case entirely: a
 reassembled datagram's header describes exactly the bytes beside it, so neither
