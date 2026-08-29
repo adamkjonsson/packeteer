@@ -25,7 +25,29 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
-_Nothing yet._
+### Fixed
+
+- **`sanitise` now redacts the addresses inside ICMP and ICMPv6 payloads**
+  (#122) — it had no ICMP handling at all, so a Neighbour Discovery capture
+  came out with its Ethernet and IPv6 headers replaced and the same addresses
+  still in the payload: the ND target, a link-layer option holding the real
+  MAC, and the whole packet quoted inside an ICMP error.
+
+  The link-layer option made the sanitisation **reversible**: an IPv6
+  link-local address is EUI-64 derived from the MAC, so the leaked option
+  reconstructs the address that was replaced.  A file that looked sanitised
+  and reported success was not.
+
+  Now redacted: Neighbour Solicitation and Advertisement targets, Router
+  Solicitation and Advertisement options including the advertised prefix,
+  Redirect targets and destinations, link-layer address options, the packet
+  quoted by any ICMP or ICMPv6 error, and an ICMPv4 Redirect's gateway.
+  Replacements go through the same map as the rest of the capture, so an
+  address inside a payload matches the one in the header around it.
+
+  An ICMP type this version has no rule for now raises a
+  `PersonalDataWarning` with `kind="unredacted"` rather than passing through
+  quietly — silence is what let this go unnoticed.
 
 ---
 

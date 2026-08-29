@@ -63,9 +63,18 @@ class PersonalDataWarning(UserWarning):
     attributes give machine-readable access to the finding without parsing the
     message string.
 
+    Also emitted when something could not be redacted rather than found —
+    an ICMP message type this version has no rule for, whose payload may carry
+    addresses that are still in the output.  The two share a class on purpose:
+    code that catches this warning is asking *is this file safe to share*, and
+    a separate class for the second case would be silently missed by everyone
+    already asking that question.
+
     Attributes:
-        kind: ``"email"`` or ``"name"``.
-        match: The matched text with up to 40 characters of surrounding context.
+        kind: ``"email"``, ``"name"``, or ``"unredacted"`` for something that
+            could not be checked.
+        match: The matched text with up to 40 characters of surrounding
+            context; for ``"unredacted"``, what could not be redacted.
         text: The matched text itself, without surrounding context (used for
             consolidation across packets).
         packet_num: The 1-based index of the packet in the spec or capture file.
@@ -539,6 +548,248 @@ def _sanitise_arp(arp: dict, r: _Replacer, opts: SanitiseOptions) -> None:
                 arp[key] = r.ip(arp[key])
 
 
+# ── ICMP and ICMPv6 ───────────────────────────────────────────────────────────
+#
+# An ICMP payload is opaque bytes to the rest of packeteer, but several message
+# types carry addresses inside it — a Neighbour Discovery target, a link-layer
+# address option, a router's own prefix, or the whole packet that provoked an
+# error.  Left alone they defeat the sanitisation around them: an IPv6
+# link-local address is EUI-64 derived from the MAC, so a leaked link-layer
+# option reconstructs the address that was replaced.
+#
+# The bytes are rewritten in place rather than parsed into a model, which is
+# how `_sanitise_dns` works too: `sanitise` needs to understand enough
+# structure to redact, and nothing more.  The ICMP checksum is not carried in a
+# packet spec, so a rebuild recomputes it and the edited payload stays valid.
+
+_ICMPV6_NEIGHBOUR_SOLICITATION = 135
+_ICMPV6_NEIGHBOUR_ADVERTISEMENT = 136
+_ICMPV6_ROUTER_SOLICITATION = 133
+_ICMPV6_ROUTER_ADVERTISEMENT = 134
+_ICMPV6_REDIRECT = 137
+_ICMPV6_ECHO = frozenset({128, 129})
+#: Types whose payload is the packet that provoked them.
+_ICMPV6_QUOTING = frozenset({1, 2, 3, 4})
+_ICMPV4_ECHO = frozenset({0, 8})
+_ICMPV4_QUOTING = frozenset({3, 4, 5, 11, 12})
+_ICMPV4_REDIRECT = 5
+
+_ND_OPT_SOURCE_LINK_ADDR = 1
+_ND_OPT_TARGET_LINK_ADDR = 2
+_ND_OPT_PREFIX_INFORMATION = 3
+
+_IPV6_ADDR_LEN = 16
+_IPV4_ADDR_LEN = 4
+_ND_OPT_UNIT = 8
+
+
+def _payload_bytes(pl: dict) -> bytes | None:
+    """Return a payload section's bytes, whichever way it was encoded."""
+    data = pl.get("data")
+    if not isinstance(data, str):
+        return None
+    if pl.get("encoding") == "utf8":
+        return data.encode("utf-8")
+    try:
+        return bytes.fromhex(data)
+    except ValueError:
+        return None
+
+
+def _set_payload_bytes(pl: dict, data: bytes) -> None:
+    """Write *data* back to a payload section, as hex."""
+    pl["data"] = data.hex()
+    pl.pop("encoding", None)
+
+
+def _replace_ipv6(buf: bytearray, offset: int, r: _Replacer) -> None:
+    """Rewrite the IPv6 address at *offset* through *r*."""
+    if offset + _IPV6_ADDR_LEN > len(buf):
+        return
+    original = ipaddress.IPv6Address(bytes(buf[offset:offset + _IPV6_ADDR_LEN]))
+    buf[offset:offset + _IPV6_ADDR_LEN] = ipaddress.IPv6Address(
+        r.ip(str(original)),
+    ).packed
+
+
+def _replace_ipv4(buf: bytearray, offset: int, r: _Replacer) -> None:
+    """Rewrite the IPv4 address at *offset* through *r*."""
+    if offset + _IPV4_ADDR_LEN > len(buf):
+        return
+    original = ipaddress.IPv4Address(bytes(buf[offset:offset + _IPV4_ADDR_LEN]))
+    buf[offset:offset + _IPV4_ADDR_LEN] = ipaddress.IPv4Address(
+        r.ip(str(original)),
+    ).packed
+
+
+def _replace_mac(buf: bytearray, offset: int, r: _Replacer) -> None:
+    """Rewrite the six-byte MAC at *offset* through *r*.
+
+    Through the same replacer as the Ethernet header, so a link-layer option
+    and the frame that carries it end up with the same synthetic address and
+    the capture still reads as coherent traffic.
+    """
+    if offset + 6 > len(buf):
+        return
+    original = ":".join(f"{b:02x}" for b in buf[offset:offset + 6])
+    buf[offset:offset + 6] = bytes.fromhex(r.mac(original).replace(":", ""))
+
+
+def _sanitise_nd_options(buf: bytearray, start: int, r: _Replacer,
+                         opts: SanitiseOptions) -> None:
+    """Rewrite addresses in the Neighbour Discovery options from *start*."""
+    offset = start
+    while offset + 2 <= len(buf):
+        opt_type = buf[offset]
+        length = buf[offset + 1] * _ND_OPT_UNIT
+        if length == 0 or offset + length > len(buf):
+            return
+        if opts.macs and opt_type in (_ND_OPT_SOURCE_LINK_ADDR,
+                                      _ND_OPT_TARGET_LINK_ADDR):
+            _replace_mac(buf, offset + 2, r)
+        elif opts.ips and opt_type == _ND_OPT_PREFIX_INFORMATION:
+            # The advertised prefix is the network's own, and identifies it.
+            _replace_ipv6(buf, offset + 16, r)
+        offset += length
+
+
+def _sanitise_quoted_packet(buf: bytearray, start: int, r: _Replacer,
+                            opts: SanitiseOptions) -> None:
+    """Rewrite the addresses of the packet an ICMP error quotes.
+
+    The quoted bytes are a packet, header and all, so they carry the addresses
+    of the exchange that provoked the error — the same ones sanitised in the
+    frame around them.
+    """
+    if start >= len(buf):
+        return
+    version = buf[start] >> 4
+    if version == 6 and start + 40 <= len(buf):
+        if opts.ips:
+            _replace_ipv6(buf, start + 8, r)
+            _replace_ipv6(buf, start + 24, r)
+        _sanitise_quoted_ports(buf, start + 40, buf[start + 6], r, opts)
+    elif version == 4 and start + 20 <= len(buf):
+        header_len = (buf[start] & 0x0F) * 4
+        if opts.ips:
+            _replace_ipv4(buf, start + 12, r)
+            _replace_ipv4(buf, start + 16, r)
+        _sanitise_quoted_ports(buf, start + header_len, buf[start + 9], r, opts)
+
+
+def _sanitise_quoted_ports(buf: bytearray, start: int, protocol: int,
+                           r: _Replacer, opts: SanitiseOptions) -> None:
+    """Rewrite the ports of a quoted TCP or UDP header, if asked for."""
+    if not opts.ports or protocol not in (6, 17) or start + 4 > len(buf):
+        return
+    for offset in (start, start + 2):
+        port = int.from_bytes(buf[offset:offset + 2], "big")
+        buf[offset:offset + 2] = r.port(port).to_bytes(2, "big")
+
+
+def _sanitise_icmpv6_payload(buf: bytearray, icmp_type: int, r: _Replacer,
+                             opts: SanitiseOptions, packet_num: int) -> None:
+    """Rewrite whatever addresses an ICMPv6 message of *icmp_type* carries."""
+    if icmp_type in (_ICMPV6_NEIGHBOUR_SOLICITATION,
+                     _ICMPV6_NEIGHBOUR_ADVERTISEMENT):
+        if opts.ips:
+            _replace_ipv6(buf, 0, r)
+        _sanitise_nd_options(buf, _IPV6_ADDR_LEN, r, opts)
+    elif icmp_type == _ICMPV6_REDIRECT:
+        if opts.ips:
+            _replace_ipv6(buf, 0, r)
+            _replace_ipv6(buf, _IPV6_ADDR_LEN, r)
+        _sanitise_nd_options(buf, 2 * _IPV6_ADDR_LEN, r, opts)
+    elif icmp_type == _ICMPV6_ROUTER_SOLICITATION:
+        _sanitise_nd_options(buf, 0, r, opts)
+    elif icmp_type == _ICMPV6_ROUTER_ADVERTISEMENT:
+        # Reachable time and retransmit timer come first, then the options.
+        _sanitise_nd_options(buf, 8, r, opts)
+    elif icmp_type in _ICMPV6_QUOTING:
+        _sanitise_quoted_packet(buf, 0, r, opts)
+    elif icmp_type not in _ICMPV6_ECHO:
+        _warn_unknown_icmp("ICMPv6", icmp_type, packet_num)
+
+
+def _sanitise_icmpv4_payload(pkt: dict, buf: bytearray, icmp_type: int,
+                             r: _Replacer, opts: SanitiseOptions,
+                             packet_num: int) -> None:
+    """Rewrite whatever addresses an ICMPv4 message of *icmp_type* carries."""
+    if icmp_type in _ICMPV4_QUOTING:
+        if icmp_type == _ICMPV4_REDIRECT and opts.ips:
+            _sanitise_icmpv4_gateway(pkt, r)
+        _sanitise_quoted_packet(buf, 0, r, opts)
+    elif icmp_type not in _ICMPV4_ECHO:
+        _warn_unknown_icmp("ICMP", icmp_type, packet_num)
+
+
+def _sanitise_icmpv4_gateway(pkt: dict, r: _Replacer) -> None:
+    """Rewrite a Redirect's gateway address.
+
+    It sits in the four header bytes a packet spec records as *identifier* and
+    *sequence*, because those are what an Echo puts there.
+    """
+    transport = pkt.get("transport", {})
+    high = transport.get("identifier")
+    low = transport.get("sequence")
+    if not isinstance(high, int) or not isinstance(low, int):
+        return
+    gateway = ipaddress.IPv4Address((high << 16) | low)
+    packed = int(ipaddress.IPv4Address(r.ip(str(gateway))))
+    transport["identifier"] = packed >> 16
+    transport["sequence"] = packed & 0xFFFF
+
+
+def _warn_unknown_icmp(family: str, icmp_type: int, packet_num: int) -> None:
+    """Say that a message type could not be checked for addresses.
+
+    Silence is what let this go unnoticed: a type nobody wrote a rule for may
+    carry an address, and passing it through quietly is indistinguishable from
+    having redacted it.
+    """
+    where = f" in packet {packet_num}" if packet_num else ""
+    what = f"{family} type {icmp_type}"
+    warnings.warn(
+        PersonalDataWarning(
+            f"{what}{where} is not one this version knows how to redact; if it "
+            f"carries addresses they are still in the output.  Use "
+            f"SanitiseOptions(payload=True) to zero it.",
+            kind="unredacted",
+            match=what,
+            text=what,
+            packet_num=packet_num,
+        ),
+        stacklevel=2,
+    )
+
+
+def _sanitise_icmp(pkt: dict, r: _Replacer, opts: SanitiseOptions,
+                   packet_num: int) -> None:
+    """Redact the addresses inside an ICMP or ICMPv6 payload."""
+    protocol = pkt.get("network", {}).get("protocol")
+    if protocol not in ("icmp", "icmpv6"):
+        return
+    transport = pkt.get("transport", {})
+    icmp_type = transport.get("type")
+    if not isinstance(icmp_type, int):
+        return
+    payload = pkt.get("payload")
+    data = _payload_bytes(payload) if isinstance(payload, dict) else None
+    if data is None:
+        # A Redirect keeps its gateway in the header, so it is worth doing even
+        # with no payload at all.
+        if protocol == "icmp" and icmp_type == _ICMPV4_REDIRECT and opts.ips:
+            _sanitise_icmpv4_gateway(pkt, r)
+        return
+
+    buf = bytearray(data)
+    if protocol == "icmpv6":
+        _sanitise_icmpv6_payload(buf, icmp_type, r, opts, packet_num)
+    else:
+        _sanitise_icmpv4_payload(pkt, buf, icmp_type, r, opts, packet_num)
+    _set_payload_bytes(payload, bytes(buf))
+
+
 def _sanitise_payloads(pkt: dict, opts: SanitiseOptions) -> None:
     """Zero the payload data and opaque SCTP chunk fields of *pkt* in-place.
 
@@ -608,6 +859,9 @@ def _sanitise_packet(
             t["src_port"] = r.port(t["src_port"])
         if "dst_port" in t:
             t["dst_port"] = r.port(t["dst_port"])
+
+    # Before _sanitise_payloads, which may zero the bytes this reads.
+    _sanitise_icmp(pkt, r, opts, packet_num)
 
     _sanitise_payloads(pkt, opts)
 
