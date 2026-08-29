@@ -823,6 +823,24 @@ def _run_multi_packet(
         print(f"Wrote {len(collected)} packet(s) to {pcapng_path} (link type: {link_type})")
 
 
+def _cmd_protocol_check(args: argparse.Namespace) -> None:
+    """Validate a protocol spec, printing every fault it has."""
+    from packeteer import protospec
+
+    try:
+        spec = protospec.load(args.spec)
+    except protospec.SpecError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    result = protospec.check(spec)
+    for diagnostic in result.diagnostics:
+        print(diagnostic, file=sys.stderr)
+    print(result.summary())
+    if not result.ok(strict=args.strict):
+        sys.exit(1)
+
+
 def _cmd_build(args: argparse.Namespace) -> None:
     try:
         with open(args.config) as f:
@@ -1751,6 +1769,29 @@ def main() -> None:
     parser.add_argument("--version", action="version", version=f"packeteer {_version}")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # ── protocol subcommand ───────────────────────────────────────────────────
+    protocol_parser = subparsers.add_parser(
+        "protocol",
+        help="Work with protocol specs",
+        description="Check, show and compile application-protocol specs",
+    )
+    protocol_verbs = protocol_parser.add_subparsers(dest="protocol_command",
+                                                    required=True)
+    check_parser = protocol_verbs.add_parser(
+        "check",
+        help="Validate a protocol spec",
+        description=(
+            "Validate a protocol spec and type every expression in it, before "
+            "any data exists.  Every fault is reported, not just the first."
+        ),
+    )
+    check_parser.add_argument("spec", metavar="FILE", help="Protocol spec file")
+    check_parser.add_argument(
+        "--strict", action="store_true",
+        help="Fail on warnings as well as errors",
+    )
+    check_parser.set_defaults(func=_cmd_protocol_check)
 
     # ── build subcommand ──────────────────────────────────────────────────────
     build_parser = subparsers.add_parser(

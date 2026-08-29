@@ -14,8 +14,18 @@ in order to describe an **encoder**, which kober never had to.
 """
 from __future__ import annotations
 
+from packeteer.protospec.check import CheckResult, Diagnostic, check
 from packeteer.protospec.errors import SpecError
 from packeteer.protospec.loader import from_mapping, load, loads
 from packeteer.protospec.spec import Spec
 
-__all__ = ["Spec", "SpecError", "load", "loads", "from_mapping"]
+__all__ = [
+    "Spec",
+    "SpecError",
+    "CheckResult",
+    "Diagnostic",
+    "check",
+    "load",
+    "loads",
+    "from_mapping",
+]

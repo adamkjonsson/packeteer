@@ -75,6 +75,23 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   function call is reported as **not supported yet**, naming it, since kober
   has a closed table of three and a spec written for kober may use one.
 
+- **`packeteer protocol check` and `packeteer.protospec.check`** (#107) —
+  validates a spec and types every expression in it before any data exists,
+  reporting **every** fault rather than stopping at the first, each with its
+  line.  `--strict` fails on warnings too.
+
+  Beyond what a decode-only checker would do, it refuses specs that decode but
+  cannot **encode**: a `derive` naming a field it does not size or count, a
+  `const` a field's type cannot hold, `size_of` on a repeating field.  A
+  length that nothing derives is a warning rather than an error, with the fix
+  in the message — such a capture still round-trips, but building a message by
+  hand means keeping the length right yourself.
+
+  For `input: stream` it proves the entry unit is length-prefixed and reports
+  the prefix size, which is what a reassembler needs in order to know where a
+  message ends before it has one.  A spec that cannot be proved is refused
+  naming the field that made the prefix variable.
+
 ---
 
 ## [0.10.0] - 2026-08-28
