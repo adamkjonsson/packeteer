@@ -653,7 +653,7 @@ annotations.
 **Q6 — What message framing does v1 support?**
 
 **Decided (Adam, 2026-08-28): datagram, plus length-prefixed streams.**
-**Reversed the same day, after #111 — datagram only.**
+**Reversed 2026-08-29, after #111 built it — datagram only.**
 
 The first decision brought TCP reassembly into packeteer, and #111 built it.
 Reverted, and the reason is better than the cost argument that produced the
