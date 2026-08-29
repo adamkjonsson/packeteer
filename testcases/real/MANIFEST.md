@@ -44,8 +44,23 @@ Before adding one:
 
 ## Known gaps
 
-- **VLAN, MPLS, and any tunnel.** packeteer supports seven encapsulations and
-  has real traffic for none of them.
+Tracked as [#127](https://github.com/adamkjonsson/packeteer/issues/127), with
+the tiers and the rules for closing them.  The corpus reaches twelve decoders
+across 459 packets; everything below has **no** real traffic at all.
+
+- **VLAN, MPLS, and any tunnel.** packeteer supports nine such modules — GRE,
+  VXLAN, Geneve, GTP-U, EtherIP, IPsec, MPLS, PPPoE, IP-in-IP — and has real
+  traffic for none of them.
+- **A classic `.pcap` file.** Every capture here is pcapng, because sanitising
+  with `--pcapng` is what produced them.  The format `tcpdump -w` writes by
+  default has no example.
+- **A nanosecond-resolution capture.** Every one is microsecond.
+- **Linux cooked capture** (link types 113 and 276).  Every capture came from
+  one macOS laptop, which is a gap in the *collecting*, not in the traffic.
+- **IPv4 fragments and IPv6 extension headers.**  Tested only against packets
+  packeteer fragmented itself.
+- **SCTP**, and an **HTTP body** of any kind — the two HTTP messages here are
+  a `GET /` and its response headers, so #84's chunked body has no coverage.
 - **An ICMPv4 Redirect.** Its gateway address lives in the header bytes a spec
   records as `identifier`/`sequence`, and `_sanitise_icmpv4_gateway` is the
   only code that treats them as an address.  Producing one needs two gateways
