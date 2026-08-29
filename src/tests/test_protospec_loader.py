@@ -565,3 +565,76 @@ class TestYAMLImplicitTyping(unittest.TestCase):
         })
         self.assertEqual(spec.version, "1.10")
         self.assertEqual(spec.units["m"].fields[0].name, "no")
+
+
+class TestUnknownKeysAreRefused(unittest.TestCase):
+    """A misspelled key that loads and does nothing is worse than a refusal.
+
+    It produces a decoder that silently does the wrong thing — kober's
+    reasoning, and this was found by a `doc:` inside YAML flow style splitting
+    on its comma and leaving a stray key that was quietly ignored.
+    """
+
+    def test_an_unknown_top_level_key(self) -> None:
+        with self.assertRaises(SpecError) as ctx:
+            _spec(_MINIMAL + "\nnmae: typo\n")
+        self.assertIn("nmae", str(ctx.exception))
+
+    def test_an_unknown_unit_key(self) -> None:
+        with self.assertRaises(SpecError) as ctx:
+            _spec("""
+                name: t
+                version: "1"
+                entry: m
+                units:
+                  m:
+                    feilds:
+                      - {name: a, type: {int: {bits: 8}}}
+            """)
+        self.assertIn("feilds", str(ctx.exception))
+
+    def test_an_unknown_field_key(self) -> None:
+        with self.assertRaises(SpecError) as ctx:
+            _spec("""
+                name: t
+                version: "1"
+                entry: m
+                units:
+                  m:
+                    fields:
+                      - {name: a, type: {int: {bits: 8}}, sensitve: true}
+            """)
+        self.assertIn("sensitve", str(ctx.exception))
+
+    def test_the_message_lists_what_is_known(self) -> None:
+        with self.assertRaises(SpecError) as ctx:
+            _spec(_MINIMAL + "\nnmae: typo\n")
+        self.assertIn("'entry'", str(ctx.exception))
+
+    def test_a_flow_style_doc_split_on_its_comma_is_caught(self) -> None:
+        """`doc: a, b` inside braces is two keys, and the second is a typo."""
+        with self.assertRaises(SpecError) as ctx:
+            _spec("""
+                name: t
+                version: "1"
+                entry: m
+                units:
+                  m:
+                    fields:
+                      - {name: a, type: {int: {bits: 8}}, doc: Reserved, must be zero.}
+            """)
+        self.assertIn("must be zero", str(ctx.exception))
+
+    def test_kober_keys_this_version_lacks_are_not_typos(self) -> None:
+        """`params` and `emit` load and are reported as unsupported instead."""
+        spec = _spec("""
+            name: t
+            version: "1"
+            entry: m
+            units:
+              m:
+                params: []
+                fields:
+                  - {name: a, type: {int: {bits: 8}}}
+        """)
+        self.assertIn("unit.params", {u.construct for u in spec.unsupported})

@@ -156,6 +156,25 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   `check` still proves such a spec is length-prefixed and reports the prefix
   size, so nothing is lost if the decision is revisited.
 
+- **An unknown key in a spec is refused rather than ignored** (#113) — at the
+  spec, unit and field level, listing what is known.  A misspelled key that
+  loads and does nothing produces a decoder that silently does the wrong
+  thing.  kober's constructs this version does not implement — `params`,
+  `emit` — are still recorded and reported as "not supported yet", since a
+  spec written for kober carries them legitimately.
+
+### Documentation
+
+- **A protocol spec format reference and a walkthrough** (#113) — every key,
+  what the subset can and cannot describe, the relationship to kober's
+  dialect, and a spec-to-pcap walkthrough from `check` through `show`,
+  `compile` and into `PacketBuilder.app`.  A second example spec,
+  `examples/protocols/rpc.yaml`, exercises bit fields, an enum on a sub-byte
+  field, a nested unit and a `switch`.
+- {doc}`guide/adding-a-protocol` now opens by saying there are two routes and
+  when each is right — compile a spec unless the language cannot express your
+  protocol.
+
 ---
 
 ## [0.10.0] - 2026-08-28

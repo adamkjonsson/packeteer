@@ -9,5 +9,6 @@ network traffic without any external dependencies.
 introduction/index
 cli/index
 guide/index
+protocols/index
 reference/index
 ```

@@ -72,6 +72,19 @@ _UNSUPPORTED_KEYS: dict[str, str] = {
     "emit":   "kober's output granularity, which packeteer has no use for",
 }
 
+# Known keys, by where they appear.  Anything else is a typo, and a typo that
+# loads and does nothing is a decoder that silently does the wrong thing — so
+# an unknown key is refused rather than ignored.  This is kober's rule.
+_SPEC_KEYS: frozenset[str] = frozenset({
+    "name", "version", "entry", "units", "enums", "over", "ports", "input",
+    "doc", *_UNSUPPORTED_KEYS,
+})
+_UNIT_KEYS: frozenset[str] = frozenset({"fields", "doc", *_UNSUPPORTED_KEYS})
+_FIELD_KEYS: frozenset[str] = frozenset({
+    "name", "type", "repeat", "const", "derive", "sensitive", "doc",
+    "condition",
+})
+
 
 def load(path: str | os.PathLike[str]) -> Spec:
     """Read a spec from a file.
@@ -204,6 +217,24 @@ def _yaml_hint(value: Any) -> str:
     return ""
 
 
+def _reject_unknown(mapping: dict[str, Any], known: frozenset[str],
+                    what: str, loc: Location) -> None:
+    """Refuse a key that is not in *known*.
+
+    A misspelled key that loads and does nothing produces a decoder that
+    silently does the wrong thing, which is worse than one that will not load.
+    """
+    unknown = sorted(str(k) for k in mapping if str(k) not in known)
+    if not unknown:
+        return
+    listed = ", ".join(repr(k) for k in unknown)
+    raise SpecError(
+        f"{what} has no key {listed}; known keys are "
+        f"{', '.join(repr(k) for k in sorted(known))}",
+        loc,
+    )
+
+
 def _require(data: Any, key: str, loc: Location) -> Any:
     """Return ``data[key]``, or raise naming what is missing."""
     if not isinstance(data, dict) or key not in data:
@@ -272,6 +303,7 @@ def from_mapping(data: Any, *, source: str | None = None) -> Spec:
     """
     root = _at(Location(path="", source=source), data)
     _as_mapping(data, root, "a spec")
+    _reject_unknown(data, _SPEC_KEYS, "a spec", root)
     unsupported: list[Unsupported] = []
 
     for key, note in _UNSUPPORTED_KEYS.items():
@@ -335,6 +367,7 @@ def _enum_def(name: str, members: Any, loc: Location) -> EnumDef:
 def _unit(name: str, data: Any, loc: Location, unsupported: list[Unsupported]) -> Unit:
     """Build one unit and its fields."""
     mapping = _as_mapping(data, loc, f"unit {name!r}")
+    _reject_unknown(mapping, _UNIT_KEYS, f"unit {name!r}", loc)
     for key, note in _UNSUPPORTED_KEYS.items():
         if key in mapping:
             unsupported.append(Unsupported(f"unit.{key}", loc.child(key), note))
@@ -353,6 +386,7 @@ def _unit(name: str, data: Any, loc: Location, unsupported: list[Unsupported]) -
 def _field(data: Any, loc: Location, unsupported: list[Unsupported]) -> Field:
     """Build one field."""
     mapping = _as_mapping(data, loc, "a field")
+    _reject_unknown(mapping, _FIELD_KEYS, "a field", loc)
     raw_name = mapping.get("name")
     # `name: null` is kober's anonymous field — reserved bits that are decoded
     # and re-encoded but never named.
