@@ -207,19 +207,121 @@ class TestUnsupportedConstructsAreMarked(unittest.TestCase):
         self.assertIn("not supported yet", out)
 
 
-class TestKoberSpecsRender(unittest.TestCase):
-    """The real test of legibility: something nobody wrote for this renderer."""
+class TestEverythingAtOnce(unittest.TestCase):
+    """Every construct the renderer handles, in one spec.
 
-    def test_dns_renders_every_construct_it_uses(self) -> None:
-        out = render(load("/Users/adam/projs/zipline-kober/examples/dns.yaml"))
+    Shaped after kober's own `dns.yaml`, written inline rather than loaded
+    from a kober checkout: a test that reads a file outside this repository
+    passes on the machine that has it and fails everywhere else.
+    """
+
+    _SPEC = """
+        name: dnslike
+        version: "1.0"
+        entry: message
+        enums:
+          opcode: {0: query, 1: iquery, 2: status}
+        units:
+          message:
+            fields:
+              - {name: id, type: {int: {bits: 16}}}
+              - {name: flags, type: {unit: flags}}
+              - {name: qdcount, type: {int: {bits: 16}}}
+              - {name: questions, type: {unit: question}, repeat: {count: "qdcount"}}
+          flags:
+            fields:
+              - {name: qr, type: {int: {bits: 1}}}
+              - {name: opcode, type: {int: {bits: 4, enum: opcode}}}
+              - {name: null, type: {int: {bits: 3}}}
+          question:
+            fields:
+              - {name: length, type: {int: {bits: 8}}}
+              - name: rest
+                type:
+                  switch:
+                    on: "length >> 6"
+                    cases:
+                      0: {string: {size: {expr: "length"}}}
+                      3: {bytes: {size: 2}}
+    """
+
+    def test_every_construct_renders(self) -> None:
+        out = _render(self._SPEC)
         for expected in ("enum opcode:", "├── id: u16", "(anonymous): u3",
-                         "→ question", "switch on length >> 6", "case 0:"):
+                         "→ question", "×qdcount", "switch on length >> 6",
+                         "case 0: string[length]", "case 3: bytes[2]"):
             with self.subTest(expected=expected):
                 self.assertIn(expected, out)
 
-    def test_long_docs_are_wrapped(self) -> None:
-        out = render(load("/Users/adam/projs/zipline-kober/examples/http.yaml"))
-        self.assertTrue(all(len(line) <= 100 for line in out.splitlines()))
+    def test_a_nested_unit_is_expanded_under_its_field(self) -> None:
+        out = _render(self._SPEC)
+        self.assertIn("├── flags: → flags", out)
+        self.assertIn("│   ├── qr: u1", out)
+
+
+class TestLongDocsAreWrapped(unittest.TestCase):
+    """An unwrapped paragraph destroys the tree, and real specs have them."""
+
+    _SPEC = """
+        name: wordy
+        version: "1.0"
+        entry: m
+        units:
+          m:
+            doc: >
+              One request or response. Framing is decided here, from the
+              headers, and the two body fields are mutually exclusive by
+              construction: a message reads at most one of them, and a message
+              with neither framing header reads no body at all.
+            fields:
+              - name: a
+                type: {int: {bits: 8}}
+                doc: >
+                  Header lines up to and including the blank line that ends
+                  them. The blank line is kept as the last element rather than
+                  dropped: it is input, and every byte has to be accounted for.
+    """
+
+    def test_no_line_runs_long(self) -> None:
+        for line in _render(self._SPEC).splitlines():
+            with self.subTest(line=line[:40]):
+                self.assertLessEqual(len(line), 100)
+
+    def test_the_text_survives_the_wrapping(self) -> None:
+        out = _render(self._SPEC).replace("\n", " ")
+        self.assertIn("every byte has to be accounted for", " ".join(out.split()))
+
+    def test_docs_can_still_be_omitted(self) -> None:
+        self.assertNotIn("Framing is decided here", _render(self._SPEC, docs=False))
+
+
+class TestTestsStayInsideTheRepository(unittest.TestCase):
+    """A test that reads a path outside this checkout passes only here.
+
+    This is a real failure, not a hypothetical: two tests in this file loaded
+    kober's example specs from a sibling directory, which passed locally and
+    failed in CI on the first run.
+    """
+
+    def test_no_test_module_names_an_absolute_path(self) -> None:
+        import pathlib as _pathlib
+
+        # Built rather than written out, so this test does not match itself.
+        markers = [quote + "/" + root + "/"
+                   for quote in ('"', "'")
+                   for root in ("Users", "home", "root")]
+
+        here = _pathlib.Path(__file__).resolve().parent
+        for module in sorted(here.glob("test_*.py")):
+            source = module.read_text(encoding="utf-8")
+            found = [m for m in markers if m in source]
+            with self.subTest(module=module.name):
+                # Not assertNotIn: its failure message would print the whole
+                # module.
+                self.assertEqual(
+                    found, [],
+                    f"{module.name} reads a path outside the repository",
+                )
 
 
 if __name__ == "__main__":
