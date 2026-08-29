@@ -273,3 +273,81 @@ class TestRestOfHeader(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             ICMPv6Header().rest_of_header = 1 << 32
+
+
+class TestDHCPIdentityOptions(unittest.TestCase):
+    """A DHCP option that names the client, rather than describing it (#125).
+
+    `chaddr` was redacted and option 61 was not, so the real MAC sat two
+    fields away from its own substitution — and the two disagreed, which made
+    the capture wrong as well as leaky.
+    """
+
+    _MAC = "22:c1:84:08:78:21"
+
+    def _clean(self, options: list[dict], **opts: bool) -> dict:
+        spec = {"packets": [{
+            "network": {"src": "0.0.0.0", "dst": "255.255.255.255",
+                        "protocol": "udp"},
+            "transport": {"src_port": 68, "dst_port": 67},
+            "dhcp": {"chaddr": self._MAC.replace(":", "") + "00" * 10,
+                     "options": options},
+        }]}
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return sanitise(spec, SanitiseOptions(**opts))["packets"][0]["dhcp"]
+
+    def test_a_client_identifier_holding_a_mac_is_replaced(self) -> None:
+        clean = self._clean([{"code": 61,
+                              "data": "01" + self._MAC.replace(":", "")}])
+        self.assertNotIn(self._MAC.replace(":", ""), clean["options"][0]["data"])
+
+    def test_and_it_matches_chaddr(self) -> None:
+        """They name the same machine, so they must agree afterwards."""
+        clean = self._clean([{"code": 61,
+                              "data": "01" + self._MAC.replace(":", "")}])
+        self.assertEqual(clean["options"][0]["data"][2:],
+                         clean["chaddr"][:12])
+
+    def test_the_hardware_type_byte_survives(self) -> None:
+        clean = self._clean([{"code": 61,
+                              "data": "01" + self._MAC.replace(":", "")}])
+        self.assertTrue(clean["options"][0]["data"].startswith("01"))
+
+    def test_an_opaque_client_identifier_is_zeroed(self) -> None:
+        """Not a MAC, but it names the client by definition."""
+        clean = self._clean([{"code": 61, "data": "ff0102030405060708"}])
+        self.assertEqual(clean["options"][0]["data"], "00" * 9)
+
+    def test_a_hostname_is_replaced(self) -> None:
+        clean = self._clean([{"code": 12, "hostname": "adams-laptop"}])
+        self.assertNotEqual(clean["options"][0]["hostname"], "adams-laptop")
+
+    def test_the_same_hostname_maps_consistently(self) -> None:
+        clean = self._clean([{"code": 12, "hostname": "host"},
+                             {"code": 12, "hostname": "host"}])
+        self.assertEqual(clean["options"][0]["hostname"],
+                         clean["options"][1]["hostname"])
+
+    def test_a_domain_name_is_replaced(self) -> None:
+        clean = self._clean([{"code": 15, "domain": "corp.example.com"}])
+        self.assertNotIn("corp", clean["options"][0]["domain"])
+
+    def test_vendor_and_user_class_data_is_zeroed(self) -> None:
+        for code in (43, 77):
+            with self.subTest(option=code):
+                clean = self._clean([{"code": code, "data": "deadbeef"}])
+                self.assertEqual(clean["options"][0]["data"], "00000000")
+
+    def test_structural_options_are_left_alone(self) -> None:
+        """Timers and code lists describe the exchange, not the client."""
+        clean = self._clean([{"code": 51, "seconds": 7776000},
+                             {"code": 55, "codes": [1, 3, 6]}])
+        self.assertEqual(clean["options"][0]["seconds"], 7776000)
+        self.assertEqual(clean["options"][1]["codes"], [1, 3, 6])
+
+    def test_macs_false_leaves_the_client_identifier(self) -> None:
+        clean = self._clean([{"code": 61,
+                              "data": "01" + self._MAC.replace(":", "")}],
+                            macs=False)
+        self.assertIn(self._MAC.replace(":", ""), clean["options"][0]["data"])

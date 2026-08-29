@@ -474,6 +474,15 @@ _DHCP_OPT_ROUTER       = 3
 _DHCP_OPT_DNS_SERVER   = 6
 _DHCP_OPT_HOSTNAME     = 12
 _DHCP_OPT_DOMAIN_NAME  = 15
+_DHCP_OPT_VENDOR_SPECIFIC = 43
+_DHCP_OPT_CLIENT_ID    = 61
+_DHCP_OPT_USER_CLASS   = 77
+_DHCP_OPT_CLIENT_FQDN  = 81
+
+#: Client Identifier hardware type for Ethernet, per RFC 2132 §9.14.  The
+#: option is then the type byte and the six-byte MAC.
+_DHCP_CLIENT_ID_ETHERNET = 0x01
+_MAC_LEN = 6
 _DHCP_OPT_REQUESTED_IP = 50
 _DHCP_OPT_SERVER_ID    = 54
 
@@ -503,6 +512,59 @@ def _sanitise_dhcp(dhcp: dict, r: _Replacer, opts: SanitiseOptions) -> None:
                 opt["routers"] = [r.ip(a) for a in opt.get("routers", [])]
             elif code == _DHCP_OPT_DNS_SERVER:
                 opt["servers"] = [r.ip(a) for a in opt.get("servers", [])]
+        _sanitise_dhcp_identity_option(opt, code, r, opts)
+
+
+def _sanitise_dhcp_identity_option(opt: dict, code: int, r: _Replacer,
+                                   opts: SanitiseOptions) -> None:
+    """Redact a DHCP option that names the client rather than describing it.
+
+    The rest of the option space is numeric or structural — timers, MTUs,
+    parameter-request lists — and is deliberately left alone.  These are the
+    ones that carry a name, a MAC or free-form vendor data.
+    """
+    if code in (_DHCP_OPT_HOSTNAME, _DHCP_OPT_CLIENT_FQDN):
+        # A hostname identifies the machine as surely as its address does.
+        if opts.ips and isinstance(opt.get("hostname"), str):
+            opt["hostname"] = r.dns_label(opt["hostname"])
+        if opts.ips and isinstance(opt.get("data"), str):
+            opt["data"] = "00" * (len(opt["data"]) // 2)
+    elif code == _DHCP_OPT_DOMAIN_NAME:
+        if opts.ips and isinstance(opt.get("domain"), str):
+            opt["domain"] = _sanitise_dns_name(opt["domain"], r)
+    elif code == _DHCP_OPT_CLIENT_ID:
+        _sanitise_dhcp_client_id(opt, r, opts)
+    elif code in (_DHCP_OPT_VENDOR_SPECIFIC, _DHCP_OPT_USER_CLASS):
+        # Opaque by definition, so there is nothing to substitute sensibly.
+        if isinstance(opt.get("data"), str):
+            opt["data"] = "00" * (len(opt["data"]) // 2)
+
+
+def _sanitise_dhcp_client_id(opt: dict, r: _Replacer,
+                             opts: SanitiseOptions) -> None:
+    """Redact a Client Identifier, which usually is the client's MAC.
+
+    ``01`` followed by six bytes is an Ethernet address (RFC 2132 §9.14), and
+    it must get the *same* substitution as ``chaddr`` — otherwise the two
+    disagree and the capture stops making sense as traffic.  Any other form is
+    an opaque identifier that names the client by definition, so it is zeroed.
+    """
+    data = opt.get("data")
+    if not isinstance(data, str):
+        return
+    try:
+        raw = bytes.fromhex(data)
+    except ValueError:
+        return
+    if len(raw) == _MAC_LEN + 1 and raw[0] == _DHCP_CLIENT_ID_ETHERNET:
+        # It is a MAC, so `macs` governs it exactly as it governs `chaddr` —
+        # zeroing it here when `macs` is off would contradict that.
+        if opts.macs:
+            mac = ":".join(f"{b:02x}" for b in raw[1:])
+            opt["data"] = f"{raw[0]:02x}" + r.mac(mac).replace(":", "")
+        return
+    if opts.ips:
+        opt["data"] = "00" * len(raw)
 
 
 # ── HTTP sensitive header names (case-insensitive check uses .lower()) ────────

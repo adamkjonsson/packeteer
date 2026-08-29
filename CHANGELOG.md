@@ -27,6 +27,18 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ### Fixed
 
+- **`sanitise` now redacts the DHCP options that name the client** (#125) — it
+  redacted `chaddr` and the address-bearing options and nothing else, so
+  option 61 (Client Identifier) kept the real MAC two fields away from its own
+  substitution, and option 12 (Hostname) kept the machine's name.  The two
+  MACs also disagreed afterwards, which made the capture wrong as well as
+  leaky.
+
+  Now redacted: Hostname (12), Domain Name (15), Client Identifier (61) — the
+  same substitution `chaddr` gets, so they agree — Client FQDN (81), and the
+  opaque Vendor Specific (43) and User Class (77).  The rest of the option
+  space is numeric or structural and is left alone deliberately.
+
 - **An unsupported link type no longer passes in silence** (#123) — it made
   the whole frame an opaque payload with no warning at all, which in a packet
   spec is indistinguishable from a packet that genuinely carried only bytes.
