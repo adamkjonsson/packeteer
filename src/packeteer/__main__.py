@@ -122,6 +122,8 @@ from packeteer.pcap import (
     LINKTYPE_ETHERNET,
     LINKTYPE_LINUX_SLL,
     LINKTYPE_LINUX_SLL2,
+    LINKTYPE_LOOP,
+    LINKTYPE_NULL,
     LINKTYPE_RAW,
     is_pcap_or_pcapng,
     write_pcap,
@@ -691,10 +693,15 @@ def _apply_spec_to_builder(
         )
         sys.exit(1)
 
-    # ── Link layer: Ethernet, or a Linux cooked (SLL/SLL2) pseudo header ──────
+    # ── Link layer: Ethernet, a Linux cooked (SLL/SLL2) pseudo header, or BSD
+    # loopback framing.  They are alternatives — a packet has exactly one.
+    loopback_spec = spec.get("loopback")
     sll_spec = spec.get("sll")
     sll2_spec = spec.get("sll2")
-    if sll_spec is not None:
+    if loopback_spec is not None:
+        b = b.loopback(family=loopback_spec.get("family"),
+                       big_endian=loopback_spec.get("big_endian", False))
+    elif sll_spec is not None:
         b = b.sll(**{k: sll_spec[k]
                      for k in ("packet_type", "arphrd_type", "address") if k in sll_spec})
     elif sll2_spec is not None:
@@ -943,6 +950,9 @@ def _link_type(value: str) -> int:
         "sll": LINKTYPE_LINUX_SLL,
         "linux_sll2": LINKTYPE_LINUX_SLL2,
         "sll2": LINKTYPE_LINUX_SLL2,
+        "null": LINKTYPE_NULL,
+        "loopback": LINKTYPE_NULL,
+        "loop": LINKTYPE_LOOP,
     }
     key = value.strip().lower()
     if key in names:
@@ -962,6 +972,12 @@ def _infer_link_type(specs: list) -> int:
         return LINKTYPE_LINUX_SLL2
     if any("sll" in spec for spec in specs):
         return LINKTYPE_LINUX_SLL
+    loopback = [spec["loopback"] for spec in specs if "loopback" in spec]
+    if loopback:
+        # DLT_LOOP is the same framing in network order, so the byte order a
+        # spec recorded is what says which of the two it was.
+        return LINKTYPE_LOOP if any(s.get("big_endian") for s in loopback) \
+            else LINKTYPE_NULL
     all_no_eth = all(not spec.get("ethernet", {}).get("enabled", True) for spec in specs)
     return LINKTYPE_RAW if all_no_eth else LINKTYPE_ETHERNET
 

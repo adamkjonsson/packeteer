@@ -103,6 +103,7 @@ from packeteer.generate.ipv6 import (
     RawOption,
     RouterAlertOption,
 )
+from packeteer.generate.loopback import AF_INET, AF_INET6_DEFAULT, LoopbackHeader
 from packeteer.generate.mpls import MPLSLabel
 from packeteer.generate.pppoe import PPPOE_CODE_SESSION, PPPoEHeader
 from packeteer.generate.pseudowire import PseudowireHeader
@@ -250,6 +251,23 @@ def _apply_ethernet(config: dict[str, Any], hdr: EthernetHeader) -> None:
             "dei": hdr.inner_vlan_tag.dei,
         }
     config["ethernet"] = section
+
+
+def _apply_loopback(config: dict[str, Any], hdr: LoopbackHeader) -> None:
+    """Serialise a BSD loopback header into ``config["loopback"]``.
+
+    Both keys are omitted when a rebuild would derive them — the family from
+    the IP version that follows, and the byte order from ``DLT_NULL``'s
+    little-endian norm.  What survives is what a capture did differently, the
+    same rule ``transport.length`` follows.
+    """
+    section: dict[str, Any] = {}
+    derived = AF_INET6_DEFAULT if hdr.is_ipv6 else AF_INET
+    if hdr.family != derived:
+        section["family"] = hdr.family
+    if hdr.big_endian:
+        section["big_endian"] = True
+    config["loopback"] = section
 
 
 def _apply_sll(config: dict[str, Any], hdr: SLLHeader | SLL2Header) -> None:
@@ -865,6 +883,8 @@ def update_config(
     """
     if isinstance(layer, EthernetHeader):
         _apply_ethernet(config, layer)
+    elif isinstance(layer, LoopbackHeader):
+        _apply_loopback(config, layer)
     elif isinstance(layer, (SLLHeader, SLL2Header)):
         _apply_sll(config, layer)
     elif isinstance(layer, ARPHeader):

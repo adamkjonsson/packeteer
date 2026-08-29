@@ -51,6 +51,22 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ### Added
 
+- **BSD loopback captures can be read and written** (#124) — link types `0`
+  (`DLT_NULL`) and `108` (`DLT_LOOP`), the framing `tcpdump -i lo0` produces on
+  macOS and the BSDs.  `ParsedPacket.loopback`, `PacketBuilder.loopback()`, a
+  `loopback` packet-spec section, and `LINKTYPE_NULL` / `LINKTYPE_LOOP`.
+
+  Without it the easiest traffic there is — anything you can send to yourself —
+  could not be parsed at all, which is not academic: collecting ICMPv4 and
+  IPv6 captures for the corpus needed a second machine or a tunnel broker
+  purely because loopback was unreadable.  On Linux `lo` is `EN10MB`, so this
+  only bites where loopback capture is most convenient.
+
+  The address family is derived from the IP version on rebuild and recorded
+  only when a capture disagrees — `AF_INET6` is `30` on macOS, `28` on
+  FreeBSD, `24` on OpenBSD and `10` on Linux — so a capture from another
+  platform still round-trips byte for byte.
+
 - **`ICMPHeader.rest_of_header` and `ICMPv6Header.rest_of_header`** (#122) —
   the four type-specific bytes after the checksum, read and written as one
   value.  That is what most message types actually mean by them: an ICMPv6

@@ -95,8 +95,10 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 #: Largest value the 32-bit pcap ``ts_sec`` field can hold (year 2106).
 _MAX_TS_SEC: int = 0xFFFFFFFF
 
+LINKTYPE_NULL: int = 0        # BSD loopback (4-byte address family)
 LINKTYPE_ETHERNET: int = 1    # Ethernet II
 LINKTYPE_RAW: int = 101       # Raw IP (no Ethernet header)
+LINKTYPE_LOOP: int = 108      # OpenBSD loopback (big-endian family)
 LINKTYPE_LINUX_SLL: int = 113   # Linux "cooked" capture v1 (tcpdump -i any)
 LINKTYPE_LINUX_SLL2: int = 276  # Linux "cooked" capture v2
 

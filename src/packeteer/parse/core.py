@@ -62,6 +62,7 @@ from packeteer.generate.icmpv6 import ICMPv6Header
 from packeteer.generate.ip import IPHeader
 from packeteer.generate.ipsec import IPPROTO_AH, IPPROTO_ESP, AHHeader, ESPHeader
 from packeteer.generate.ipv6 import IPv6Header
+from packeteer.generate.loopback import LoopbackHeader
 from packeteer.generate.mpls import ETHERTYPE_MPLS_MULTICAST, ETHERTYPE_MPLS_UNICAST, MPLSLabel
 from packeteer.generate.pppoe import ETHERTYPE_PPPOE_DISCOVERY, ETHERTYPE_PPPOE_SESSION, PPPoEHeader
 from packeteer.generate.pseudowire import ETHERTYPE_PW_CW, PseudowireHeader
@@ -74,6 +75,8 @@ from packeteer.pcap import (
     LINKTYPE_ETHERNET,
     LINKTYPE_LINUX_SLL,
     LINKTYPE_LINUX_SLL2,
+    LINKTYPE_LOOP,
+    LINKTYPE_NULL,
     LINKTYPE_RAW,
     PcapFile,
     PcapFileHeader,
@@ -95,6 +98,7 @@ from .icmpv6 import packet_parser as _icmpv6_parser
 from .ip import packet_parser as _ip_parser
 from .ipsec import ah_packet_parser as _ah_parser
 from .ipsec import esp_packet_parser as _esp_parser
+from .loopback import packet_parser as _loopback_parser
 from .mpls import packet_parser as _mpls_parser
 from .pppoe import packet_parser as _pppoe_parser
 from .pseudowire import packet_parser as _pw_parser
@@ -186,6 +190,10 @@ class ParsedPacket:
 
     Attributes:
         ethernet: Parsed Ethernet II header (includes VLAN tag when present).
+        loopback: Parsed BSD loopback header (``DLT_NULL`` / ``DLT_LOOP``),
+            present instead of :attr:`ethernet` for a capture taken on a
+            loopback interface.  It carries no addresses — there is no
+            link — only which protocol follows.
         sll: Parsed Linux cooked-capture pseudo header (``SLLHeader`` for
             ``LINKTYPE_LINUX_SLL``, ``SLL2Header`` for ``LINKTYPE_LINUX_SLL2``),
             or ``None``.  Present instead of :attr:`ethernet`; its Protocol Type
@@ -307,6 +315,7 @@ class ParsedPacket:
 
     ethernet:    EthernetHeader | None = None
     sll:         SLLHeader | SLL2Header | None = None
+    loopback:    LoopbackHeader | None = None
     arp:         ARPHeader | None = None
     mpls:        list[MPLSLabel] = field(default_factory=list)
     pppoe:       PPPoEHeader | None = None
@@ -435,6 +444,14 @@ def _parse_link_layer(
         s_size, ethertype, s_hdr = _sll2_parser(data)
         pkt.sll = s_hdr
         return _after_l2(s_size, ethertype)
+    if link_type in (LINKTYPE_NULL, LINKTYPE_LOOP):
+        # DLT_LOOP is always network order; DLT_NULL is the capturing host's,
+        # so its order is worked out from the bytes themselves.
+        l_size, ethertype, l_hdr = _loopback_parser(
+            data, big_endian=True if link_type == LINKTYPE_LOOP else None,
+        )
+        pkt.loopback = l_hdr
+        return _after_l2(l_size, ethertype)
     if link_type == LINKTYPE_RAW:
         return data, None   # raw IP — skip MPLS loop below
     _set_payload(pkt, data, 0)
@@ -1122,6 +1139,8 @@ def _packet_to_spec(pkt: ParsedPacket) -> dict[str, Any]:
     cfg: dict[str, Any] = {}
     if pkt.ethernet is not None:
         update_config(cfg, pkt.ethernet)
+    if pkt.loopback is not None:
+        update_config(cfg, pkt.loopback)
     if pkt.sll is not None:
         update_config(cfg, pkt.sll)
     if pkt.arp is not None:

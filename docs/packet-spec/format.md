@@ -131,6 +131,44 @@ The Protocol Type field is set automatically from the layer that follows
 
 ---
 
+(packet-spec-loopback)=
+## `loopback`
+
+BSD loopback framing — the four bytes `tcpdump -i lo0` puts before each packet
+on macOS and the BSDs, naming the address family that follows.  It is an
+alternative to `ethernet` and `sll` (do not use more than one), and it carries
+no addresses, because there is no link.
+
+```json
+"metadata": { "link_type": 0 },
+"packets": [
+  {
+    "loopback": {},
+    "network":   { "src": "127.0.0.1", "dst": "127.0.0.1", "protocol": "udp" },
+    "transport": { "dst_port": 9 }
+  }
+]
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `family` | derived | The address family value.  Omitted when a rebuild can work it out from the IP version — `2` for IPv4, and macOS's `30` for IPv6 |
+| `big_endian` | `false` | Write the family in network order.  Omitted unless true |
+
+Both keys appear only when a capture did something a rebuild could not
+derive, the same rule [`transport.length`](packet-spec-transport-overrides)
+follows.  `family` survives when a capture came from a platform whose
+`AF_INET6` differs — it is `30` on macOS, `28` on FreeBSD, `24` on OpenBSD and
+`10` on Linux — and `big_endian` when the capture was `DLT_LOOP` (link type
+108) rather than `DLT_NULL` (link type 0), which are the same framing in
+opposite byte orders.
+
+The link type is inferred from the section when `metadata.link_type` is
+absent: `DLT_LOOP` when any packet recorded `big_endian`, `DLT_NULL`
+otherwise.
+
+---
+
 (packet-spec-mpls)=
 ## `mpls`
 

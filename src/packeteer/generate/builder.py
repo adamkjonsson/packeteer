@@ -241,6 +241,12 @@ from .ipv6 import (
     _build_hop_by_hop_header,
     _build_ipv6_header,
 )
+from .loopback import (
+    AF_INET,
+    AF_INET6_DEFAULT,
+    LoopbackHeader,
+    _build_loopback_header,
+)
 from .mpls import ETHERTYPE_MPLS_UNICAST, MPLSLabel, _build_mpls_label
 from .pppoe import (
     ETHERTYPE_PPPOE_DISCOVERY,
@@ -451,6 +457,18 @@ def _build_encap_layer(layer: object, next_layer: object, data: bytes) -> bytes:
         ethertype = _ethertype_for(next_layer) if next_layer else 0
         data = _build_sll2_header(layer, ethertype) + data
 
+    elif isinstance(layer, LoopbackHeader):
+        # The family says which protocol follows, so it is derived from the
+        # layer after it unless a spec pinned one — a capture's own value
+        # varies by the platform that took it.
+        family = layer.family
+        if family is None:
+            family = (AF_INET6_DEFAULT
+                      if isinstance(next_layer, IPv6Header) else AF_INET)
+        data = _build_loopback_header(
+            LoopbackHeader(family=family, big_endian=layer.big_endian),
+        ) + data
+
     return data
 
 
@@ -547,6 +565,41 @@ class PacketBuilder:
         # ethertype=0 is a placeholder; the correct value is filled in at
         # build time based on whatever layer follows this one.
         self._layers.append(EthernetHeader(dst_mac, src_mac, ethertype=0, pad=pad))
+        return self
+
+    def loopback(
+        self,
+        *,
+        family: int | None = None,
+        big_endian: bool = False,
+    ) -> "PacketBuilder":
+        """Append a BSD loopback header (``DLT_NULL`` / ``DLT_LOOP``).
+
+        The framing a capture on ``lo0`` uses on macOS and the BSDs: four
+        bytes naming the address family, and no addresses at all — there is no
+        link.  Use it instead of :meth:`ethernet`.
+
+        Args:
+            family: The address family value.  ``None`` derives it from the IP
+                layer that follows — ``2`` for IPv4, and macOS's ``30`` for
+                IPv6, since ``AF_INET6`` differs by platform.  Pass one to
+                reproduce a capture taken elsewhere.
+            big_endian: Write the family in network order, which is what
+                ``DLT_LOOP`` requires.  ``DLT_NULL`` uses the capturing host's
+                order, little-endian in practice.
+
+        Example — a loopback UDP packet::
+
+            pkt = (PacketBuilder()
+                .loopback()
+                .ip(src="127.0.0.1", dst="127.0.0.1")
+                .udp(dst_port=9)
+                .payload(data=b"x")
+                .build()
+            )
+
+        """
+        self._layers.append(LoopbackHeader(family=family, big_endian=big_endian))
         return self
 
     def sll(
