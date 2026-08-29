@@ -65,9 +65,12 @@ class TestTheExampleSpecCompiles(_CompileTestCase):
 
     def setUp(self) -> None:
         self.mod = self.compile_file(_EXAMPLE)
-        self.msg = self.mod.Reading(magic=0x5345, version=1, count=2, samples=[
-            self.mod.Sample(kind=0, length=4, value=b"21.5", reading=-3),
-            self.mod.Sample(kind=1, length=2, value=b"48", reading=7),
+        # `count` and `length` are derived, so they are left None: a decoded
+        # message has them cleared whenever the capture agreed with the
+        # derivation, and an object that sets them would not compare equal.
+        self.msg = self.mod.Reading(magic=0x5345, version=1, samples=[
+            self.mod.Sample(kind=0, value=b"21.5", reading=-3),
+            self.mod.Sample(kind=1, value=b"48", reading=7),
         ])
 
     def test_decode_encode_round_trip(self) -> None:
@@ -84,6 +87,11 @@ class TestTheExampleSpecCompiles(_CompileTestCase):
     def test_bytes_reach_the_spec_as_hex(self) -> None:
         section = self.mod.to_spec(self.msg)
         self.assertEqual(section["samples"][0]["value"], b"21.5".hex())
+
+    def test_derived_keys_are_absent_from_a_clean_spec(self) -> None:
+        section = self.mod.to_spec(self.mod.decode(self.mod.encode(self.msg)))
+        self.assertNotIn("count", section)
+        self.assertNotIn("length", section["samples"][0])
 
     def test_it_registers_itself(self) -> None:
         proto = protocols.for_section("sensor")
@@ -104,10 +112,9 @@ class TestItWorksThroughPacketeer(_CompileTestCase):
 
     def setUp(self) -> None:
         self.mod = self.compile_file(_EXAMPLE)
-        self.msg = self.mod.Reading(magic=0x5345, version=1, count=1, samples=[
-            self.mod.Sample(kind=2, length=3, value=b"1013", reading=1),
+        self.msg = self.mod.Reading(magic=0x5345, version=1, samples=[
+            self.mod.Sample(kind=2, value=b"101", reading=1),
         ])
-        self.msg.samples[0].value = b"101"
 
     def _frame(self) -> bytes:
         from packeteer.generate import PacketBuilder
@@ -361,3 +368,177 @@ class TestCompiledSpecsAreChecked(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDerivedFields(_CompileTestCase):
+    """The rule the whole feature stands on (#110).
+
+    A well-formed capture produces a spec with no redundant lengths and
+    counts; a capture whose length disagrees with its data keeps the captured
+    value and rebuilds byte-for-byte.  This is what `transport.length` and
+    `transport.checksum` have done by hand since #68, generated.
+
+    Note where it bites: a length used to *read* its target can never
+    disagree, because the target is whatever the length said.  It matters when
+    the target is read some other way — here, as the rest of the message,
+    which is the shape `UDPHeader.length` has.
+    """
+
+    _SPEC = """
+        name: framed
+        version: "1.0"
+        entry: m
+        over: udp
+        ports: [9200]
+        units:
+          m:
+            fields:
+              - {name: magic, type: {int: {bits: 16}}, const: 0x5345}
+              - {name: length, type: {int: {bits: 16}}, derive: {size_of: body}}
+              - {name: body, type: {bytes: {size: {remaining: true}}}}
+    """
+    _WHOLE = b"\x53\x45\x00\x04abcd"
+    _LYING = b"\x53\x45\x00\x63abcd"          # says 99, carries 4
+
+    def setUp(self) -> None:
+        self.mod = self.compile(self._SPEC)
+
+    def test_a_derived_field_defaults_to_none(self) -> None:
+        self.assertIsNone(self.mod.M().length)
+
+    def test_a_well_formed_capture_clears_it(self) -> None:
+        self.assertIsNone(self.mod.decode(self._WHOLE).length)
+
+    def test_and_the_spec_carries_no_redundant_key(self) -> None:
+        self.assertNotIn("length", self.mod.to_spec(self.mod.decode(self._WHOLE)))
+
+    def test_a_length_that_lies_is_kept(self) -> None:
+        self.assertEqual(self.mod.decode(self._LYING).length, 99)
+
+    def test_and_the_spec_records_the_lie(self) -> None:
+        self.assertEqual(
+            self.mod.to_spec(self.mod.decode(self._LYING))["length"], 99)
+
+    def test_both_rebuild_byte_for_byte(self) -> None:
+        for label, raw in (("well formed", self._WHOLE), ("lying", self._LYING)):
+            with self.subTest(capture=label):
+                self.assertEqual(self.mod.encode(self.mod.decode(raw)), raw)
+
+    def test_the_lie_survives_the_whole_packet_spec_round_trip(self) -> None:
+        """Parse → edit → build is the path this rule exists to protect."""
+        section = self.mod.to_spec(self.mod.decode(self._LYING))
+        self.assertEqual(self.mod.encode(self.mod.from_spec(section)), self._LYING)
+
+    def test_a_message_built_by_hand_needs_no_length(self) -> None:
+        self.assertEqual(self.mod.encode(self.mod.M(body=b"abcd")), self._WHOLE)
+
+    def test_an_override_is_written_verbatim(self) -> None:
+        built = self.mod.M(length=99, body=b"abcd")
+        self.assertEqual(self.mod.encode(built), self._LYING)
+
+
+class TestCountOf(_CompileTestCase):
+
+    def setUp(self) -> None:
+        self.mod = self.compile_file(_EXAMPLE)
+
+    def test_count_is_derived_from_the_list(self) -> None:
+        msg = self.mod.Reading(magic=0x5345, version=1, samples=[
+            self.mod.Sample(kind=0, length=1, value=b"a", reading=1),
+            self.mod.Sample(kind=1, length=1, value=b"b", reading=2),
+        ])
+        self.assertIsNone(msg.count)
+        self.assertEqual(self.mod.encode(msg)[3], 2)
+
+    def test_a_decoded_count_is_cleared_and_omitted(self) -> None:
+        msg = self.mod.Reading(magic=0x5345, version=1, samples=[
+            self.mod.Sample(kind=0, length=1, value=b"a", reading=1),
+        ])
+        decoded = self.mod.decode(self.mod.encode(msg))
+        self.assertIsNone(decoded.count)
+        self.assertNotIn("count", self.mod.to_spec(decoded))
+
+    def test_the_example_still_round_trips_with_the_rule_on(self) -> None:
+        msg = self.mod.Reading(magic=0x5345, version=1, samples=[
+            self.mod.Sample(kind=2, length=3, value=b"abc", reading=-1),
+        ])
+        raw = self.mod.encode(msg)
+        self.assertEqual(self.mod.encode(self.mod.decode(raw)), raw)
+        self.assertEqual(self.mod.from_spec(self.mod.to_spec(msg)), msg)
+
+
+class TestConst(_CompileTestCase):
+
+    _SPEC = """
+        name: withmagic
+        version: "1.0"
+        entry: m
+        over: udp
+        ports: [9201]
+        units:
+          m:
+            fields:
+              - {name: magic, type: {int: {bits: 16}}, const: 0x5345}
+              - {name: v, type: {int: {bits: 8}}}
+    """
+
+    def setUp(self) -> None:
+        self.mod = self.compile(self._SPEC)
+
+    def test_the_constant_is_the_default(self) -> None:
+        self.assertEqual(self.mod.M().magic, 0x5345)
+        self.assertEqual(self.mod.encode(self.mod.M(v=1)), b"\x53\x45\x01")
+
+    def test_a_mismatch_raises_naming_both_values(self) -> None:
+        """What leaves someone else's traffic on a shared port as a payload."""
+        with self.assertRaises(ValueError) as ctx:
+            self.mod.decode(b"\x00\x00\x01")
+        self.assertIn("magic", str(ctx.exception))
+
+    def test_a_mismatched_payload_stays_a_payload_when_parsed(self) -> None:
+        from packeteer.generate import PacketBuilder
+        from packeteer.parse import parse_packet
+
+        frame = (PacketBuilder()
+                 .ethernet(src_mac="00:00:00:00:00:01", dst_mac="00:00:00:00:00:02")
+                 .ip(src="10.0.0.1", dst="10.0.0.2").udp(dst_port=9201)
+                 .payload(data=b"\x00\x00\x01").build())
+        pkt = parse_packet(frame)
+        self.assertIsNone(pkt.app)
+        self.assertEqual(pkt.payload, b"\x00\x00\x01")
+
+    def test_an_override_is_honoured_so_bad_traffic_can_be_built(self) -> None:
+        """Packeteer generates malformed traffic on purpose; see `fuzz`."""
+        self.assertEqual(self.mod.encode(self.mod.M(magic=0, v=1)), b"\x00\x00\x01")
+
+
+class TestTheCheckerGuardsTheRule(unittest.TestCase):
+
+    def _errors(self, body: str) -> str:
+        return " | ".join(d.message for d in check(
+            loads(textwrap.dedent(body), fmt="yaml")).errors)
+
+    def test_a_field_cannot_be_both_const_and_derived(self) -> None:
+        self.assertIn("const", self._errors("""
+            name: t
+            version: "1"
+            entry: m
+            units:
+              m:
+                fields:
+                  - {name: n, type: {int: {bits: 8}}, const: 1,
+                     derive: {size_of: v}}
+                  - {name: v, type: {bytes: {size: {remaining: true}}}}
+        """))
+
+    def test_size_of_a_fixed_width_field_is_refused(self) -> None:
+        self.assertIn("size_of", self._errors("""
+            name: t
+            version: "1"
+            entry: m
+            units:
+              m:
+                fields:
+                  - {name: n, type: {int: {bits: 8}}, derive: {size_of: v}}
+                  - {name: v, type: {int: {bits: 32}}}
+        """))

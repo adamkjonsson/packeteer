@@ -46,6 +46,7 @@ from packeteer.protospec.expr import (
 )
 from packeteer.protospec.spec import (
     BytesType,
+    CountOf,
     Endian,
     Field,
     FieldType,
@@ -135,6 +136,7 @@ class _Generator:
         for unit in self.spec.units.values():
             self._emit_unit_decoder(unit)
             self._emit_unit_encoder(unit)
+            self._emit_unit_measure(unit)
             self._emit_unit_to_spec(unit)
             self._emit_unit_from_spec(unit)
         self._emit_api()
@@ -227,7 +229,11 @@ class _Generator:
     def _annotation(self, fld: Field) -> str:
         """Return the type annotation for a field."""
         inner = self._type_annotation(fld.type)
-        return f"list[{inner}]" if fld.repeat is not None else inner
+        if fld.repeat is not None:
+            return f"list[{inner}]"
+        # A derived field is None when it is to be computed, which is what
+        # lets a captured value that disagrees with the derivation survive.
+        return f"{inner} | None" if fld.derive is not None else inner
 
     def _type_annotation(self, field_type: FieldType) -> str:
         if isinstance(field_type, IntType):
@@ -244,6 +250,10 @@ class _Generator:
         """Return the default value expression for a field."""
         if fld.repeat is not None:
             return "field(default_factory=list)"
+        if fld.derive is not None:
+            return "None"
+        if fld.const is not None:
+            return repr(fld.const.value)
         if isinstance(fld.type, IntType):
             return "0"
         if isinstance(fld.type, BytesType):
@@ -267,6 +277,7 @@ class _Generator:
         self._emit("        _root = _obj")
         for fld in unit.fields:
             self._emit_field_decode(unit, fld, "    ")
+        self._emit_derived_clears(unit, "    ")
         self._emit("    return _obj")
         self._emit()
 
@@ -282,6 +293,37 @@ class _Generator:
             return
         self._emit_read(unit, fld, fld.type, pad, target)
 
+    def _emit_derived_clears(self, unit: Unit, pad: str) -> None:
+        """Clear every derived field whose captured value the spec would derive.
+
+        Run once the whole unit is decoded, because a derivation may read
+        fields that come after the field deriving from them — a length before
+        its data being the ordinary case.
+
+        A field cleared here is omitted from the packet spec, so a well-formed
+        capture produces a spec with no redundant lengths and counts.  One that
+        disagrees keeps the captured value, which is what makes a malformed
+        capture rebuild byte-for-byte.
+        """
+        for fld in unit.fields:
+            if fld.derive is None or fld.name is None:
+                continue
+            attr = f"_obj.{self.names.field(unit.name, fld.name)}"
+            self._emit(f"{pad}if {attr} == {self._derived_value(unit, fld)}:")
+            self._emit(f"{pad}    {attr} = None")
+
+    def _derived_value(self, unit: Unit, fld: Field) -> str:
+        """Return the expression computing what a derived field should hold."""
+        target = next(f for f in unit.fields if f.name == fld.derive.field)
+        value = f"_obj.{self.names.field(unit.name, target.name)}"
+        if isinstance(fld.derive, CountOf):
+            return f"len({value})"
+        if isinstance(target.type, StringType):
+            return f"len({value}.encode({target.type.encoding!r}))"
+        if isinstance(target.type, UnitRef):
+            return f"len(_bytes_of_{_snake(target.type.unit)}({value}))"
+        return f"len({value})"
+
     def _emit_read(self, unit: Unit, fld: Field, field_type: FieldType,
                    pad: str, target: str) -> None:
         """Emit the statements that read one value into *target*."""
@@ -292,16 +334,36 @@ class _Generator:
             if field_type.endian is Endian.LITTLE:
                 args.append("little=True")
             self._emit(f"{pad}{target} = _r.read_int({', '.join(args)})")
+            self._emit_const_check(fld, field_type, pad, target)
         elif isinstance(field_type, BytesType):
             self._emit(f"{pad}{target} = {self._read_bytes(unit, fld, field_type.size)}")
+            self._emit_const_check(fld, field_type, pad, target)
         elif isinstance(field_type, StringType):
             read = self._read_bytes(unit, fld, field_type.size)
             self._emit(f"{pad}{target} = {read}.decode({field_type.encoding!r})")
+            self._emit_const_check(fld, field_type, pad, target)
         elif isinstance(field_type, UnitRef):
             self._emit(f"{pad}{target} = _decode_{_snake(field_type.unit)}"
                        f"(_r, _root, _obj)")
         elif isinstance(field_type, Switch):
             self._emit_switch_decode(unit, fld, field_type, pad, target)
+
+    def _emit_const_check(self, fld: Field, field_type: FieldType,
+                          pad: str, target: str) -> None:
+        """Emit the check that a constant field holds what the spec says.
+
+        Raising on a mismatch is the point: a port claim is weak, so this is
+        what makes someone else's traffic on the same port stay an opaque
+        payload rather than become a wrong message.
+        """
+        if fld.const is None or not isinstance(field_type,
+                                               (IntType, BytesType, StringType)):
+            return
+        expected = repr(fld.const.value)
+        name = fld.name or "constant"
+        self._emit(f"{pad}if {target} != {expected}:")
+        self._emit(f'{pad}    raise ValueError(f"{name} is {{{target}!r}}, '
+                   f'expected {{{expected}!r}}")')
 
     def _read_bytes(self, unit: Unit, fld: Field, size: Size) -> str:
         if isinstance(size, Fixed):
@@ -347,6 +409,12 @@ class _Generator:
             self._emit_write(unit, fld, fld.type, pad, "0")
             return
         value = f"_obj.{self.names.field(unit.name, fld.name)}"
+        if fld.derive is not None:
+            # None means derive it; anything else is an override, written
+            # verbatim so a capture that disagreed with its own derivation
+            # rebuilds byte-for-byte.
+            value = (f"({value} if {value} is not None "
+                     f"else {self._derived_value(unit, fld)})")
         if fld.repeat is not None:
             self._emit(f"{pad}for _item in {value}:")
             self._emit_write(unit, fld, fld.type, f"{pad}    ", "_item")
@@ -391,6 +459,17 @@ class _Generator:
 
     # ── packet spec ───────────────────────────────────────────────────────────
 
+    def _emit_unit_measure(self, unit: Unit) -> None:
+        """Emit a helper returning a unit's encoded bytes, for ``size_of``."""
+        cls = self.names.unit(unit.name)
+        self._emit()
+        self._emit(f"def _bytes_of_{_snake(unit.name)}(_obj: {cls}) -> bytes:")
+        self._emit(f'    """Return one {unit.name} encoded, to measure it."""')
+        self._emit("    _w = Writer()")
+        self._emit(f"    _encode_{_snake(unit.name)}(_obj, _w)")
+        self._emit("    return _w.getvalue()")
+        self._emit()
+
     def _emit_unit_to_spec(self, unit: Unit) -> None:
         self._emit()
         self._emit(f"def _to_spec_{_snake(unit.name)}(_obj: Any) -> dict[str, Any]:")
@@ -405,6 +484,11 @@ class _Generator:
             if fld.repeat is not None:
                 item = self._spec_value(fld.type, "_item")
                 self._emit(f"    _out[{key!r}] = [{item} for _item in {value}]")
+            elif fld.derive is not None:
+                # Present only when the capture disagreed with the derivation.
+                self._emit(f"    if {value} is not None:")
+                self._emit(f"        _out[{key!r}] = "
+                           f"{self._spec_value(fld.type, value)}")
             else:
                 self._emit(f"    _out[{key!r}] = {self._spec_value(fld.type, value)}")
         self._emit("    return _out")

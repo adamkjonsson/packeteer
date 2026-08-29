@@ -429,6 +429,19 @@ class _Checker:
                 f"repeat; there is nothing to count",
                 fld.loc,
             )
+        if fld.const is not None:
+            self._error(
+                "a field cannot be both 'const' and 'derive': one fixes the "
+                "value, the other computes it",
+                fld.loc,
+            )
+        if isinstance(fld.derive, SizeOf) and not isinstance(
+                target.type, (BytesType, StringType, UnitRef)):
+            self._error(
+                f"'size_of' names {fld.derive.field!r}, whose encoded length "
+                f"is fixed by its type; size a bytes, string or unit field",
+                fld.loc,
+            )
         if isinstance(fld.derive, SizeOf) and target.repeat is not None:
             self._error(
                 f"'size_of' names {fld.derive.field!r}, which repeats; use "

@@ -128,6 +128,24 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   order.  A read past the end raises `ValueError`, which is what makes a
   decoder refuse a truncated or mismatched payload.
 
+- **Derived fields and constants in a compiled protocol** (#110) — a field
+  with `derive: {size_of: …}` or `{count_of: …}` compiles to `int | None`,
+  where `None` means "compute it".  On encode it is computed unless the object
+  overrides it; on decode it is cleared when the capture agrees with the
+  derivation and kept when it does not; and `to_spec` omits it when it is
+  `None`.
+
+  So a well-formed capture produces a spec with no redundant lengths and
+  counts, and a capture whose length disagrees with its data records the
+  disagreement and rebuilds byte-for-byte.  That is the rule
+  `transport.length` and `transport.checksum` have followed since #68, applied
+  by the compiler to every derived field.
+
+  A `const:` field takes the constant as its default and raises on decode when
+  the bytes disagree — which is what leaves another protocol's traffic on a
+  shared port as an opaque payload.  An explicit override is still written, so
+  deliberately malformed traffic can be built.
+
 ---
 
 ## [0.10.0] - 2026-08-28
