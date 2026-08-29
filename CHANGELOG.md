@@ -49,6 +49,23 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   `PersonalDataWarning` with `kind="unredacted"` rather than passing through
   quietly — silence is what let this go unnoticed.
 
+### Added
+
+- **`ICMPHeader.rest_of_header` and `ICMPv6Header.rest_of_header`** (#122) —
+  the four type-specific bytes after the checksum, read and written as one
+  value.  That is what most message types actually mean by them: an ICMPv6
+  Packet Too Big's MTU, an ICMPv4 Redirect's gateway address, a Parameter
+  Problem's pointer.
+
+### Documentation
+
+- **`identifier` and `sequence` are documented as what they are** (#122) — the
+  two halves of a type-specific field, named for what an Echo puts there.
+  Every other ICMP message type uses those bytes for something else, and the
+  header classes, the two parsers and the packet-spec reference all said
+  otherwise.  The field names are unchanged, so specs written against an
+  earlier version still build.
+
 ---
 
 ## [0.11.0] - 2026-08-29

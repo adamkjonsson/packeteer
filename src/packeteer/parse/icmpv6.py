@@ -10,7 +10,13 @@ def packet_parser(data: bytes) -> tuple[int, int | None, ICMPv6Header | None]:
 
     Header layout (8 bytes)::
 
-        Type(1) | Code(1) | Checksum(2) | Identifier(2) | Sequence(2)
+        Type(1) | Code(1) | Checksum(2) | Type-specific(4)
+
+    The last four bytes are Identifier and Sequence only for an Echo
+    Request or Reply; other types put a Reserved field, an MTU, a
+    gateway address or flags there.  They are read as two 16-bit halves
+    regardless, and reach the header as *identifier* and *sequence*; see
+    that class for what each type means by them.
 
     Args:
         data: Raw bytes starting at the first byte of an ICMPv6 header.

@@ -655,8 +655,28 @@ in order:
 | `options.raw` | derived | The option region as captured, hex-encoded, written out verbatim (see below) |
 | `type` | `8` / `128` | ICMP type (`8`=Echo Request) or ICMPv6 type (`128`=Echo Request) |
 | `code` | `0` | ICMP/ICMPv6 sub-type code |
-| `identifier` | `1` | ICMP/ICMPv6 16-bit identifier |
-| `sequence` | `1` | ICMP/ICMPv6 16-bit sequence number |
+| `identifier` | `1` | The **first** two of the four type-specific bytes after the checksum — see below |
+| `sequence` | `1` | The **second** two |
+
+The four bytes after the checksum are **type-specific**.  They are called
+`identifier` and `sequence` because that is what an Echo Request or Reply puts
+there, which is what packeteer generates by default — but other message types
+use them for something else, and a spec for one of those is setting halves of
+a single value:
+
+| Type | What the four bytes hold |
+|------|--------------------------|
+| ICMP `0`/`8`, ICMPv6 `128`/`129` (Echo) | Identifier, then Sequence |
+| ICMP `5` (Redirect) | The gateway address, as one 32-bit value |
+| ICMP `12`, ICMPv6 `4` (Parameter Problem) | A pointer |
+| ICMPv6 `2` (Packet Too Big) | The MTU |
+| ICMPv6 `134` (Router Advertisement) | Hop limit, flags, router lifetime |
+| ICMPv6 `136` (Neighbour Advertisement) | R/S/O flags, then reserved bits |
+| ICMP `3`/`11`, ICMPv6 `1`/`3`/`133`/`135`/`137` | Unused or Reserved, zero |
+
+In Python,
+{attr}`~packeteer.generate.icmpv6.ICMPv6Header.rest_of_header` reads and writes
+all four as one value, keeping the two halves consistent.
 | `length` | derived | UDP Length field, overriding the derived `8 + len(payload)` (see below) |
 | `checksum` | derived | TCP/UDP checksum, overriding the computed one (see below) |
 

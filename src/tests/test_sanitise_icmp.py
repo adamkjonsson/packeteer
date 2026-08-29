@@ -225,3 +225,51 @@ class TestNothingRealSurvives(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRestOfHeader(unittest.TestCase):
+    """The four bytes after the checksum are type-specific, not id/sequence.
+
+    They are stored as two halves named for what an Echo puts there, which is
+    misleading for every other type — a Redirect's gateway address arrives as
+    two unrelated-looking numbers.  `rest_of_header` is the honest view, and
+    the halves stay the stored fields so older specs still build.
+    """
+
+    def test_it_combines_the_two_halves(self) -> None:
+        from packeteer.generate.icmpv6 import ICMPv6Header
+
+        self.assertEqual(ICMPv6Header(identifier=0x1234,
+                                      sequence=0x5678).rest_of_header,
+                         0x12345678)
+
+    def test_setting_it_splits_them(self) -> None:
+        from packeteer.generate.icmp import ICMPHeader
+
+        header = ICMPHeader(type=5, code=1)
+        header.rest_of_header = int(ipaddress.IPv4Address("192.0.2.254"))
+        self.assertEqual((header.identifier, header.sequence), (0xC000, 0x02FE))
+
+    def test_a_redirect_gateway_reads_back_off_the_wire(self) -> None:
+        gateway = int(ipaddress.IPv4Address("192.0.2.254"))
+        frame = (PacketBuilder()
+                 .ethernet(src_mac=_SRC_MAC, dst_mac=_DST_MAC)
+                 .ip(src="192.0.2.1", dst="192.0.2.9")
+                 .icmp(type=5, code=1, identifier=gateway >> 16,
+                       sequence=gateway & 0xFFFF)
+                 .payload(data=b"\x45\x00" + b"\x00" * 18).build())
+        header = parse_packet(frame, decode_app=False).transport
+        self.assertEqual(str(ipaddress.IPv4Address(header.rest_of_header)),
+                         "192.0.2.254")
+
+    def test_an_echo_is_unaffected(self) -> None:
+        from packeteer.generate.icmpv6 import ICMPv6Header
+
+        echo = ICMPv6Header()
+        self.assertEqual((echo.identifier, echo.sequence), (1, 1))
+
+    def test_a_value_too_wide_is_refused(self) -> None:
+        from packeteer.generate.icmpv6 import ICMPv6Header
+
+        with self.assertRaises(ValueError):
+            ICMPv6Header().rest_of_header = 1 << 32
