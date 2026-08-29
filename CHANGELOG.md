@@ -146,6 +146,22 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   shared port as an opaque payload.  An explicit override is still written, so
   deliberately malformed traffic can be built.
 
+- **`packeteer.parse.reassemble` — TCP stream reassembly** (#111) —
+  `Reassembler` puts TCP segments back into whole application messages, the
+  way `Defragmenter` puts IP fragments back into datagrams.  It is driven by a
+  `frame_length` callable the protocol supplies, and reports what it could not
+  complete as `IncompleteMessage`, with a reason.
+
+  Bytes are placed by sequence number rather than arrival order: a
+  retransmission is dropped, an overlap contributes only its new part, and a
+  gap is held rather than spliced over.  That is what lets it read
+  `packeteer stream` output with impairments on, which emits spurious
+  retransmissions and leaves permanent gaps.  A flow that grows too large,
+  waits too long, or arrives among too many others is abandoned and reported
+  rather than kept.
+
+  Nothing wires it into the parser yet; #112 does.
+
 ---
 
 ## [0.10.0] - 2026-08-28
