@@ -105,6 +105,29 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   the marker a `pointer` field would print as `bytes[rest]` and the tree would
   quietly misreport the spec.
 
+- **`packeteer protocol compile` and `packeteer.protospec.compile_spec`**
+  (#109) — compiles a datagram spec to a Python module: a dataclass per unit,
+  `encode`, `decode`, `to_spec`, `from_spec`, and an `AppProtocol` registered
+  at import.  Everything 0.10.0 shipped then works on it — `PacketBuilder.app`,
+  `ParsedPacket.app`, a section in `packeteer parse` output, and
+  `packeteer build` reading it back to byte-identical frames.
+
+  The module is written beside the spec unless `--out` says otherwise, since
+  it is meant to be committed and reviewed.  The spec is checked first and one
+  with errors is not compiled.
+
+  A generated module imports only `packeteer` and the standard library, which
+  is what makes it safe to vendor.  Names are validated rather than silently
+  renamed — a field that is not a Python identifier, or that collides with a
+  name the module uses, is refused — author text is escaped rather than
+  interpolated, and the generated source is parsed before it is written, so a
+  bug in the compiler is a refusal rather than a broken file.
+
+- **`packeteer.protospec.runtime`** (#109) — the `Reader` and `Writer` a
+  compiled protocol uses, handling byte- and bit-level fields in either byte
+  order.  A read past the end raises `ValueError`, which is what makes a
+  decoder refuse a truncated or mismatched payload.
+
 ---
 
 ## [0.10.0] - 2026-08-28

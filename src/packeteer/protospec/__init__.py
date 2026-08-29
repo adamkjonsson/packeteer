@@ -15,6 +15,7 @@ in order to describe an **encoder**, which kober never had to.
 from __future__ import annotations
 
 from packeteer.protospec.check import CheckResult, Diagnostic, check
+from packeteer.protospec.codegen import compile_spec
 from packeteer.protospec.errors import SpecError
 from packeteer.protospec.loader import from_mapping, load, loads
 from packeteer.protospec.show import render
@@ -26,6 +27,7 @@ __all__ = [
     "CheckResult",
     "Diagnostic",
     "check",
+    "compile_spec",
     "render",
     "load",
     "loads",
