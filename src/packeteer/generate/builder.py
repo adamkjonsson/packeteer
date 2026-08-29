@@ -1133,6 +1133,7 @@ class PacketBuilder:
         # IPv6-specific
         traffic_class: int = 0,
         flow_label: int = 0,
+        declared_length: int | None = None,
         protocol: int = 0,
     ) -> "PacketBuilder":
         """Append an IP header layer.  IPv4 or IPv6 is auto-detected from *src*.
@@ -1146,6 +1147,12 @@ class PacketBuilder:
         Args:
             src: Source IP address (dotted-decimal IPv4 or colon-hex IPv6).
             dst: Destination IP address in the same format.
+            declared_length: The length field's value, overriding the one
+                derived from the bytes beside it — IPv4 Total Length, or IPv6
+                Payload Length.  Its use is a capture cut short by a snaplen,
+                whose header still says how long the packet was: passing the
+                captured value is what makes such a packet rebuild as
+                truncated rather than as a smaller whole one.
             ttl: Time-To-Live (IPv4) or Hop Limit (IPv6).  Defaults to ``64``.
             tos: IPv4 Type of Service / DSCP+ECN byte.
             identification: IPv4 Identification field.
@@ -1171,6 +1178,7 @@ class PacketBuilder:
                 hop_limit=ttl,
                 traffic_class=traffic_class,
                 flow_label=flow_label,
+                payload_length=declared_length,
             ))
         else:
             self._layers.append(IPHeader(
@@ -1179,6 +1187,7 @@ class PacketBuilder:
                 identification=identification,
                 flags=flags,
                 fragment_offset=fragment_offset,
+                total_length=declared_length,
             ))
         return self
 
@@ -1547,23 +1556,32 @@ class PacketBuilder:
 
     @staticmethod
     def _clone_ip(layer: IPHeader, proto: int) -> IPHeader:
-        """Return a copy of *layer* with ``protocol`` set to *proto*."""
+        """Return a copy of *layer* with ``protocol`` set to *proto*.
+
+        Every field has to be named here: one left out is silently dropped on
+        the way to the wire, which is how ``total_length`` came to be lost.
+        """
         return IPHeader(
             layer.src, layer.dst, proto,
             ttl=layer.ttl, tos=layer.tos,
             identification=layer.identification,
             flags=layer.flags,
             fragment_offset=layer.fragment_offset,
+            total_length=layer.total_length,
         )
 
     @staticmethod
     def _clone_ipv6(layer: IPv6Header, proto: int) -> IPv6Header:
-        """Return a copy of *layer* with ``next_header`` set to *proto*."""
+        """Return a copy of *layer* with ``next_header`` set to *proto*.
+
+        Every field has to be named here; see :meth:`_clone_ip`.
+        """
         return IPv6Header(
             layer.src, layer.dst, proto,
             hop_limit=layer.hop_limit,
             traffic_class=layer.traffic_class,
             flow_label=layer.flow_label,
+            payload_length=layer.payload_length,
         )
 
     def _assemble_range(self, start: int, end: int, data: bytes) -> bytes:

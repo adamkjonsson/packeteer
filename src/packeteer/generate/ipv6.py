@@ -220,7 +220,9 @@ def _build_ipv6_header(hdr: IPv6Header, payload: bytes) -> bytes:
     dst = socket.inet_pton(socket.AF_INET6, hdr.dst)
     return struct.pack('!I', version_tc_fl) + struct.pack(
         '!HBB16s16s',
-        len(payload),       # payload length (excludes this 40-byte header)
+        # Derived from the bytes beside it, unless the header carries what a
+        # capture held — how a truncated packet keeps saying how long it was.
+        len(payload) if hdr.payload_length is None else hdr.payload_length,
         hdr.next_header,
         hdr.hop_limit,
         src,

@@ -78,6 +78,7 @@ from packeteer.pcap import (
     LINKTYPE_LOOP,
     LINKTYPE_NULL,
     LINKTYPE_RAW,
+    SNAPLEN_UNLIMITED,
     PcapFile,
     PcapFileHeader,
     PcapReader,
@@ -322,11 +323,13 @@ class ParsedPacket:
             ``total_length`` lies sets it with no snaplen involved.
 
             When it is ``True``, ``transport.length`` and
-            ``transport.checksum`` are cleared rather than recorded, because
-            neither can be checked against bytes that are not in the file —
-            so a cleared checksum means "derivable **or** unknowable", and
-            this is what tells the two apart.  ``False`` for an IPv6 jumbogram
-            (RFC 2675), whose payload length the header does not state.
+            ``transport.checksum`` are recorded as captured, since a value
+            derived from the bytes present would be derived from fewer bytes
+            than the sender used and so is certain to differ.  They are the
+            capture's own values, not a verdict on them: neither can be
+            checked against bytes that are not in the file, and this flag is
+            what says so.  ``False`` for an IPv6 jumbogram (RFC 2675), whose
+            payload length the header does not state.
         payload: Bytes remaining after all parsed headers.
         payload_offset: Index of ``payload[0]`` within the frame passed to
             :func:`parse_packet`, or ``None`` when :attr:`payload` is empty.
@@ -836,14 +839,19 @@ def _clear_derivable_transport_fields(
     rather than the fragment carrying them.  Keeping the fields only in that
     case is what stops every packet spec growing two redundant keys.
 
-    A *truncated* payload clears both instead of comparing them.  The derived
-    values would be computed from fewer bytes than the sender used, so keeping
-    the captured ones would say "wrong on the wire" about every packet of a
-    snaplen-limited capture; and a rebuild of a truncated packet does not
-    reproduce the original either way, so there is nothing for them to
-    preserve.  The cost is that corruption cannot be reported at all in a
-    truncated capture — the bytes the sender checksummed are not in the file,
-    so "unknown" is the only honest answer.
+    A *truncated* payload keeps both instead of comparing them.  The
+    comparison is meaningless there — the derived value is computed from
+    fewer bytes than the sender used, so it always differs — and the rule
+    the comparison implements says record whatever a rebuild cannot derive,
+    which on a truncated packet is both fields.  Keeping them is what lets a
+    snaplen capture rebuild as itself rather than as a smaller whole packet
+    (see ``network.declared_length``).
+
+    This is not a claim that the checksum was wrong on the wire.  In a
+    truncated capture the bytes the sender checksummed are not in the file,
+    so nothing can say; ``packet_metadata.truncated`` is what marks the
+    packets where a recorded checksum means "as captured, unverifiable"
+    rather than "wrong".
 
     Does nothing when the IP header is missing, since the derived values
     cannot be computed at all.
@@ -860,9 +868,6 @@ def _clear_derivable_transport_fields(
     if not isinstance(hdr, (TCPHeader, UDPHeader)) or pkt.ip is None:
         return
     if truncated:
-        hdr.checksum = None
-        if isinstance(hdr, UDPHeader):
-            hdr.length = None
         return
     src, dst = pkt.ip.src, pkt.ip.dst
     version = 6 if isinstance(pkt.ip, IPv6Header) else 4
@@ -1200,6 +1205,15 @@ def _packet_to_spec(pkt: ParsedPacket) -> dict[str, Any]:
         update_config(cfg, pkt.pppoe)
     if pkt.ip is not None:
         update_config(cfg, pkt.ip)
+    if pkt.datagram_truncated and pkt.ip is not None:
+        # The header says more than the bytes present, which a rebuild cannot
+        # work out — so it is recorded, the same rule `transport.length`
+        # follows.  Without it a truncated capture rebuilds as a smaller whole
+        # packet that never existed.
+        declared = (pkt.ip.total_length if isinstance(pkt.ip, IPHeader)
+                    else pkt.ip.payload_length)
+        if declared is not None:
+            cfg.setdefault("network", {})["declared_length"] = declared
 
     if (pkt.ah is not None or pkt.esp is not None
             or pkt.ipip or pkt.gre is not None
@@ -1329,6 +1343,14 @@ def parse_pcap_file(
                 # Only when set: absent means whole, which is the common case
                 # and not worth a key on every packet.
                 cfg["packet_metadata"]["truncated"] = True
+            orig_len = getattr(record, "orig_len", None)
+            if orig_len is not None and orig_len != len(record.data):
+                # The record says the packet was longer than the bytes kept,
+                # which nothing in the frame states: without this a rebuild
+                # writes it back as a whole packet of the captured size.
+                # Absent from a reassembled record, which has no single
+                # on-the-wire length to report.
+                cfg["packet_metadata"]["orig_len"] = orig_len
             if packet_filter is None or packet_filter.matches(cfg):
                 packet_configs.append(cfg)
 
@@ -1380,6 +1402,10 @@ def parse_pcap_file(
     # version_major 1 = pcapng, 2 = pcap
     file_type = "pcapng" if pcap.header.version_major == 1 else "pcap"
     global_output.setdefault("type", file_type)
+    if pcap.header.snaplen not in (0, SNAPLEN_UNLIMITED):
+        # Recorded only when the file declared a real limit: 65535 is what a
+        # rebuild writes anyway, and pcapng's 0 means "no limit".
+        global_output.setdefault("snaplen", pcap.header.snaplen)
     if path is not None:
         global_output.setdefault("from_file", str(path))
 

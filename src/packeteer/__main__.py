@@ -125,6 +125,8 @@ from packeteer.pcap import (
     LINKTYPE_LOOP,
     LINKTYPE_NULL,
     LINKTYPE_RAW,
+    SNAPLEN_UNLIMITED,
+    PacketTuple,
     is_pcap_or_pcapng,
     write_pcap,
     write_pcapng,
@@ -270,6 +272,7 @@ def _build_ip_layer(b: "PacketBuilder", net: dict) -> "PacketBuilder":
         fragment_offset=net.get("fragment_offset", 0),
         traffic_class=net.get("traffic_class", 0),
         flow_label=net.get("flow_label", 0),
+        declared_length=net.get("declared_length"),
         protocol=_fragment_protocol(net) if _is_later_fragment(net) else 0,
     )
     frag = net.get("fragment")
@@ -815,8 +818,8 @@ def _run_multi_packet(
     # Use link_type from metadata when present; otherwise infer from packet contents.
     link_type = _link_type_for_build(top_metadata, specs)
 
-    # collected: list of (pkt_bytes, ts_sec, ts_frac)
-    collected: list[tuple[bytes, int, int]] = []
+    # collected: list of (pkt_bytes, ts_sec, ts_frac[, orig_len])
+    collected: list[PacketTuple] = []
 
     for i, spec in enumerate(specs, 1):
         out = spec.get("packet_metadata", {})
@@ -833,14 +836,24 @@ def _run_multi_packet(
 
         ts_sec: int = out.get("timestamp_s", 0)
         ts_frac: int = out.get("timestamp_ns" if nanoseconds else "timestamp_us", 0)
+        # A packet the capture held only part of keeps its on-the-wire length,
+        # so the record says it was cut rather than that it was this small.
+        # Not carried across fragmentation: each fragment is its own record.
+        orig_len = out.get("orig_len") if len(pkts) == 1 else None
         for pkt in pkts:
-            collected.append((pkt, ts_sec, ts_frac))
+            if orig_len is None:
+                collected.append((pkt, ts_sec, ts_frac))
+            else:
+                collected.append((pkt, ts_sec, ts_frac, int(orig_len)))
 
+    snaplen: int = top_metadata.get("snaplen", SNAPLEN_UNLIMITED)
     if pcap_path:
-        write_pcap(collected, path=pcap_path, link_type=link_type, nanoseconds=nanoseconds)
+        write_pcap(collected, path=pcap_path, link_type=link_type,
+                   nanoseconds=nanoseconds, snaplen=snaplen)
         print(f"Wrote {len(collected)} packet(s) to {pcap_path} (link type: {link_type})")
     else:
-        write_pcapng(collected, path=pcapng_path, link_type=link_type, nanoseconds=nanoseconds)
+        write_pcapng(collected, path=pcapng_path, link_type=link_type,
+                     nanoseconds=nanoseconds, snaplen=snaplen)
         print(f"Wrote {len(collected)} packet(s) to {pcapng_path} (link type: {link_type})")
 
 

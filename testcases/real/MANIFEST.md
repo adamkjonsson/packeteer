@@ -39,15 +39,11 @@ Before adding one:
 | `icmpv6_nd.pcapng` | 93 | Neighbour Discovery with link-layer options, and an ICMPv6 error.  Found #122 |
 | `ipv6_udp.pcapng` | 7 | IPv6 over Ethernet — the `0x86DD` path |
 | `tcp_v4.pcapng` | 11 | A complete TCP session with **two stacks' option layouts** — the client's in the SYN, the server's in the SYN-ACK.  This is #87's case |
+| `tcp_v4_snaplen.pcapng` | 11 | The same session captured with `tcpdump -s 96`: two packets hold less than their headers declare.  The only real coverage of #92, #94 and #126 — and the file whose sanitised copy #126 was filed about |
 | `tcp_v6_loopback.pcapng` | 10 | TCP over IPv6 over `DLT_NULL` (link type 0), which #124 added support for.  Also carries offloaded checksums, so it exercises the preserved-`transport.checksum` path from #68 against real bytes |
 
 ## Known gaps
 
-- **A snaplen-truncated capture.** One was collected and cannot be committed:
-  sanitising it destroys the very property it was collected for, because a
-  truncated capture does not round-trip
-  ([#126](https://github.com/adamkjonsson/packeteer/issues/126)).  Until that
-  is fixed, #92's and #94's paths have no real-traffic coverage.
 - **VLAN, MPLS, and any tunnel.** packeteer supports seven encapsulations and
   has real traffic for none of them.
 - **An ICMPv4 Redirect.** Its gateway address lives in the header bytes a spec

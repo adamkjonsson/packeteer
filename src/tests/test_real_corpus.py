@@ -158,6 +158,35 @@ class TestRealTrafficCoversWhatSyntheticCannot(unittest.TestCase):
                 if "checksum" in p.get("transport", {})]
         self.assertTrue(kept, "offloaded checksums should survive into the spec")
 
+    def test_a_snaplen_capture_is_actually_truncated(self) -> None:
+        """#92, #94 and #126 all turn on a capture holding less than it says."""
+        with open_pcap(path=str(_CORPUS / "tcp_v4_snaplen.pcapng")) as capture:
+            records = list(capture)
+        cut = [r for r in records if len(r.data) < r.orig_len]
+        self.assertTrue(cut, "tcp_v4_snaplen.pcapng should hold truncated records")
+
+    def test_a_snaplen_capture_rebuilds_as_a_truncated_file(self) -> None:
+        """Not just the packets (#126): the file has to say it was cut too."""
+        path = _CORPUS / "tcp_v4_snaplen.pcapng"
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            spec = json.loads(parse_pcap_file(path=str(path)))
+        with open_pcap(path=str(path)) as capture:
+            header, records = capture.header, list(capture)
+
+        self.assertEqual(spec["metadata"]["snaplen"], header.snaplen)
+        rebuilt = {p["packet_metadata"]["packet_num"]:
+                   p["packet_metadata"].get("orig_len")
+                   for p in spec["packets"]}
+        self.assertEqual(
+            rebuilt,
+            {i: (r.orig_len if len(r.data) < r.orig_len else None)
+             for i, r in enumerate(records, 1)},
+        )
+        truncated = [p for p in spec["packets"]
+                     if "declared_length" in p.get("network", {})]
+        self.assertTrue(truncated, "the cut packets should keep their IP length")
+
     def test_icmpv6_carries_neighbour_discovery(self) -> None:
         types = {p.transport.type for p in self._packets("icmpv6_nd.pcapng")
                  if type(p.transport).__name__ == "ICMPv6Header"}

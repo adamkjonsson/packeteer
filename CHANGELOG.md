@@ -25,7 +25,83 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
+### Added
+
+- **`write_pcap` and `write_pcapng` take an `orig_len` and a `snaplen`**
+  (#126) — a record may be a 4-tuple `(data, ts_sec, ts_frac, orig_len)`
+  alongside the existing 3-tuple, and both writers accept `snaplen=`
+  (default `65535`, exported as `packeteer.pcap.SNAPLEN_UNLIMITED`).  Without
+  them nothing could write a capture that says it was cut short.
+
+- **`PacketBuilder.ip(declared_length=…)`** (#126) — writes the IPv4 Total
+  Length or IPv6 Payload Length field verbatim instead of deriving it from the
+  payload, which is what makes a rebuilt packet truncated rather than small.
+
+- **BSD loopback captures can be read and written** (#124) — link types `0`
+  (`DLT_NULL`) and `108` (`DLT_LOOP`), the framing `tcpdump -i lo0` produces on
+  macOS and the BSDs.  `ParsedPacket.loopback`, `PacketBuilder.loopback()`, a
+  `loopback` packet-spec section, and `LINKTYPE_NULL` / `LINKTYPE_LOOP`.
+
+  Without it the easiest traffic there is — anything you can send to yourself —
+  could not be parsed at all, which is not academic: collecting ICMPv4 and
+  IPv6 captures for the corpus needed a second machine or a tunnel broker
+  purely because loopback was unreadable.  On Linux `lo` is `EN10MB`, so this
+  only bites where loopback capture is most convenient.
+
+  The address family is derived from the IP version on rebuild and recorded
+  only when a capture disagrees — `AF_INET6` is `30` on macOS, `28` on
+  FreeBSD, `24` on OpenBSD and `10` on Linux — so a capture from another
+  platform still round-trips byte for byte.
+
+- **`ICMPHeader.rest_of_header` and `ICMPv6Header.rest_of_header`** (#122) —
+  the four type-specific bytes after the checksum, read and written as one
+  value.  That is what most message types actually mean by them: an ICMPv6
+  Packet Too Big's MTU, an ICMPv4 Redirect's gateway address, a Parameter
+  Problem's pointer.
+
+### Changed
+
+- **A truncated packet keeps its `transport.length` and `transport.checksum`**
+  (#126) — 0.9.1 cleared both (#92) so that a snaplen would not read as
+  corruption on every packet.  Half of that reasoning was that a truncated
+  packet could not be rebuilt as itself anyway; #126 makes it possible, and
+  these are two of the values it needs.
+
+  A recorded checksum therefore no longer means "wrong on the wire" on its
+  own: on a packet with `packet_metadata.truncated` set it is the captured
+  value, which nothing can check, because the bytes it covers are not in the
+  file.  Consumers that read a recorded checksum as corruption should test
+  `truncated` alongside it.
+
+- **`PcapFile.packets` holds `PcapRecord` objects** rather than plain
+  `(data, ts_sec, ts_frac)` tuples (#126).  A record unpacks, indexes and
+  measures as that tuple, so `for data, ts_sec, ts_frac in result.packets`
+  and `packets[0][0]` are unaffected; what it adds is the rest of the record,
+  `orig_len` above all, which is the only place a truncated packet's real
+  length survives.  Code comparing an element to a literal tuple
+  (`packets[0] == (data, 1, 0)`) must compare `tuple(packets[0])` instead.
+
 ### Fixed
+
+- **A truncated capture rebuilds as truncated** (#126) — a capture taken with
+  a snaplen went through `parse` → `build`, or `sanitise --pcap`, and came out
+  *complete*: smaller, internally consistent packets that never existed on any
+  wire, in a file whose header no longer said anything had been cut.
+
+  Four facts were absent from a packet spec, and each is now recorded — only
+  when a rebuild could not derive it, the rule `transport.length` already
+  follows:
+
+  - `network.declared_length` — IPv4 Total Length or IPv6 Payload Length as
+    the header stated it;
+  - `packet_metadata.orig_len` — the packet's length on the wire;
+  - `metadata.snaplen` — the limit the capture was taken with;
+  - `transport.length` and `transport.checksum`, which #92 cleared (see
+    *Changed*).
+
+  `packet_metadata.truncated`, added in 0.11.0, is unchanged and still the
+  human-readable signal; it is a boolean, so nothing could act on it to
+  rebuild a packet.
 
 - **`sanitise` now redacts the DHCP options that name the client** (#125) — it
   redacted `chaddr` and the address-bearing options and nothing else, so
@@ -79,30 +155,6 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   An ICMP type this version has no rule for now raises a
   `PersonalDataWarning` with `kind="unredacted"` rather than passing through
   quietly — silence is what let this go unnoticed.
-
-### Added
-
-- **BSD loopback captures can be read and written** (#124) — link types `0`
-  (`DLT_NULL`) and `108` (`DLT_LOOP`), the framing `tcpdump -i lo0` produces on
-  macOS and the BSDs.  `ParsedPacket.loopback`, `PacketBuilder.loopback()`, a
-  `loopback` packet-spec section, and `LINKTYPE_NULL` / `LINKTYPE_LOOP`.
-
-  Without it the easiest traffic there is — anything you can send to yourself —
-  could not be parsed at all, which is not academic: collecting ICMPv4 and
-  IPv6 captures for the corpus needed a second machine or a tunnel broker
-  purely because loopback was unreadable.  On Linux `lo` is `EN10MB`, so this
-  only bites where loopback capture is most convenient.
-
-  The address family is derived from the IP version on rebuild and recorded
-  only when a capture disagrees — `AF_INET6` is `30` on macOS, `28` on
-  FreeBSD, `24` on OpenBSD and `10` on Linux — so a capture from another
-  platform still round-trips byte for byte.
-
-- **`ICMPHeader.rest_of_header` and `ICMPv6Header.rest_of_header`** (#122) —
-  the four type-specific bytes after the checksum, read and written as one
-  value.  That is what most message types actually mean by them: an ICMPv6
-  Packet Too Big's MTU, an ICMPv4 Redirect's gateway address, a Parameter
-  Problem's pointer.
 
 ### Documentation
 

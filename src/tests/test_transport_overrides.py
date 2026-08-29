@@ -199,36 +199,43 @@ def _payload_frame(version: int, transport: str, size: int = 200) -> bytes:
     return b.payload(data=b"A" * size).build()
 
 
-class TestTruncatedCaptureClearsBoth(unittest.TestCase):
-    """A snaplen must not read as corruption on every packet (#92).
+class TestTruncatedCaptureKeepsBoth(unittest.TestCase):
+    """A truncated packet records both keys, because neither is derivable (#126).
 
-    The keys mean "a rebuild could not work this out for itself", which a
-    consumer reads as "this was wrong on the wire".  A truncated payload
-    derives a different value from fewer bytes than the sender used, so
-    keeping the captured one would make that reading false everywhere.
+    #92 cleared them, on the reasoning that a recorded key reads as "this was
+    wrong on the wire" and that a truncated packet could not be rebuilt as
+    itself anyway.  #126 supplies the missing lengths, so the second half no
+    longer holds: these are the values that make the rebuild truncated rather
+    than a smaller whole packet.  What separates "wrong" from "unknowable" is
+    ``packet_metadata.truncated`` (#94), which the keys now travel with.
     """
 
-    def test_neither_key_appears_for_any_transport_or_version(self) -> None:
+    def test_both_keys_appear_for_any_transport_or_version(self) -> None:
         for version in (4, 6):
             for transport in ("udp", "tcp"):
                 with self.subTest(version=version, transport=transport):
                     frame = _payload_frame(version, transport)
                     section = _spec(_snaplen(frame, 100))
-                    self.assertNotIn("checksum", section)
-                    self.assertNotIn("length", section)
+                    self.assertIn("checksum", section)
+                    if transport == "udp":
+                        self.assertIn("length", section)
 
-    def test_parsed_header_fields_are_none(self) -> None:
+    def test_parsed_header_fields_hold_the_captured_values(self) -> None:
         for version in (4, 6):
             for transport in ("udp", "tcp"):
                 with self.subTest(version=version, transport=transport):
-                    hdr = parse_packet(
-                        _snaplen(_payload_frame(version, transport), 100)
-                    ).transport
-                    self.assertIsNone(hdr.checksum)
-                    if isinstance(hdr, UDPHeader):
-                        self.assertIsNone(hdr.length)
+                    frame = _payload_frame(version, transport)
+                    cut = parse_packet(_snaplen(frame, 100)).transport
+                    # What the sender wrote, read straight off the wire, not
+                    # what 100 fewer bytes would derive.
+                    at = 14 + (20 if version == 4 else 40)
+                    at += 6 if transport == "udp" else 16
+                    (on_the_wire,) = struct.unpack_from("!H", frame, at)
+                    self.assertEqual(cut.checksum, on_the_wire)
+                    if isinstance(cut, UDPHeader):
+                        self.assertEqual(cut.length, 8 + 200)
 
-    def test_the_same_packets_captured_whole_also_have_neither(self) -> None:
+    def test_the_same_packets_captured_whole_have_neither(self) -> None:
         """The control: the test above must be measuring truncation."""
         for version in (4, 6):
             for transport in ("udp", "tcp"):
@@ -238,7 +245,7 @@ class TestTruncatedCaptureClearsBoth(unittest.TestCase):
                     self.assertNotIn("length", section)
 
     def test_payload_keeps_the_bytes_that_were_captured(self) -> None:
-        """Clearing the header fields must not disturb the payload itself."""
+        """Keeping the header fields must not disturb the payload itself."""
         pkt = parse_packet(_snaplen(_payload_frame(4, "udp"), 100))
         self.assertEqual(pkt.payload, b"A" * 100)
 
@@ -248,7 +255,7 @@ class TestTruncatedCaptureClearsBoth(unittest.TestCase):
         self.assertIsNone(parse_packet(_snaplen(frame, cut)).transport)
 
 
-class TestTruncationHidesCorruption(unittest.TestCase):
+class TestTruncationCannotVerifyCorruption(unittest.TestCase):
     """The cost of the fix, pinned so it is a decision rather than a surprise."""
 
     def _corrupt(self, frame: bytes) -> bytes:
@@ -260,10 +267,17 @@ class TestTruncationHidesCorruption(unittest.TestCase):
         frame = self._corrupt(_payload_frame(4, "udp"))
         self.assertEqual(_spec(frame)["checksum"], 0xDEAD)
 
-    def test_corrupt_and_truncated_reports_nothing(self) -> None:
-        """The sender's bytes are not in the file, so "unknown" is the answer."""
-        frame = self._corrupt(_payload_frame(4, "udp"))
-        self.assertNotIn("checksum", _spec(_snaplen(frame, 100)))
+    def test_corrupt_and_intact_look_the_same_once_truncated(self) -> None:
+        """The sender's bytes are not in the file, so nothing can say which.
+
+        Both record a checksum; only ``packet_metadata.truncated`` says the
+        value could not be checked.  Reading a recorded checksum as "wrong on
+        the wire" without looking at that flag is what this pins down.
+        """
+        intact = _payload_frame(4, "udp")
+        corrupt = self._corrupt(intact)
+        self.assertIn("checksum", _spec(_snaplen(intact, 100)))
+        self.assertEqual(_spec(_snaplen(corrupt, 100))["checksum"], 0xDEAD)
 
 
 class TestFragmentsAreNotTruncated(unittest.TestCase):
@@ -287,11 +301,12 @@ class TestFragmentsAreNotTruncated(unittest.TestCase):
 
 
 class TestDatagramTruncated(unittest.TestCase):
-    """The signal that tells a clean checksum from an unknowable one (#94).
+    """The signal that tells a wrong checksum from an unknowable one (#94).
 
-    #92 clears `transport.checksum` on a truncated capture, which removed a
-    false positive on every packet but merged "derivable" and "unknowable"
-    into one absent key.  This is what separates them again.
+    A recorded `transport.checksum` means "a rebuild would not derive this".
+    On a whole packet that is corruption; on a truncated one it is simply the
+    captured value, since the bytes it covers are not all in the file.  This
+    flag is what separates the two.
     """
 
     def test_set_for_every_transport_and_version_when_truncated(self) -> None:
@@ -390,8 +405,9 @@ class TestTruncatedReachesTheSpec(unittest.TestCase):
         # frame is a truncated datagram as far as the IP header is concerned.
         self.assertTrue(self._spec_metadata(_snaplen(frame, 100))["truncated"])
 
-    def test_the_checksum_key_is_absent_either_way(self) -> None:
+    def test_a_recorded_checksum_needs_the_marker_to_read(self) -> None:
         """Which is exactly why the marker is needed to tell them apart."""
         frame = _payload_frame(4, "tcp")
         self.assertNotIn("checksum", _spec(frame))
-        self.assertNotIn("checksum", _spec(_snaplen(frame, 100)))
+        self.assertIn("checksum", _spec(_snaplen(frame, 100)))
+        self.assertTrue(self._spec_metadata(_snaplen(frame, 100))["truncated"])

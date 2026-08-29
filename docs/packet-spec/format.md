@@ -590,6 +590,7 @@ streams reproducible.
 | `fragment_offset` | no (default `0`) | IPv4 13-bit fragment offset in 8-byte units |
 | `traffic_class` | no (default `0`) | IPv6 Traffic Class (DSCP + ECN, 8-bit) |
 | `flow_label` | no (default `0`) | IPv6 20-bit Flow Label |
+| `declared_length` | no | The header's length field — IPv4 Total Length or IPv6 Payload Length — when the capture holds fewer bytes than it declares, as after a snaplen.  Written out verbatim; otherwise derived from the payload.  See [truncated captures](packet-spec-truncation). |
 | `hop_by_hop_options` | no | IPv6 only.  Array of Hop-by-Hop option objects (RFC 8200 §4.3).  See below. |
 | `fragment` | no | IPv6 only.  Fragment extension header (RFC 8200 §4.5).  See below. |
 
@@ -750,7 +751,7 @@ you want to edit `mss` or `timestamps` by hand and have the change take effect.
 
 Both are normally derived from the payload beside them, and `parse` omits them
 from a spec when the derived value is what the capture held.  They appear only
-where a rebuild could not work the value out for itself, which is two cases:
+where a rebuild could not work the value out for itself, which is three cases:
 
 **A fragmented datagram's first fragment.** The transport header travels once,
 in the first fragment, and its Length covers the *whole* datagram — not the
@@ -790,10 +791,41 @@ transmitted.  So a capture of a remote host's replies is the one to use when
 valid checksums matter.
 ```
 
+**A capture cut short by a snaplen.** The header covers bytes the file does
+not hold, so any derived value is computed from too few of them and is certain
+to be wrong.  Both keys are recorded as captured, alongside
+`packet_metadata.truncated` — which is what says the checksum could not be
+checked rather than that it was wrong.  See
+[truncated captures](packet-spec-truncation).
+
 Reassembling first, with `packeteer parse --defragment` or
 {func}`~packeteer.parse.defragment`, side-steps the fragment case entirely: a
 reassembled datagram's header describes exactly the bytes beside it, so neither
 key is emitted.
+
+(packet-spec-truncation)=
+### Truncated captures
+
+A capture taken with a snaplen — `tcpdump -s 96`, and anything else that keeps
+only the front of each packet — holds packets whose headers describe bytes
+that are not in the file.  Four keys carry that across a round trip, each
+written only when the capture and a rebuild would disagree:
+
+| Key | What it holds |
+|-----|---------------|
+| `network.declared_length` | IPv4 Total Length / IPv6 Payload Length as the header stated it |
+| `transport.length`, `transport.checksum` | the transport header's own fields, as captured |
+| `packet_metadata.orig_len` | the packet's length on the wire |
+| `metadata.snaplen` | the limit the capture was taken with |
+
+Without them a truncated capture rebuilds as a set of *smaller, whole* packets
+that never existed on any wire: internally consistent, correctly checksummed,
+and no longer a record of what was seen.  With them, `parse` → `build`
+reproduces the file byte for byte, and so does `packeteer sanitise --pcap`.
+
+Nothing is recovered that the capture did not hold — the missing bytes are
+still missing, and the payload is as short as it ever was.  What survives is
+every statement the file made *about* those bytes.
 
 **A truncated capture emits neither key, and so cannot report corruption.**
 When a snaplen cut the payload short, the bytes the sender checksummed are not
@@ -1191,6 +1223,7 @@ Always present in configs produced by `packeteer parse` and
 | `link_type` | no | pcap link-layer type integer for the whole file — `1` = Ethernet (default), `101` = Raw IP.  Written by `packeteer parse`; read by `packeteer build` to set the link-layer type of the output pcap/pcapng.  When absent, `packeteer build` infers the type from the packet contents. |
 | `from_file` | no | Path of the source pcap or pcapng file — written automatically by `packeteer parse` (informational only; ignored by `packeteer build`) |
 | `type` | no | Source file format: `"pcap"` or `"pcapng"` — written automatically by `packeteer parse`; read by `packeteer build` to choose the output file format (overridable via `--pcap` / `--pcapng` flags) |
+| `snaplen` | no (default `65535`) | The capture limit the source file declared, in bytes.  Written by `packeteer parse` only when the file named a real limit; read by `packeteer build` and written into the output's file header.  See [truncated captures](packet-spec-truncation). |
 
 ---
 
@@ -1201,7 +1234,8 @@ Always present in configs produced by `packeteer parse` and
 |-------|---------|-------------|
 | `mtu` | — | Fragment the packet so each IP datagram is at most this many bytes — see {doc}`../api/fragmentation` |
 | `packet_num` | — | 1-based position of this packet in the capture file.  Written automatically by `packeteer parse`; used in PII warnings to identify which packets contain a finding.  Ignored by `packeteer build`. |
-| `truncated` | — | `true` when the IP header declares more payload than the capture holds, as after a snaplen.  Written by `packeteer parse` only when set; ignored by `packeteer build`.  It is what distinguishes a `transport.checksum` absent because a rebuild can derive it from one absent because nobody can check it — see [`length` and `checksum`](packet-spec-transport-overrides). |
+| `truncated` | — | `true` when the IP header declares more payload than the capture holds, as after a snaplen.  Written by `packeteer parse` only when set; ignored by `packeteer build`, which rebuilds the truncation from `network.declared_length` and `orig_len` instead.  It is what distinguishes a recorded `transport.checksum` that was wrong on the wire from one nobody can check — see [`length` and `checksum`](packet-spec-transport-overrides). |
+| `orig_len` | — | The packet's length on the wire, when the record holds fewer bytes than that.  Written by `packeteer parse` only when the two differ; read by `packeteer build`, which writes it into the record header so the rebuilt capture is cut in the same place.  See [truncated captures](packet-spec-truncation). |
 | `timestamp_s` | `0` | Capture timestamp — whole seconds |
 | `timestamp_us` | `0` | Microsecond fraction (0–999999); used when `metadata.nanoseconds` is `false` |
 | `timestamp_ns` | `0` | Nanosecond fraction (0–999999999); used when `metadata.nanoseconds` is `true` |
