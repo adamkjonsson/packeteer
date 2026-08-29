@@ -542,3 +542,51 @@ class TestTheCheckerGuardsTheRule(unittest.TestCase):
                   - {name: n, type: {int: {bits: 8}}, derive: {size_of: v}}
                   - {name: v, type: {int: {bits: 32}}}
         """))
+
+
+class TestStreamSpecsAreRefused(unittest.TestCase):
+    """packeteer decodes one packet at a time, and says so (#114).
+
+    A stream protocol's messages span packets.  Reassembling them cannot serve
+    the guarantee everything else here serves — that a capture rebuilds byte
+    for byte — because a reassembled message does not rebuild as the segments
+    that carried it.  So such a spec is refused rather than compiled into
+    something that would silently decode half a message.
+    """
+
+    _STREAM = """
+        name: dnstcp
+        version: "1.0"
+        input: stream
+        over: tcp
+        ports: [5399]
+        entry: framed
+        units:
+          framed:
+            fields:
+              - {name: length, type: {int: {bits: 16}}, derive: {size_of: message}}
+              - {name: message, type: {bytes: {size: {remaining: true}}}}
+    """
+
+    def test_compiling_one_is_refused(self) -> None:
+        with self.assertRaises(SpecError) as ctx:
+            _source(self._STREAM)
+        self.assertIn("not supported yet", str(ctx.exception))
+
+    def test_the_message_says_where_such_a_protocol_belongs(self) -> None:
+        with self.assertRaises(SpecError) as ctx:
+            _source(self._STREAM)
+        message = str(ctx.exception)
+        self.assertIn("kober", message)
+        self.assertIn("input: datagram", message)
+
+    def test_check_still_proves_the_prefix(self) -> None:
+        """Kept, so nothing is lost if the decision is revisited."""
+        result = check(loads(textwrap.dedent(self._STREAM), fmt="yaml"))
+        self.assertEqual(result.errors, ())
+        self.assertEqual(result.prefix_size, 2)
+
+    def test_a_datagram_spec_over_tcp_is_fine(self) -> None:
+        """It is the framing that is out of scope, not TCP."""
+        code = _source(self._STREAM.replace("input: stream", "input: datagram"))
+        self.assertIn("PROTOCOL", code)

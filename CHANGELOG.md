@@ -146,21 +146,15 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   shared port as an opaque payload.  An explicit override is still written, so
   deliberately malformed traffic can be built.
 
-- **`packeteer.parse.reassemble` — TCP stream reassembly** (#111) —
-  `Reassembler` puts TCP segments back into whole application messages, the
-  way `Defragmenter` puts IP fragments back into datagrams.  It is driven by a
-  `frame_length` callable the protocol supplies, and reports what it could not
-  complete as `IncompleteMessage`, with a reason.
+- **A spec declaring `input: stream` is refused rather than compiled** (#114) —
+  a stream protocol's messages span packets, and packeteer decodes one packet
+  at a time.  The error names
+  [kober](https://github.com/adamkjonsson/zipline-kober), which decodes
+  stream-shaped protocols, and says that a spec whose messages each fit in one
+  packet should declare `input: datagram`.
 
-  Bytes are placed by sequence number rather than arrival order: a
-  retransmission is dropped, an overlap contributes only its new part, and a
-  gap is held rather than spliced over.  That is what lets it read
-  `packeteer stream` output with impairments on, which emits spurious
-  retransmissions and leaves permanent gaps.  A flow that grows too large,
-  waits too long, or arrives among too many others is abandoned and reported
-  rather than kept.
-
-  Nothing wires it into the parser yet; #112 does.
+  `check` still proves such a spec is length-prefixed and reports the prefix
+  size, so nothing is lost if the decision is revisited.
 
 ---
 
@@ -441,7 +435,6 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   options, and a connection that negotiates timestamps carries one on every
   segment, so advertising them without sending them would trade one
   implausibility for another.  Carrying them properly is #90.
-
 
 ### Fixed
 

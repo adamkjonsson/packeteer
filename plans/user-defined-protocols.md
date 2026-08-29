@@ -19,10 +19,10 @@ it is first.
 | Milestone | What lands | Size |
 |---|---|---|
 | **v0.10.0** | The app-protocol registry. DNS/DHCP/HTTP stop being hardwired and become the first three entries in a table. No YAML anywhere. | **Shipped in 0.10.0** |
-| **v0.11.0** | The spec language, the checker, and the compiler. `packeteer protocol check\|show\|compile`. Binary protocols, datagram or length-prefixed stream. | ~4,300 new |
+| **v0.11.0** | The spec language, the checker, and the compiler. `packeteer protocol check\|show\|compile`. Binary datagram protocols. | ~3,300 new |
 | **v0.12.0** | Compiled protocols become first-class: sanitisation, `stream --payload`, CLI loading, docs, conformance suite. | ~1,800 new |
 
-Roughly **7,000 lines net new against a 22k-line library** — the largest
+Roughly **6,000 lines net new against a 22k-line library** — the largest
 feature the project has taken on. The milestone split exists so that each one
 is independently defensible if the next never happens.
 
@@ -652,21 +652,44 @@ annotations.
 <a id="q6"></a>
 **Q6 — What message framing does v1 support?**
 
-**Decided (Adam, 2026-08-28): datagram, plus length-prefixed streams.** Not
-the recommendation, which was datagram only. A stream protocol whose entry
-unit declares its own length at a fixed position at the front is in scope, and
-is reassembled across segments; a delimiter-framed one is refused by `check`.
+**Decided (Adam, 2026-08-28): datagram, plus length-prefixed streams.**
+**Reversed the same day, after #111 — datagram only.**
 
-This is the decision that sets the milestone's size. It brings TCP reassembly
-into packeteer, which has nothing like it today except
-`~packeteer.parse.defragment.Defragmenter` for IP fragments, and it forces the
-same entry-point split #73 settled for fragments: a length-prefixed protocol
-cannot be decoded from a single frame, so `parse_packet` leaves its payload
-alone and the reassembling front door does the work.
+The first decision brought TCP reassembly into packeteer, and #111 built it.
+Reverted, and the reason is better than the cost argument that produced the
+original recommendation:
 
-It also buys something real: DNS-over-TCP becomes expressible, which is the
-first case where a generated protocol could stand beside a built-in rather
-than only beside a proprietary one.
+> **Reassembly cannot serve packeteer's round trip.** [Q9](#q9) had already
+> concluded that reassembly must be *off* wherever a packet spec is produced,
+> because a capture whose messages were reassembled rebuilds as whole messages
+> rather than as the segments that carried them. So the feature is
+> structurally incapable of participating in `parse` → edit → `build`, which
+> is what every other part of packeteer serves. #68, #86, #87 and #92 are all
+> in service of byte-exact reconstruction; reassembly is a read-only analysis
+> feature bolted onto a library whose defining guarantee it cannot uphold.
+
+That gives a principled boundary rather than a taste-based one: **packeteer's
+unit is the packet because its guarantee is byte-exact reconstruction, and a
+byte stream has no packet-level identity to reconstruct.**
+
+IP defragmentation is not a counterexample, though it looks like one: a
+datagram *is* the unit of IP semantics, and packeteer needs it in order to
+round-trip fragmented captures.
+
+Two things corroborated it. A spec declaring `input: stream` compiled to
+something that silently decoded half a message when one spanned segments —
+the impedance mismatch showing through as a correctness hazard. And it
+duplicated kober, which already reassembles streams, in the one place
+correctness is hardest.
+
+The split it suggests matches how the two projects already work: **packeteer
+produces streams, kober consumes them.** kober already uses
+`packeteer stream --payload http` as adversarial input. Packet-shaped
+protocols compile here; stream-shaped ones — DNS-over-TCP, HTTP — are kober's,
+where `input: stream` already means something.
+
+The real loss is DNS-over-TCP as a conformance fixture, which was the one
+protocol in the subset packeteer already implements by hand.
 
 <a id="q8"></a>
 **Q8 — How does the length-prefixed reassembler handle disordered TCP?**

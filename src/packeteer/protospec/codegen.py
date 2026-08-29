@@ -52,6 +52,7 @@ from packeteer.protospec.spec import (
     FieldType,
     Fixed,
     FromExpr,
+    InputShape,
     IntType,
     Location,
     Size,
@@ -115,6 +116,17 @@ def compile_spec(spec: Spec, *, source: str | None = None,
             spec, and is reported as such.
 
     """
+    if spec.input is InputShape.STREAM:
+        raise SpecError(
+            "not supported yet: 'input: stream' — a stream protocol's messages "
+            "span packets, and packeteer decodes one packet at a time.  Its "
+            "guarantee is that a capture rebuilds byte for byte, which a "
+            "reassembled message cannot do, so reassembly is out of scope "
+            "here; kober (https://github.com/adamkjonsson/zipline-kober) "
+            "decodes stream-shaped protocols.  A spec whose messages each fit "
+            "in one packet should say 'input: datagram'.",
+            spec.loc.child("input"),
+        )
     return _Generator(spec, source, generator).run()
 
 
