@@ -33,10 +33,14 @@ def packet_parser(data: bytes) -> tuple[int, int | None, ICMPHeader | None]:
         return (0, None, None)
 
     try:
-        icmp_type, code, _, identifier, sequence = struct.unpack(
+        icmp_type, code, checksum, identifier, sequence = struct.unpack(
             "!BBHHH", data[:8]
         )
-        hdr = ICMPHeader(type=icmp_type, code=code, identifier=identifier, sequence=sequence)
+        # Captured as it stands; whether it survives into a spec is decided by
+        # _clear_derivable_transport_fields, which drops it when a rebuild
+        # would arrive at the same value.
+        hdr = ICMPHeader(type=icmp_type, code=code, identifier=identifier,
+                    sequence=sequence, checksum=checksum)
 
     except struct.error:
         return (0, None, None)

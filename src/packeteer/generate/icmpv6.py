@@ -65,6 +65,13 @@ class ICMPv6Header:
             ``1``.
         sequence: The **second** two.  For an Echo, the sequence number.
             Defaults to ``1``.
+        checksum: Explicit checksum, overriding the computed one.  ``None``
+            (the default) computes it.  Set, it is written out exactly as
+            given, which is what reproduces a checksum that was wrong on the
+            wire — checksum offload is the commonest reason a real capture
+            carries one — and what lets a fragmented datagram's first fragment
+            keep the checksum covering the whole datagram rather than the
+            fragment beside it.
 
     """
 
@@ -72,6 +79,7 @@ class ICMPv6Header:
     code: int = 0
     identifier: int = 1
     sequence: int = 1
+    checksum: int | None = None
 
     @property
     def rest_of_header(self) -> int:
@@ -106,7 +114,9 @@ def _build_icmpv6_header(
 ) -> bytes:
     """Build an 8-byte ICMPv6 header with a correct checksum.
 
-    The checksum is mandatory and covers the ICMPv6 header, *payload*, and
+    The checksum is written out as given when ``hdr.checksum`` is set.
+    Otherwise it is computed: it is mandatory and covers the ICMPv6 header,
+    *payload*, and
     the IPv6 pseudo-header (source address, destination address, ICMPv6
     length, and Next Header = 58).  This matches the requirement in
     RFC 4443 §2.3 and RFC 8200 §8.1.
@@ -138,6 +148,8 @@ def _build_icmpv6_header(
 
     """
     raw = struct.pack('!BBHHH', hdr.type, hdr.code, 0, hdr.identifier, hdr.sequence)
+    if hdr.checksum is not None:
+        return raw[:2] + struct.pack('!H', hdr.checksum) + raw[4:]
     icmpv6_length = len(raw) + len(payload)
 
     pseudo = (

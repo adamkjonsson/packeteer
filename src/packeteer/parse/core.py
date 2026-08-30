@@ -57,8 +57,8 @@ from packeteer.generate.geneve import GENEVE_PORT, GENEVE_PROTO_TEB, GeneveHeade
 from packeteer.generate.gre import GRE_PROTO_TEB, IPPROTO_GRE, GREHeader
 from packeteer.generate.gtpu import GTPU_MSG_G_PDU, GTPU_PORT, GTPUHeader
 from packeteer.generate.http import HTTPMessage
-from packeteer.generate.icmp import ICMPHeader
-from packeteer.generate.icmpv6 import ICMPv6Header
+from packeteer.generate.icmp import ICMPHeader, _build_icmp_header
+from packeteer.generate.icmpv6 import ICMPv6Header, _build_icmpv6_header
 from packeteer.generate.ip import IPHeader
 from packeteer.generate.ipsec import IPPROTO_AH, IPPROTO_ESP, AHHeader, ESPHeader
 from packeteer.generate.ipv6 import IPv6Header
@@ -66,7 +66,7 @@ from packeteer.generate.loopback import LoopbackHeader
 from packeteer.generate.mpls import ETHERTYPE_MPLS_MULTICAST, ETHERTYPE_MPLS_UNICAST, MPLSLabel
 from packeteer.generate.pppoe import ETHERTYPE_PPPOE_DISCOVERY, ETHERTYPE_PPPOE_SESSION, PPPoEHeader
 from packeteer.generate.pseudowire import ETHERTYPE_PW_CW, PseudowireHeader
-from packeteer.generate.sctp import SCTPHeader
+from packeteer.generate.sctp import SCTPHeader, _build_sctp_packet
 from packeteer.generate.sll import SLL2Header, SLLHeader
 from packeteer.generate.tcp import TCPHeader, _build_tcp_header
 from packeteer.generate.udp import UDPHeader, _build_udp_header
@@ -865,36 +865,67 @@ def _clear_derivable_transport_fields(
             see :func:`_ip_payload_size`.
 
     """
-    if not isinstance(hdr, (TCPHeader, UDPHeader)) or pkt.ip is None:
+    if pkt.ip is None or not isinstance(
+        hdr, (TCPHeader, UDPHeader, ICMPHeader, ICMPv6Header, SCTPHeader),
+    ):
         return
     if truncated:
         return
-    src, dst = pkt.ip.src, pkt.ip.dst
-    version = 6 if isinstance(pkt.ip, IPv6Header) else 4
 
     if isinstance(hdr, UDPHeader):
-        captured_length, captured_checksum = hdr.length, hdr.checksum
-        hdr.length = hdr.checksum = None
+        # The only transport here with a length field of its own.
+        captured_length = hdr.length
+        hdr.length = None
         if captured_length != 8 + len(payload):
             hdr.length = captured_length
-        try:
-            derived = _build_udp_header(hdr, payload, src, dst, version)
-        except OSError:
-            hdr.length, hdr.checksum = captured_length, captured_checksum
-            return
-        if captured_checksum != struct.unpack("!H", derived[6:8])[0]:
-            hdr.checksum = captured_checksum
-        return
 
     captured_checksum = hdr.checksum
     hdr.checksum = None
+    derived = _derived_checksum(pkt, hdr, payload)
+    if derived is None or derived != captured_checksum:
+        hdr.checksum = captured_checksum
+
+
+def _derived_checksum(
+    pkt: ParsedPacket, hdr: object, payload: bytes,
+) -> int | None:
+    """Return the checksum a rebuild of *hdr* would compute, or ``None``.
+
+    ``None`` means the value could not be worked out at all — an address the
+    pseudo-header needs would not parse — in which case the captured checksum
+    has to be kept, since nothing can show it is redundant.
+
+    *hdr* must have had its own ``checksum`` cleared first, or the builder
+    writes that value straight back out and the comparison is with itself.
+
+    Args:
+        pkt: Packet the header belongs to; supplies the IP addresses.
+        hdr: Parsed transport header.
+        payload: Bytes after the transport header, as captured.
+
+    Returns:
+        The derived checksum, or ``None`` when it cannot be computed.
+
+    """
+    src, dst = pkt.ip.src, pkt.ip.dst
+    version = 6 if isinstance(pkt.ip, IPv6Header) else 4
     try:
-        derived = _build_tcp_header(hdr, payload, src, dst, version)
+        if isinstance(hdr, UDPHeader):
+            return struct.unpack("!H", _build_udp_header(
+                hdr, payload, src, dst, version)[6:8])[0]
+        if isinstance(hdr, TCPHeader):
+            return struct.unpack("!H", _build_tcp_header(
+                hdr, payload, src, dst, version)[16:18])[0]
+        if isinstance(hdr, ICMPHeader):
+            return struct.unpack("!H", _build_icmp_header(hdr, payload)[2:4])[0]
+        if isinstance(hdr, ICMPv6Header):
+            return struct.unpack("!H", _build_icmpv6_header(
+                hdr, payload, src, dst)[2:4])[0]
+        # SCTP carries its chunks on the header, so the payload is already in
+        # it; the CRC-32c is 32 bits rather than 16.
+        return struct.unpack("!I", _build_sctp_packet(hdr)[8:12])[0]
     except OSError:
-        hdr.checksum = captured_checksum
-        return
-    if captured_checksum != struct.unpack("!H", derived[16:18])[0]:
-        hdr.checksum = captured_checksum
+        return None
 
 
 def _parse_ip_protocol(

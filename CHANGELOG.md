@@ -33,6 +33,12 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   (default `65535`, exported as `packeteer.pcap.SNAPLEN_UNLIMITED`).  Without
   them nothing could write a capture that says it was cut short.
 
+- **`checksum` on `ICMPHeader`, `ICMPv6Header` and `SCTPHeader`** (#128), with
+  the override semantics `TCPHeader.checksum` already had — set, written out
+  verbatim; `None`, computed.  `PacketBuilder.icmp()`, `.icmpv6()` and
+  `.sctp()` take it as a keyword, and it is read from and written to the
+  `transport` section of a packet spec.
+
 - **`PacketBuilder.ip(declared_length=…)`** (#126) — writes the IPv4 Total
   Length or IPv6 Payload Length field verbatim instead of deriving it from the
   payload, which is what makes a rebuilt packet truncated rather than small.
@@ -83,6 +89,21 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   (`packets[0] == (data, 1, 0)`) must compare `tuple(packets[0])` instead.
 
 ### Fixed
+
+- **A wrong ICMP, ICMPv6 or SCTP checksum is no longer silently recomputed**
+  (#128) — the three header classes had no checksum field at all, so `parse`
+  recorded nothing and `build` always computed a fresh one.  A capture whose
+  checksum was wrong on the wire came back subtly different, and for these
+  three protocols that is usually offload rather than corruption: SCTP's
+  CRC-32c is expensive enough that stacks routinely hand it to the card.
+
+  It also meant a **fragmented ICMP datagram could not round-trip** — the
+  first fragment's checksum covers the whole datagram, not the bytes beside
+  it, which is the case #68 fixed for TCP and UDP and never extended.
+  `ping -s 4000` produced a capture packeteer could not rebuild.
+
+  The rule is now one rule for all five transports: record a checksum exactly
+  when a rebuild would not derive it.
 
 - **A truncated capture rebuilds as truncated** (#126) — a capture taken with
   a snaplen went through `parse` → `build`, or `sanitise --pcap`, and came out

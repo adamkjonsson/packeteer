@@ -322,6 +322,7 @@ def _dispatch_transport(
             code=transport.get("code", 0),
             identifier=transport.get("identifier", 1),
             sequence=transport.get("sequence", 1),
+            checksum=transport.get("checksum"),
         )
     if proto_lower == "icmpv6":
         return b.icmpv6(
@@ -329,6 +330,7 @@ def _dispatch_transport(
             code=transport.get("code", 0),
             identifier=transport.get("identifier", 1),
             sequence=transport.get("sequence", 1),
+            checksum=transport.get("checksum"),
         )
     if proto_lower == "sctp":
         chunks = [
@@ -340,6 +342,7 @@ def _dispatch_transport(
             dst_port=transport.get("dst_port", 0),
             verification_tag=transport.get("verification_tag", 0),
             chunks=chunks or None,
+            checksum=transport.get("checksum"),
         )
     print(
         f"Error: packet {packet_num} {context}unknown protocol '{proto_lower}'",

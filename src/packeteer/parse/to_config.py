@@ -416,6 +416,10 @@ def _apply_transport(
             "identifier": hdr.identifier,
             "sequence": hdr.sequence,
         }
+    if getattr(hdr, "checksum", None) is not None:
+        # Only when a rebuild would not derive it — see
+        # `_clear_derivable_transport_fields`, which clears it otherwise.
+        section["checksum"] = hdr.checksum
     config["transport"] = section
 
 

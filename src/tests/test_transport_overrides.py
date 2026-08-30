@@ -411,3 +411,146 @@ class TestTruncatedReachesTheSpec(unittest.TestCase):
         self.assertNotIn("checksum", _spec(frame))
         self.assertIn("checksum", _spec(_snaplen(frame, 100)))
         self.assertTrue(self._spec_metadata(_snaplen(frame, 100))["truncated"])
+
+
+def _icmp_frame(version: int, size: int = 200) -> bytes:
+    """Build an Ethernet frame carrying an ICMP Echo with *size* payload bytes."""
+    b = (PacketBuilder()
+         .ethernet(src_mac="00:00:00:00:00:01", dst_mac="00:00:00:00:00:02")
+         .ip(src="10.0.0.1" if version == 4 else "2001:db8::1",
+             dst="10.0.0.2" if version == 4 else "2001:db8::2"))
+    b = b.icmp(type=8) if version == 4 else b.icmpv6(type=128)
+    return b.payload(data=b"A" * size).build()
+
+
+def _sctp_frame() -> bytes:
+    return (PacketBuilder()
+            .ethernet(src_mac="00:00:00:00:00:01", dst_mac="00:00:00:00:00:02")
+            .ip(src="10.0.0.1", dst="10.0.0.2")
+            .sctp(src_port=1, dst_port=2)
+            .build())
+
+
+#: Where each protocol's checksum sits in its frame, and how wide it is.
+_CHECKSUM_AT = {
+    "icmp":   (14 + 20 + 2, 2),
+    "icmpv6": (14 + 40 + 2, 2),
+    "sctp":   (14 + 20 + 8, 4),
+}
+
+
+def _corrupt(frame: bytes, protocol: str) -> tuple[bytes, int]:
+    """Return *frame* with a deliberately wrong checksum, and that value."""
+    at, width = _CHECKSUM_AT[protocol]
+    wrong = b"\xde\xad\xbe\xef"[:width]
+    raw = bytearray(frame)
+    raw[at:at + width] = wrong
+    return bytes(raw), int.from_bytes(wrong, "big")
+
+
+def _frame_for(protocol: str) -> bytes:
+    if protocol == "sctp":
+        return _sctp_frame()
+    return _icmp_frame(4 if protocol == "icmp" else 6)
+
+
+class TestICMPAndSCTPChecksumsSurvive(unittest.TestCase):
+    """#68's rule reaches the other three transports (#128).
+
+    `ICMPHeader`, `ICMPv6Header` and `SCTPHeader` had no checksum field at
+    all, so `parse` recorded nothing and `build` always recomputed — silently
+    correcting a checksum that was wrong on the wire, which for these three is
+    usually offload rather than corruption.
+    """
+
+    def test_a_wrong_checksum_is_recorded_and_rebuilt_verbatim(self) -> None:
+        for protocol in ("icmp", "icmpv6", "sctp"):
+            with self.subTest(protocol=protocol):
+                frame, wrong = _corrupt(_frame_for(protocol), protocol)
+                self.assertEqual(_spec(frame)["checksum"], wrong)
+                pkt = parse_packet(frame)
+                self.assertEqual(pkt.transport.checksum, wrong)
+
+    def test_a_correct_checksum_stays_out_of_the_spec(self) -> None:
+        """The control: a key on every packet would be noise, not information."""
+        for protocol in ("icmp", "icmpv6", "sctp"):
+            with self.subTest(protocol=protocol):
+                self.assertNotIn("checksum", _spec(_frame_for(protocol)))
+
+    def test_the_builder_writes_an_explicit_checksum_out(self) -> None:
+        for protocol in ("icmp", "icmpv6", "sctp"):
+            with self.subTest(protocol=protocol):
+                at, width = _CHECKSUM_AT[protocol]
+                value = 0xDEAD if width == 2 else 0xDEADBEEF
+                b = (PacketBuilder()
+                     .ethernet(src_mac="00:00:00:00:00:01",
+                               dst_mac="00:00:00:00:00:02"))
+                if protocol == "icmp":
+                    frame = (b.ip(src="10.0.0.1", dst="10.0.0.2")
+                             .icmp(type=8, checksum=value)
+                             .payload(data=b"A" * 200).build())
+                elif protocol == "icmpv6":
+                    frame = (b.ip(src="2001:db8::1", dst="2001:db8::2")
+                             .icmpv6(type=128, checksum=value)
+                             .payload(data=b"A" * 200).build())
+                else:
+                    frame = (b.ip(src="10.0.0.1", dst="10.0.0.2")
+                             .sctp(src_port=1, dst_port=2, checksum=value).build())
+                self.assertEqual(
+                    int.from_bytes(frame[at:at + width], "big"), value,
+                )
+
+    def test_a_truncated_capture_keeps_it_too(self) -> None:
+        """The #126 rule, which is the same rule: record what is underivable."""
+        frame = _icmp_frame(4)
+        section = _spec(_snaplen(frame, 100))
+        self.assertIn("checksum", section)
+
+
+class TestFragmentedICMPRoundTrips(unittest.TestCase):
+    """The first fragment's checksum covers the whole datagram (#128).
+
+    The same case as a TCP first fragment, which #68 already handled — ICMP
+    was simply never included, so `ping -s 4000` produced a capture that could
+    not be rebuilt.
+    """
+
+    def setUp(self) -> None:
+        self.frags = (PacketBuilder()
+                      .ethernet(src_mac="00:00:00:00:00:01",
+                                dst_mac="00:00:00:00:00:02")
+                      .ip(src="10.0.0.1", dst="10.0.0.2")
+                      .icmp(type=8)
+                      .payload(data=b"A" * 4000)
+                      .fragment(mtu=1500))
+        self.assertGreater(len(self.frags), 1, "the payload must actually split")
+
+    def _spec_packets(self) -> list[dict]:
+        import io
+        import json
+
+        from packeteer.parse import parse_pcap_file
+        from packeteer.pcap import write_pcap
+
+        buf = io.BytesIO()
+        write_pcap([(f, 1, i) for i, f in enumerate(self.frags)], file_object=buf)
+        buf.seek(0)
+        return json.loads(parse_pcap_file(file_object=buf))["packets"]
+
+    def test_every_fragment_rebuilds_identically(self) -> None:
+        import packeteer.__main__ as cli
+
+        for index, (spec, fragment) in enumerate(
+            zip(self._spec_packets(), self.frags, strict=True), start=1,
+        ):
+            with self.subTest(fragment=index):
+                builder, _ = cli._apply_spec_to_builder(PacketBuilder(), spec, index)
+                self.assertEqual(builder.build().hex(), fragment.hex())
+
+    def test_the_first_fragment_is_the_one_that_needs_it(self) -> None:
+        packets = self._spec_packets()
+        self.assertIn("checksum", packets[0]["transport"])
+        # The rest carry payload bytes from the middle of the datagram and no
+        # header of their own, so there is nothing to record.
+        for later in packets[1:]:
+            self.assertNotIn("transport", later)

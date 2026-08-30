@@ -1322,10 +1322,16 @@ class PacketBuilder:
         code: int = 0,
         identifier: int = 1,
         sequence: int = 1,
+        checksum: int | None = None,
     ) -> "PacketBuilder":
-        """Append an ICMPv4 transport header layer.  Requires an IPv4 layer above it."""
+        """Append an ICMPv4 transport header layer.  Requires an IPv4 layer above it.
+
+        *checksum* overrides the derived value when set; see
+        :class:`~packeteer.generate.icmp.ICMPHeader`.
+        """
         self._layers.append(ICMPHeader(
             type=type, code=code, identifier=identifier, sequence=sequence,
+            checksum=checksum,
         ))
         return self
 
@@ -1336,10 +1342,16 @@ class PacketBuilder:
         code: int = 0,
         identifier: int = 1,
         sequence: int = 1,
+        checksum: int | None = None,
     ) -> "PacketBuilder":
-        """Append an ICMPv6 transport header layer.  Requires an IPv6 layer above it."""
+        """Append an ICMPv6 transport header layer.  Requires an IPv6 layer above it.
+
+        *checksum* overrides the derived value when set; see
+        :class:`~packeteer.generate.icmpv6.ICMPv6Header`.
+        """
         self._layers.append(ICMPv6Header(
             type=type, code=code, identifier=identifier, sequence=sequence,
+            checksum=checksum,
         ))
         return self
 
@@ -1350,6 +1362,7 @@ class PacketBuilder:
         dst_port: int = 0,
         verification_tag: int = 0,
         chunks: list[SCTPChunk] | None = None,
+        checksum: int | None = None,
     ) -> "PacketBuilder":
         """Append an SCTP transport header and chunk list (RFC 9260).
 
@@ -1359,7 +1372,7 @@ class PacketBuilder:
         :meth:`payload` after :meth:`sctp`.
 
         The CRC-32c checksum (Castagnoli, RFC 9260 §6.8) is computed
-        automatically at :meth:`build` time.
+        automatically at :meth:`build` time, unless *checksum* is given.
 
         Args:
             src_port: Source port number.
@@ -1368,6 +1381,8 @@ class PacketBuilder:
                 the handshake.  Defaults to ``0``.
             chunks: List of :data:`~.SCTPChunk` objects to encode.  When
                 ``None`` a single empty :class:`~.SCTPDataChunk` is used.
+            checksum: Explicit CRC-32c, written out as given instead of being
+                computed.  See :class:`~packeteer.generate.sctp.SCTPHeader`.
 
         Example::
 
@@ -1392,6 +1407,7 @@ class PacketBuilder:
             dst_port=dst_port,
             verification_tag=verification_tag,
             chunks=chunks or [],
+            checksum=checksum,
         ))
         return self
 

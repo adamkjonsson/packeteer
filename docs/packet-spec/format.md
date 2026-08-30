@@ -717,7 +717,7 @@ In Python,
 {attr}`~packeteer.generate.icmpv6.ICMPv6Header.rest_of_header` reads and writes
 all four as one value, keeping the two halves consistent.
 | `length` | derived | UDP Length field, overriding the derived `8 + len(payload)` (see below) |
-| `checksum` | derived | TCP/UDP checksum, overriding the computed one (see below) |
+| `checksum` | derived | Transport checksum, overriding the computed one — TCP, UDP, ICMP, ICMPv6, or SCTP's 32-bit CRC-32c (see below) |
 
 TCP flag bit values: `TCP_FIN`=1, `TCP_SYN`=2, `TCP_RST`=4, `TCP_PSH`=8,
 `TCP_ACK`=16, `TCP_URG`=32, `TCP_ECE`=64, `TCP_CWR`=128.  Add values to
@@ -750,8 +750,11 @@ you want to edit `mss` or `timestamps` by hand and have the change take effect.
 ### `length` and `checksum` — when the header describes other bytes
 
 Both are normally derived from the payload beside them, and `parse` omits them
-from a spec when the derived value is what the capture held.  They appear only
-where a rebuild could not work the value out for itself, which is three cases:
+from a spec when the derived value is what the capture held.  `checksum`
+applies to every transport packeteer decodes — TCP, UDP, ICMP, ICMPv6 and
+SCTP; `length` only to UDP, the one with a length field of its own.  They
+appear only where a rebuild could not work the value out for itself, which is
+three cases:
 
 **A fragmented datagram's first fragment.** The transport header travels once,
 in the first fragment, and its Length covers the *whole* datagram — not the
@@ -770,7 +773,9 @@ the pseudo-header length used to compute it is what would otherwise be wrong.
 
 **A checksum that was wrong on the wire.** An explicit `checksum` is written
 out exactly as given, including `0`, so a corrupt packet survives a
-parse → build round trip.  This is the only way a spec can express a bad
+parse → build round trip.  This holds for all five transports: ICMP, ICMPv6
+and SCTP had no checksum field until 0.12.0, so until then a wrong one was
+silently recomputed and the packet came back subtly different.  This is the only way a spec can express a bad
 checksum; the fuzzer could previously only do it at the byte level.
 
 ```{note}
@@ -877,6 +882,7 @@ shape — SCTP data lives inside typed **chunks** rather than in a separate
 | `src_port` | `0` | SCTP source port (16-bit) |
 | `dst_port` | `0` | SCTP destination port (16-bit) |
 | `verification_tag` | `0` | Verification Tag negotiated during the handshake (32-bit) |
+| `checksum` | derived | CRC-32c, overriding the computed one.  A 32-bit value, unlike every other transport's 16-bit checksum |
 | `chunks` | `[]` | Array of chunk objects (see below).  An empty array produces a single empty DATA chunk. |
 
 **Chunk object fields by type:**

@@ -53,6 +53,13 @@ class ICMPHeader:
             ``1``.
         sequence: The **second** two.  For an Echo, the sequence number.
             Defaults to ``1``.
+        checksum: Explicit checksum, overriding the computed one.  ``None``
+            (the default) computes it.  Set, it is written out exactly as
+            given, which is what reproduces a checksum that was wrong on the
+            wire — checksum offload is the commonest reason a real capture
+            carries one — and what lets a fragmented datagram's first fragment
+            keep the checksum covering the whole datagram rather than the
+            fragment beside it.
 
     """
 
@@ -60,6 +67,7 @@ class ICMPHeader:
     code: int = 0
     identifier: int = 1
     sequence: int = 1
+    checksum: int | None = None
 
     @property
     def rest_of_header(self) -> int:
@@ -89,7 +97,8 @@ class ICMPHeader:
 def _build_icmp_header(hdr: ICMPHeader, payload: bytes) -> bytes:
     """Build an 8-byte ICMPv4 header with a correct checksum.
 
-    The checksum is computed over the ICMP header and *payload* concatenated.
+    The checksum is computed over the ICMP header and *payload* concatenated,
+    unless ``hdr.checksum`` is set, in which case it is written out as given.
     No IP pseudo-header is involved (unlike TCP and UDP).
 
     Args:
@@ -114,5 +123,7 @@ def _build_icmp_header(hdr: ICMPHeader, payload: bytes) -> bytes:
 
     """
     raw = struct.pack('!BBHHH', hdr.type, hdr.code, 0, hdr.identifier, hdr.sequence)
+    if hdr.checksum is not None:
+        return raw[:2] + struct.pack('!H', hdr.checksum) + raw[4:]
     checksum = ones_complement_checksum(raw + payload)
     return raw[:2] + struct.pack('!H', checksum) + raw[4:]
