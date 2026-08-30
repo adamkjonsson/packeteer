@@ -29,6 +29,11 @@ before sharing or archiving.
 and a caller's own protocol registered there is decoded, built, serialised and
 redacted on the same footing.
 
+**`packeteer.conformance`** holds any registered protocol to the contract
+every one must meet — {func}`~packeteer.conformance.check_protocol`.  It is
+what keeps hand-written and compiled protocols from drifting apart, and it is
+worth running against your own.
+
 **`packeteer.fuzz`** provides {func}`~packeteer.fuzz.fuzz` and
 {func}`~packeteer.fuzz.fuzz_bytes` for generating adversarial packet variants, controlled
 by {class}`~packeteer.fuzz.FuzzOptions`.
@@ -46,4 +51,5 @@ fragmentation
 sanitiser
 fuzzer
 protocols
+conformance
 ```

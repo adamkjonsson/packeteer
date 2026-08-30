@@ -20,6 +20,7 @@ This is a read-only reporting command — it never modifies the capture.
 | `--json` | Emit the report as JSON instead of human-readable text |
 | `--num N` / `-n N` | Analyse only the first `N` packets (reading stops early) |
 | `--link-type TYPE` | Force the link-layer type, disabling auto-detection (`ethernet`, `raw`, `linux_sll`, `linux_sll2`, or an integer) |
+| `--load-protocol FILE` | Import a protocol module first, so its traffic is decoded rather than left as an opaque payload.  Repeatable; see [`packeteer parse`](parse) |
 | `--no-auto-link-type` | Trust the file header's link-layer type instead of auto-detecting |
 
 ## What gets reported

@@ -30,6 +30,7 @@ string.
 | `--output FILE` / `-o FILE` | Write spec-level variants as a packet spec (JSON) to FILE |
 | `--pcap FILE` | Write all variants (spec-level + byte-level) as a libpcap file |
 | `--pcapng FILE` | Write all variants (spec-level + byte-level) as a pcapng file |
+| `--load-protocol FILE` | Import a protocol module first, so its traffic is decoded rather than left as an opaque payload.  Repeatable; see [`packeteer parse`](parse) |
 
 ## Mutation types
 
