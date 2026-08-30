@@ -15,7 +15,9 @@ through the same interface described here, in
 easier to describe in YAML and compile — see {doc}`../protocols/index`.  Write
 one by hand when the spec language cannot express yours: delimiter framing,
 compression pointers, a message spanning packets, or anything needing code.
-The two produce the same thing, and packeteer cannot tell them apart.
+The two produce the same thing, and packeteer cannot tell them apart, and
+**both are permanent** — DNS, DHCP and HTTP are not expressible in the spec
+subset, which is why they are hand-written and will stay so.
 ```
 
 ## The contract
@@ -132,6 +134,17 @@ untouched, and the command reports success.  For everything else in packeteer
 an unregistered protocol means a feature you do not get; here it means data
 you meant to remove is still there.  If in doubt, redact.
 
+If your protocol genuinely carries nothing identifying, say so out loud rather
+than by omission:
+
+```python
+register(AppProtocol(..., redacts_nothing=True))
+```
+
+`packeteer sanitise` then warns that the section was not redacted, instead of
+passing it through in silence.  A compiled protocol sets this automatically
+when its spec marks no field `sensitive:`.
+
 ### 5. Register it
 
 ```python
@@ -201,6 +214,17 @@ Registration is a side effect of importing your module, so something has to
 import it before the protocol is used.  In a script or a test, import it at
 the top.  In a package, import it from your `__init__`.
 
+On the command line, `--load-protocol` does it:
+
+```console
+$ packeteer parse --load-protocol ./sensor.py capture.pcap
+```
+
+It is repeatable, accepted before or after the subcommand, and mirrored by the
+`PACKETEER_PROTOCOLS` environment variable and by a `"protocols"` key in a
+packet spec.  {func}`packeteer.protocols.load_module` is the same thing from
+the API.
+
 A protocol module is **code**, and registering one runs it.  Treat a protocol
 someone sends you the way you would treat any other Python they send you.
 
@@ -222,6 +246,30 @@ def test_round_trip():
 
 If those pass, `packeteer parse` → edit the JSON → `packeteer build` works for
 your protocol, which is the point of registering it.
+
+### Or check the whole contract at once
+
+{func}`packeteer.conformance.check_protocol` holds a protocol to everything
+packeteer's own built-ins are held to — the round trips above, plus the ones
+easy to forget: that a section survives `json.dumps`, that a truncated message
+raises instead of decoding into a half-built object, that the registry
+resolves it by message type and by port, and that a whole packet built with
+`.app()` rebuilds byte for byte through its spec.
+
+```python
+from packeteer import conformance, protocols
+
+failures = conformance.check_protocol(
+    protocols.for_section("sensor"),
+    [Reading(version=1, samples=[(2, 21)])],
+)
+assert not failures, "\n".join(failures)
+```
+
+It returns every failure rather than raising at the first, and it is the same
+function packeteer runs over DNS, DHCP, HTTP and the example specs.  On its
+first run it found two defects in packeteer itself, which is the argument for
+using it.
 
 ## Replacing a built-in
 

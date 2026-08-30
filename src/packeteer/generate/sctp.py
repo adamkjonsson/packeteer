@@ -359,6 +359,11 @@ class SCTPHeader:
         chunks: List of SCTP chunks to include in this packet.  Defaults to
             a single unfragmented DATA chunk carrying an empty payload when
             ``None`` is passed to :func:`_build_sctp_packet`.
+        checksum: Explicit CRC-32c, overriding the computed one.  ``None``
+            (the default) computes it.  Set, it is written out exactly as
+            given, which is what reproduces a checksum that was wrong on the
+            wire — for SCTP that is almost always checksum offload, since the
+            CRC-32c is expensive enough that stacks hand it to the card.
 
     """
 
@@ -366,6 +371,7 @@ class SCTPHeader:
     dst_port:         int             = 0
     verification_tag: int             = 0
     chunks:           list[SCTPChunk] = field(default_factory=list)
+    checksum:         int | None      = None
 
 
 # ── Wire encoding helpers ─────────────────────────────────────────────────────
@@ -525,7 +531,7 @@ def _build_sctp_packet(hdr: SCTPHeader) -> bytes:
         0,  # checksum placeholder
     )
     packet   = common + chunks_bytes
-    checksum = crc32c(packet)
+    checksum = crc32c(packet) if hdr.checksum is None else hdr.checksum
 
-    # Insert computed checksum at offset 8
+    # Insert the checksum at offset 8
     return packet[:8] + struct.pack("!I", checksum) + packet[12:]

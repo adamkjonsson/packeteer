@@ -76,25 +76,42 @@ def _decode_option(code: int, data: bytes) -> DHCPOpt:  # type: ignore[valid-typ
     return result if result is not None else DHCPOptRaw(code=code, data=bytes(data))
 
 
-def _decode_options(data: bytes) -> list[DHCPOpt]:  # type: ignore[valid-type]
-    """Decode the options field (after the magic cookie) into a list."""
+def _decode_options(data: bytes) -> tuple[list[DHCPOpt], bytes]:  # type: ignore[valid-type]
+    """Decode the options field (after the magic cookie).
+
+    Returns the options and any bytes after the END option — BOOTP pads a
+    short message out with zeros, and nothing else records them, so a rebuild
+    would come back shorter than the capture.
+    """
     options: list[DHCPOpt] = []  # type: ignore[valid-type]
     pos = 0
     while pos < len(data):
         code = data[pos]
         pos += 1
         if code == 255:  # END
-            break
+            return options, data[pos:]
         if code == 0:    # PAD
             continue
         if pos >= len(data):
-            break
+            raise ValueError(
+                f"DHCP option {code} at offset {pos - 1} has no length byte: "
+                f"the message is cut short"
+            )
         length = data[pos]
         pos += 1
+        if pos + length > len(data):
+            raise ValueError(
+                f"DHCP option {code} declares {length} bytes but only "
+                f"{len(data) - pos} remain: the message is cut short"
+            )
         opt_data = data[pos: pos + length]
         pos += length
         options.append(_decode_option(code, opt_data))
-    return options
+    # Falling out of the loop means the options ran out with no END.  Decoding
+    # that as a whole message would report the options it happened to reach
+    # and say nothing about the ones it did not — a spec claiming a
+    # snaplen-truncated message simply lacked them.
+    raise ValueError("DHCP options end without an END option (255)")
 
 
 def parse_dhcp(data: bytes) -> DHCPMessage:
@@ -138,7 +155,7 @@ def parse_dhcp(data: bytes) -> DHCPMessage:
             f"DHCP magic cookie missing or invalid: {cookie.hex()!r}"
         )
 
-    options = _decode_options(data[240:])
+    options, trailer = _decode_options(data[240:])
 
     return DHCPMessage(
         op=op, htype=htype, hlen=hlen, hops=hops,
@@ -151,4 +168,5 @@ def parse_dhcp(data: bytes) -> DHCPMessage:
         sname=sname,
         file=file_,
         options=options,
+        trailer=trailer,
     )

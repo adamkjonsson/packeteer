@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import json
 import socket
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
@@ -103,6 +104,7 @@ from packeteer.generate.ipv6 import (
     RawOption,
     RouterAlertOption,
 )
+from packeteer.generate.loopback import AF_INET, AF_INET6_DEFAULT, LoopbackHeader
 from packeteer.generate.mpls import MPLSLabel
 from packeteer.generate.pppoe import PPPOE_CODE_SESSION, PPPoEHeader
 from packeteer.generate.pseudowire import PseudowireHeader
@@ -237,6 +239,10 @@ def _apply_ethernet(config: dict[str, Any], hdr: EthernetHeader) -> None:
         # Only written when the captured frame was below the Ethernet minimum;
         # a rebuild pads by default, which would lengthen it.
         section["pad"] = False
+    if hdr.trailer:
+        # Bytes after the frame's own content, which no layer owns and a
+        # rebuild cannot infer.  They supersede `pad`, being the exact bytes.
+        section["trailer"] = hdr.trailer.hex()
     if hdr.vlan_tag is not None:
         section["vlan"] = {
             "id": hdr.vlan_tag.vid,
@@ -250,6 +256,23 @@ def _apply_ethernet(config: dict[str, Any], hdr: EthernetHeader) -> None:
             "dei": hdr.inner_vlan_tag.dei,
         }
     config["ethernet"] = section
+
+
+def _apply_loopback(config: dict[str, Any], hdr: LoopbackHeader) -> None:
+    """Serialise a BSD loopback header into ``config["loopback"]``.
+
+    Both keys are omitted when a rebuild would derive them — the family from
+    the IP version that follows, and the byte order from ``DLT_NULL``'s
+    little-endian norm.  What survives is what a capture did differently, the
+    same rule ``transport.length`` follows.
+    """
+    section: dict[str, Any] = {}
+    derived = AF_INET6_DEFAULT if hdr.is_ipv6 else AF_INET
+    if hdr.family != derived:
+        section["family"] = hdr.family
+    if hdr.big_endian:
+        section["big_endian"] = True
+    config["loopback"] = section
 
 
 def _apply_sll(config: dict[str, Any], hdr: SLLHeader | SLL2Header) -> None:
@@ -398,6 +421,10 @@ def _apply_transport(
             "identifier": hdr.identifier,
             "sequence": hdr.sequence,
         }
+    if getattr(hdr, "checksum", None) is not None:
+        # Only when a rebuild would not derive it — see
+        # `_clear_derivable_transport_fields`, which clears it otherwise.
+        section["checksum"] = hdr.checksum
     config["transport"] = section
 
 
@@ -734,6 +761,11 @@ def _apply_dns(config: dict[str, Any], msg: DNSMessage) -> None:
         "authority":  [_serialise_dns_rr(rr) for rr in msg.authority],
         "additional": [_serialise_dns_rr(rr) for rr in msg.additional],
     }
+    if msg.raw:
+        # Only when the decoded fields do not re-encode to what was captured.
+        # It wins over them on build, and `sanitise` drops it when it edits
+        # the section — see `DNSMessage.raw`.
+        config["dns"]["raw"] = msg.raw.hex()
 
 
 # ── DHCP serialisation ────────────────────────────────────────────────────────
@@ -782,6 +814,9 @@ def _apply_dhcp(config: dict[str, Any], msg: DHCPMessage) -> None:
         "file":    msg.file.rstrip(b"\x00").decode("ascii", errors="replace"),
         "options": [_serialise_dhcp_option(o) for o in msg.options],
     }
+    if msg.trailer:
+        # Padding after the END option, which only these bytes reproduce.
+        config["dhcp"]["trailer"] = msg.trailer.hex()
 
 
 # ── HTTP serialisation ────────────────────────────────────────────────────────
@@ -865,6 +900,8 @@ def update_config(
     """
     if isinstance(layer, EthernetHeader):
         _apply_ethernet(config, layer)
+    elif isinstance(layer, LoopbackHeader):
+        _apply_loopback(config, layer)
     elif isinstance(layer, (SLLHeader, SLL2Header)):
         _apply_sll(config, layer)
     elif isinstance(layer, ARPHeader):
@@ -951,6 +988,7 @@ def to_packet_spec(
     packets: list[dict[str, Any]],
     *,
     metadata: dict[str, Any] | None = None,
+    protocols: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     """Wrap a list of per-packet dicts into a top-level packet spec dict.
 
@@ -963,6 +1001,14 @@ def to_packet_spec(
             (e.g. ``{"from_file": "capture.pcap", "type": "pcap",
             "nanoseconds": False}``).  ``nanoseconds`` is added automatically
             when absent.
+        protocols: Paths of protocol modules to record in the top-level
+            ``protocols`` key, so a spec naming a user protocol can be rebuilt
+            without passing ``--protocol`` again.  Omitted when empty.
+
+            These are **paths the user supplied**, never anything discovered
+            while parsing: ``packeteer build`` imports them, and a path taken
+            from a capture's contents would let a capture choose what code
+            runs.
 
     Returns:
         A packet spec dict accepted by ``packeteer build``.
@@ -972,6 +1018,8 @@ def to_packet_spec(
     top_meta: dict[str, Any] = dict(metadata) if metadata is not None else {}
     top_meta.setdefault("nanoseconds", False)
     cfg["metadata"] = top_meta
+    if protocols:
+        cfg["protocols"] = list(protocols)
     cfg["packets"] = packets
     return cfg
 

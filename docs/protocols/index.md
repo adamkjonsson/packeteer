@@ -9,6 +9,12 @@ first.  The other is {doc}`writing the protocol by hand <../guide/adding-a-proto
 which is what you need when the spec language cannot express your protocol —
 see [what a spec can and cannot describe](protocols-scope).
 
+**Both are permanent.**  DNS, DHCP and HTTP are not expressible in the spec
+subset, so the built-ins are hand-written and will stay so; neither route is
+on its way out.  They produce the same
+{class}`~packeteer.protocols.AppProtocol`, packeteer cannot tell them apart,
+and {func}`packeteer.conformance.check_protocol` holds both to one contract.
+
 ```{toctree}
 :maxdepth: 1
 
@@ -156,11 +162,37 @@ works them out.  Had the capture carried a length that *disagreed* with its
 data, the key would be there and the disagreement would be rebuilt exactly —
 see [`derive`](derive).
 
-```{note}
-The `packeteer` command line cannot yet load a compiled protocol — something
-has to `import` the module for it to register, which today means going through
-the Python API.  A `--protocol` flag is planned; see
-`plans/user-defined-protocols.md`.
+### Telling the command line about it
+
+Registration is a side effect of importing, so something has to import the
+module.  On the command line that is `--load-protocol`, which every subcommand
+accepts, before or after the verb:
+
+```console
+$ packeteer parse --load-protocol ./sensor.py capture.pcap
+```
+
+Two other routes exist for when repeating the flag becomes tiresome:
+
+| Route | Use it for |
+|---|---|
+| `--load-protocol FILE`, repeatable | One invocation, explicit |
+| `"protocols": ["./sensor.py"]` in a packet spec | A spec that describes itself, so `parse` → edit → `build` needs no flag |
+| `PACKETEER_PROTOCOLS`, `:`-separated | A shell that always wants the same ones |
+
+`packeteer parse --load-protocol …` writes the `protocols` key into the spec
+it produces, relative to the spec file, so the spec and the module beside it
+move together and `packeteer build` needs no flag.
+
+```{warning}
+**All three import Python from a path, and importing runs it.**  That is no
+worse than `import` — you name the file — but it is no better either.
+
+The `protocols` key is a path *you* wrote in a spec you are editing.  packeteer
+never takes such a path from a capture's contents, because a capture is
+something you may have been sent: a path discovered while parsing traffic would
+let the traffic choose what code runs.  Loading from a spec says on stderr what
+it is importing, for the same reason.
 ```
 
 ---
@@ -176,8 +208,11 @@ number: a decoder that raises leaves the bytes as an opaque payload, which is
 what keeps someone else's traffic on the same port from being read as yours.
 
 **Mark what is sensitive.**  A field carrying anything identifying that is not
-marked [`sensitive`](sensitive) is not redacted by `packeteer sanitise`, and
-the command still reports success.
+marked [`sensitive`](sensitive) is not redacted by `packeteer sanitise`.  A
+spec that marks nothing at all makes the command warn, once per capture, that
+the section went through untouched — but a spec that marks *some* fields and
+misses one is silent about the one it missed, because nothing can tell which
+of your fields carries a name.
 
 **One message per packet.**  See [scope](protocols-scope): a protocol whose
 messages span TCP segments belongs in

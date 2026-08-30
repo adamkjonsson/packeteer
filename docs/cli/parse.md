@@ -3,6 +3,7 @@
 ```
 packeteer parse <capture> [--output FILE] [--link-type TYPE]
                           [--defragment] [--no-decode-app]
+                          [--load-protocol FILE]
                           [--proto PROTO] [--port PORTS] [--src-port PORTS] [--dst-port PORTS]
                           [--src ADDR] [--dst ADDR] [--host ADDR] [--app APP]
 ```
@@ -24,6 +25,39 @@ by hand or programmatically before rebuilding.
 | `--link-type TYPE` | Override the link-layer type in the file header (see below) |
 | `--no-decode-app` | Keep DNS/DHCP/HTTP payloads as raw bytes (see below) |
 | `--defragment` | Reassemble fragmented IP datagrams (see below) |
+| `--load-protocol FILE` | Import a protocol module first, so its traffic is decoded (see below).  Repeatable |
+
+## Loading a protocol packeteer does not ship
+
+`--load-protocol FILE` imports a protocol module before running, so a
+protocol you compiled from a spec or wrote by hand is decoded like a
+built-in.  It is repeatable and accepted before or after the subcommand:
+
+```console
+$ packeteer parse --load-protocol ./sensor.py capture.pcap
+```
+
+Two other routes exist:
+
+| Route | Use it for |
+|---|---|
+| `--load-protocol FILE` | One invocation, explicit |
+| `"protocols": ["./sensor.py"]` in a packet spec | A spec that describes what it needs, resolved against the spec file's directory |
+| `PACKETEER_PROTOCOLS`, `:`-separated | A shell that always wants the same ones |
+
+```{warning}
+**A protocol module is code, and loading it runs it.**  That is no worse than
+`import` — you name the file — but it is no better either: treat a module
+someone sends you the way you would treat any other Python they send you.
+
+packeteer never takes such a path from a capture's contents.  A capture is
+something you may have been sent, and a path discovered while parsing traffic
+would let the traffic choose what code runs.  The `protocols` key is a path
+*you* wrote in a spec you are editing, and loading from a spec says on stderr
+what it is importing.
+```
+
+See {doc}`../protocols/index` for compiling a protocol from a spec.
 
 ### Reassembling fragmented datagrams
 

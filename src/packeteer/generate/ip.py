@@ -93,7 +93,11 @@ def _build_ip_header(hdr: IPHeader, payload: bytes) -> bytes:
             (raised by :func:`socket.inet_aton`).
 
     """
-    total_length = 20 + len(payload)
+    # Derived from the bytes beside it, unless the header carries the value
+    # a capture held — which is how a snaplen-truncated packet keeps saying
+    # how long it was before it was cut.  Same rule as `transport.length`.
+    total_length = 20 + len(payload) if hdr.total_length is None \
+        else hdr.total_length
     flags_frag = (hdr.flags << 13) | hdr.fragment_offset
     src = socket.inet_aton(hdr.src)
     dst = socket.inet_aton(hdr.dst)

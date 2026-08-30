@@ -33,6 +33,9 @@ cycle between all four.  It therefore holds *callables*, never modules.
 """
 from __future__ import annotations
 
+import importlib.util
+import os
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -46,6 +49,7 @@ __all__ = [
     "for_port",
     "for_section",
     "for_message",
+    "load_module",
 ]
 
 # Top-level packet-spec keys that describe a packet's structure rather than an
@@ -99,6 +103,12 @@ class AppProtocol:
             section in place.  ``None`` means **nothing is redacted**: a
             protocol registered without one flows through
             :func:`packeteer.sanitise.sanitise` untouched.
+        redacts_nothing: Declare that :attr:`sanitise` redacts nothing, so
+            ``packeteer sanitise`` warns instead of passing the section
+            through in silence.  A compiled protocol sets it when its spec
+            marks no field ``sensitive:``; a hand-written one can set it to
+            say the same thing out loud, which is better than the silence a
+            ``None`` *sanitise* buys.
 
     """
 
@@ -112,6 +122,7 @@ class AppProtocol:
     to_spec:   Callable[[object], dict[str, Any]]
     from_spec: Callable[[dict[str, Any]], object]
     sanitise:  Callable[[dict[str, Any], Any, Any], None] | None = None
+    redacts_nothing: bool = False
 
     def carries(self, transport: str) -> bool:
         """Whether this protocol can be carried over *transport*.
@@ -217,6 +228,90 @@ def unregister(name: str) -> None:
         raise ProtocolError(f"no protocol registered as {name!r}")
     del _registry[name]
     _reindex()
+
+
+#: Names each loaded path registered, so a path loaded, unregistered and
+#: loaded again runs a second time instead of silently doing nothing.
+_loaded: dict[str, tuple[str, ...]] = {}
+
+
+def load_module(path: str | os.PathLike) -> tuple[AppProtocol, ...]:
+    """Import a Python file so the protocols it defines register themselves.
+
+    Registration is a side effect of importing, so a protocol module has to be
+    imported before it is used.  This does that for a module identified by
+    path rather than by import name — a compiled spec someone has just written
+    out, most often.
+
+    **A protocol module is code, and running it is running that code.** This
+    is no worse than ``import``, since the caller names the file, but it is no
+    better either: treat a module someone sends you the way you would treat
+    any other Python they send you.  Never take the path from data packeteer
+    parsed, only from something the user wrote.
+
+    The module is executed under a name derived from its file name, prefixed
+    so it cannot collide with or shadow a real installed module, and is left
+    in :data:`sys.modules` so a second call is a no-op rather than a second
+    execution.
+
+    Args:
+        path: Path to a ``.py`` file.  A compiled protocol module, or any
+            module whose import calls :func:`register`.
+
+    Returns:
+        The protocols the module registered, in registration order.  Empty
+        when it registered none, which is worth checking: a module that
+        defines a protocol and never registers it is a silent no-op.  Also
+        empty when this path was already loaded and its protocols are still
+        registered — but a path whose protocols have since been unregistered
+        is executed again, so unregistering and reloading works.
+
+    Raises:
+        ProtocolError: If *path* does not exist, cannot be read as a module,
+            or raises while executing.  The original exception is chained.
+
+    Example::
+
+        from packeteer import protocols
+
+        added = protocols.load_module("./sensor.py")
+        print([p.name for p in added])      # ['sensor']
+
+    """
+    resolved = os.fspath(os.path.abspath(path))
+    if not os.path.isfile(resolved):
+        raise ProtocolError(f"no protocol module at {os.fspath(path)!r}")
+
+    module_name = "packeteer._loaded." + os.path.splitext(
+        os.path.basename(resolved))[0]
+    if module_name in sys.modules:
+        registered_now = {proto.name for proto in registered()}
+        if _loaded.get(resolved, ()) and set(_loaded[resolved]) <= registered_now:
+            # Already loaded and still registered; executing it again would
+            # collide with itself.
+            return ()
+        # It was loaded and then unregistered, so run it again rather than
+        # doing nothing — a no-op here would look like a module that
+        # registers nothing, which is a different problem entirely.
+        del sys.modules[module_name]
+
+    before = {proto.name for proto in registered()}
+    spec = importlib.util.spec_from_file_location(module_name, resolved)
+    if spec is None or spec.loader is None:
+        raise ProtocolError(f"cannot load a Python module from {resolved!r}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception as exc:
+        del sys.modules[module_name]
+        raise ProtocolError(
+            f"{os.fspath(path)} failed while being imported "
+            f"({type(exc).__name__}: {exc})"
+        ) from exc
+    added = tuple(p for p in registered() if p.name not in before)
+    _loaded[resolved] = tuple(proto.name for proto in added)
+    return added
 
 
 def registered() -> tuple[AppProtocol, ...]:

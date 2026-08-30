@@ -28,6 +28,7 @@ from __future__ import annotations
 import ast
 import keyword
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 
@@ -108,12 +109,13 @@ def compile_spec(spec: Spec, *, source: str | None = None,
             ``"packeteer X.Y.Z"``.
 
     Returns:
-        Python source, already parsed once to prove it is valid.
+        Python source, already parsed *and imported* once to prove it is
+        valid — see :meth:`_Generator._check_importable`.
 
     Raises:
         SpecError: If a name cannot be compiled, or if the generated source
-            does not parse — which is a bug in this module rather than in the
-            spec, and is reported as such.
+            does not parse or import — which is a bug in this module rather
+            than in the spec, and is reported as such.
 
     """
     if spec.input is InputShape.STREAM:
@@ -151,6 +153,7 @@ class _Generator:
             self._emit_unit_measure(unit)
             self._emit_unit_to_spec(unit)
             self._emit_unit_from_spec(unit)
+            self._emit_unit_sanitise(unit)
         self._emit_api()
         code = "\n".join(self.lines) + "\n"
         try:
@@ -162,7 +165,40 @@ class _Generator:
                 f"the spec",
                 self.spec.loc,
             ) from exc
+        self._check_importable(code)
         return code
+
+    def _check_importable(self, code: str) -> None:
+        """Prove the emitted module loads, not merely that it parses.
+
+        #132 was a module that parsed and then raised ``NameError`` on
+        import, which reached whoever ran it next rather than the compiler
+        that wrote it.  Parsing cannot catch that: the module is
+        syntactically fine.
+
+        The module is executed in a throwaway namespace and the protocol it
+        registers is removed again, so compiling never leaves one behind.
+        Skipped when the name is already registered, since executing the
+        module would collide with it — and undoing that collision would mean
+        touching a protocol this function did not create.
+        """
+        from packeteer import protocols
+
+        if any(p.name == self.spec.name for p in protocols.registered()):
+            return
+        namespace: dict[str, object] = {}
+        try:
+            exec(compile(code, f"<{self.spec.name}>", "exec"), namespace)  # noqa: S102
+        except Exception as exc:        # pragma: no cover - a generator bug
+            raise SpecError(
+                f"generated module does not import ({type(exc).__name__}: "
+                f"{exc}); this is a bug in packeteer's compiler, not in the "
+                f"spec",
+                self.spec.loc,
+            ) from exc
+        finally:
+            if any(p.name == self.spec.name for p in protocols.registered()):
+                protocols.unregister(self.spec.name)
 
     # ── names ─────────────────────────────────────────────────────────────────
 
@@ -273,7 +309,11 @@ class _Generator:
         if isinstance(fld.type, StringType):
             return '""'
         if isinstance(fld.type, UnitRef):
-            return f"field(default_factory={self.names.unit(fld.type.unit)})"
+            # A lambda, not the class itself: `default_factory` is evaluated
+            # when the class body runs, and a unit may reference one defined
+            # later in the spec — or reference it mutually (#132).
+            cls = self.names.unit(fld.type.unit)
+            return f"field(default_factory=lambda: {cls}())"
         return "None"
 
     # ── decoding ──────────────────────────────────────────────────────────────
@@ -493,7 +533,12 @@ class _Generator:
             attr = self.names.field(unit.name, fld.name)
             key = fld.name
             value = f"_obj.{attr}"
-            if fld.repeat is not None:
+            if isinstance(fld.type, Switch) and fld.repeat is None:
+                self._emit_switch_convert(
+                    unit, fld, fld.type, f"_out[{key!r}]", value,
+                    self._spec_value,
+                )
+            elif fld.repeat is not None:
                 item = self._spec_value(fld.type, "_item")
                 self._emit(f"    _out[{key!r}] = [{item} for _item in {value}]")
             elif fld.derive is not None:
@@ -504,6 +549,98 @@ class _Generator:
             else:
                 self._emit(f"    _out[{key!r}] = {self._spec_value(fld.type, value)}")
         self._emit("    return _out")
+        self._emit()
+
+    def _sensitive_fields(self) -> set[str]:
+        """Return every ``sensitive:`` field in the spec, as ``unit.field``."""
+        return {
+            f"{unit.name}.{fld.name}"
+            for unit in self.spec.units.values()
+            for fld in unit.fields
+            if fld.name is not None and fld.sensitive
+        }
+
+    def _emit_unit_sanitise(self, unit: Unit) -> None:
+        """Emit the redactor for one unit's section.
+
+        It walks the same keys :meth:`_emit_unit_to_spec` writes, so the two
+        cannot drift: a field redacted here is a field that reaches a spec.
+        """
+        self._emit()
+        self._emit(f"def _sanitise_{_snake(unit.name)}"
+                   f"(_section: dict[str, Any], _r: Any, _opts: Any) -> None:")
+        self._emit(f'    """Redact one {unit.name} section in place."""')
+        body = False
+        for fld in unit.fields:
+            if fld.name is None:
+                continue
+            key = fld.name
+            if fld.sensitive:
+                body = True
+                self._emit(f"    if {key!r} in _section:")
+                target = f"_section[{key!r}]"
+                if fld.repeat is not None:
+                    self._emit(f"        {target} = [{self._redact(fld.type, '_item')}"
+                               f" for _item in {target}]")
+                else:
+                    self._emit(f"        {target} = {self._redact(fld.type, target)}")
+            elif isinstance(fld.type, UnitRef):
+                # Not annotated itself, but something inside it may be.
+                body = True
+                nested = f"_sanitise_{_snake(fld.type.unit)}"
+                self._emit(f"    if {key!r} in _section:")
+                if fld.repeat is not None:
+                    self._emit(f"        for _item in _section[{key!r}]:")
+                    self._emit(f"            {nested}(_item, _r, _opts)")
+                else:
+                    self._emit(f"        {nested}(_section[{key!r}], _r, _opts)")
+        if not body:
+            self._emit("    return")
+        self._emit()
+
+    def _redact(self, field_type: FieldType, value: str) -> str:
+        """Return the redacted stand-in for one value of *field_type*."""
+        if isinstance(field_type, StringType):
+            return "'[redacted]'"
+        if isinstance(field_type, BytesType):
+            # Hex in a spec, and the length is often what a `size` field
+            # derives from, so zero the bytes rather than dropping them.
+            return f"('00' * (len({value}) // 2))"
+        if isinstance(field_type, IntType):
+            return "0"
+        # A unit or a switch arm: the shape is only known at run time.
+        return f"_redact_any({value})"
+
+    def _emit_switch_convert(
+        self, unit: Unit, fld: Field, switch: Switch, target: str,
+        value: str, convert: "Callable[[FieldType, str], str]",
+        pad: str = "    ",
+    ) -> None:
+        """Emit the selector dispatch a switch field needs outside decoding.
+
+        ``to_spec`` and ``from_spec`` both have to know which arm a value
+        belongs to, and the arm is chosen the same way the decoder chooses it:
+        by the selector expression, whose fields are already set on ``_obj``
+        because they precede the switch field.
+
+        Without this a unit-typed arm went into a spec **as the dataclass**,
+        so the section could not be written to JSON at all — `packeteer parse`
+        produced something no file could hold.
+        """
+        self._emit(f"{pad}_sel = {self._py(switch.on, unit, fld.loc)}")
+        first = True
+        for case, arm in sorted(switch.arms.items()):
+            self._emit(f"{pad}{'if' if first else 'elif'} _sel == {case}:")
+            self._emit(f"{pad}    {target} = {convert(arm, value)}")
+            first = False
+        self._emit(f"{pad}else:")
+        if switch.default is not None:
+            self._emit(f"{pad}    {target} = {convert(switch.default, value)}")
+        else:
+            # No arm and no default: the decoder refuses to guess, and neither
+            # does this — but the value is carried through unchanged rather
+            # than dropped, so nothing is silently lost on the way out.
+            self._emit(f"{pad}    {target} = {value}")
         self._emit()
 
     def _spec_value(self, field_type: FieldType, value: str) -> str:
@@ -530,7 +667,13 @@ class _Generator:
                 continue
             attr = self.names.field(unit.name, fld.name)
             key = fld.name
-            if fld.repeat is not None:
+            if isinstance(fld.type, Switch) and fld.repeat is None:
+                self._emit(f"    if {key!r} in _section:")
+                self._emit_switch_convert(
+                    unit, fld, fld.type, f"_obj.{attr}",
+                    f"_section[{key!r}]", self._from_spec_value, pad="        ",
+                )
+            elif fld.repeat is not None:
                 item = self._from_spec_value(fld.type, "_item")
                 self._emit(f"    _obj.{attr} = [{item} for _item in "
                            f"_section.get({key!r}, [])]")
@@ -556,6 +699,22 @@ class _Generator:
     def _emit_api(self) -> None:
         entry = _snake(self.spec.entry)
         cls = self.names.unit(self.spec.entry)
+        self._emit()
+        self._emit("def _redact_any(_value: Any) -> Any:")
+        self._emit('    """Blank every leaf of a value whose shape is only '
+                   'known at run time."""')
+        self._emit("    if isinstance(_value, str):")
+        self._emit("        return '[redacted]'")
+        self._emit("    if isinstance(_value, bool):")
+        self._emit("        return False")
+        self._emit("    if isinstance(_value, int):")
+        self._emit("        return 0")
+        self._emit("    if isinstance(_value, dict):")
+        self._emit("        return {_k: _redact_any(_v) for _k, _v in _value.items()}")
+        self._emit("    if isinstance(_value, list):")
+        self._emit("        return [_redact_any(_v) for _v in _value]")
+        self._emit("    return _value")
+        self._emit()
         self._emit()
         self._emit("def _spec_any(_value: Any) -> Any:")
         self._emit('    """Return a switch arm\'s value in a JSON-safe form."""')
@@ -588,6 +747,20 @@ class _Generator:
         self._emit(f"    return _from_spec_{entry}(section)")
         self._emit()
         self._emit()
+        self._emit("def sanitise(section: dict[str, Any], replacer: Any, "
+                   "options: Any) -> None:")
+        annotated = self._sensitive_fields()
+        if annotated:
+            listed = ", ".join(sorted(annotated))
+            if len(listed) > 60:
+                listed = f"{len(annotated)} fields marked sensitive"
+            self._emit(f'    """Redact {listed}."""')
+        else:
+            self._emit('    """Redact nothing: the spec marks no field '
+                       'sensitive."""')
+        self._emit(f"    _sanitise_{entry}(section, replacer, options)")
+        self._emit()
+        self._emit()
         ports = ", ".join(str(p) for p in sorted(self.spec.ports))
         self._emit("PROTOCOL = AppProtocol(")
         self._emit(f"    name={self.spec.name!r},")
@@ -598,6 +771,12 @@ class _Generator:
         self._emit("    encode=encode,")
         self._emit("    to_spec=to_spec,")
         self._emit("    from_spec=from_spec,")
+        self._emit("    sanitise=sanitise,")
+        if not self._sensitive_fields():
+            # Q4: a compiled protocol always has a sanitiser, so "nobody wrote
+            # one" is not its failure mode — "nobody marked anything" is, and
+            # silence is the one outcome that must not be available.
+            self._emit("    redacts_nothing=True,")
         self._emit(")")
         self._emit()
         self._emit("register(PROTOCOL)")

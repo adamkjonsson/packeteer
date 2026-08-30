@@ -17,7 +17,29 @@ _LF2   = b"\n\n"
 
 
 def parse_http(data: bytes) -> HTTPMessage:  # type: ignore[valid-type]
-    """Parse an HTTP/1.x message from raw TCP payload bytes.
+    r"""Parse an HTTP/1.x message from raw TCP payload bytes.
+
+    **The body is the encoded body.**  ``Content-Length`` trims it to the
+    stated size, and a ``Transfer-Encoding: chunked`` message keeps its
+    framing — the chunk sizes, the CRLFs and the terminating ``0``::
+
+        >>> parse_http(b"HTTP/1.1 200 OK\r\n"
+        ...            b"Transfer-Encoding: chunked\r\n\r\n"
+        ...            b"4\r\nabcd\r\n0\r\n\r\n").body
+        b'4\r\nabcd\r\n0\r\n\r\n'
+
+    That is deliberate, and it is what makes a chunked message rebuild byte
+    for byte.  **Chunk boundaries are a sender's choice, not a property of the
+    payload**: a 70-byte body split ``1c/c/18/4`` and the same body split
+    ``40/6`` are different bytes on the wire and identical once de-chunked, so
+    a de-chunked body cannot be re-chunked back into the capture it came from.
+
+    It is the same reasoning that put stream-shaped protocols outside
+    packeteer in 0.11.0: reassembly and byte-exact reconstruction want
+    opposite things, and packeteer's guarantee is the second one.  A consumer
+    that wants the reconstructed payload is one that decodes framing for a
+    living — `kober <https://github.com/adamkjonsson/zipline-kober>`_ — and
+    de-chunking ``body`` is four lines wherever it is needed.
 
     Args:
         data: Raw bytes from a TCP segment containing an HTTP message.

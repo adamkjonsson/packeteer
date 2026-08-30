@@ -253,6 +253,12 @@ class DHCPMessage:
         file: Boot file name (128 bytes, null-terminated).
         options: List of :data:`DHCPOpt` instances.  The END option (255) is
             appended automatically by the encoder.
+        trailer: Bytes carried after the END option, as captured — BOOTP pads
+            a short message out with zeros, and only these bytes reproduce it.
+            Written out verbatim.  Empty for anything packeteer builds itself.
+            Named to match
+            :attr:`~packeteer.generate.ethernet.EthernetHeader.trailer`, which
+            is the same idea one layer down.
 
     """
 
@@ -271,6 +277,7 @@ class DHCPMessage:
     sname:   bytes = field(default_factory=lambda: b"\x00" * 64)
     file:    bytes = field(default_factory=lambda: b"\x00" * 128)
     options: list[DHCPOpt] = field(default_factory=list)  # type: ignore[assignment]
+    trailer: bytes = b""
 
 
 # ── Wire encoder ──────────────────────────────────────────────────────────────
@@ -356,4 +363,4 @@ def _build_dhcp_message(msg: DHCPMessage) -> bytes:
         options += _encode_option(opt)
     options += bytes([DHCP_OPT_END])
 
-    return header + options
+    return header + options + msg.trailer

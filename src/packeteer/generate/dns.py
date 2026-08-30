@@ -305,6 +305,23 @@ class DNSMessage:
         answers: Entries in the answer section.
         authority: Entries in the authority section.
         additional: Entries in the additional section.
+        raw: The message exactly as captured, when re-encoding the decoded
+            fields would not reproduce it.  Written out verbatim, so a
+            compressed message round-trips; empty otherwise.
+
+            **Name compression is why this exists.** RFC 1035 §4.1.4 lets a
+            name be a pointer to any earlier occurrence, and senders disagree
+            about which one to pick — across 476 real messages, a canonical
+            encoder chooses a different target for 234 of 516 pointers.  So
+            there is no encoder that reproduces captured bytes, and the only
+            thing that does is the bytes.  Same reasoning as
+            :attr:`~packeteer.generate.tcp.TCPOptions.raw`.
+
+            It takes precedence over the decoded fields, so **editing them has
+            no effect while it is set** — clear it to hand-edit a captured
+            message.  ``packeteer sanitise`` clears it whenever it changes the
+            section, since redacting a name that is still in *raw* would not
+            redact anything.
 
     """
 
@@ -314,6 +331,7 @@ class DNSMessage:
     answers: list[DNSResourceRecord] = field(default_factory=list)
     authority: list[DNSResourceRecord] = field(default_factory=list)
     additional: list[DNSResourceRecord] = field(default_factory=list)
+    raw: bytes = b""
 
 
 # ── Wire encoder ──────────────────────────────────────────────────────────────
@@ -378,6 +396,9 @@ def _encode_rr(rr: DNSResourceRecord) -> bytes:
 def _build_dns_message(msg: DNSMessage) -> bytes:
     """Build a DNS message as wire-format bytes (no TCP length prefix).
 
+    Returns ``msg.raw`` unchanged when it is set; names are otherwise written
+    out in full, since packeteer does not emit compression pointers.
+
     Args:
         msg: The DNS message to encode.
 
@@ -385,6 +406,10 @@ def _build_dns_message(msg: DNSMessage) -> bytes:
         Wire-format bytes suitable for use as a UDP payload.
 
     """
+    if msg.raw:
+        # The captured bytes, which an encoder cannot reproduce when the
+        # sender compressed names — see `DNSMessage.raw`.
+        return msg.raw
     header = struct.pack(
         "!HHHHHH",
         msg.id,

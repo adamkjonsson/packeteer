@@ -199,36 +199,43 @@ def _payload_frame(version: int, transport: str, size: int = 200) -> bytes:
     return b.payload(data=b"A" * size).build()
 
 
-class TestTruncatedCaptureClearsBoth(unittest.TestCase):
-    """A snaplen must not read as corruption on every packet (#92).
+class TestTruncatedCaptureKeepsBoth(unittest.TestCase):
+    """A truncated packet records both keys, because neither is derivable (#126).
 
-    The keys mean "a rebuild could not work this out for itself", which a
-    consumer reads as "this was wrong on the wire".  A truncated payload
-    derives a different value from fewer bytes than the sender used, so
-    keeping the captured one would make that reading false everywhere.
+    #92 cleared them, on the reasoning that a recorded key reads as "this was
+    wrong on the wire" and that a truncated packet could not be rebuilt as
+    itself anyway.  #126 supplies the missing lengths, so the second half no
+    longer holds: these are the values that make the rebuild truncated rather
+    than a smaller whole packet.  What separates "wrong" from "unknowable" is
+    ``packet_metadata.truncated`` (#94), which the keys now travel with.
     """
 
-    def test_neither_key_appears_for_any_transport_or_version(self) -> None:
+    def test_both_keys_appear_for_any_transport_or_version(self) -> None:
         for version in (4, 6):
             for transport in ("udp", "tcp"):
                 with self.subTest(version=version, transport=transport):
                     frame = _payload_frame(version, transport)
                     section = _spec(_snaplen(frame, 100))
-                    self.assertNotIn("checksum", section)
-                    self.assertNotIn("length", section)
+                    self.assertIn("checksum", section)
+                    if transport == "udp":
+                        self.assertIn("length", section)
 
-    def test_parsed_header_fields_are_none(self) -> None:
+    def test_parsed_header_fields_hold_the_captured_values(self) -> None:
         for version in (4, 6):
             for transport in ("udp", "tcp"):
                 with self.subTest(version=version, transport=transport):
-                    hdr = parse_packet(
-                        _snaplen(_payload_frame(version, transport), 100)
-                    ).transport
-                    self.assertIsNone(hdr.checksum)
-                    if isinstance(hdr, UDPHeader):
-                        self.assertIsNone(hdr.length)
+                    frame = _payload_frame(version, transport)
+                    cut = parse_packet(_snaplen(frame, 100)).transport
+                    # What the sender wrote, read straight off the wire, not
+                    # what 100 fewer bytes would derive.
+                    at = 14 + (20 if version == 4 else 40)
+                    at += 6 if transport == "udp" else 16
+                    (on_the_wire,) = struct.unpack_from("!H", frame, at)
+                    self.assertEqual(cut.checksum, on_the_wire)
+                    if isinstance(cut, UDPHeader):
+                        self.assertEqual(cut.length, 8 + 200)
 
-    def test_the_same_packets_captured_whole_also_have_neither(self) -> None:
+    def test_the_same_packets_captured_whole_have_neither(self) -> None:
         """The control: the test above must be measuring truncation."""
         for version in (4, 6):
             for transport in ("udp", "tcp"):
@@ -238,7 +245,7 @@ class TestTruncatedCaptureClearsBoth(unittest.TestCase):
                     self.assertNotIn("length", section)
 
     def test_payload_keeps_the_bytes_that_were_captured(self) -> None:
-        """Clearing the header fields must not disturb the payload itself."""
+        """Keeping the header fields must not disturb the payload itself."""
         pkt = parse_packet(_snaplen(_payload_frame(4, "udp"), 100))
         self.assertEqual(pkt.payload, b"A" * 100)
 
@@ -248,7 +255,7 @@ class TestTruncatedCaptureClearsBoth(unittest.TestCase):
         self.assertIsNone(parse_packet(_snaplen(frame, cut)).transport)
 
 
-class TestTruncationHidesCorruption(unittest.TestCase):
+class TestTruncationCannotVerifyCorruption(unittest.TestCase):
     """The cost of the fix, pinned so it is a decision rather than a surprise."""
 
     def _corrupt(self, frame: bytes) -> bytes:
@@ -260,10 +267,17 @@ class TestTruncationHidesCorruption(unittest.TestCase):
         frame = self._corrupt(_payload_frame(4, "udp"))
         self.assertEqual(_spec(frame)["checksum"], 0xDEAD)
 
-    def test_corrupt_and_truncated_reports_nothing(self) -> None:
-        """The sender's bytes are not in the file, so "unknown" is the answer."""
-        frame = self._corrupt(_payload_frame(4, "udp"))
-        self.assertNotIn("checksum", _spec(_snaplen(frame, 100)))
+    def test_corrupt_and_intact_look_the_same_once_truncated(self) -> None:
+        """The sender's bytes are not in the file, so nothing can say which.
+
+        Both record a checksum; only ``packet_metadata.truncated`` says the
+        value could not be checked.  Reading a recorded checksum as "wrong on
+        the wire" without looking at that flag is what this pins down.
+        """
+        intact = _payload_frame(4, "udp")
+        corrupt = self._corrupt(intact)
+        self.assertIn("checksum", _spec(_snaplen(intact, 100)))
+        self.assertEqual(_spec(_snaplen(corrupt, 100))["checksum"], 0xDEAD)
 
 
 class TestFragmentsAreNotTruncated(unittest.TestCase):
@@ -287,11 +301,12 @@ class TestFragmentsAreNotTruncated(unittest.TestCase):
 
 
 class TestDatagramTruncated(unittest.TestCase):
-    """The signal that tells a clean checksum from an unknowable one (#94).
+    """The signal that tells a wrong checksum from an unknowable one (#94).
 
-    #92 clears `transport.checksum` on a truncated capture, which removed a
-    false positive on every packet but merged "derivable" and "unknowable"
-    into one absent key.  This is what separates them again.
+    A recorded `transport.checksum` means "a rebuild would not derive this".
+    On a whole packet that is corruption; on a truncated one it is simply the
+    captured value, since the bytes it covers are not all in the file.  This
+    flag is what separates the two.
     """
 
     def test_set_for_every_transport_and_version_when_truncated(self) -> None:
@@ -390,8 +405,152 @@ class TestTruncatedReachesTheSpec(unittest.TestCase):
         # frame is a truncated datagram as far as the IP header is concerned.
         self.assertTrue(self._spec_metadata(_snaplen(frame, 100))["truncated"])
 
-    def test_the_checksum_key_is_absent_either_way(self) -> None:
+    def test_a_recorded_checksum_needs_the_marker_to_read(self) -> None:
         """Which is exactly why the marker is needed to tell them apart."""
         frame = _payload_frame(4, "tcp")
         self.assertNotIn("checksum", _spec(frame))
-        self.assertNotIn("checksum", _spec(_snaplen(frame, 100)))
+        self.assertIn("checksum", _spec(_snaplen(frame, 100)))
+        self.assertTrue(self._spec_metadata(_snaplen(frame, 100))["truncated"])
+
+
+def _icmp_frame(version: int, size: int = 200) -> bytes:
+    """Build an Ethernet frame carrying an ICMP Echo with *size* payload bytes."""
+    b = (PacketBuilder()
+         .ethernet(src_mac="00:00:00:00:00:01", dst_mac="00:00:00:00:00:02")
+         .ip(src="10.0.0.1" if version == 4 else "2001:db8::1",
+             dst="10.0.0.2" if version == 4 else "2001:db8::2"))
+    b = b.icmp(type=8) if version == 4 else b.icmpv6(type=128)
+    return b.payload(data=b"A" * size).build()
+
+
+def _sctp_frame() -> bytes:
+    return (PacketBuilder()
+            .ethernet(src_mac="00:00:00:00:00:01", dst_mac="00:00:00:00:00:02")
+            .ip(src="10.0.0.1", dst="10.0.0.2")
+            .sctp(src_port=1, dst_port=2)
+            .build())
+
+
+#: Where each protocol's checksum sits in its frame, and how wide it is.
+_CHECKSUM_AT = {
+    "icmp":   (14 + 20 + 2, 2),
+    "icmpv6": (14 + 40 + 2, 2),
+    "sctp":   (14 + 20 + 8, 4),
+}
+
+
+def _corrupt(frame: bytes, protocol: str) -> tuple[bytes, int]:
+    """Return *frame* with a deliberately wrong checksum, and that value."""
+    at, width = _CHECKSUM_AT[protocol]
+    wrong = b"\xde\xad\xbe\xef"[:width]
+    raw = bytearray(frame)
+    raw[at:at + width] = wrong
+    return bytes(raw), int.from_bytes(wrong, "big")
+
+
+def _frame_for(protocol: str) -> bytes:
+    if protocol == "sctp":
+        return _sctp_frame()
+    return _icmp_frame(4 if protocol == "icmp" else 6)
+
+
+class TestICMPAndSCTPChecksumsSurvive(unittest.TestCase):
+    """#68's rule reaches the other three transports (#128).
+
+    `ICMPHeader`, `ICMPv6Header` and `SCTPHeader` had no checksum field at
+    all, so `parse` recorded nothing and `build` always recomputed — silently
+    correcting a checksum that was wrong on the wire, which for these three is
+    usually offload rather than corruption.
+    """
+
+    def test_a_wrong_checksum_is_recorded_and_rebuilt_verbatim(self) -> None:
+        for protocol in ("icmp", "icmpv6", "sctp"):
+            with self.subTest(protocol=protocol):
+                frame, wrong = _corrupt(_frame_for(protocol), protocol)
+                self.assertEqual(_spec(frame)["checksum"], wrong)
+                pkt = parse_packet(frame)
+                self.assertEqual(pkt.transport.checksum, wrong)
+
+    def test_a_correct_checksum_stays_out_of_the_spec(self) -> None:
+        """The control: a key on every packet would be noise, not information."""
+        for protocol in ("icmp", "icmpv6", "sctp"):
+            with self.subTest(protocol=protocol):
+                self.assertNotIn("checksum", _spec(_frame_for(protocol)))
+
+    def test_the_builder_writes_an_explicit_checksum_out(self) -> None:
+        for protocol in ("icmp", "icmpv6", "sctp"):
+            with self.subTest(protocol=protocol):
+                at, width = _CHECKSUM_AT[protocol]
+                value = 0xDEAD if width == 2 else 0xDEADBEEF
+                b = (PacketBuilder()
+                     .ethernet(src_mac="00:00:00:00:00:01",
+                               dst_mac="00:00:00:00:00:02"))
+                if protocol == "icmp":
+                    frame = (b.ip(src="10.0.0.1", dst="10.0.0.2")
+                             .icmp(type=8, checksum=value)
+                             .payload(data=b"A" * 200).build())
+                elif protocol == "icmpv6":
+                    frame = (b.ip(src="2001:db8::1", dst="2001:db8::2")
+                             .icmpv6(type=128, checksum=value)
+                             .payload(data=b"A" * 200).build())
+                else:
+                    frame = (b.ip(src="10.0.0.1", dst="10.0.0.2")
+                             .sctp(src_port=1, dst_port=2, checksum=value).build())
+                self.assertEqual(
+                    int.from_bytes(frame[at:at + width], "big"), value,
+                )
+
+    def test_a_truncated_capture_keeps_it_too(self) -> None:
+        """The #126 rule, which is the same rule: record what is underivable."""
+        frame = _icmp_frame(4)
+        section = _spec(_snaplen(frame, 100))
+        self.assertIn("checksum", section)
+
+
+class TestFragmentedICMPRoundTrips(unittest.TestCase):
+    """The first fragment's checksum covers the whole datagram (#128).
+
+    The same case as a TCP first fragment, which #68 already handled — ICMP
+    was simply never included, so `ping -s 4000` produced a capture that could
+    not be rebuilt.
+    """
+
+    def setUp(self) -> None:
+        self.frags = (PacketBuilder()
+                      .ethernet(src_mac="00:00:00:00:00:01",
+                                dst_mac="00:00:00:00:00:02")
+                      .ip(src="10.0.0.1", dst="10.0.0.2")
+                      .icmp(type=8)
+                      .payload(data=b"A" * 4000)
+                      .fragment(mtu=1500))
+        self.assertGreater(len(self.frags), 1, "the payload must actually split")
+
+    def _spec_packets(self) -> list[dict]:
+        import io
+        import json
+
+        from packeteer.parse import parse_pcap_file
+        from packeteer.pcap import write_pcap
+
+        buf = io.BytesIO()
+        write_pcap([(f, 1, i) for i, f in enumerate(self.frags)], file_object=buf)
+        buf.seek(0)
+        return json.loads(parse_pcap_file(file_object=buf))["packets"]
+
+    def test_every_fragment_rebuilds_identically(self) -> None:
+        import packeteer.__main__ as cli
+
+        for index, (spec, fragment) in enumerate(
+            zip(self._spec_packets(), self.frags, strict=True), start=1,
+        ):
+            with self.subTest(fragment=index):
+                builder, _ = cli._apply_spec_to_builder(PacketBuilder(), spec, index)
+                self.assertEqual(builder.build().hex(), fragment.hex())
+
+    def test_the_first_fragment_is_the_one_that_needs_it(self) -> None:
+        packets = self._spec_packets()
+        self.assertIn("checksum", packets[0]["transport"])
+        # The rest carry payload bytes from the middle of the datagram and no
+        # header of their own, so there is nothing to record.
+        for later in packets[1:]:
+            self.assertNotIn("transport", later)

@@ -121,6 +121,50 @@ redact the values of `Host`, `Cookie`, `Set-Cookie`, `Authorization`,
 `Location`, `Referer`, and `Origin`.  The header keys and non-sensitive headers
 are always kept unchanged.
 
+### A protocol you registered
+
+A registered protocol's section is sanitised by the protocol itself, on the
+same footing as the three above.  How much gets redacted depends on how the
+protocol was made:
+
+**Compiled from a spec** — every field marked
+[`sensitive: true`](sensitive) is redacted, and nothing else.  A `string`
+becomes `"[redacted]"`, `bytes` become zeros of the same length, an `int`
+becomes `0`.
+
+```yaml
+- {name: owner, type: {string: {size: 12}}, sensitive: true}
+```
+
+**Written by hand** — whatever its `sanitise` callable does; a protocol
+registered without one is skipped entirely.  See
+{doc}`adding-a-protocol`.
+
+```{warning}
+**A field nobody marked is not redacted, and the command still reports
+success.**  Only what is annotated is touched.  Redacting everything unmarked
+would make `sanitise` useless on the very protocol you added in order to read
+your traffic, so the choice is deliberate — but it means an unmarked field
+carrying a name goes through untouched.
+
+The one case packeteer *can* detect is a protocol that annotates **nothing at
+all**: it declares
+{attr}`~packeteer.protocols.AppProtocol.redacts_nothing` and `sanitise` warns
+once per capture that the section was not redacted.  A hand-written protocol
+can declare the same thing, which is better than the silence of having no
+`sanitise` callable.
+
+Either way, check the output.  Every defect this found in packeteer's own
+redaction — an ICMPv6 target address, a DHCP hostname, a client MAC — was
+found by comparing a sanitised capture against its original, not by reading
+code.
+```
+
+Every string in an application section is also scanned for email addresses and
+names, whichever route the protocol came from, and anything found is reported
+as a {class}`~packeteer.sanitise.PersonalDataWarning`.  **A report is not a
+redaction** — it tells you a field wants `sensitive: true`.
+
 ## Tunnel handling
 
 Nested tunnel specs (`gre`, `ipip`, `etherip`, `pseudowire`) are walked

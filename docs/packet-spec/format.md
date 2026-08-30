@@ -46,6 +46,7 @@ packet with no layer-2 framing.
 | `dst_mac` | `"00:00:00:00:00:02"` | Destination MAC address |
 | `enabled` | `true` | Set to `false` to omit the Ethernet header |
 | `pad` | `true` | Zero-pad the frame to the IEEE 802.3 minimum of 60 bytes when `true` |
+| `trailer` | — | Bytes carried after the frame's own content, hex-encoded — a sender's padding, or a link-layer trailer.  Written out verbatim and **instead of** `pad`, since it is the exact bytes rather than an inferred width: a frame padded to 58 bytes rather than 60 cannot be expressed by `pad` at all.  Written by `parse` only when such bytes are present |
 | `vlan.id` | — | VLAN ID 1–4094; omit `vlan` entirely to disable VLAN tagging |
 | `vlan.pcp` | `0` | Priority Code Point (0–7) |
 | `vlan.dei` | `0` | Drop Eligible Indicator (0 or 1) |
@@ -128,6 +129,44 @@ it).
 
 The Protocol Type field is set automatically from the layer that follows
 (IP / ARP / …).
+
+---
+
+(packet-spec-loopback)=
+## `loopback`
+
+BSD loopback framing — the four bytes `tcpdump -i lo0` puts before each packet
+on macOS and the BSDs, naming the address family that follows.  It is an
+alternative to `ethernet` and `sll` (do not use more than one), and it carries
+no addresses, because there is no link.
+
+```json
+"metadata": { "link_type": 0 },
+"packets": [
+  {
+    "loopback": {},
+    "network":   { "src": "127.0.0.1", "dst": "127.0.0.1", "protocol": "udp" },
+    "transport": { "dst_port": 9 }
+  }
+]
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `family` | derived | The address family value.  Omitted when a rebuild can work it out from the IP version — `2` for IPv4, and macOS's `30` for IPv6 |
+| `big_endian` | `false` | Write the family in network order.  Omitted unless true |
+
+Both keys appear only when a capture did something a rebuild could not
+derive, the same rule [`transport.length`](packet-spec-transport-overrides)
+follows.  `family` survives when a capture came from a platform whose
+`AF_INET6` differs — it is `30` on macOS, `28` on FreeBSD, `24` on OpenBSD and
+`10` on Linux — and `big_endian` when the capture was `DLT_LOOP` (link type
+108) rather than `DLT_NULL` (link type 0), which are the same framing in
+opposite byte orders.
+
+The link type is inferred from the section when `metadata.link_type` is
+absent: `DLT_LOOP` when any packet recorded `big_endian`, `DLT_NULL`
+otherwise.
 
 ---
 
@@ -552,6 +591,7 @@ streams reproducible.
 | `fragment_offset` | no (default `0`) | IPv4 13-bit fragment offset in 8-byte units |
 | `traffic_class` | no (default `0`) | IPv6 Traffic Class (DSCP + ECN, 8-bit) |
 | `flow_label` | no (default `0`) | IPv6 20-bit Flow Label |
+| `declared_length` | no | The header's length field — IPv4 Total Length or IPv6 Payload Length — when the capture holds fewer bytes than it declares, as after a snaplen.  Written out verbatim; otherwise derived from the payload.  See [truncated captures](packet-spec-truncation). |
 | `hop_by_hop_options` | no | IPv6 only.  Array of Hop-by-Hop option objects (RFC 8200 §4.3).  See below. |
 | `fragment` | no | IPv6 only.  Fragment extension header (RFC 8200 §4.5).  See below. |
 
@@ -655,10 +695,30 @@ in order:
 | `options.raw` | derived | The option region as captured, hex-encoded, written out verbatim (see below) |
 | `type` | `8` / `128` | ICMP type (`8`=Echo Request) or ICMPv6 type (`128`=Echo Request) |
 | `code` | `0` | ICMP/ICMPv6 sub-type code |
-| `identifier` | `1` | ICMP/ICMPv6 16-bit identifier |
-| `sequence` | `1` | ICMP/ICMPv6 16-bit sequence number |
+| `identifier` | `1` | The **first** two of the four type-specific bytes after the checksum — see below |
+| `sequence` | `1` | The **second** two |
+
+The four bytes after the checksum are **type-specific**.  They are called
+`identifier` and `sequence` because that is what an Echo Request or Reply puts
+there, which is what packeteer generates by default — but other message types
+use them for something else, and a spec for one of those is setting halves of
+a single value:
+
+| Type | What the four bytes hold |
+|------|--------------------------|
+| ICMP `0`/`8`, ICMPv6 `128`/`129` (Echo) | Identifier, then Sequence |
+| ICMP `5` (Redirect) | The gateway address, as one 32-bit value |
+| ICMP `12`, ICMPv6 `4` (Parameter Problem) | A pointer |
+| ICMPv6 `2` (Packet Too Big) | The MTU |
+| ICMPv6 `134` (Router Advertisement) | Hop limit, flags, router lifetime |
+| ICMPv6 `136` (Neighbour Advertisement) | R/S/O flags, then reserved bits |
+| ICMP `3`/`11`, ICMPv6 `1`/`3`/`133`/`135`/`137` | Unused or Reserved, zero |
+
+In Python,
+{attr}`~packeteer.generate.icmpv6.ICMPv6Header.rest_of_header` reads and writes
+all four as one value, keeping the two halves consistent.
 | `length` | derived | UDP Length field, overriding the derived `8 + len(payload)` (see below) |
-| `checksum` | derived | TCP/UDP checksum, overriding the computed one (see below) |
+| `checksum` | derived | Transport checksum, overriding the computed one — TCP, UDP, ICMP, ICMPv6, or SCTP's 32-bit CRC-32c (see below) |
 
 TCP flag bit values: `TCP_FIN`=1, `TCP_SYN`=2, `TCP_RST`=4, `TCP_PSH`=8,
 `TCP_ACK`=16, `TCP_URG`=32, `TCP_ECE`=64, `TCP_CWR`=128.  Add values to
@@ -687,12 +747,29 @@ The decoded keys stay beside it so the spec is still readable, but **`raw`
 wins**: when it is present the other `options` keys are ignored.  Delete it if
 you want to edit `mss` or `timestamps` by hand and have the change take effect.
 
+
+```{note}
+**Why `dns.raw` exists.**  RFC 1035 §4.1.4 lets a name be a pointer to any
+earlier occurrence of the same suffix, and senders disagree about which one to
+point at.  Across 476 real DNS messages, an encoder following the usual
+"first occurrence wins" rule picks a different target for 234 of 516
+pointers — so no encoder reproduces captured bytes, and the only thing that
+does is the bytes themselves.  It is the same reasoning as
+[`options.raw`](packet-spec-transport-overrides) for TCP options.
+
+The cost is that a captured DNS message and a redacted one cannot both be had:
+`sanitise` drops `raw`, and the rebuilt message loses its compression.
+```
+
 (packet-spec-transport-overrides)=
 ### `length` and `checksum` — when the header describes other bytes
 
 Both are normally derived from the payload beside them, and `parse` omits them
-from a spec when the derived value is what the capture held.  They appear only
-where a rebuild could not work the value out for itself, which is two cases:
+from a spec when the derived value is what the capture held.  `checksum`
+applies to every transport packeteer decodes — TCP, UDP, ICMP, ICMPv6 and
+SCTP; `length` only to UDP, the one with a length field of its own.  They
+appear only where a rebuild could not work the value out for itself, which is
+three cases:
 
 **A fragmented datagram's first fragment.** The transport header travels once,
 in the first fragment, and its Length covers the *whole* datagram — not the
@@ -711,13 +788,64 @@ the pseudo-header length used to compute it is what would otherwise be wrong.
 
 **A checksum that was wrong on the wire.** An explicit `checksum` is written
 out exactly as given, including `0`, so a corrupt packet survives a
-parse → build round trip.  This is the only way a spec can express a bad
+parse → build round trip.  This holds for all five transports: ICMP, ICMPv6
+and SCTP had no checksum field until 0.12.0, so until then a wrong one was
+silently recomputed and the packet came back subtly different.  This is the only way a spec can express a bad
 checksum; the fuzzer could previously only do it at the byte level.
+
+```{note}
+**Checksum offload is the commonest reason a real capture has one**, and it is
+not corruption.  Modern stacks leave the transport checksum to the network
+card, so a packet captured on the way *out* often carries a placeholder — very
+often the segment length — rather than a computed value.  Loopback captures
+have it on nearly every packet, because nothing ever transmits them and so
+nothing ever fills the field in.
+
+Wireshark reports these as checksum errors, and turns its own validation off
+by default for the same reason.  packeteer records the value it found, which
+is what lets such a capture rebuild byte for byte — recomputing would silently
+produce a file that differs from the one you parsed.
+
+Packets a capture *received* have correct checksums, because they really were
+transmitted.  So a capture of a remote host's replies is the one to use when
+valid checksums matter.
+```
+
+**A capture cut short by a snaplen.** The header covers bytes the file does
+not hold, so any derived value is computed from too few of them and is certain
+to be wrong.  Both keys are recorded as captured, alongside
+`packet_metadata.truncated` — which is what says the checksum could not be
+checked rather than that it was wrong.  See
+[truncated captures](packet-spec-truncation).
 
 Reassembling first, with `packeteer parse --defragment` or
 {func}`~packeteer.parse.defragment`, side-steps the fragment case entirely: a
 reassembled datagram's header describes exactly the bytes beside it, so neither
 key is emitted.
+
+(packet-spec-truncation)=
+### Truncated captures
+
+A capture taken with a snaplen — `tcpdump -s 96`, and anything else that keeps
+only the front of each packet — holds packets whose headers describe bytes
+that are not in the file.  Four keys carry that across a round trip, each
+written only when the capture and a rebuild would disagree:
+
+| Key | What it holds |
+|-----|---------------|
+| `network.declared_length` | IPv4 Total Length / IPv6 Payload Length as the header stated it |
+| `transport.length`, `transport.checksum` | the transport header's own fields, as captured |
+| `packet_metadata.orig_len` | the packet's length on the wire |
+| `metadata.snaplen` | the limit the capture was taken with |
+
+Without them a truncated capture rebuilds as a set of *smaller, whole* packets
+that never existed on any wire: internally consistent, correctly checksummed,
+and no longer a record of what was seen.  With them, `parse` → `build`
+reproduces the file byte for byte, and so does `packeteer sanitise --pcap`.
+
+Nothing is recovered that the capture did not hold — the missing bytes are
+still missing, and the payload is as short as it ever was.  What survives is
+every statement the file made *about* those bytes.
 
 **A truncated capture emits neither key, and so cannot report corruption.**
 When a snaplen cut the payload short, the bytes the sender checksummed are not
@@ -769,6 +897,7 @@ shape — SCTP data lives inside typed **chunks** rather than in a separate
 | `src_port` | `0` | SCTP source port (16-bit) |
 | `dst_port` | `0` | SCTP destination port (16-bit) |
 | `verification_tag` | `0` | Verification Tag negotiated during the handshake (32-bit) |
+| `checksum` | derived | CRC-32c, overriding the computed one.  A 32-bit value, unlike every other transport's 16-bit checksum |
 | `chunks` | `[]` | Array of chunk objects (see below).  An empty array produces a single empty DATA chunk. |
 
 **Chunk object fields by type:**
@@ -834,6 +963,7 @@ automatically (RFC 1035 §4.2.2) when the enclosing transport is TCP.
 | `answers` | Array of resource records in the answer section |
 | `authority` | Array of resource records in the authority section |
 | `additional` | Array of resource records in the additional section |
+| `raw` | — | The message exactly as captured, hex-encoded, written by `parse` only when re-encoding the decoded fields would not reproduce it — a **compressed** message, in practice.  It is written out verbatim and **takes precedence over every other key here**, so editing them has no effect while it is present; delete it to hand-edit a captured message.  `packeteer sanitise` deletes it whenever it changes the section, since a redacted name that is still in `raw` is not redacted |
 
 ### `dns.flags`
 
@@ -943,6 +1073,7 @@ encoded as the UDP payload.  Use with `transport.src_port` or
 | `sname` | `""` | Server host name (up to 64 bytes) |
 | `file` | `""` | Boot file name (up to 128 bytes) |
 | `options` | `[]` | Array of option objects; see below |
+| `trailer` | — | Bytes after the END option, hex-encoded.  BOOTP pads a short message out with zeros; only these bytes reproduce it.  Written by `parse` only when present |
 
 ### `dhcp.options` entries
 
@@ -1046,7 +1177,7 @@ The `type` field selects between request and response:
 | `path` | `"/"` | Request-target (path, optionally with query string) |
 | `version` | `"1.1"` | HTTP version without the `"HTTP/"` prefix |
 | `headers` | `{}` | Object of header name → value string pairs |
-| `body` | `""` | Request body encoded as a hex string |
+| `body` | `""` | Request body as a hex string, **as it appears on the wire** — see the note below |
 
 ### `http` fields — response
 
@@ -1057,12 +1188,33 @@ The `type` field selects between request and response:
 | `status_code` | `200` | 3-digit integer status code |
 | `reason` | `"OK"` | Reason phrase |
 | `headers` | `{}` | Object of header name → value string pairs |
-| `body` | `""` | Response body encoded as a hex string |
+| `body` | `""` | Response body as a hex string, **as it appears on the wire** — see the note below |
 
 `Content-Length` is added automatically by the builder when `body` is
 non-empty and the message does not already frame itself — that is, when
 neither `Content-Length` nor `Transfer-Encoding` is present.  Header names are
 matched case-insensitively.
+
+```{note}
+**A chunked body keeps its framing.**  `body` for a
+`Transfer-Encoding: chunked` message is the chunked bytes — sizes, CRLFs and
+the terminating `0` — not the payload a recipient would reconstruct:
+
+```json
+"body": "22f0d0a3c21646f63747970652068746d6c3e…300d0a0d0a"
+```
+
+This is deliberate.  **Chunk boundaries are a sender's choice, not a property
+of the payload**: a 70-byte body split `1c/c/18/4` and the same body split
+`40/6` are different bytes on the wire and identical once de-chunked, so a
+de-chunked body could not be re-chunked to reproduce the capture.  Keeping the
+framing is what makes `parse` → `build` byte-exact for chunked traffic.
+
+It is the same reasoning that put stream-shaped protocols outside packeteer in
+0.11.0 — reassembly and byte-exact reconstruction want opposite things, and
+packeteer's guarantee is the second.  De-chunking is four lines in a consumer
+that wants the payload; un-de-chunking is not possible at all.
+```
 
 A message carrying `Transfer-Encoding: chunked` therefore gets no
 `Content-Length`, and its `body` must already be chunk-framed: the builder
@@ -1104,6 +1256,31 @@ hex.
 ---
 
 (packet-spec-metadata)=
+## `protocols` (top-level)
+
+An optional array of paths to protocol modules `packeteer build`,
+`packeteer sanitise` and `packeteer fuzz` import before reading the packets,
+so a spec using a protocol packeteer does not ship describes what it needs.
+
+```json
+"protocols": ["./sensor.py"]
+```
+
+Paths resolve against **the spec file's directory**, not the working
+directory, so a spec and the module beside it move together.
+`packeteer parse --load-protocol ./sensor.py -o spec.json` writes the key for
+you.
+
+```{warning}
+Importing a module runs it.  This key names Python that packeteer will
+execute, so treat a spec someone sends you the way you would treat any other
+Python they send you.  packeteer never writes a path here that it found while
+parsing a capture — only one you supplied — and it says on stderr what it is
+importing.
+```
+
+---
+
 ## `metadata` (top-level)
 
 Always present in configs produced by `packeteer parse` and
@@ -1115,6 +1292,7 @@ Always present in configs produced by `packeteer parse` and
 | `link_type` | no | pcap link-layer type integer for the whole file — `1` = Ethernet (default), `101` = Raw IP.  Written by `packeteer parse`; read by `packeteer build` to set the link-layer type of the output pcap/pcapng.  When absent, `packeteer build` infers the type from the packet contents. |
 | `from_file` | no | Path of the source pcap or pcapng file — written automatically by `packeteer parse` (informational only; ignored by `packeteer build`) |
 | `type` | no | Source file format: `"pcap"` or `"pcapng"` — written automatically by `packeteer parse`; read by `packeteer build` to choose the output file format (overridable via `--pcap` / `--pcapng` flags) |
+| `snaplen` | no (default `65535`) | The capture limit the source file declared, in bytes.  Written by `packeteer parse` only when the file named a real limit; read by `packeteer build` and written into the output's file header.  See [truncated captures](packet-spec-truncation). |
 
 ---
 
@@ -1125,7 +1303,8 @@ Always present in configs produced by `packeteer parse` and
 |-------|---------|-------------|
 | `mtu` | — | Fragment the packet so each IP datagram is at most this many bytes — see {doc}`../api/fragmentation` |
 | `packet_num` | — | 1-based position of this packet in the capture file.  Written automatically by `packeteer parse`; used in PII warnings to identify which packets contain a finding.  Ignored by `packeteer build`. |
-| `truncated` | — | `true` when the IP header declares more payload than the capture holds, as after a snaplen.  Written by `packeteer parse` only when set; ignored by `packeteer build`.  It is what distinguishes a `transport.checksum` absent because a rebuild can derive it from one absent because nobody can check it — see [`length` and `checksum`](packet-spec-transport-overrides). |
+| `truncated` | — | `true` when the IP header declares more payload than the capture holds, as after a snaplen.  Written by `packeteer parse` only when set; ignored by `packeteer build`, which rebuilds the truncation from `network.declared_length` and `orig_len` instead.  It is what distinguishes a recorded `transport.checksum` that was wrong on the wire from one nobody can check — see [`length` and `checksum`](packet-spec-transport-overrides). |
+| `orig_len` | — | The packet's length on the wire, when the record holds fewer bytes than that.  Written by `packeteer parse` only when the two differ; read by `packeteer build`, which writes it into the record header so the rebuilt capture is cut in the same place.  See [truncated captures](packet-spec-truncation). |
 | `timestamp_s` | `0` | Capture timestamp — whole seconds |
 | `timestamp_us` | `0` | Microsecond fraction (0–999999); used when `metadata.nanoseconds` is `false` |
 | `timestamp_ns` | `0` | Nanosecond fraction (0–999999999); used when `metadata.nanoseconds` is `true` |

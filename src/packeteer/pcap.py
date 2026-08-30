@@ -95,8 +95,10 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 #: Largest value the 32-bit pcap ``ts_sec`` field can hold (year 2106).
 _MAX_TS_SEC: int = 0xFFFFFFFF
 
+LINKTYPE_NULL: int = 0        # BSD loopback (4-byte address family)
 LINKTYPE_ETHERNET: int = 1    # Ethernet II
 LINKTYPE_RAW: int = 101       # Raw IP (no Ethernet header)
+LINKTYPE_LOOP: int = 108      # OpenBSD loopback (big-endian family)
 LINKTYPE_LINUX_SLL: int = 113   # Linux "cooked" capture v1 (tcpdump -i any)
 LINKTYPE_LINUX_SLL2: int = 276  # Linux "cooked" capture v2
 
@@ -125,6 +127,9 @@ _PCAPNG_IDB_OPT_TSRESOL: int = 9
 
 # Timestamp resolutions, in ticks per second
 _US_PER_SECOND: int = 1_000_000
+
+SNAPLEN_UNLIMITED: int = 65535
+"""Snaplen meaning "no limit" — what a capture of whole packets declares."""
 _NS_PER_SECOND: int = 1_000_000_000
 
 
@@ -214,6 +219,14 @@ class PcapRecord:
         """Yield ``data``, ``ts_sec``, ``ts_frac`` so the record unpacks."""
         return iter((self.data, self.ts_sec, self.ts_frac))
 
+    def __len__(self) -> int:
+        """Return ``3`` — the length of the tuple this record stands in for."""
+        return 3
+
+    def __getitem__(self, index: int) -> Any:
+        """Index like the ``(data, ts_sec, ts_frac)`` tuple this replaces."""
+        return (self.data, self.ts_sec, self.ts_frac)[index]
+
     @property
     def timestamp(self) -> float:
         """Capture time in seconds since the Unix epoch.
@@ -246,14 +259,19 @@ class PcapFile:
 
     Attributes:
         header: Global file metadata.
-        packets: Ordered list of ``(data, ts_sec, ts_frac)`` tuples.
-            *ts_frac* holds microseconds or nanoseconds depending on
+        packets: Ordered list of :class:`PcapRecord`.  Each unpacks and
+            indexes as ``(data, ts_sec, ts_frac)``, so the loop
+            ``for data, ts_sec, ts_frac in result.packets`` still works;
+            reach for the attributes when the rest of a record matters —
+            :attr:`PcapRecord.orig_len` above all, which is the only place
+            a snaplen-truncated packet's real length survives.  *ts_frac*
+            holds microseconds or nanoseconds depending on
             :attr:`PcapFileHeader.nanoseconds`.
 
     """
 
     header: PcapFileHeader
-    packets: list[tuple[bytes, int, int]] = field(default_factory=list)
+    packets: list[PcapRecord] = field(default_factory=list)
 
 
 # ── Read helpers ──────────────────────────────────────────────────────────────
@@ -399,7 +417,7 @@ def _open_pcapng(reader: _ChainedReader) -> tuple[PcapFileHeader, Iterator[PcapR
 
     interfaces: list[tuple[int, int]] = []  # (link_type, ticks_per_second)
     link_type = 1
-    snaplen   = 65535
+    snaplen   = SNAPLEN_UNLIMITED
     tick_hz   = _US_PER_SECOND
     pending: tuple[int, bytes, int] | None = None
 
@@ -736,6 +754,15 @@ def open_pcap(
 
 # ── Write helpers ─────────────────────────────────────────────────────────────
 
+PacketTuple = tuple[bytes, int, int] | tuple[bytes, int, int, int]
+"""One record to write: ``(data, ts_sec, ts_frac)``, optionally ``orig_len``.
+
+The fourth field is the packet's length on the wire, which is longer than
+*data* when the capture was taken with a snaplen.  Left out, it is
+``len(data)`` — every packet whole, which is what a built capture is.
+"""
+
+
 def _pcapng_opt(code: int, value: bytes) -> bytes:
     """Pack one TLV option with a 4-byte-padded value."""
     pad = (4 - len(value) % 4) % 4
@@ -744,9 +771,10 @@ def _pcapng_opt(code: int, value: bytes) -> bytes:
 
 def _write_pcap(
     file_obj: io.IOBase,
-    packets: list[tuple[bytes, int, int]],
+    packets: list[PacketTuple],
     link_type: int,
     nanoseconds: bool,
+    snaplen: int,
 ) -> None:
     magic = _MAGIC_NSEC if nanoseconds else _MAGIC_USEC
     file_obj.write(struct.pack(
@@ -755,7 +783,7 @@ def _write_pcap(
         2, 4,   # version 2.4
         0,      # UTC
         0,      # timestamp accuracy
-        65535,  # snaplen
+        snaplen,
         link_type,
     ))
     for pkt_tuple in packets:
@@ -763,15 +791,17 @@ def _write_pcap(
         sec = pkt_tuple[1]
         frac = pkt_tuple[2]
         length = len(pkt)
-        file_obj.write(struct.pack("<IIII", sec, frac, length, length))
+        orig_len = pkt_tuple[3] if len(pkt_tuple) > 3 else length
+        file_obj.write(struct.pack("<IIII", sec, frac, length, orig_len))
         file_obj.write(pkt)
 
 
 def _write_pcapng(
     file_obj: io.IOBase,
-    packets: list[tuple[bytes, int, int]],
+    packets: list[PacketTuple],
     link_type: int,
     nanoseconds: bool,
+    snaplen: int,
 ) -> None:
     # Section Header Block
     shb_body = struct.pack("<IHHq", _PCAPNG_BOM_LE, 1, 0, -1)
@@ -783,7 +813,7 @@ def _write_pcapng(
     # Interface Description Block
     tsresol = 9 if nanoseconds else 6
     idb_body = (
-        struct.pack("<HHI", link_type, 0, 65535)
+        struct.pack("<HHI", link_type, 0, snaplen)
         + _pcapng_opt(_PCAPNG_IDB_OPT_TSRESOL, bytes([tsresol]))
         + struct.pack("<HH", _OPT_ENDOFOPT, 0)
     )
@@ -794,14 +824,16 @@ def _write_pcapng(
 
     # Enhanced Packet Blocks
     resolution = 1_000_000_000 if nanoseconds else 1_000_000
-    for pkt_data, ts_sec, ts_frac in packets:
+    for pkt_tuple in packets:
+        pkt_data, ts_sec, ts_frac = pkt_tuple[0], pkt_tuple[1], pkt_tuple[2]
         ts64 = ts_sec * resolution + ts_frac
         ts_hi = (ts64 >> 32) & 0xFFFFFFFF
         ts_lo = ts64 & 0xFFFFFFFF
         cap_len = len(pkt_data)
+        orig_len = pkt_tuple[3] if len(pkt_tuple) > 3 else cap_len
         pad = (4 - cap_len % 4) % 4
         epb_body = (
-            struct.pack("<IIIII", 0, ts_hi, ts_lo, cap_len, cap_len)
+            struct.pack("<IIIII", 0, ts_hi, ts_lo, cap_len, orig_len)
             + pkt_data
             + b"\x00" * pad
         )
@@ -897,7 +929,7 @@ def read_pcap(
         records: Iterator[PcapRecord] = iter(reader)
         if max_packets is not None:
             records = itertools.islice(records, max_packets)
-        packets = [(r.data, r.ts_sec, r.ts_frac) for r in records]
+        packets = list(records)
     return PcapFile(header=reader.header, packets=packets)
 
 
@@ -991,18 +1023,22 @@ def pcap_ts_to_datetime(
 
 
 def write_pcap(
-    packets: list[tuple[bytes, int, int]],
+    packets: list[PacketTuple],
     *,
     path: str | os.PathLike | None = None,
     file_object: io.IOBase | None = None,
     link_type: int = LINKTYPE_ETHERNET,
     nanoseconds: bool = False,
+    snaplen: int = SNAPLEN_UNLIMITED,
 ) -> None:
     """Write raw packet bytes to a libpcap (``.pcap``) file.
 
     Args:
         packets: Ordered list of ``(raw_bytes, ts_sec, ts_frac)`` — one per
-            pcap record.  *ts_frac* is microseconds when *nanoseconds* is
+            pcap record — or ``(raw_bytes, ts_sec, ts_frac, orig_len)``, where
+            *orig_len* is the packet's length on the wire.  The two forms may
+            be mixed; without a fourth field the record is written as a whole
+            packet.  *ts_frac* is microseconds when *nanoseconds* is
             ``False`` (default) or nanoseconds when *nanoseconds* is ``True``.
             For :class:`~datetime.datetime` timestamps, build the pair with
             :func:`datetime_to_pcap_ts`, e.g.
@@ -1015,6 +1051,11 @@ def write_pcap(
         nanoseconds: When ``True``, write magic ``0xA1B23C4D`` so readers
             interpret the timestamp fraction as nanoseconds instead of the
             default microseconds (magic ``0xA1B2C3D4``).
+        snaplen: Capture limit to declare in the file header, in bytes.
+            Defaults to ``65535`` — no limit worth naming, which is true of
+            anything packeteer built.  Pass the source file's value when
+            rewriting a capture taken with ``tcpdump -s``, so the output says
+            it was cut short in the same way the original did.
 
     Raises:
         OSError: If *path* cannot be opened for writing.
@@ -1036,18 +1077,19 @@ def write_pcap(
     """
     if path is not None:
         with open(path, "wb") as f:
-            _write_pcap(f, packets, link_type, nanoseconds)
+            _write_pcap(f, packets, link_type, nanoseconds, snaplen)
     if file_object is not None:
-        _write_pcap(file_object, packets, link_type, nanoseconds)
+        _write_pcap(file_object, packets, link_type, nanoseconds, snaplen)
 
 
 def write_pcapng(
-    packets: list[tuple[bytes, int, int]],
+    packets: list[PacketTuple],
     *,
     path: str | os.PathLike | None = None,
     file_object: io.IOBase | None = None,
     link_type: int = LINKTYPE_ETHERNET,
     nanoseconds: bool = False,
+    snaplen: int = SNAPLEN_UNLIMITED,
 ) -> None:
     """Write raw packet bytes to a pcapng (``.pcapng``) file.
 
@@ -1056,6 +1098,9 @@ def write_pcapng(
 
     Args:
         packets: Ordered list of ``(raw_bytes, ts_sec, ts_frac)`` — one per
+            packet — or ``(raw_bytes, ts_sec, ts_frac, orig_len)``, where
+            *orig_len* is the packet's length on the wire.  The two forms may
+            be mixed; without a fourth field the record is written as a whole
             packet.  *ts_frac* is microseconds when *nanoseconds* is ``False``
             (default) or nanoseconds when *nanoseconds* is ``True``.
             For :class:`~datetime.datetime` timestamps, build the pair with
@@ -1069,6 +1114,11 @@ def write_pcapng(
         nanoseconds: When ``True``, timestamps are in nanoseconds and the
             ``if_tsresol`` option is set to ``9`` (10^-9).  Defaults to
             ``False`` (microseconds, ``if_tsresol`` = 6).
+        snaplen: Capture limit to declare in the file header, in bytes.
+            Defaults to ``65535`` — no limit worth naming, which is true of
+            anything packeteer built.  Pass the source file's value when
+            rewriting a capture taken with ``tcpdump -s``, so the output says
+            it was cut short in the same way the original did.
 
     Raises:
         OSError: If *path* cannot be opened for writing.
@@ -1084,6 +1134,6 @@ def write_pcapng(
     """
     if path is not None:
         with open(path, "wb") as f:
-            _write_pcapng(f, packets, link_type, nanoseconds)
+            _write_pcapng(f, packets, link_type, nanoseconds, snaplen)
     if file_object is not None:
-        _write_pcapng(file_object, packets, link_type, nanoseconds)
+        _write_pcapng(file_object, packets, link_type, nanoseconds, snaplen)

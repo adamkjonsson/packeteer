@@ -229,7 +229,7 @@ def packet_parser(data: bytes) -> tuple[int, int | None, SCTPHeader | None]:
         return (0, None, None)
 
     try:
-        src_port, dst_port, verification_tag, _checksum = struct.unpack(
+        src_port, dst_port, verification_tag, checksum = struct.unpack(
             "!HHII", data[:12]
         )
     except struct.error:
@@ -259,5 +259,6 @@ def packet_parser(data: bytes) -> tuple[int, int | None, SCTPHeader | None]:
         dst_port=dst_port,
         verification_tag=verification_tag,
         chunks=chunks,
+        checksum=checksum,
     )
     return (len(data), dst_port, hdr)

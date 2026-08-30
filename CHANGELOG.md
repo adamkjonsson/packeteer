@@ -25,7 +25,358 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
-_Nothing yet._
+---
+
+## [0.12.0] - 2026-08-30
+
+### Added
+
+- **`write_pcap` and `write_pcapng` take an `orig_len` and a `snaplen`**
+  (#126) — a record may be a 4-tuple `(data, ts_sec, ts_frac, orig_len)`
+  alongside the existing 3-tuple, and both writers accept `snaplen=`
+  (default `65535`, exported as `packeteer.pcap.SNAPLEN_UNLIMITED`).  Without
+  them nothing could write a capture that says it was cut short.
+
+- **`packeteer.conformance`** (#120) — holds any registered protocol to the
+  contract every one must meet, whether it was written by hand or compiled
+  from a spec.  `check_protocol` returns every failure rather than raising at
+  the first, so one run says everything that is wrong.
+
+  It checks that encoding is stable, that a spec round trip is lossless, that
+  a section survives `json.dumps`, that truncated input raises at every byte
+  offset rather than decoding into a half-built object, that the registry
+  resolves the protocol by message type and by port, that sanitising leaves a
+  section usable, and that a whole packet built with `PacketBuilder.app`
+  rebuilds byte for byte through its spec — the last being the guarantee
+  packeteer exists for, and one that had been asserted for the two mechanisms
+  separately, in different files, with different fixtures.
+
+  A decoder may canonicalise — DNS returns `example.com.` for a name written
+  `example.com` — so the check is that the normalisation is *stable*, not that
+  it is absent.  `canonicalises` reports it as information.
+
+- **`packeteer stream --payload <protocol>`** (#119) — `--payload` was a
+  closed set of `http` and `vpn`, so a user who had compiled a protocol could
+  build single packets with it but not drive a generated conversation, which
+  is what packeteer is most often reached for.  Any registered protocol's name
+  now works, and `http` and `vpn` are unchanged.
+
+  `--protocol-messages FILE` says *what to send*: a JSON array of packet-spec
+  sections, sent in order and cycled when the stream is longer than the list.
+  A protocol describes what a message looks like, not what conversation to
+  have, so this stays out of the spec grammar — putting it there would make
+  every spec carry test data.
+
+  The payloads are fed into the ordinary stream generator rather than a path
+  of their own, so the packet labels stay `DATA[i]` and `ACK[i]` and every
+  anomaly option applies.  That is deliberate: #83 was `--payload http`
+  emitting labels the impairment passes did not recognise, and dropping every
+  anomaly flag in silence.
+
+- **`UDPStreamConfig.payload_fn`** (#119) — the hook
+  `TCPStreamConfig.payload_fn` already had, so a callable written for one
+  works for the other.
+
+- **The command line can load a user protocol** (#118) — three routes, and
+  until now there were none: a compiled protocol registers when its module is
+  imported, and nothing on the command line imported it, so `packeteer parse`
+  saw only an opaque payload where the Python API saw a decoded section.
+
+  - `--load-protocol FILE`, repeatable, accepted before or after the
+    subcommand;
+  - a top-level `"protocols": ["./sensor.py"]` key in a packet spec, resolved
+    against the spec file's directory, which `packeteer parse
+    --load-protocol …` writes for you so a spec describes what it needs;
+  - `PACKETEER_PROTOCOLS`, separated by the platform path separator.
+
+  The flag is **not** called `--protocol`, as the issue proposed: `packeteer
+  stream --protocol tcp` already means the transport to simulate, and one
+  spelling for two things is a trap.
+
+  All three import Python from a path, so loading from a spec says on stderr
+  what it is importing, and a path is never taken from a capture's contents —
+  a capture is something you may have been sent.
+
+- **`packeteer.protocols.load_module`** (#118) — imports a Python file so the
+  protocols it defines register themselves, and returns them.  The primitive
+  under the three routes above, so the API can do what the CLI does.
+
+- **`to_packet_spec(protocols=…)` and `parse_pcap_file(protocol_modules=…)`**
+  (#118) — record the `protocols` key from paths the caller supplied.
+
+- **A compiled protocol redacts its own sensitive fields** (#117) — `codegen`
+  emits a redaction function from the spec's `sensitive:` annotations and puts
+  it on the `AppProtocol`, so a compiled protocol is sanitised exactly like a
+  built-in.  `string` becomes `"[redacted]"`, `bytes` become zeros of the same
+  length, an `int` becomes `0`, and a unit or switch arm has every leaf
+  beneath it blanked.  Unit-typed fields are followed into and repeated fields
+  redacted element by element.
+
+  `sensitive: true` has been in the grammar since 0.11.0 and nothing read it:
+  a compiled protocol registered with `sanitise=None`, so its section flowed
+  through `packeteer sanitise` untouched and the command reported success.
+
+- **`AppProtocol.redacts_nothing`** (#117) — declares that a protocol's
+  `sanitise` redacts nothing, so `packeteer sanitise` warns rather than
+  passing the section through in silence.  A compiled protocol sets it when
+  its spec marks no field `sensitive:`; a hand-written one can set it to say
+  the same thing out loud.
+
+- **`raw` on `DNSMessage`** (#130) — the message exactly as captured, kept
+  when re-encoding the decoded fields would not reproduce it, and written out
+  verbatim.  It appears as `dns.raw` in a packet spec and **takes precedence
+  over the decoded keys**, so editing them has no effect while it is present.
+  `packeteer sanitise` deletes it whenever it changes the section.
+
+- **`trailer` on `EthernetHeader` and `DHCPMessage`** (#129) — the bytes
+  carried after a structure's own content, written out verbatim.
+  `PacketBuilder.ethernet(trailer=…)` takes it, and it appears as
+  `ethernet.trailer` and `dhcp.trailer` in a packet spec, hex-encoded and only
+  when such bytes are present.  An Ethernet trailer is written *instead of*
+  the automatic padding, being the exact bytes rather than an inferred width.
+
+- **`checksum` on `ICMPHeader`, `ICMPv6Header` and `SCTPHeader`** (#128), with
+  the override semantics `TCPHeader.checksum` already had — set, written out
+  verbatim; `None`, computed.  `PacketBuilder.icmp()`, `.icmpv6()` and
+  `.sctp()` take it as a keyword, and it is read from and written to the
+  `transport` section of a packet spec.
+
+- **`PacketBuilder.ip(declared_length=…)`** (#126) — writes the IPv4 Total
+  Length or IPv6 Payload Length field verbatim instead of deriving it from the
+  payload, which is what makes a rebuilt packet truncated rather than small.
+
+- **BSD loopback captures can be read and written** (#124) — link types `0`
+  (`DLT_NULL`) and `108` (`DLT_LOOP`), the framing `tcpdump -i lo0` produces on
+  macOS and the BSDs.  `ParsedPacket.loopback`, `PacketBuilder.loopback()`, a
+  `loopback` packet-spec section, and `LINKTYPE_NULL` / `LINKTYPE_LOOP`.
+
+  Without it the easiest traffic there is — anything you can send to yourself —
+  could not be parsed at all, which is not academic: collecting ICMPv4 and
+  IPv6 captures for the corpus needed a second machine or a tunnel broker
+  purely because loopback was unreadable.  On Linux `lo` is `EN10MB`, so this
+  only bites where loopback capture is most convenient.
+
+  The address family is derived from the IP version on rebuild and recorded
+  only when a capture disagrees — `AF_INET6` is `30` on macOS, `28` on
+  FreeBSD, `24` on OpenBSD and `10` on Linux — so a capture from another
+  platform still round-trips byte for byte.
+
+- **`ICMPHeader.rest_of_header` and `ICMPv6Header.rest_of_header`** (#122) —
+  the four type-specific bytes after the checksum, read and written as one
+  value.  That is what most message types actually mean by them: an ICMPv6
+  Packet Too Big's MTU, an ICMPv4 Redirect's gateway address, a Parameter
+  Problem's pointer.
+
+### Changed
+
+- **Breaking: a truncated packet keeps its `transport.length` and
+  `transport.checksum`** (#126) — 0.9.1 cleared both (#92) so that a snaplen
+  would not read as corruption on every packet.  Half of that reasoning was
+  that a truncated
+  packet could not be rebuilt as itself anyway; #126 makes it
+  possible, and these are two of the values it needs.
+
+  A recorded checksum therefore no longer means "wrong on the wire" on its
+  own: on a packet with `packet_metadata.truncated` set it is the captured
+  value, which nothing can check, because the bytes it covers are not in the
+  file.  Consumers that read a recorded checksum as corruption should test
+  `truncated` alongside it.
+
+- **Breaking: `PcapFile.packets` holds `PcapRecord` objects** rather than
+  plain `(data, ts_sec, ts_frac)` tuples (#126).  A record unpacks, indexes and
+  measures as that tuple, so `for data, ts_sec, ts_frac in result.packets`
+  and `packets[0][0]` are unaffected; what it adds is the rest of the record,
+  `orig_len` above all, which is the only place a truncated packet's real
+  length survives.  Code comparing an element to a literal tuple
+  (`packets[0] == (data, 1, 0)`) must compare `tuple(packets[0])` instead.
+
+### Fixed
+
+- **A `switch` arm that is a unit no longer reaches a spec as a dataclass**
+  (#133) — `to_spec` emitted the object itself, so a section could not be
+  written to JSON at all and `packeteer parse` produced something no file
+  could hold.  `from_spec` had the mirror of it, which meant the pair
+  round-tripped in memory and broke only through a file.
+  `examples/protocols/rpc.yaml` was affected.  Both now dispatch on the
+  selector, the way `decode` always has.
+
+- **A truncated DHCP message raises instead of decoding** (#134) — options
+  that ran out mid-way were silently accepted, so a message cut short by a
+  snaplen decoded into one missing whatever the capture did not hold, and
+  `parse` wrote a spec saying those options were *not there*.  That is a
+  different statement from "this was truncated", and the wrong one.
+
+- **A generated module with a forward unit reference now imports** (#132) —
+  `default_factory` named the class directly, and it is evaluated when the
+  class body runs, so a spec whose unit referenced one defined later in the
+  file compiled to a module that raised `NameError` on import.  Whether a spec
+  worked depended on the order its units happened to be written in.
+  `compile_spec` now imports what it generates as well as parsing it, so a
+  module that cannot load is caught by the compiler rather than by whoever
+  runs it next.
+
+- **Every string in an application section is scanned for PII** (#117) —
+  previously only the top-level payload was, so a name or an email in a
+  decoded field went unreported.  A report is not a redaction: it says a field
+  wants `sensitive: true`.
+
+- **A compressed DNS message round-trips** (#130) — `parse` decodes name
+  compression correctly but `build` writes every name out in full, so a
+  compressed message re-encoded *larger* than it was captured and no packet
+  carrying one ever rebuilt: 118 of 238 in one capture, 347 of 12 270 in
+  another.
+
+  Emitting compression would not have fixed it.  RFC 1035 §4.1.4 lets a name
+  point at any earlier occurrence of a suffix and senders disagree about
+  which; across 476 real messages an encoder following the usual rule picks a
+  different target for 234 of 516 pointers.  So the bytes are kept instead,
+  under the rule the rest of the format follows — record what a rebuild
+  cannot derive.
+
+- **Bytes past the end of a datagram are no longer dropped** (#129) — a frame
+  padded to anything other than the 60-byte Ethernet minimum could not be
+  expressed: `ethernet.pad` is a boolean, so it says "pad to 60" or "do not
+  pad", and a real capture held 58-byte ARP frames — 42 of ARP and 16 of the
+  sender's padding.  Those 16 bytes were dropped and the frame rebuilt 16
+  short, on 34 of 86 packets.
+
+  The same defect one layer down: BOOTP pads a short DHCP message with zeros
+  after the END option, which the parser stopped at and the encoder never
+  reproduced, so a real DHCP Request rebuilt 11 bytes shorter than captured.
+
+  Both are now recorded as `trailer`, and every unsanitised capture on hand
+  rebuilds byte for byte except the compressed DNS of #130.
+
+- **A wrong ICMP, ICMPv6 or SCTP checksum is no longer silently recomputed**
+  (#128) — the three header classes had no checksum field at all, so `parse`
+  recorded nothing and `build` always computed a fresh one.  A capture whose
+  checksum was wrong on the wire came back subtly different, and for these
+  three protocols that is usually offload rather than corruption: SCTP's
+  CRC-32c is expensive enough that stacks routinely hand it to the card.
+
+  It also meant a **fragmented ICMP datagram could not round-trip** — the
+  first fragment's checksum covers the whole datagram, not the bytes beside
+  it, which is the case #68 fixed for TCP and UDP and never extended.
+  `ping -s 4000` produced a capture packeteer could not rebuild.
+
+  The rule is now one rule for all five transports: record a checksum exactly
+  when a rebuild would not derive it.
+
+- **A truncated capture rebuilds as truncated** (#126) — a capture taken with
+  a snaplen went through `parse` → `build`, or `sanitise --pcap`, and came out
+  *complete*: smaller, internally consistent packets that never existed on any
+  wire, in a file whose header no longer said anything had been cut.
+
+  Four facts were absent from a packet spec, and each is now recorded — only
+  when a rebuild could not derive it, the rule `transport.length` already
+  follows:
+
+  - `network.declared_length` — IPv4 Total Length or IPv6 Payload Length as
+    the header stated it;
+  - `packet_metadata.orig_len` — the packet's length on the wire;
+  - `metadata.snaplen` — the limit the capture was taken with;
+  - `transport.length` and `transport.checksum`, which #92 cleared (see
+    *Changed*).
+
+  `packet_metadata.truncated`, added in 0.11.0, is unchanged and still the
+  human-readable signal; it is a boolean, so nothing could act on it to
+  rebuild a packet.
+
+- **`sanitise` now redacts the DHCP options that name the client** (#125) — it
+  redacted `chaddr` and the address-bearing options and nothing else, so
+  option 61 (Client Identifier) kept the real MAC two fields away from its own
+  substitution, and option 12 (Hostname) kept the machine's name.  The two
+  MACs also disagreed afterwards, which made the capture wrong as well as
+  leaky.
+
+  Now redacted: Hostname (12), Domain Name (15), Client Identifier (61) — the
+  same substitution `chaddr` gets, so they agree — Client FQDN (81), and the
+  opaque Vendor Specific (43) and User Class (77).  The rest of the option
+  space is numeric or structural and is left alone deliberately.
+
+- **An unsupported link type no longer passes in silence** (#123) — it made
+  the whole frame an opaque payload with no warning at all, which in a packet
+  spec is indistinguishable from a packet that genuinely carried only bytes.
+  `sanitise` then reported success on a file where every address, port and MAC
+  was still present, and the failure surfaced later as
+  `missing network.src`, which names a symptom rather than the cause.
+
+  `parse` now raises `UnsupportedLinkTypeWarning`, once per file; `sanitise`
+  warns that a packet was never decoded and so has not been redacted; and
+  `build` says the packet was not decoded rather than naming the key that is
+  missing because of it.
+
+- **A `sanitise` warning that could not be checked was reported as a name**
+  (#123) — warning consolidation rewrote every `PersonalDataWarning` with a
+  template assuming `kind` was `"email"` or `"name"`, so the `"unredacted"`
+  reports added in 0.12.0 came out as "Possible name found in…".  Findings and
+  reports are now distinguished; a report keeps its own wording and is still
+  consolidated across packets.
+
+- **`sanitise` now redacts the addresses inside ICMP and ICMPv6 payloads**
+  (#122) — it had no ICMP handling at all, so a Neighbour Discovery capture
+  came out with its Ethernet and IPv6 headers replaced and the same addresses
+  still in the payload: the ND target, a link-layer option holding the real
+  MAC, and the whole packet quoted inside an ICMP error.
+
+  The link-layer option made the sanitisation **reversible**: an IPv6
+  link-local address is EUI-64 derived from the MAC, so the leaked option
+  reconstructs the address that was replaced.  A file that looked sanitised
+  and reported success was not.
+
+  Now redacted: Neighbour Solicitation and Advertisement targets, Router
+  Solicitation and Advertisement options including the advertised prefix,
+  Redirect targets and destinations, link-layer address options, the packet
+  quoted by any ICMP or ICMPv6 error, and an ICMPv4 Redirect's gateway.
+  Replacements go through the same map as the rest of the capture, so an
+  address inside a payload matches the one in the header around it.
+
+  An ICMP type this version has no rule for now raises a
+  `PersonalDataWarning` with `kind="unredacted"` rather than passing through
+  quietly — silence is what let this go unnoticed.
+
+### Documentation
+
+- **The guides describe both ways of adding a protocol** (#121) — they still
+  described the world as it was before 0.10.0.  `parsing.md` named only
+  `.dns`, `.dhcp` and `.http` and now documents
+  `ParsedPacket.app` / `.app_protocol` as how *any* protocol's message is
+  reached; `generating.md` gains `PacketBuilder.app` beside the three
+  per-protocol methods; `sanitising.md` says what happens to a registered
+  protocol's section, and says plainly that a field nobody marked
+  `sensitive:` is not redacted; `cli/parse.md`, `cli/build.md` and
+  `cli/sanitise.md` document `--load-protocol` and the three loading routes,
+  with the warning that a protocol module is code and is run as code.
+
+  Stated where a reader arrives rather than only where it is convenient:
+  **packeteer has two protocol mechanisms and keeps both.**  DNS, DHCP and
+  HTTP are not expressible in the spec subset, so the built-ins are
+  hand-written and will stay so — a reader who finds only one route would
+  reasonably assume the other was legacy.
+
+- **A chunked HTTP body is documented as the encoded body** (#84) — and, more
+  to the point, *why*.  `parse_http` trims to `Content-Length` and leaves a
+  `Transfer-Encoding: chunked` message's framing in `body`, which had been
+  behaviour nobody had written down and the question had been raised twice.
+
+  Chunk boundaries are a **sender's choice, not a property of the payload**: a
+  70-byte body split `1c/c/18/6` and the same body split `40/6` are different
+  bytes on the wire and identical once de-chunked, so a de-chunked body could
+  not be re-chunked to reproduce the capture.  Keeping the framing is what
+  makes `parse` → `build` byte-exact for chunked traffic.
+
+  It is the same reasoning that put stream-shaped protocols outside packeteer
+  in 0.11.0 — reassembly and byte-exact reconstruction want opposite things.
+  The decision is now recorded in the `parse_http` docstring, the `http`
+  section of the packet-spec reference and the parsing guide, and asserted
+  against the real chunked capture in the corpus.
+
+- **`identifier` and `sequence` are documented as what they are** (#122) — the
+  two halves of a type-specific field, named for what an Echo puts there.
+  Every other ICMP message type uses those bytes for something else, and the
+  header classes, the two parsers and the packet-spec reference all said
+  otherwise.  The field names are unchanged, so specs written against an
+  earlier version still build.
 
 ---
 
@@ -2406,7 +2757,8 @@ the exhaustive API reference.
      tagged with names that predate this convention, so only the entries below
      carry compare links. -->
 
-[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/adamkjonsson/packeteer/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/adamkjonsson/packeteer/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/adamkjonsson/packeteer/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/adamkjonsson/packeteer/compare/v0.9.0...v0.9.1

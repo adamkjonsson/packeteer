@@ -39,11 +39,14 @@ Examples:
 import argparse
 import configparser
 import json
+import os
+import struct
 import sys
+from collections.abc import Callable
 from importlib.metadata import PackageNotFoundError as _PkgNotFoundError
 from importlib.metadata import version as _pkg_version
 
-from packeteer import app
+from packeteer import app, protocols
 from packeteer.filter import PacketFilter
 from packeteer.fuzz import (
     ALL_MUTATION_NAMES,
@@ -122,7 +125,11 @@ from packeteer.pcap import (
     LINKTYPE_ETHERNET,
     LINKTYPE_LINUX_SLL,
     LINKTYPE_LINUX_SLL2,
+    LINKTYPE_LOOP,
+    LINKTYPE_NULL,
     LINKTYPE_RAW,
+    SNAPLEN_UNLIMITED,
+    PacketTuple,
     is_pcap_or_pcapng,
     write_pcap,
     write_pcapng,
@@ -268,6 +275,7 @@ def _build_ip_layer(b: "PacketBuilder", net: dict) -> "PacketBuilder":
         fragment_offset=net.get("fragment_offset", 0),
         traffic_class=net.get("traffic_class", 0),
         flow_label=net.get("flow_label", 0),
+        declared_length=net.get("declared_length"),
         protocol=_fragment_protocol(net) if _is_later_fragment(net) else 0,
     )
     frag = net.get("fragment")
@@ -317,6 +325,7 @@ def _dispatch_transport(
             code=transport.get("code", 0),
             identifier=transport.get("identifier", 1),
             sequence=transport.get("sequence", 1),
+            checksum=transport.get("checksum"),
         )
     if proto_lower == "icmpv6":
         return b.icmpv6(
@@ -324,6 +333,7 @@ def _dispatch_transport(
             code=transport.get("code", 0),
             identifier=transport.get("identifier", 1),
             sequence=transport.get("sequence", 1),
+            checksum=transport.get("checksum"),
         )
     if proto_lower == "sctp":
         chunks = [
@@ -335,6 +345,7 @@ def _dispatch_transport(
             dst_port=transport.get("dst_port", 0),
             verification_tag=transport.get("verification_tag", 0),
             chunks=chunks or None,
+            checksum=transport.get("checksum"),
         )
     print(
         f"Error: packet {packet_num} {context}unknown protocol '{proto_lower}'",
@@ -664,8 +675,22 @@ def _apply_spec_to_builder(
 
     if not is_pppoe_discovery and not is_etherip and not is_ipip and not is_gre and \
             not is_pseudowire and not is_arp and (not src or not dst or not protocol_str):
+        # A packet with only a payload was never decoded — almost always an
+        # unsupported link type — and saying which key is missing sends the
+        # reader looking in the wrong place.
+        undecoded = "payload" in spec and not any(
+            key in spec for key in
+            ("ethernet", "sll", "sll2", "loopback", "arp", "network")
+        )
+        detail = (
+            " was not decoded when it was parsed, most likely because its "
+            "capture used a link type packeteer does not support; there is "
+            "nothing to rebuild from"
+            if undecoded else
+            " missing network.src, network.dst, or network.protocol"
+        )
         print(
-            f"Error: packet {packet_num} missing network.src, network.dst, or network.protocol",
+            f"Error: packet {packet_num}{detail}",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -691,10 +716,15 @@ def _apply_spec_to_builder(
         )
         sys.exit(1)
 
-    # ── Link layer: Ethernet, or a Linux cooked (SLL/SLL2) pseudo header ──────
+    # ── Link layer: Ethernet, a Linux cooked (SLL/SLL2) pseudo header, or BSD
+    # loopback framing.  They are alternatives — a packet has exactly one.
+    loopback_spec = spec.get("loopback")
     sll_spec = spec.get("sll")
     sll2_spec = spec.get("sll2")
-    if sll_spec is not None:
+    if loopback_spec is not None:
+        b = b.loopback(family=loopback_spec.get("family"),
+                       big_endian=loopback_spec.get("big_endian", False))
+    elif sll_spec is not None:
         b = b.sll(**{k: sll_spec[k]
                      for k in ("packet_type", "arphrd_type", "address") if k in sll_spec})
     elif sll2_spec is not None:
@@ -706,6 +736,7 @@ def _apply_spec_to_builder(
             src_mac=eth.get("src_mac", "00:00:00:00:00:01"),
             dst_mac=eth.get("dst_mac", "00:00:00:00:00:02"),
             pad=eth.get("pad", True),
+            trailer=bytes.fromhex(eth.get("trailer", "")),
         )
         vlan = eth.get("vlan", {})
         if vlan:
@@ -794,8 +825,8 @@ def _run_multi_packet(
     # Use link_type from metadata when present; otherwise infer from packet contents.
     link_type = _link_type_for_build(top_metadata, specs)
 
-    # collected: list of (pkt_bytes, ts_sec, ts_frac)
-    collected: list[tuple[bytes, int, int]] = []
+    # collected: list of (pkt_bytes, ts_sec, ts_frac[, orig_len])
+    collected: list[PacketTuple] = []
 
     for i, spec in enumerate(specs, 1):
         out = spec.get("packet_metadata", {})
@@ -812,14 +843,24 @@ def _run_multi_packet(
 
         ts_sec: int = out.get("timestamp_s", 0)
         ts_frac: int = out.get("timestamp_ns" if nanoseconds else "timestamp_us", 0)
+        # A packet the capture held only part of keeps its on-the-wire length,
+        # so the record says it was cut rather than that it was this small.
+        # Not carried across fragmentation: each fragment is its own record.
+        orig_len = out.get("orig_len") if len(pkts) == 1 else None
         for pkt in pkts:
-            collected.append((pkt, ts_sec, ts_frac))
+            if orig_len is None:
+                collected.append((pkt, ts_sec, ts_frac))
+            else:
+                collected.append((pkt, ts_sec, ts_frac, int(orig_len)))
 
+    snaplen: int = top_metadata.get("snaplen", SNAPLEN_UNLIMITED)
     if pcap_path:
-        write_pcap(collected, path=pcap_path, link_type=link_type, nanoseconds=nanoseconds)
+        write_pcap(collected, path=pcap_path, link_type=link_type,
+                   nanoseconds=nanoseconds, snaplen=snaplen)
         print(f"Wrote {len(collected)} packet(s) to {pcap_path} (link type: {link_type})")
     else:
-        write_pcapng(collected, path=pcapng_path, link_type=link_type, nanoseconds=nanoseconds)
+        write_pcapng(collected, path=pcapng_path, link_type=link_type,
+                     nanoseconds=nanoseconds, snaplen=snaplen)
         print(f"Wrote {len(collected)} packet(s) to {pcapng_path} (link type: {link_type})")
 
 
@@ -901,6 +942,66 @@ def _cmd_protocol_check(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+#: Environment variable naming protocol modules to load, colon-separated.
+_PROTOCOL_ENV = "PACKETEER_PROTOCOLS"
+
+
+def _load_protocol_modules(paths: list[str], *, source: str) -> None:
+    """Import each protocol module in *paths*, or exit naming what failed.
+
+    *source* says where the paths came from, so a failure names the thing the
+    user can go and fix rather than just the file.
+    """
+    for path in paths:
+        try:
+            added = protocols.load_module(path)
+        except protocols.ProtocolError as exc:
+            print(f"Error loading protocol module ({source}): {exc}",
+                  file=sys.stderr)
+            sys.exit(1)
+        if not added:
+            # Importing it did nothing, which is not obviously wrong — a
+            # module may register on a later import — but silence here is
+            # indistinguishable from a protocol that failed to arrive.
+            print(f"Warning: {path} registered no protocol", file=sys.stderr)
+
+
+def _protocol_paths_from_args(args: argparse.Namespace) -> list[str]:
+    """Return the protocol paths given by flag or environment, in order."""
+    # Never `args.protocol`: `stream --protocol tcp` owns that dest, and a
+    # string there would be iterated one character at a time.
+    paths = list(getattr(args, "load_protocol", None) or [])
+    paths += list(getattr(args, "load_protocol_local", None) or [])
+    env = os.environ.get(_PROTOCOL_ENV, "")
+    paths += [part for part in env.split(os.pathsep) if part]
+    return paths
+
+
+def _load_spec_protocols(config: dict, spec_path: str) -> None:
+    """Import the modules a packet spec's ``protocols`` key names.
+
+    Paths resolve against the spec file's directory, so a spec and the module
+    beside it move together.
+
+    **This executes Python named in a data file**, which is why it says what
+    it is importing.  The key is one the *user* wrote in a spec they are
+    editing; nothing packeteer parses out of a capture ever reaches it.
+    """
+    listed = config.get("protocols")
+    if not listed:
+        return
+    if not isinstance(listed, list) or not all(isinstance(p, str) for p in listed):
+        print("Error: 'protocols' must be a list of module paths",
+              file=sys.stderr)
+        sys.exit(1)
+    base = os.path.dirname(os.path.abspath(spec_path))
+    resolved = [p if os.path.isabs(p) else os.path.join(base, p) for p in listed]
+    for path in resolved:
+        print(f"Loading protocol module named by {spec_path}: {path}",
+              file=sys.stderr)
+    _load_protocol_modules(resolved, source=f"named in {spec_path}")
+
+
 def _cmd_build(args: argparse.Namespace) -> None:
     try:
         with open(args.config) as f:
@@ -908,6 +1009,7 @@ def _cmd_build(args: argparse.Namespace) -> None:
     except (OSError, json.JSONDecodeError) as e:
         print(f"Error loading config '{args.config}': {e}", file=sys.stderr)
         sys.exit(1)
+    _load_spec_protocols(raw_cfg, args.config)
     _run_multi_packet(raw_cfg, pcap_path=args.pcap, pcapng_path=args.pcapng)
 
 
@@ -943,6 +1045,9 @@ def _link_type(value: str) -> int:
         "sll": LINKTYPE_LINUX_SLL,
         "linux_sll2": LINKTYPE_LINUX_SLL2,
         "sll2": LINKTYPE_LINUX_SLL2,
+        "null": LINKTYPE_NULL,
+        "loopback": LINKTYPE_NULL,
+        "loop": LINKTYPE_LOOP,
     }
     key = value.strip().lower()
     if key in names:
@@ -962,6 +1067,12 @@ def _infer_link_type(specs: list) -> int:
         return LINKTYPE_LINUX_SLL2
     if any("sll" in spec for spec in specs):
         return LINKTYPE_LINUX_SLL
+    loopback = [spec["loopback"] for spec in specs if "loopback" in spec]
+    if loopback:
+        # DLT_LOOP is the same framing in network order, so the byte order a
+        # spec recorded is what says which of the two it was.
+        return LINKTYPE_LOOP if any(s.get("big_endian") for s in loopback) \
+            else LINKTYPE_NULL
     all_no_eth = all(not spec.get("ethernet", {}).get("enabled", True) for spec in specs)
     return LINKTYPE_RAW if all_no_eth else LINKTYPE_ETHERNET
 
@@ -984,6 +1095,23 @@ def _positive_int(value: str) -> int:
     return n
 
 
+def _spec_protocol_paths(args: argparse.Namespace) -> list[str]:
+    """Return the paths `parse` should record in the spec it writes.
+
+    Only what the user named on this invocation — the flag and the
+    environment variable — and written relative to the spec file so the two
+    move together.  Nothing here comes from the capture.
+    """
+    paths = _protocol_paths_from_args(args)
+    if not paths:
+        return []
+    output = getattr(args, "output", None)
+    if not output:
+        return [os.path.abspath(p) for p in paths]
+    base = os.path.dirname(os.path.abspath(output))
+    return [os.path.relpath(os.path.abspath(p), start=base) for p in paths]
+
+
 def _cmd_parse(args: argparse.Namespace) -> None:
     try:
         pf = _build_packet_filter(args)
@@ -997,6 +1125,7 @@ def _cmd_parse(args: argparse.Namespace) -> None:
             link_type=getattr(args, "link_type", None),
             decode_app=not getattr(args, "no_decode_app", False),
             defragment=getattr(args, "defragment", False),
+            protocol_modules=_spec_protocol_paths(args),
         )
     except (OSError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -1055,6 +1184,7 @@ def _cmd_sanitise(args: argparse.Namespace) -> None:
         except json.JSONDecodeError as e:
             print(f"Invalid JSON in '{args.input}': {e}", file=sys.stderr)
             sys.exit(1)
+        _load_spec_protocols(config, args.input)
 
     opts = SanitiseOptions(
         ips=not args.no_ips,
@@ -1139,6 +1269,7 @@ def _cmd_fuzz(args: argparse.Namespace) -> None:
         except (OSError, json.JSONDecodeError) as e:
             print(f"Error reading '{args.input}': {e}", file=sys.stderr)
             sys.exit(1)
+        _load_spec_protocols(config, args.input)
 
     requested: list[str] = args.mutations or list(ALL_MUTATION_NAMES)
     opts = FuzzOptions(mutations=requested, count=args.count, seed=args.seed)
@@ -1565,6 +1696,86 @@ def _validate_stream_args(args: argparse.Namespace) -> str:
     return protocol
 
 
+#: What a generated encoder raises when a section is the wrong shape.  These
+#: sections are user JSON going through code compiled from a spec, so the
+#: failure is bad input rather than a bug, and a traceback is the wrong answer
+#: to it — `AttributeError` above all, which is what a field of the wrong type
+#: produces (`'int' object has no attribute 'encode'`).
+_ENCODE_ERRORS = (
+    ValueError, KeyError, TypeError, AttributeError, IndexError,
+    OverflowError, struct.error,
+)
+
+
+def _protocol_payload_fn(
+    args: argparse.Namespace, protocol: str,
+) -> "Callable[[int, str], bytes] | None":
+    """Return a ``payload_fn`` for ``--payload <registered protocol>``.
+
+    ``None`` when ``--payload`` was not given, leaving the stream generators
+    to make up random bytes as they always have.  ``http`` and ``vpn`` are
+    handled before this and never reach it.
+
+    The messages come from ``--protocol-messages``: a protocol describes what
+    a message *looks like*, not what conversation to have, so the two are
+    separate on purpose and neither belongs in the spec grammar.
+    """
+    name = getattr(args, "payload", None)
+    if name is None:
+        return None
+
+    proto = protocols.for_section(name)
+    if proto is None:
+        known = ["http", "vpn"] + sorted(p.name for p in protocols.registered())
+        print(
+            f"Error: --payload {name!r} is not a registered protocol.  "
+            f"Known: {', '.join(known)}.  Use --load-protocol to add one.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if not proto.carries(protocol):
+        print(
+            f"Error: --payload {name!r} is carried over {proto.over}, "
+            f"not {protocol}.  Use --protocol {proto.over}.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    path = getattr(args, "protocol_messages", None)
+    if not path:
+        print(
+            f"Error: --payload {name!r} needs --protocol-messages FILE saying "
+            f"which messages to send.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    try:
+        with open(path) as handle:
+            sections = json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"Error reading '{path}': {exc}", file=sys.stderr)
+        sys.exit(1)
+    if not isinstance(sections, list) or not sections:
+        print(f"Error: '{path}' must be a non-empty JSON array of "
+              f"{name} sections", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        encoded = [proto.encode(proto.from_spec(section), protocol)
+                   for section in sections]
+    except _ENCODE_ERRORS as exc:
+        print(f"Error encoding a {name} message from '{path}' "
+              f"({type(exc).__name__}): {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    def payload_fn(index: int, _direction: str) -> bytes:
+        # Cycled rather than exhausted: --packets says how long the stream is,
+        # and a shorter message list should not silently shorten it.
+        return encoded[index % len(encoded)]
+
+    return payload_fn
+
+
 def _build_stream_config(
     protocol: str, args: argparse.Namespace,
 ) -> TCPStreamConfig | UDPStreamConfig | SCTPStreamConfig:
@@ -1739,6 +1950,7 @@ def _cmd_stream(args: argparse.Namespace) -> None:
         stream = _generate_vpn_payload_stream(args, encap)
         _write_stream_output(args, stream)
         return
+    payload_fn = _protocol_payload_fn(args, protocol)
 
     # Common keyword arguments shared by all protocol generators
     common = {
@@ -1760,6 +1972,13 @@ def _cmd_stream(args: argparse.Namespace) -> None:
     }
 
     config = _build_stream_config(protocol, args)
+    if payload_fn is not None:
+        # Deliberately the ordinary generator rather than a path of its own:
+        # #83 was `--payload http` emitting labels the impairment passes did
+        # not recognise, so every anomaly flag was silently dropped.  Feeding
+        # payloads in leaves the labels — DATA[i], ACK[i] — exactly as they
+        # are, so impairments apply without knowing a protocol was involved.
+        config.payload_fn = payload_fn
 
     try:
         if args.sessions > 1:
@@ -1827,6 +2046,14 @@ def main() -> None:
     except _PkgNotFoundError:
         _version = "unknown"
     parser.add_argument("--version", action="version", version=f"packeteer {_version}")
+    parser.add_argument(
+        "--load-protocol", metavar="FILE", action="append", dest="load_protocol",
+        help="Import a protocol module before running, so packeteer knows the "
+             "protocol it registers.  Repeatable, accepted after the "
+             f"subcommand too, and read from {_PROTOCOL_ENV} "
+             "(colon-separated).  A protocol module is code and is run as "
+             "code.",
+    )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -1897,6 +2124,12 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     build_parser.add_argument(
+        "--load-protocol", metavar="FILE", action="append",
+        dest="load_protocol_local",
+        help="Import a protocol module before running.  The global --load-protocol,\n"
+             "accepted here too because this is where it reads naturally.",
+    )
+    build_parser.add_argument(
         "config", metavar="FILE",
         help="Packet spec file with a 'packets' array",
     )
@@ -1915,6 +2148,12 @@ def main() -> None:
             " that can be replayed with 'packeteer build'"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parse_parser.add_argument(
+        "--load-protocol", metavar="FILE", action="append",
+        dest="load_protocol_local",
+        help="Import a protocol module before running.  The global --load-protocol,\n"
+             "accepted here too because this is where it reads naturally.",
     )
     parse_parser.add_argument(
         "pcap",
@@ -2015,6 +2254,12 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     info_parser.add_argument(
+        "--load-protocol", metavar="FILE", action="append",
+        dest="load_protocol_local",
+        help="Import a protocol module before running.  The global --load-protocol,\n"
+             "accepted here too because this is where it reads naturally.",
+    )
+    info_parser.add_argument(
         "pcap",
         metavar="FILE",
         help="Input .pcap or .pcapng file to inspect",
@@ -2064,6 +2309,12 @@ def main() -> None:
             "When a capture file is given, it is parsed automatically before sanitising."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    san_parser.add_argument(
+        "--load-protocol", metavar="FILE", action="append",
+        dest="load_protocol_local",
+        help="Import a protocol module before running.  The global --load-protocol,\n"
+             "accepted here too because this is where it reads naturally.",
     )
     san_parser.add_argument(
         "input", metavar="FILE",
@@ -2154,6 +2405,12 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     fuzz_parser.add_argument(
+        "--load-protocol", metavar="FILE", action="append",
+        dest="load_protocol_local",
+        help="Import a protocol module before running.  The global --load-protocol,\n"
+             "accepted here too because this is where it reads naturally.",
+    )
+    fuzz_parser.add_argument(
         "input", metavar="FILE",
         help="Input packet spec (.json) or capture file (.pcap/.pcapng)",
     )
@@ -2200,6 +2457,12 @@ def main() -> None:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    stream_parser.add_argument(
+        "--load-protocol", metavar="FILE", action="append",
+        dest="load_protocol_local",
+        help="Import a protocol module before running.  The global --load-protocol,\n"
+             "accepted here too because this is where it reads naturally.",
+    )
     # Config file (optional — CLI flags take precedence over config values)
     stream_parser.add_argument(
         "--config", metavar="FILE",
@@ -2245,12 +2508,23 @@ def main() -> None:
     )
     # Payload type
     stream_parser.add_argument(
-        "--payload", default=None, choices=["http", "vpn"],
+        "--payload", default=None, metavar="NAME",
         help=(
             "Application-layer payload to generate instead of random bytes. "
             "'http' simulates a REST client (TCP); 'vpn' simulates a fictive "
-            "binary VPN with a key-exchange channel and a CTR-mode data channel "
-            "(UDP)."
+            "binary VPN with a key-exchange channel and a CTR-mode data "
+            "channel (UDP).  Any other registered protocol's name is also "
+            "accepted — see --load-protocol — and then --protocol-messages "
+            "says what to send."
+        ),
+    )
+    stream_parser.add_argument(
+        "--protocol-messages", metavar="FILE", default=None,
+        help=(
+            "JSON array of packet-spec sections for --payload <protocol>, sent "
+            "in order and cycled when the stream is longer than the list.  A "
+            "protocol says what a message looks like; this says which messages "
+            "to send."
         ),
     )
     stream_parser.add_argument(
@@ -2659,6 +2933,7 @@ def main() -> None:
     stream_parser.set_defaults(func=_cmd_stream)
 
     args = parser.parse_args()
+    _load_protocol_modules(_protocol_paths_from_args(args), source="--load-protocol")
     args.func(args)
 
 

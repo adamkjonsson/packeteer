@@ -37,7 +37,7 @@ import socket
 import struct
 import warnings
 from collections import Counter
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -57,15 +57,16 @@ from packeteer.generate.geneve import GENEVE_PORT, GENEVE_PROTO_TEB, GeneveHeade
 from packeteer.generate.gre import GRE_PROTO_TEB, IPPROTO_GRE, GREHeader
 from packeteer.generate.gtpu import GTPU_MSG_G_PDU, GTPU_PORT, GTPUHeader
 from packeteer.generate.http import HTTPMessage
-from packeteer.generate.icmp import ICMPHeader
-from packeteer.generate.icmpv6 import ICMPv6Header
+from packeteer.generate.icmp import ICMPHeader, _build_icmp_header
+from packeteer.generate.icmpv6 import ICMPv6Header, _build_icmpv6_header
 from packeteer.generate.ip import IPHeader
 from packeteer.generate.ipsec import IPPROTO_AH, IPPROTO_ESP, AHHeader, ESPHeader
 from packeteer.generate.ipv6 import IPv6Header
+from packeteer.generate.loopback import LoopbackHeader
 from packeteer.generate.mpls import ETHERTYPE_MPLS_MULTICAST, ETHERTYPE_MPLS_UNICAST, MPLSLabel
 from packeteer.generate.pppoe import ETHERTYPE_PPPOE_DISCOVERY, ETHERTYPE_PPPOE_SESSION, PPPoEHeader
 from packeteer.generate.pseudowire import ETHERTYPE_PW_CW, PseudowireHeader
-from packeteer.generate.sctp import SCTPHeader
+from packeteer.generate.sctp import SCTPHeader, _build_sctp_packet
 from packeteer.generate.sll import SLL2Header, SLLHeader
 from packeteer.generate.tcp import TCPHeader, _build_tcp_header
 from packeteer.generate.udp import UDPHeader, _build_udp_header
@@ -74,7 +75,10 @@ from packeteer.pcap import (
     LINKTYPE_ETHERNET,
     LINKTYPE_LINUX_SLL,
     LINKTYPE_LINUX_SLL2,
+    LINKTYPE_LOOP,
+    LINKTYPE_NULL,
     LINKTYPE_RAW,
+    SNAPLEN_UNLIMITED,
     PcapFile,
     PcapFileHeader,
     PcapReader,
@@ -95,6 +99,7 @@ from .icmpv6 import packet_parser as _icmpv6_parser
 from .ip import packet_parser as _ip_parser
 from .ipsec import ah_packet_parser as _ah_parser
 from .ipsec import esp_packet_parser as _esp_parser
+from .loopback import packet_parser as _loopback_parser
 from .mpls import packet_parser as _mpls_parser
 from .pppoe import packet_parser as _pppoe_parser
 from .pseudowire import packet_parser as _pw_parser
@@ -105,6 +110,46 @@ from .tcp import packet_parser as _tcp_parser
 from .to_config import apply_tunneled, to_json_string, to_packet_spec, update_config
 from .udp import packet_parser as _udp_parser
 from .vxlan import packet_parser as _vxlan_parser
+
+
+class UnsupportedLinkTypeWarning(UserWarning):
+    """Emitted when a capture's link type is not one the parser knows.
+
+    Nothing above the link layer can be decoded, so the whole frame becomes an
+    opaque payload — no addresses, no ports, no protocol.  Without this warning
+    that is indistinguishable from a packet that genuinely carried only bytes,
+    and the difference matters: :func:`packeteer.sanitise.sanitise` cannot
+    redact what it cannot see, so it would report success on a file whose every
+    address is still in it.
+
+    The numeric link type is on the :attr:`link_type` attribute, so a caller
+    can act on it without reading the message.
+
+    Attributes:
+        link_type: The unrecognised link type, as recorded in the capture.
+
+    Example:
+
+        .. code-block:: python
+
+            import warnings
+            from packeteer.parse import parse_pcap_file, UnsupportedLinkTypeWarning
+
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                spec = parse_pcap_file(path="capture.pcap")
+
+            for w in caught:
+                if issubclass(w.category, UnsupportedLinkTypeWarning):
+                    print("cannot decode link type", w.message.link_type)
+
+    """
+
+    link_type: int
+
+    def __init__(self, message: str, link_type: int) -> None:
+        super().__init__(message)
+        self.link_type = link_type
 
 
 class UnsupportedIPProtocolWarning(UserWarning):
@@ -186,6 +231,10 @@ class ParsedPacket:
 
     Attributes:
         ethernet: Parsed Ethernet II header (includes VLAN tag when present).
+        loopback: Parsed BSD loopback header (``DLT_NULL`` / ``DLT_LOOP``),
+            present instead of :attr:`ethernet` for a capture taken on a
+            loopback interface.  It carries no addresses — there is no
+            link — only which protocol follows.
         sll: Parsed Linux cooked-capture pseudo header (``SLLHeader`` for
             ``LINKTYPE_LINUX_SLL``, ``SLL2Header`` for ``LINKTYPE_LINUX_SLL2``),
             or ``None``.  Present instead of :attr:`ethernet`; its Protocol Type
@@ -274,11 +323,13 @@ class ParsedPacket:
             ``total_length`` lies sets it with no snaplen involved.
 
             When it is ``True``, ``transport.length`` and
-            ``transport.checksum`` are cleared rather than recorded, because
-            neither can be checked against bytes that are not in the file —
-            so a cleared checksum means "derivable **or** unknowable", and
-            this is what tells the two apart.  ``False`` for an IPv6 jumbogram
-            (RFC 2675), whose payload length the header does not state.
+            ``transport.checksum`` are recorded as captured, since a value
+            derived from the bytes present would be derived from fewer bytes
+            than the sender used and so is certain to differ.  They are the
+            capture's own values, not a verdict on them: neither can be
+            checked against bytes that are not in the file, and this flag is
+            what says so.  ``False`` for an IPv6 jumbogram (RFC 2675), whose
+            payload length the header does not state.
         payload: Bytes remaining after all parsed headers.
         payload_offset: Index of ``payload[0]`` within the frame passed to
             :func:`parse_packet`, or ``None`` when :attr:`payload` is empty.
@@ -307,6 +358,7 @@ class ParsedPacket:
 
     ethernet:    EthernetHeader | None = None
     sll:         SLLHeader | SLL2Header | None = None
+    loopback:    LoopbackHeader | None = None
     arp:         ARPHeader | None = None
     mpls:        list[MPLSLabel] = field(default_factory=list)
     pppoe:       PPPoEHeader | None = None
@@ -435,8 +487,25 @@ def _parse_link_layer(
         s_size, ethertype, s_hdr = _sll2_parser(data)
         pkt.sll = s_hdr
         return _after_l2(s_size, ethertype)
+    if link_type in (LINKTYPE_NULL, LINKTYPE_LOOP):
+        # DLT_LOOP is always network order; DLT_NULL is the capturing host's,
+        # so its order is worked out from the bytes themselves.
+        l_size, ethertype, l_hdr = _loopback_parser(
+            data, big_endian=True if link_type == LINKTYPE_LOOP else None,
+        )
+        pkt.loopback = l_hdr
+        return _after_l2(l_size, ethertype)
     if link_type == LINKTYPE_RAW:
         return data, None   # raw IP — skip MPLS loop below
+    warnings.warn(
+        UnsupportedLinkTypeWarning(
+            f"link type {link_type} is not supported; the whole frame is "
+            f"stored in the payload field, so no addresses, ports or protocol "
+            f"were decoded from it",
+            link_type,
+        ),
+        stacklevel=3,
+    )
     _set_payload(pkt, data, 0)
     return None
 
@@ -505,6 +574,9 @@ def _parse_pppoe_and_mpls(
         a_size, _, a_hdr = _arp_parser(remaining)
         if a_size > 0 and a_hdr is not None:
             pkt.arp = a_hdr
+            # An ARP message is a fixed 28 bytes; anything after it is the
+            # sender's padding, which only these bytes can reproduce.
+            _record_trailer(pkt, remaining[a_size:])
         else:
             _set_payload(pkt, remaining, offset)
         return None
@@ -753,6 +825,27 @@ def _ip_payload_size(ip_hdr: IPHeader | IPv6Header | None, ip_size: int) -> int 
     return None
 
 
+def _record_trailer(pkt: ParsedPacket, trailer: bytes) -> None:
+    """Keep bytes that follow the end of a frame's own content.
+
+    A frame below the 60-byte Ethernet minimum is padded by the hardware, and
+    an IP datagram shorter than the frame carrying it leaves those bytes after
+    its declared end.  They belong to no layer, so nothing else records them —
+    and ``EthernetHeader.pad`` cannot: it is a boolean, so it can say "pad to
+    60" but not "these exact bytes", which is wrong for a frame padded to any
+    other length.
+
+    Does nothing when there is no trailer, or when the frame is not Ethernet.
+
+    Args:
+        pkt: Packet being parsed; its ``ethernet`` layer carries the trailer.
+        trailer: The bytes after the decoded content, as captured.
+
+    """
+    if trailer and pkt.ethernet is not None:
+        pkt.ethernet.trailer = trailer
+
+
 def _clear_derivable_transport_fields(
     pkt: ParsedPacket, hdr: object, payload: bytes, truncated: bool = False,
 ) -> None:
@@ -770,14 +863,19 @@ def _clear_derivable_transport_fields(
     rather than the fragment carrying them.  Keeping the fields only in that
     case is what stops every packet spec growing two redundant keys.
 
-    A *truncated* payload clears both instead of comparing them.  The derived
-    values would be computed from fewer bytes than the sender used, so keeping
-    the captured ones would say "wrong on the wire" about every packet of a
-    snaplen-limited capture; and a rebuild of a truncated packet does not
-    reproduce the original either way, so there is nothing for them to
-    preserve.  The cost is that corruption cannot be reported at all in a
-    truncated capture — the bytes the sender checksummed are not in the file,
-    so "unknown" is the only honest answer.
+    A *truncated* payload keeps both instead of comparing them.  The
+    comparison is meaningless there — the derived value is computed from
+    fewer bytes than the sender used, so it always differs — and the rule
+    the comparison implements says record whatever a rebuild cannot derive,
+    which on a truncated packet is both fields.  Keeping them is what lets a
+    snaplen capture rebuild as itself rather than as a smaller whole packet
+    (see ``network.declared_length``).
+
+    This is not a claim that the checksum was wrong on the wire.  In a
+    truncated capture the bytes the sender checksummed are not in the file,
+    so nothing can say; ``packet_metadata.truncated`` is what marks the
+    packets where a recorded checksum means "as captured, unverifiable"
+    rather than "wrong".
 
     Does nothing when the IP header is missing, since the derived values
     cannot be computed at all.
@@ -791,39 +889,67 @@ def _clear_derivable_transport_fields(
             see :func:`_ip_payload_size`.
 
     """
-    if not isinstance(hdr, (TCPHeader, UDPHeader)) or pkt.ip is None:
+    if pkt.ip is None or not isinstance(
+        hdr, (TCPHeader, UDPHeader, ICMPHeader, ICMPv6Header, SCTPHeader),
+    ):
         return
     if truncated:
-        hdr.checksum = None
-        if isinstance(hdr, UDPHeader):
-            hdr.length = None
         return
-    src, dst = pkt.ip.src, pkt.ip.dst
-    version = 6 if isinstance(pkt.ip, IPv6Header) else 4
 
     if isinstance(hdr, UDPHeader):
-        captured_length, captured_checksum = hdr.length, hdr.checksum
-        hdr.length = hdr.checksum = None
+        # The only transport here with a length field of its own.
+        captured_length = hdr.length
+        hdr.length = None
         if captured_length != 8 + len(payload):
             hdr.length = captured_length
-        try:
-            derived = _build_udp_header(hdr, payload, src, dst, version)
-        except OSError:
-            hdr.length, hdr.checksum = captured_length, captured_checksum
-            return
-        if captured_checksum != struct.unpack("!H", derived[6:8])[0]:
-            hdr.checksum = captured_checksum
-        return
 
     captured_checksum = hdr.checksum
     hdr.checksum = None
+    derived = _derived_checksum(pkt, hdr, payload)
+    if derived is None or derived != captured_checksum:
+        hdr.checksum = captured_checksum
+
+
+def _derived_checksum(
+    pkt: ParsedPacket, hdr: object, payload: bytes,
+) -> int | None:
+    """Return the checksum a rebuild of *hdr* would compute, or ``None``.
+
+    ``None`` means the value could not be worked out at all — an address the
+    pseudo-header needs would not parse — in which case the captured checksum
+    has to be kept, since nothing can show it is redundant.
+
+    *hdr* must have had its own ``checksum`` cleared first, or the builder
+    writes that value straight back out and the comparison is with itself.
+
+    Args:
+        pkt: Packet the header belongs to; supplies the IP addresses.
+        hdr: Parsed transport header.
+        payload: Bytes after the transport header, as captured.
+
+    Returns:
+        The derived checksum, or ``None`` when it cannot be computed.
+
+    """
+    src, dst = pkt.ip.src, pkt.ip.dst
+    version = 6 if isinstance(pkt.ip, IPv6Header) else 4
     try:
-        derived = _build_tcp_header(hdr, payload, src, dst, version)
+        if isinstance(hdr, UDPHeader):
+            return struct.unpack("!H", _build_udp_header(
+                hdr, payload, src, dst, version)[6:8])[0]
+        if isinstance(hdr, TCPHeader):
+            return struct.unpack("!H", _build_tcp_header(
+                hdr, payload, src, dst, version)[16:18])[0]
+        if isinstance(hdr, ICMPHeader):
+            return struct.unpack("!H", _build_icmp_header(hdr, payload)[2:4])[0]
+        if isinstance(hdr, ICMPv6Header):
+            return struct.unpack("!H", _build_icmpv6_header(
+                hdr, payload, src, dst)[2:4])[0]
+        # SCTP carries its chunks on the header, so the payload is already in
+        # it; the CRC-32c is 32 bits rather than 16.
+        return struct.unpack("!I", _build_sctp_packet(hdr)[8:12])[0]
     except OSError:
-        hdr.checksum = captured_checksum
-        return
-    if captured_checksum != struct.unpack("!H", derived[16:18])[0]:
-        hdr.checksum = captured_checksum
+        return None
 
 
 def _parse_ip_protocol(
@@ -1057,6 +1183,7 @@ def parse_packet(
     truncated = declared is not None and declared > len(remaining)
     pkt.datagram_truncated = truncated
     if declared is not None and declared < len(remaining):
+        _record_trailer(pkt, remaining[declared:])
         remaining = remaining[:declared]
 
     if _is_non_first_fragment(ip_hdr):
@@ -1122,6 +1249,8 @@ def _packet_to_spec(pkt: ParsedPacket) -> dict[str, Any]:
     cfg: dict[str, Any] = {}
     if pkt.ethernet is not None:
         update_config(cfg, pkt.ethernet)
+    if pkt.loopback is not None:
+        update_config(cfg, pkt.loopback)
     if pkt.sll is not None:
         update_config(cfg, pkt.sll)
     if pkt.arp is not None:
@@ -1132,6 +1261,15 @@ def _packet_to_spec(pkt: ParsedPacket) -> dict[str, Any]:
         update_config(cfg, pkt.pppoe)
     if pkt.ip is not None:
         update_config(cfg, pkt.ip)
+    if pkt.datagram_truncated and pkt.ip is not None:
+        # The header says more than the bytes present, which a rebuild cannot
+        # work out — so it is recorded, the same rule `transport.length`
+        # follows.  Without it a truncated capture rebuilds as a smaller whole
+        # packet that never existed.
+        declared = (pkt.ip.total_length if isinstance(pkt.ip, IPHeader)
+                    else pkt.ip.payload_length)
+        if declared is not None:
+            cfg.setdefault("network", {})["declared_length"] = declared
 
     if (pkt.ah is not None or pkt.esp is not None
             or pkt.ipip or pkt.gre is not None
@@ -1180,6 +1318,7 @@ def parse_pcap_file(
     link_type: int | None = None,
     decode_app: bool = True,
     defragment: bool = False,
+    protocol_modules: Sequence[str] | None = None,
 ) -> str:
     """Parse every packet in a pcap file and return a packet spec string.
 
@@ -1215,6 +1354,11 @@ def parse_pcap_file(
             raw bytes in the spec's ``payload`` section instead of being
             decoded into ``dns`` / ``dhcp`` / ``http`` sections.  Use it when
             the byte-exact payload matters more than the decoded view.
+        protocol_modules: Paths to record in the spec's top-level
+            ``protocols`` key, so ``packeteer build`` reloads the same user
+            protocols without being told again.  These must be paths the
+            caller supplied; a path taken from a capture's contents would let
+            a capture choose what code runs.
         defragment: When ``True``, fragmented datagrams are reassembled and
             each appears once, as a whole packet.  Off by default because a
             spec is the round-trip format: a fragmented capture parses and
@@ -1240,6 +1384,7 @@ def parse_pcap_file(
 
     packet_configs: list[dict[str, Any]] = []
     unsupported: Counter[int] = Counter()
+    unsupported_links: set[int] = set()
 
     records: Iterable[tuple[bytes, int, int]] = pcap.packets
     if defragment:
@@ -1247,6 +1392,7 @@ def parse_pcap_file(
 
     with warnings.catch_warnings(record=True) as _caught:
         warnings.filterwarnings("always", category=UnsupportedIPProtocolWarning)
+        warnings.filterwarnings("always", category=UnsupportedLinkTypeWarning)
         for packet_num, record in enumerate(records, 1):
             pkt = parse_pcap_packet(record, pcap.header, decode_app=decode_app)
             cfg = _packet_to_spec(pkt)
@@ -1259,10 +1405,24 @@ def parse_pcap_file(
                 # Only when set: absent means whole, which is the common case
                 # and not worth a key on every packet.
                 cfg["packet_metadata"]["truncated"] = True
+            orig_len = getattr(record, "orig_len", None)
+            if orig_len is not None and orig_len != len(record.data):
+                # The record says the packet was longer than the bytes kept,
+                # which nothing in the frame states: without this a rebuild
+                # writes it back as a whole packet of the captured size.
+                # Absent from a reassembled record, which has no single
+                # on-the-wire length to report.
+                cfg["packet_metadata"]["orig_len"] = orig_len
             if packet_filter is None or packet_filter.matches(cfg):
                 packet_configs.append(cfg)
 
     for w in _caught:
+        if issubclass(w.category, UnsupportedLinkTypeWarning):
+            # One per file rather than one per packet: the link type is a
+            # property of the capture, and every packet in it is affected.
+            assert isinstance(w.message, UnsupportedLinkTypeWarning)
+            unsupported_links.add(w.message.link_type)
+            continue
         if issubclass(w.category, UnsupportedIPProtocolWarning):
             assert isinstance(w.message, UnsupportedIPProtocolWarning)
             unsupported[w.message.protocol] += 1
@@ -1270,6 +1430,19 @@ def parse_pcap_file(
             warnings.warn_explicit(
                 w.message, w.category, w.filename, w.lineno, source=w.source,
             )
+
+    for unknown in sorted(unsupported_links):
+        file_hint = f" in {str(path)!r}" if path is not None else ""
+        warnings.warn(
+            UnsupportedLinkTypeWarning(
+                f"link type {unknown} is not supported{file_hint}; every "
+                f"frame is stored whole in its payload field, so nothing above "
+                f"the link layer was decoded — and 'packeteer sanitise' cannot "
+                f"redact addresses it did not parse",
+                unknown,
+            ),
+            stacklevel=2,
+        )
 
     if unsupported:
         file_hint = f" in {str(path)!r}" if path is not None else ""
@@ -1291,10 +1464,16 @@ def parse_pcap_file(
     # version_major 1 = pcapng, 2 = pcap
     file_type = "pcapng" if pcap.header.version_major == 1 else "pcap"
     global_output.setdefault("type", file_type)
+    if pcap.header.snaplen not in (0, SNAPLEN_UNLIMITED):
+        # Recorded only when the file declared a real limit: 65535 is what a
+        # rebuild writes anyway, and pcapng's 0 means "no limit".
+        global_output.setdefault("snaplen", pcap.header.snaplen)
     if path is not None:
         global_output.setdefault("from_file", str(path))
 
-    return to_json_string(to_packet_spec(packet_configs, metadata=global_output))
+    return to_json_string(to_packet_spec(
+        packet_configs, metadata=global_output, protocols=protocol_modules,
+    ))
 
 
 class PacketReader:

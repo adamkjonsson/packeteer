@@ -241,6 +241,12 @@ from .ipv6 import (
     _build_hop_by_hop_header,
     _build_ipv6_header,
 )
+from .loopback import (
+    AF_INET,
+    AF_INET6_DEFAULT,
+    LoopbackHeader,
+    _build_loopback_header,
+)
 from .mpls import ETHERTYPE_MPLS_UNICAST, MPLSLabel, _build_mpls_label
 from .pppoe import (
     ETHERTYPE_PPPOE_DISCOVERY,
@@ -451,6 +457,18 @@ def _build_encap_layer(layer: object, next_layer: object, data: bytes) -> bytes:
         ethertype = _ethertype_for(next_layer) if next_layer else 0
         data = _build_sll2_header(layer, ethertype) + data
 
+    elif isinstance(layer, LoopbackHeader):
+        # The family says which protocol follows, so it is derived from the
+        # layer after it unless a spec pinned one — a capture's own value
+        # varies by the platform that took it.
+        family = layer.family
+        if family is None:
+            family = (AF_INET6_DEFAULT
+                      if isinstance(next_layer, IPv6Header) else AF_INET)
+        data = _build_loopback_header(
+            LoopbackHeader(family=family, big_endian=layer.big_endian),
+        ) + data
+
     return data
 
 
@@ -532,6 +550,7 @@ class PacketBuilder:
         src_mac: str = "00:00:00:00:00:01",
         dst_mac: str = "00:00:00:00:00:02",
         pad: bool = True,
+        trailer: bytes = b"",
     ) -> "PacketBuilder":
         """Append an Ethernet II header layer.
 
@@ -540,13 +559,54 @@ class PacketBuilder:
         Args:
             src_mac: Source MAC address (colon- or hyphen-separated hex).
             dst_mac: Destination MAC address.
+            trailer: Bytes to append after the frame's content, written out
+                verbatim and instead of any padding.  Its use is a captured
+                frame whose sender padded it to something other than the
+                60-byte minimum, which *pad* cannot express.
             pad: When ``True``, zero-pad the assembled frame to the IEEE 802.3
                 minimum of 60 bytes when the frame would otherwise be shorter.
 
         """
         # ethertype=0 is a placeholder; the correct value is filled in at
         # build time based on whatever layer follows this one.
-        self._layers.append(EthernetHeader(dst_mac, src_mac, ethertype=0, pad=pad))
+        self._layers.append(
+            EthernetHeader(dst_mac, src_mac, ethertype=0, pad=pad, trailer=trailer),
+        )
+        return self
+
+    def loopback(
+        self,
+        *,
+        family: int | None = None,
+        big_endian: bool = False,
+    ) -> "PacketBuilder":
+        """Append a BSD loopback header (``DLT_NULL`` / ``DLT_LOOP``).
+
+        The framing a capture on ``lo0`` uses on macOS and the BSDs: four
+        bytes naming the address family, and no addresses at all — there is no
+        link.  Use it instead of :meth:`ethernet`.
+
+        Args:
+            family: The address family value.  ``None`` derives it from the IP
+                layer that follows — ``2`` for IPv4, and macOS's ``30`` for
+                IPv6, since ``AF_INET6`` differs by platform.  Pass one to
+                reproduce a capture taken elsewhere.
+            big_endian: Write the family in network order, which is what
+                ``DLT_LOOP`` requires.  ``DLT_NULL`` uses the capturing host's
+                order, little-endian in practice.
+
+        Example — a loopback UDP packet::
+
+            pkt = (PacketBuilder()
+                .loopback()
+                .ip(src="127.0.0.1", dst="127.0.0.1")
+                .udp(dst_port=9)
+                .payload(data=b"x")
+                .build()
+            )
+
+        """
+        self._layers.append(LoopbackHeader(family=family, big_endian=big_endian))
         return self
 
     def sll(
@@ -1080,6 +1140,7 @@ class PacketBuilder:
         # IPv6-specific
         traffic_class: int = 0,
         flow_label: int = 0,
+        declared_length: int | None = None,
         protocol: int = 0,
     ) -> "PacketBuilder":
         """Append an IP header layer.  IPv4 or IPv6 is auto-detected from *src*.
@@ -1093,6 +1154,12 @@ class PacketBuilder:
         Args:
             src: Source IP address (dotted-decimal IPv4 or colon-hex IPv6).
             dst: Destination IP address in the same format.
+            declared_length: The length field's value, overriding the one
+                derived from the bytes beside it — IPv4 Total Length, or IPv6
+                Payload Length.  Its use is a capture cut short by a snaplen,
+                whose header still says how long the packet was: passing the
+                captured value is what makes such a packet rebuild as
+                truncated rather than as a smaller whole one.
             ttl: Time-To-Live (IPv4) or Hop Limit (IPv6).  Defaults to ``64``.
             tos: IPv4 Type of Service / DSCP+ECN byte.
             identification: IPv4 Identification field.
@@ -1118,6 +1185,7 @@ class PacketBuilder:
                 hop_limit=ttl,
                 traffic_class=traffic_class,
                 flow_label=flow_label,
+                payload_length=declared_length,
             ))
         else:
             self._layers.append(IPHeader(
@@ -1126,6 +1194,7 @@ class PacketBuilder:
                 identification=identification,
                 flags=flags,
                 fragment_offset=fragment_offset,
+                total_length=declared_length,
             ))
         return self
 
@@ -1260,10 +1329,16 @@ class PacketBuilder:
         code: int = 0,
         identifier: int = 1,
         sequence: int = 1,
+        checksum: int | None = None,
     ) -> "PacketBuilder":
-        """Append an ICMPv4 transport header layer.  Requires an IPv4 layer above it."""
+        """Append an ICMPv4 transport header layer.  Requires an IPv4 layer above it.
+
+        *checksum* overrides the derived value when set; see
+        :class:`~packeteer.generate.icmp.ICMPHeader`.
+        """
         self._layers.append(ICMPHeader(
             type=type, code=code, identifier=identifier, sequence=sequence,
+            checksum=checksum,
         ))
         return self
 
@@ -1274,10 +1349,16 @@ class PacketBuilder:
         code: int = 0,
         identifier: int = 1,
         sequence: int = 1,
+        checksum: int | None = None,
     ) -> "PacketBuilder":
-        """Append an ICMPv6 transport header layer.  Requires an IPv6 layer above it."""
+        """Append an ICMPv6 transport header layer.  Requires an IPv6 layer above it.
+
+        *checksum* overrides the derived value when set; see
+        :class:`~packeteer.generate.icmpv6.ICMPv6Header`.
+        """
         self._layers.append(ICMPv6Header(
             type=type, code=code, identifier=identifier, sequence=sequence,
+            checksum=checksum,
         ))
         return self
 
@@ -1288,6 +1369,7 @@ class PacketBuilder:
         dst_port: int = 0,
         verification_tag: int = 0,
         chunks: list[SCTPChunk] | None = None,
+        checksum: int | None = None,
     ) -> "PacketBuilder":
         """Append an SCTP transport header and chunk list (RFC 9260).
 
@@ -1297,7 +1379,7 @@ class PacketBuilder:
         :meth:`payload` after :meth:`sctp`.
 
         The CRC-32c checksum (Castagnoli, RFC 9260 §6.8) is computed
-        automatically at :meth:`build` time.
+        automatically at :meth:`build` time, unless *checksum* is given.
 
         Args:
             src_port: Source port number.
@@ -1306,6 +1388,8 @@ class PacketBuilder:
                 the handshake.  Defaults to ``0``.
             chunks: List of :data:`~.SCTPChunk` objects to encode.  When
                 ``None`` a single empty :class:`~.SCTPDataChunk` is used.
+            checksum: Explicit CRC-32c, written out as given instead of being
+                computed.  See :class:`~packeteer.generate.sctp.SCTPHeader`.
 
         Example::
 
@@ -1330,6 +1414,7 @@ class PacketBuilder:
             dst_port=dst_port,
             verification_tag=verification_tag,
             chunks=chunks or [],
+            checksum=checksum,
         ))
         return self
 
@@ -1494,23 +1579,32 @@ class PacketBuilder:
 
     @staticmethod
     def _clone_ip(layer: IPHeader, proto: int) -> IPHeader:
-        """Return a copy of *layer* with ``protocol`` set to *proto*."""
+        """Return a copy of *layer* with ``protocol`` set to *proto*.
+
+        Every field has to be named here: one left out is silently dropped on
+        the way to the wire, which is how ``total_length`` came to be lost.
+        """
         return IPHeader(
             layer.src, layer.dst, proto,
             ttl=layer.ttl, tos=layer.tos,
             identification=layer.identification,
             flags=layer.flags,
             fragment_offset=layer.fragment_offset,
+            total_length=layer.total_length,
         )
 
     @staticmethod
     def _clone_ipv6(layer: IPv6Header, proto: int) -> IPv6Header:
-        """Return a copy of *layer* with ``next_header`` set to *proto*."""
+        """Return a copy of *layer* with ``next_header`` set to *proto*.
+
+        Every field has to be named here; see :meth:`_clone_ip`.
+        """
         return IPv6Header(
             layer.src, layer.dst, proto,
             hop_limit=layer.hop_limit,
             traffic_class=layer.traffic_class,
             flow_label=layer.flow_label,
+            payload_length=layer.payload_length,
         )
 
     def _assemble_range(self, start: int, end: int, data: bytes) -> bytes:
@@ -1572,15 +1666,20 @@ class PacketBuilder:
         return data
 
     def _apply_eth_padding(self, data: bytes) -> bytes:
-        """Add padding after short ethernet frame.
+        """Append an Ethernet frame's trailing bytes.
 
-        Pad *data* to the Ethernet minimum frame size if the outermost layer
-        is an :class:`EthernetHeader` with ``pad=True``.
+        An explicit :attr:`~packeteer.generate.ethernet.EthernetHeader.trailer`
+        wins: it is the bytes a capture actually held, so it is written out as
+        given and no padding is inferred on top of it.  Otherwise *data* is
+        padded to the Ethernet minimum frame size when the outermost layer is
+        an :class:`EthernetHeader` with ``pad=True``.
         """
-        if (self._layers
-                and isinstance(self._layers[0], EthernetHeader)
-                and self._layers[0].pad
-                and len(data) < ETHERNET_MIN_FRAME_SIZE):
+        if not (self._layers and isinstance(self._layers[0], EthernetHeader)):
+            return data
+        ethernet = self._layers[0]
+        if ethernet.trailer:
+            return data + ethernet.trailer
+        if ethernet.pad and len(data) < ETHERNET_MIN_FRAME_SIZE:
             data += b'\x00' * (ETHERNET_MIN_FRAME_SIZE - len(data))
         return data
 

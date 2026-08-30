@@ -195,7 +195,7 @@ class TestReadPcapngRoundtrip(unittest.TestCase):
     def test_single_packet_roundtrip(self):
         payload = b"\xca\xfe\xba\xbe" * 10
         result = self._roundtrip([(payload, 1000, 500)])
-        self.assertEqual(result.packets[0], (payload, 1000, 500))
+        self.assertEqual(tuple(result.packets[0]), (payload, 1000, 500))
 
     def test_multiple_packets_roundtrip(self):
         pkts = [(bytes([i] * (i + 1)), 1000 + i, i * 100) for i in range(8)]

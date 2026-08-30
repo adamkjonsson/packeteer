@@ -63,6 +63,21 @@ cover/
 # Examples
 *.pcap
 *.pcapng
+
+# The real capture corpus is tracked, by name.  Naming each file makes adding
+# one deliberate, and stops an unsanitised capture being committed by being
+# dropped in the directory.  See testcases/real/MANIFEST.md.
+!testcases/real/arp.pcapng
+!testcases/real/http_body.pcap
+!testcases/real/dhcp.pcapng
+!testcases/real/dns.pcapng
+!testcases/real/icmp_time_exceeded.pcapng
+!testcases/real/icmpv6_nd.pcapng
+!testcases/real/ipv6_udp.pcapng
+!testcases/real/tcp_v4.pcapng
+!testcases/real/tcp_v4_snaplen.pcapng
+!testcases/real/tcp_v6_loopback.pcapng
+!testcases/real/udp_frag_nano.pcap
 *.json
 *.ini
 

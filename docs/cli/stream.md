@@ -35,7 +35,8 @@ Exactly one output flag is required; they are mutually exclusive.
 | `--no-ethernet` | off | Omit Ethernet headers |
 | `--sessions N` | `1` | Number of independent sessions (IP pairs) to generate (see below) |
 | `--session-stagger SECONDS` | `1.0` | Window over which session start times are spread when `--sessions > 1` |
-| `--payload TYPE` | off | Application-layer payload to generate instead of random bytes; `http` or `vpn` (see below) |
+| `--payload NAME` | off | Application-layer payload to generate instead of random bytes: `http`, `vpn`, or any registered protocol's name (see below) |
+| `--protocol-messages FILE` | — | JSON array of packet-spec sections for `--payload <protocol>`, sent in order and cycled |
 | `--requests N` | `10` | HTTP only: total request/response transactions |
 | `--requests-per-connection K` | all | HTTP only: transactions per connection (`1` = a new connection per request) |
 | `--error-rate P` | `0.1` | HTTP only: probability a response is a 4xx/5xx error |
@@ -101,6 +102,45 @@ reproducible.
 packeteer stream --client-ip 10.0.0.1 --server-ip 10.1.0.1 \
     --sessions 20 --packets 5 --seed 42 --pcap busy.pcap
 ```
+
+## Payloads from your own protocol
+
+`--payload <name>` takes any protocol registered with packeteer — one you
+compiled from a spec, or one you wrote by hand — so a generated conversation
+can carry your own traffic instead of random bytes.
+
+A protocol describes what a message *looks like*, not what conversation to
+have, so the two are separate: `--protocol-messages` is a JSON array of
+packet-spec sections, sent in order and cycled when the stream is longer than
+the list.
+
+```bash
+packeteer stream --load-protocol ./sensor.py \
+    --protocol udp --payload sensor --protocol-messages msgs.json \
+    --client-ip 10.0.0.1 --server-ip 10.0.0.2 --server-port 9000 \
+    --packets 100 --pcap sensors.pcap
+```
+
+```json
+[
+  { "magic": 21317, "owner": "alice", "value": 21 },
+  { "magic": 21317, "owner": "bob",   "value": 42 }
+]
+```
+
+`--load-protocol` is what registers the protocol; see
+{doc}`../protocols/index`.  The name must match the protocol's own, and the
+protocol must be carried over the transport you asked for — a UDP protocol
+with `--protocol tcp` is refused rather than quietly mis-encoded.
+
+**Every anomaly option applies**, because this is the ordinary stream
+generator with the payloads fed in rather than a path of its own: the packet
+labels stay `DATA[i]` and `ACK[i]`, which is what the impairment passes look
+for.
+
+This deliberately stays out of the spec grammar.  Which messages to send is a
+property of the traffic you want, not of the protocol, and putting it in a
+spec would make every spec carry test data.
 
 ## HTTP REST payloads
 
