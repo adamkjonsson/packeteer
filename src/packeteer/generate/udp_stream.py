@@ -29,6 +29,7 @@ Typical usage::
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from random import Random
 
@@ -104,10 +105,19 @@ class UDPStreamConfig:
     signature.
 
     Attributes:
+        payload_fn: Optional callable invoked once per datagram to supply its
+            bytes, overriding the size-based generation entirely::
+
+                def payload_fn(packet_index: int, direction: str) -> bytes
+
+            *direction* is always ``"c2s"`` here; it is in the signature so
+            the callable is the same shape as
+            :attr:`~packeteer.generate.tcp_stream.TCPStreamConfig.payload_fn`
+            and one written for a TCP stream works for a UDP one.
         payload_sizes: Explicit list of payload sizes, one per datagram.
             When provided, overrides *min_payload*, *max_payload*, and
             *payload_distribution*.  Must have exactly *num_data_packets*
-            entries.
+            entries.  Ignored when *payload_fn* is set.
         base_time: Start timestamp in seconds.  Defaults to
             ``time.time()`` when ``None``.
         gap_jitter: Maximum additional random delay per inter-packet gap in
@@ -120,6 +130,7 @@ class UDPStreamConfig:
 
     """
 
+    payload_fn: Callable[[int, str], bytes] | None = None
     payload_sizes: list[int] | None = None
     base_time: float | None = None
     gap_jitter: float = 0.0
@@ -265,19 +276,24 @@ def generate_udp_stream(
     used_ts: set[int] = set()
     usec_cursor = int(base_time * 1_000_000)
 
-    sizes = _payload_sizes(
-        num_data_packets, min_payload, max_payload,
-        payload_distribution, payload_sizes, rng,
-    )
-    # Continuous payload: tile default_payload.txt across all datagrams
-    payload_data = _repeat_payload(sum(sizes))
-    offset = 0
-    for i, size in enumerate(sizes):
+    if config.payload_fn is not None:
+        chunks = [config.payload_fn(i, "c2s") for i in range(num_data_packets)]
+    else:
+        sizes = _payload_sizes(
+            num_data_packets, min_payload, max_payload,
+            payload_distribution, payload_sizes, rng,
+        )
+        # Continuous payload: tile default_payload.txt across all datagrams
+        payload_data = _repeat_payload(sum(sizes))
+        chunks = []
+        offset = 0
+        for size in sizes:
+            chunks.append(payload_data[offset:offset + size])
+            offset += size
+    for i, chunk in enumerate(chunks):
         gap_usec = int((inter_packet_gap + rng.uniform(0, gap_jitter)) * 1_000_000)
         usec_cursor += gap_usec
         ts = _alloc_usec(usec_cursor, used_ts)
-        chunk = payload_data[offset:offset + size]
-        offset += size
         raw = _build_udp_packet(
             src_ip=client_ip, dst_ip=server_ip,
             src_port=client_port, dst_port=server_port,
@@ -292,7 +308,7 @@ def generate_udp_stream(
             ts_sec=ts // 1_000_000,
             ts_usec=ts % 1_000_000,
             direction="c2s",
-            payload_len=size,
+            payload_len=len(chunk),
             label=f"DATA[{i}]",
         ))
 

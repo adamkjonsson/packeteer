@@ -230,6 +230,11 @@ def unregister(name: str) -> None:
     _reindex()
 
 
+#: Names each loaded path registered, so a path loaded, unregistered and
+#: loaded again runs a second time instead of silently doing nothing.
+_loaded: dict[str, tuple[str, ...]] = {}
+
+
 def load_module(path: str | os.PathLike) -> tuple[AppProtocol, ...]:
     """Import a Python file so the protocols it defines register themselves.
 
@@ -256,7 +261,10 @@ def load_module(path: str | os.PathLike) -> tuple[AppProtocol, ...]:
     Returns:
         The protocols the module registered, in registration order.  Empty
         when it registered none, which is worth checking: a module that
-        defines a protocol and never registers it is a silent no-op.
+        defines a protocol and never registers it is a silent no-op.  Also
+        empty when this path was already loaded and its protocols are still
+        registered — but a path whose protocols have since been unregistered
+        is executed again, so unregistering and reloading works.
 
     Raises:
         ProtocolError: If *path* does not exist, cannot be read as a module,
@@ -277,8 +285,15 @@ def load_module(path: str | os.PathLike) -> tuple[AppProtocol, ...]:
     module_name = "packeteer._loaded." + os.path.splitext(
         os.path.basename(resolved))[0]
     if module_name in sys.modules:
-        # Already executed; registering again would collide with itself.
-        return ()
+        registered_now = {proto.name for proto in registered()}
+        if _loaded.get(resolved, ()) and set(_loaded[resolved]) <= registered_now:
+            # Already loaded and still registered; executing it again would
+            # collide with itself.
+            return ()
+        # It was loaded and then unregistered, so run it again rather than
+        # doing nothing — a no-op here would look like a module that
+        # registers nothing, which is a different problem entirely.
+        del sys.modules[module_name]
 
     before = {proto.name for proto in registered()}
     spec = importlib.util.spec_from_file_location(module_name, resolved)
@@ -294,7 +309,9 @@ def load_module(path: str | os.PathLike) -> tuple[AppProtocol, ...]:
             f"{os.fspath(path)} failed while being imported "
             f"({type(exc).__name__}: {exc})"
         ) from exc
-    return tuple(p for p in registered() if p.name not in before)
+    added = tuple(p for p in registered() if p.name not in before)
+    _loaded[resolved] = tuple(proto.name for proto in added)
+    return added
 
 
 def registered() -> tuple[AppProtocol, ...]:

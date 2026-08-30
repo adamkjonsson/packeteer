@@ -40,7 +40,9 @@ import argparse
 import configparser
 import json
 import os
+import struct
 import sys
+from collections.abc import Callable
 from importlib.metadata import PackageNotFoundError as _PkgNotFoundError
 from importlib.metadata import version as _pkg_version
 
@@ -966,8 +968,10 @@ def _load_protocol_modules(paths: list[str], *, source: str) -> None:
 
 def _protocol_paths_from_args(args: argparse.Namespace) -> list[str]:
     """Return the protocol paths given by flag or environment, in order."""
-    paths = list(getattr(args, "protocol", None) or [])
-    paths += list(getattr(args, "protocol_local", None) or [])
+    # Never `args.protocol`: `stream --protocol tcp` owns that dest, and a
+    # string there would be iterated one character at a time.
+    paths = list(getattr(args, "load_protocol", None) or [])
+    paths += list(getattr(args, "load_protocol_local", None) or [])
     env = os.environ.get(_PROTOCOL_ENV, "")
     paths += [part for part in env.split(os.pathsep) if part]
     return paths
@@ -1692,6 +1696,86 @@ def _validate_stream_args(args: argparse.Namespace) -> str:
     return protocol
 
 
+#: What a generated encoder raises when a section is the wrong shape.  These
+#: sections are user JSON going through code compiled from a spec, so the
+#: failure is bad input rather than a bug, and a traceback is the wrong answer
+#: to it — `AttributeError` above all, which is what a field of the wrong type
+#: produces (`'int' object has no attribute 'encode'`).
+_ENCODE_ERRORS = (
+    ValueError, KeyError, TypeError, AttributeError, IndexError,
+    OverflowError, struct.error,
+)
+
+
+def _protocol_payload_fn(
+    args: argparse.Namespace, protocol: str,
+) -> "Callable[[int, str], bytes] | None":
+    """Return a ``payload_fn`` for ``--payload <registered protocol>``.
+
+    ``None`` when ``--payload`` was not given, leaving the stream generators
+    to make up random bytes as they always have.  ``http`` and ``vpn`` are
+    handled before this and never reach it.
+
+    The messages come from ``--protocol-messages``: a protocol describes what
+    a message *looks like*, not what conversation to have, so the two are
+    separate on purpose and neither belongs in the spec grammar.
+    """
+    name = getattr(args, "payload", None)
+    if name is None:
+        return None
+
+    proto = protocols.for_section(name)
+    if proto is None:
+        known = ["http", "vpn"] + sorted(p.name for p in protocols.registered())
+        print(
+            f"Error: --payload {name!r} is not a registered protocol.  "
+            f"Known: {', '.join(known)}.  Use --load-protocol to add one.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if not proto.carries(protocol):
+        print(
+            f"Error: --payload {name!r} is carried over {proto.over}, "
+            f"not {protocol}.  Use --protocol {proto.over}.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    path = getattr(args, "protocol_messages", None)
+    if not path:
+        print(
+            f"Error: --payload {name!r} needs --protocol-messages FILE saying "
+            f"which messages to send.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    try:
+        with open(path) as handle:
+            sections = json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"Error reading '{path}': {exc}", file=sys.stderr)
+        sys.exit(1)
+    if not isinstance(sections, list) or not sections:
+        print(f"Error: '{path}' must be a non-empty JSON array of "
+              f"{name} sections", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        encoded = [proto.encode(proto.from_spec(section), protocol)
+                   for section in sections]
+    except _ENCODE_ERRORS as exc:
+        print(f"Error encoding a {name} message from '{path}' "
+              f"({type(exc).__name__}): {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    def payload_fn(index: int, _direction: str) -> bytes:
+        # Cycled rather than exhausted: --packets says how long the stream is,
+        # and a shorter message list should not silently shorten it.
+        return encoded[index % len(encoded)]
+
+    return payload_fn
+
+
 def _build_stream_config(
     protocol: str, args: argparse.Namespace,
 ) -> TCPStreamConfig | UDPStreamConfig | SCTPStreamConfig:
@@ -1866,6 +1950,7 @@ def _cmd_stream(args: argparse.Namespace) -> None:
         stream = _generate_vpn_payload_stream(args, encap)
         _write_stream_output(args, stream)
         return
+    payload_fn = _protocol_payload_fn(args, protocol)
 
     # Common keyword arguments shared by all protocol generators
     common = {
@@ -1887,6 +1972,13 @@ def _cmd_stream(args: argparse.Namespace) -> None:
     }
 
     config = _build_stream_config(protocol, args)
+    if payload_fn is not None:
+        # Deliberately the ordinary generator rather than a path of its own:
+        # #83 was `--payload http` emitting labels the impairment passes did
+        # not recognise, so every anomaly flag was silently dropped.  Feeding
+        # payloads in leaves the labels — DATA[i], ACK[i] — exactly as they
+        # are, so impairments apply without knowing a protocol was involved.
+        config.payload_fn = payload_fn
 
     try:
         if args.sessions > 1:
@@ -1955,7 +2047,7 @@ def main() -> None:
         _version = "unknown"
     parser.add_argument("--version", action="version", version=f"packeteer {_version}")
     parser.add_argument(
-        "--load-protocol", metavar="FILE", action="append", dest="protocol",
+        "--load-protocol", metavar="FILE", action="append", dest="load_protocol",
         help="Import a protocol module before running, so packeteer knows the "
              "protocol it registers.  Repeatable, accepted after the "
              f"subcommand too, and read from {_PROTOCOL_ENV} "
@@ -2033,7 +2125,7 @@ def main() -> None:
     )
     build_parser.add_argument(
         "--load-protocol", metavar="FILE", action="append",
-        dest="protocol_local",
+        dest="load_protocol_local",
         help="Import a protocol module before running.  The global --load-protocol,\n"
              "accepted here too because this is where it reads naturally.",
     )
@@ -2059,7 +2151,7 @@ def main() -> None:
     )
     parse_parser.add_argument(
         "--load-protocol", metavar="FILE", action="append",
-        dest="protocol_local",
+        dest="load_protocol_local",
         help="Import a protocol module before running.  The global --load-protocol,\n"
              "accepted here too because this is where it reads naturally.",
     )
@@ -2163,7 +2255,7 @@ def main() -> None:
     )
     info_parser.add_argument(
         "--load-protocol", metavar="FILE", action="append",
-        dest="protocol_local",
+        dest="load_protocol_local",
         help="Import a protocol module before running.  The global --load-protocol,\n"
              "accepted here too because this is where it reads naturally.",
     )
@@ -2220,7 +2312,7 @@ def main() -> None:
     )
     san_parser.add_argument(
         "--load-protocol", metavar="FILE", action="append",
-        dest="protocol_local",
+        dest="load_protocol_local",
         help="Import a protocol module before running.  The global --load-protocol,\n"
              "accepted here too because this is where it reads naturally.",
     )
@@ -2314,7 +2406,7 @@ def main() -> None:
     )
     fuzz_parser.add_argument(
         "--load-protocol", metavar="FILE", action="append",
-        dest="protocol_local",
+        dest="load_protocol_local",
         help="Import a protocol module before running.  The global --load-protocol,\n"
              "accepted here too because this is where it reads naturally.",
     )
@@ -2367,7 +2459,7 @@ def main() -> None:
     )
     stream_parser.add_argument(
         "--load-protocol", metavar="FILE", action="append",
-        dest="protocol_local",
+        dest="load_protocol_local",
         help="Import a protocol module before running.  The global --load-protocol,\n"
              "accepted here too because this is where it reads naturally.",
     )
@@ -2416,12 +2508,23 @@ def main() -> None:
     )
     # Payload type
     stream_parser.add_argument(
-        "--payload", default=None, choices=["http", "vpn"],
+        "--payload", default=None, metavar="NAME",
         help=(
             "Application-layer payload to generate instead of random bytes. "
             "'http' simulates a REST client (TCP); 'vpn' simulates a fictive "
-            "binary VPN with a key-exchange channel and a CTR-mode data channel "
-            "(UDP)."
+            "binary VPN with a key-exchange channel and a CTR-mode data "
+            "channel (UDP).  Any other registered protocol's name is also "
+            "accepted — see --load-protocol — and then --protocol-messages "
+            "says what to send."
+        ),
+    )
+    stream_parser.add_argument(
+        "--protocol-messages", metavar="FILE", default=None,
+        help=(
+            "JSON array of packet-spec sections for --payload <protocol>, sent "
+            "in order and cycled when the stream is longer than the list.  A "
+            "protocol says what a message looks like; this says which messages "
+            "to send."
         ),
     )
     stream_parser.add_argument(

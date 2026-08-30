@@ -33,6 +33,28 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   (default `65535`, exported as `packeteer.pcap.SNAPLEN_UNLIMITED`).  Without
   them nothing could write a capture that says it was cut short.
 
+- **`packeteer stream --payload <protocol>`** (#119) — `--payload` was a
+  closed set of `http` and `vpn`, so a user who had compiled a protocol could
+  build single packets with it but not drive a generated conversation, which
+  is what packeteer is most often reached for.  Any registered protocol's name
+  now works, and `http` and `vpn` are unchanged.
+
+  `--protocol-messages FILE` says *what to send*: a JSON array of packet-spec
+  sections, sent in order and cycled when the stream is longer than the list.
+  A protocol describes what a message looks like, not what conversation to
+  have, so this stays out of the spec grammar — putting it there would make
+  every spec carry test data.
+
+  The payloads are fed into the ordinary stream generator rather than a path
+  of their own, so the packet labels stay `DATA[i]` and `ACK[i]` and every
+  anomaly option applies.  That is deliberate: #83 was `--payload http`
+  emitting labels the impairment passes did not recognise, and dropping every
+  anomaly flag in silence.
+
+- **`UDPStreamConfig.payload_fn`** (#119) — the hook
+  `TCPStreamConfig.payload_fn` already had, so a callable written for one
+  works for the other.
+
 - **The command line can load a user protocol** (#118) — three routes, and
   until now there were none: a compiled protocol registers when its module is
   imported, and nothing on the command line imported it, so `packeteer parse`
