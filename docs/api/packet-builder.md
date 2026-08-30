@@ -41,12 +41,17 @@ multiple times to produce advanced encapsulations:
 | `.gtpu(teid=0, message_type=255, sequence=None, n_pdu=None, extension_headers=None)` | GTP-U tunnel header (3GPP TS 29.281).  Call after the outer `.udp()`; a G-PDU carries the inner `.ip()` directly (no inner Ethernet).  The Length field, E/S/PN flags, and extension-header chaining are computed automatically; the default UDP port is rewritten to 2152. |
 | `.ah(spi, sequence=0, icv=None, icv_len=12)` | IPsec Authentication Header (RFC 4302).  Call after `.ip()`; the protected content follows and stays in cleartext (AH does not encrypt).  AH's Next Header and the outer IP protocol (51) are set automatically.  Transport mode protects a transport header (`.ip().ah().tcp()`); tunnel mode protects an inner `.ip()` (`.ip().ah().ip().tcp()`).  `icv` defaults to `icv_len` random bytes, padded so the header is a multiple of 4 bytes. |
 | `.esp(spi, sequence=0, payload=None, size=0, icv_len=0)` | IPsec ESP header (RFC 4303).  Call after `.ip()` (outer protocol 50).  Only the SPI + Sequence prefix is cleartext; the rest is opaque.  Pass `payload`/`size` for an explicit opaque payload, or append inner layers (`.esp().ip().tcp()`) — those assembled bytes become the opaque (would-be-encrypted) payload, so the packet parses back as opaque ESP. |
-| `.ip(src, dst, ttl=64, …)` | IPv4 or IPv6 header — auto-detected from `src`.  Call twice for IP-in-IP. |
+| `.ip(src, dst, ttl=64, …)` | IPv4 or IPv6 header — auto-detected from `src`.  Call twice for IP-in-IP.  `declared_length` writes the IPv4 Total Length or IPv6 Payload Length field verbatim instead of deriving it, which is what makes a snaplen-truncated packet rebuild as truncated. |
 | `.hop_by_hop_options(options=None)` | IPv6 Hop-by-Hop Options extension header (RFC 8200 §4.3).  Call immediately after `.ip()` for an IPv6 address and before the transport method.  `options` is a list of `RouterAlertOption`, `JumboPayloadOption`, or `RawOption` objects; padding is added automatically. |
 | `.tcp(src_port=12345, dst_port=80, …)` | TCP transport header. |
 | `.udp(src_port=12345, dst_port=80)` | UDP transport header. |
 | `.icmp(type=8, code=0, identifier=1, sequence=1)` | ICMPv4 transport header (use with IPv4). |
 | `.icmpv6(type=128, code=0, identifier=1, sequence=1)` | ICMPv6 transport header (use with IPv6). |
+| `.sctp(src_port=0, dst_port=0, verification_tag=0, chunks=None, checksum=None)` | SCTP common header and chunk list (RFC 9260).  Data lives in the chunks, not in a separate `.payload()`. |
+| `.loopback(family=None, big_endian=False)` | BSD loopback framing — `DLT_NULL` (link type 0) or `DLT_LOOP` (108).  Call instead of `.ethernet()`; the address family is derived from the IP version unless given. |
+| `.fragment_header(fragment_offset=0, more_fragments=False, identification=0)` | IPv6 Fragment extension header (RFC 8200 §4.5).  Call after `.ip()` for an IPv6 address. |
+| `.dns(message)` / `.dhcp(message)` / `.http(message)` | Attach a message of one of the three built-in application protocols. |
+| `.app(message)` | Attach a message of **any** registered protocol, the three above included.  The protocol is found from the message's type, so nothing is named twice.  See {doc}`protocols`. |
 | `.payload(size=0, data=None)` | Set the payload.  `data` (bytes) takes precedence over `size` (random bytes). |
 
 ## Assembly methods

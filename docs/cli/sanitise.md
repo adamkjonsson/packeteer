@@ -63,10 +63,24 @@ the values of `Host`, `Cookie`, `Set-Cookie`, `Authorization`, `Location`,
 
 ## PII scanning
 
-PII scanning is **enabled by default**.  Every UTF-8 encoded payload is scanned
-for email addresses and personal names, and a warning is emitted for each unique
-finding.  Findings are consolidated across all packets in the run: if the same
-email address appears in several packets, one warning lists all packet numbers.
+PII scanning is **enabled by default** (`--scan-pii`; `--no-scan-pii` turns it
+off).  Two things are scanned for email addresses and personal names:
+
+- every UTF-8 encoded **payload**, and
+- every string in an **application-protocol section** — a decoded field is
+  where a name is likeliest to be, and until 0.12.0 only the payload was
+  looked at.
+
+A warning is emitted for each unique finding, consolidated across all packets
+in the run: if the same email address appears in several packets, one warning
+lists all packet numbers.
+
+```{note}
+**A report is not a redaction.**  Scanning tells you a field carries something
+identifying; it does not remove it.  For a protocol compiled from a spec, the
+fix is to mark that field [`sensitive: true`](sensitive) and recompile — see
+{doc}`../guide/sanitising`.
+```
 
 ```bash
 packeteer sanitise capture.pcap --pcap clean.pcap

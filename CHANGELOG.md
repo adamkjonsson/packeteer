@@ -337,6 +337,21 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ### Documentation
 
+- **The API and CLI reference cover what 0.12.0 added** — an audit against
+  the code found `packeteer.conformance` missing from the API reference
+  entirely (it now has a page, and `canonicalises` was undocumented
+  anywhere); the `PacketBuilder` quick-reference table missing seven methods,
+  including `.app()` and `.loopback()`; `--load-protocol` undocumented on
+  `fuzz` and `file-info`; and `packeteer sanitise`'s PII section still saying
+  only payloads are scanned, when 0.12.0 widened it to every string in an
+  application section.
+
+- **`packeteer protocol` has a CLI reference page** — the subcommand that
+  checks, shows and compiles protocol specs was documented in the protocol
+  guide but missing from the CLI section entirely, which still said packeteer
+  had six subcommands.  `docs/cli/protocol.md` covers all three verbs with
+  their flags, exit codes and real output, and the index lists seven.
+
 - **The guides describe both ways of adding a protocol** (#121) — they still
   described the world as it was before 0.10.0.  `parsing.md` named only
   `.dns`, `.dhcp` and `.http` and now documents
