@@ -238,6 +238,10 @@ def _apply_ethernet(config: dict[str, Any], hdr: EthernetHeader) -> None:
         # Only written when the captured frame was below the Ethernet minimum;
         # a rebuild pads by default, which would lengthen it.
         section["pad"] = False
+    if hdr.trailer:
+        # Bytes after the frame's own content, which no layer owns and a
+        # rebuild cannot infer.  They supersede `pad`, being the exact bytes.
+        section["trailer"] = hdr.trailer.hex()
     if hdr.vlan_tag is not None:
         section["vlan"] = {
             "id": hdr.vlan_tag.vid,
@@ -804,6 +808,9 @@ def _apply_dhcp(config: dict[str, Any], msg: DHCPMessage) -> None:
         "file":    msg.file.rstrip(b"\x00").decode("ascii", errors="replace"),
         "options": [_serialise_dhcp_option(o) for o in msg.options],
     }
+    if msg.trailer:
+        # Padding after the END option, which only these bytes reproduce.
+        config["dhcp"]["trailer"] = msg.trailer.hex()
 
 
 # ── HTTP serialisation ────────────────────────────────────────────────────────

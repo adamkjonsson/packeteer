@@ -82,6 +82,16 @@ class EthernetHeader:
             grows from 14 to 18 bytes: the outer EtherType becomes ``0x8100``
             (TPID), followed by the 2-byte TCI, followed by the original
             *ethertype* as the inner EtherType.
+        inner_vlan_tag: Optional second (inner) VLAN tag, for QinQ.
+        pad: When ``True`` (the default) a frame shorter than the 60-byte
+            Ethernet minimum is zero-padded up to it at build time, the way
+            the hardware would.  A capture below that size records ``False``,
+            so rebuilding reproduces its captured length.
+        trailer: Bytes carried after the end of the frame's own content, as
+            captured — a sender's padding, or a link-layer trailer.  Written
+            out verbatim, and *instead of* the automatic padding, since it is
+            the exact bytes rather than an inferred width.  Empty for anything
+            packeteer builds itself.
 
     """
 
@@ -91,6 +101,7 @@ class EthernetHeader:
     vlan_tag: VLANTag | None = None
     inner_vlan_tag: VLANTag | None = None
     pad: bool = True
+    trailer: bytes = b""
 
 
 def _parse_mac(mac: str) -> bytes:

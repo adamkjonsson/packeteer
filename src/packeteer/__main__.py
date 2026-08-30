@@ -733,6 +733,7 @@ def _apply_spec_to_builder(
             src_mac=eth.get("src_mac", "00:00:00:00:00:01"),
             dst_mac=eth.get("dst_mac", "00:00:00:00:00:02"),
             pad=eth.get("pad", True),
+            trailer=bytes.fromhex(eth.get("trailer", "")),
         )
         vlan = eth.get("vlan", {})
         if vlan:

@@ -148,6 +148,7 @@ def from_spec(section: dict[str, Any]) -> DHCPMessage:
         sname=sname_str.encode("ascii")[:64].ljust(64, b"\x00"),
         file=file_str.encode("ascii")[:128].ljust(128, b"\x00"),
         options=[_option_from_spec(o) for o in section.get("options", [])],
+        trailer=bytes.fromhex(section.get("trailer", "")),
     )
 
 

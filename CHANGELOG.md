@@ -33,6 +33,13 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   (default `65535`, exported as `packeteer.pcap.SNAPLEN_UNLIMITED`).  Without
   them nothing could write a capture that says it was cut short.
 
+- **`trailer` on `EthernetHeader` and `DHCPMessage`** (#129) — the bytes
+  carried after a structure's own content, written out verbatim.
+  `PacketBuilder.ethernet(trailer=…)` takes it, and it appears as
+  `ethernet.trailer` and `dhcp.trailer` in a packet spec, hex-encoded and only
+  when such bytes are present.  An Ethernet trailer is written *instead of*
+  the automatic padding, being the exact bytes rather than an inferred width.
+
 - **`checksum` on `ICMPHeader`, `ICMPv6Header` and `SCTPHeader`** (#128), with
   the override semantics `TCPHeader.checksum` already had — set, written out
   verbatim; `None`, computed.  `PacketBuilder.icmp()`, `.icmpv6()` and
@@ -89,6 +96,20 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   (`packets[0] == (data, 1, 0)`) must compare `tuple(packets[0])` instead.
 
 ### Fixed
+
+- **Bytes past the end of a datagram are no longer dropped** (#129) — a frame
+  padded to anything other than the 60-byte Ethernet minimum could not be
+  expressed: `ethernet.pad` is a boolean, so it says "pad to 60" or "do not
+  pad", and a real capture held 58-byte ARP frames — 42 of ARP and 16 of the
+  sender's padding.  Those 16 bytes were dropped and the frame rebuilt 16
+  short, on 34 of 86 packets.
+
+  The same defect one layer down: BOOTP pads a short DHCP message with zeros
+  after the END option, which the parser stopped at and the encoder never
+  reproduced, so a real DHCP Request rebuilt 11 bytes shorter than captured.
+
+  Both are now recorded as `trailer`, and every unsanitised capture on hand
+  rebuilds byte for byte except the compressed DNS of #130.
 
 - **A wrong ICMP, ICMPv6 or SCTP checksum is no longer silently recomputed**
   (#128) — the three header classes had no checksum field at all, so `parse`

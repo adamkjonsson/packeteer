@@ -550,6 +550,7 @@ class PacketBuilder:
         src_mac: str = "00:00:00:00:00:01",
         dst_mac: str = "00:00:00:00:00:02",
         pad: bool = True,
+        trailer: bytes = b"",
     ) -> "PacketBuilder":
         """Append an Ethernet II header layer.
 
@@ -558,13 +559,19 @@ class PacketBuilder:
         Args:
             src_mac: Source MAC address (colon- or hyphen-separated hex).
             dst_mac: Destination MAC address.
+            trailer: Bytes to append after the frame's content, written out
+                verbatim and instead of any padding.  Its use is a captured
+                frame whose sender padded it to something other than the
+                60-byte minimum, which *pad* cannot express.
             pad: When ``True``, zero-pad the assembled frame to the IEEE 802.3
                 minimum of 60 bytes when the frame would otherwise be shorter.
 
         """
         # ethertype=0 is a placeholder; the correct value is filled in at
         # build time based on whatever layer follows this one.
-        self._layers.append(EthernetHeader(dst_mac, src_mac, ethertype=0, pad=pad))
+        self._layers.append(
+            EthernetHeader(dst_mac, src_mac, ethertype=0, pad=pad, trailer=trailer),
+        )
         return self
 
     def loopback(
@@ -1659,15 +1666,20 @@ class PacketBuilder:
         return data
 
     def _apply_eth_padding(self, data: bytes) -> bytes:
-        """Add padding after short ethernet frame.
+        """Append an Ethernet frame's trailing bytes.
 
-        Pad *data* to the Ethernet minimum frame size if the outermost layer
-        is an :class:`EthernetHeader` with ``pad=True``.
+        An explicit :attr:`~packeteer.generate.ethernet.EthernetHeader.trailer`
+        wins: it is the bytes a capture actually held, so it is written out as
+        given and no padding is inferred on top of it.  Otherwise *data* is
+        padded to the Ethernet minimum frame size when the outermost layer is
+        an :class:`EthernetHeader` with ``pad=True``.
         """
-        if (self._layers
-                and isinstance(self._layers[0], EthernetHeader)
-                and self._layers[0].pad
-                and len(data) < ETHERNET_MIN_FRAME_SIZE):
+        if not (self._layers and isinstance(self._layers[0], EthernetHeader)):
+            return data
+        ethernet = self._layers[0]
+        if ethernet.trailer:
+            return data + ethernet.trailer
+        if ethernet.pad and len(data) < ETHERNET_MIN_FRAME_SIZE:
             data += b'\x00' * (ETHERNET_MIN_FRAME_SIZE - len(data))
         return data
 

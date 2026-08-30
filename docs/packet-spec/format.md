@@ -46,6 +46,7 @@ packet with no layer-2 framing.
 | `dst_mac` | `"00:00:00:00:00:02"` | Destination MAC address |
 | `enabled` | `true` | Set to `false` to omit the Ethernet header |
 | `pad` | `true` | Zero-pad the frame to the IEEE 802.3 minimum of 60 bytes when `true` |
+| `trailer` | — | Bytes carried after the frame's own content, hex-encoded — a sender's padding, or a link-layer trailer.  Written out verbatim and **instead of** `pad`, since it is the exact bytes rather than an inferred width: a frame padded to 58 bytes rather than 60 cannot be expressed by `pad` at all.  Written by `parse` only when such bytes are present |
 | `vlan.id` | — | VLAN ID 1–4094; omit `vlan` entirely to disable VLAN tagging |
 | `vlan.pcp` | `0` | Priority Code Point (0–7) |
 | `vlan.dei` | `0` | Drop Eligible Indicator (0 or 1) |
@@ -1057,6 +1058,7 @@ encoded as the UDP payload.  Use with `transport.src_port` or
 | `sname` | `""` | Server host name (up to 64 bytes) |
 | `file` | `""` | Boot file name (up to 128 bytes) |
 | `options` | `[]` | Array of option objects; see below |
+| `trailer` | — | Bytes after the END option, hex-encoded.  BOOTP pads a short message out with zeros; only these bytes reproduce it.  Written by `parse` only when present |
 
 ### `dhcp.options` entries
 

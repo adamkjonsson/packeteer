@@ -574,6 +574,9 @@ def _parse_pppoe_and_mpls(
         a_size, _, a_hdr = _arp_parser(remaining)
         if a_size > 0 and a_hdr is not None:
             pkt.arp = a_hdr
+            # An ARP message is a fixed 28 bytes; anything after it is the
+            # sender's padding, which only these bytes can reproduce.
+            _record_trailer(pkt, remaining[a_size:])
         else:
             _set_payload(pkt, remaining, offset)
         return None
@@ -820,6 +823,27 @@ def _ip_payload_size(ip_hdr: IPHeader | IPv6Header | None, ip_size: int) -> int 
             return None
         return ip_hdr.payload_length - ext_size
     return None
+
+
+def _record_trailer(pkt: ParsedPacket, trailer: bytes) -> None:
+    """Keep bytes that follow the end of a frame's own content.
+
+    A frame below the 60-byte Ethernet minimum is padded by the hardware, and
+    an IP datagram shorter than the frame carrying it leaves those bytes after
+    its declared end.  They belong to no layer, so nothing else records them —
+    and ``EthernetHeader.pad`` cannot: it is a boolean, so it can say "pad to
+    60" but not "these exact bytes", which is wrong for a frame padded to any
+    other length.
+
+    Does nothing when there is no trailer, or when the frame is not Ethernet.
+
+    Args:
+        pkt: Packet being parsed; its ``ethernet`` layer carries the trailer.
+        trailer: The bytes after the decoded content, as captured.
+
+    """
+    if trailer and pkt.ethernet is not None:
+        pkt.ethernet.trailer = trailer
 
 
 def _clear_derivable_transport_fields(
@@ -1159,6 +1183,7 @@ def parse_packet(
     truncated = declared is not None and declared > len(remaining)
     pkt.datagram_truncated = truncated
     if declared is not None and declared < len(remaining):
+        _record_trailer(pkt, remaining[declared:])
         remaining = remaining[:declared]
 
     if _is_non_first_fragment(ip_hdr):

@@ -32,7 +32,7 @@ Before adding one:
 
 | File | Packets | Covers |
 |------|---------|--------|
-| `arp.pcapng` | 86 | ARP request/reply on a real LAN |
+| `arp.pcapng` | 86 | ARP request/reply on a real LAN.  34 of the frames are **58 bytes** — 42 of ARP and 16 of the sender's padding — which is the link-layer trailer case, and what `ethernet.pad` could not express (#129) |
 | `dhcp.pcapng` | 1 | A DHCP Request with real options — hostname, client identifier, parameter request list.  Found #125 |
 | `dns.pcapng` | 238 | Real DNS over UDP, with compression pointers throughout — the path packeteer's own uncompressed output cannot exercise |
 | `http_body.pcap` | 11 | A real HTTP exchange with a **chunked** response body, kept as raw chunks and finished by a `0\r\n\r\n` in its own TCP segment — #84's subject, in bytes.  Also the corpus's only **classic `.pcap`** file, which is what `tcpdump -w` writes and what sanitising to pcapng had been hiding |
@@ -64,10 +64,14 @@ across 459 packets; everything below has **no** real traffic at all.
 - **IPv4 fragments and IPv6 extension headers.**  Tested only against packets
   packeteer fragmented itself.
 - **SCTP.**
+- **A compressed DNS message.**  `dns.pcapng` was collected for exactly this
+  and no longer has it: sanitising re-encodes every message uncompressed, so
+  the committed file is packeteer's own output
+  ([#130](https://github.com/adamkjonsson/packeteer/issues/130)).
 - **IPv6 extension headers**, including a fragmented IPv6 datagram.  The IPv4
   side is covered by `udp_frag_nano.pcap`; the IPv6 side is not.
 - **An ICMPv4 Redirect.** Its gateway address lives in the header bytes a spec
   records as `identifier`/`sequence`, and `_sanitise_icmpv4_gateway` is the
   only code that treats them as an address.  Producing one needs two gateways
   on a subnet, so it is tested only against synthesised packets.
-- **A capture with a link-layer trailer or FCS.**
+- **An FCS.**  `arp.pcapng` carries a sender's padding, which is the trailer case; no capture here keeps a frame check sequence, since the hardware strips it before the frame reaches libpcap.

@@ -204,6 +204,14 @@ class TestRealTrafficCoversWhatSyntheticCannot(unittest.TestCase):
                      if "declared_length" in p.get("network", {})]
         self.assertTrue(truncated, "the cut packets should keep their IP length")
 
+    def test_a_capture_carries_a_link_layer_trailer(self) -> None:
+        """58-byte frames: 42 of ARP and 16 of padding, which #129 restored."""
+        spec = self._spec("arp.pcapng")
+        trailers = [p["ethernet"]["trailer"] for p in spec["packets"]
+                    if "trailer" in p.get("ethernet", {})]
+        self.assertTrue(trailers, "arp.pcapng should hold padded frames")
+        self.assertEqual({len(bytes.fromhex(t)) for t in trailers}, {16})
+
     def test_a_capture_is_a_classic_pcap_file(self) -> None:
         """`tcpdump -w`'s own format, which sanitising to pcapng had hidden."""
         formats = set()
