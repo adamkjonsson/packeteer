@@ -41,7 +41,7 @@ Before adding one:
 | `ipv6_udp.pcapng` | 7 | IPv6 over Ethernet — the `0x86DD` path |
 | `tcp_v4.pcapng` | 11 | A complete TCP session with **two stacks' option layouts** — the client's in the SYN, the server's in the SYN-ACK.  This is #87's case |
 | `tcp_v4_snaplen.pcapng` | 11 | The same session captured with `tcpdump -s 96`: two packets hold less than their headers declare.  The only real coverage of #92, #94 and #126 — and the file whose sanitised copy #126 was filed about |
-| `udp_frag_nano.pcap` | 1 | The first fragment of a 4 008-byte UDP datagram, fragmented by the OS rather than by packeteer: its `transport.length` and `checksum` describe the whole datagram and not the 1 472 bytes present, which is #68's rule in real bytes.  Also the only **nanosecond-resolution** file |
+| `udp_frag_nano.pcap` | 3 | A whole 4 008-byte UDP datagram in three fragments, split by the OS rather than by packeteer — the only real traffic `packeteer.parse.defragment` has.  The first fragment's `transport.length` and `checksum` describe the whole datagram, not the 1 472 bytes beside them, which is #68's rule in real bytes.  Also the only **nanosecond-resolution** file |
 | `tcp_v6_loopback.pcapng` | 10 | TCP over IPv6 over `DLT_NULL` (link type 0), which #124 added support for.  Also carries offloaded checksums, so it exercises the preserved-`transport.checksum` path from #68 against real bytes |
 
 ## Known gaps
@@ -64,11 +64,8 @@ across 459 packets; everything below has **no** real traffic at all.
 - **IPv4 fragments and IPv6 extension headers.**  Tested only against packets
   packeteer fragmented itself.
 - **SCTP.**
-- **A complete fragmented datagram.**  `udp_frag_nano.pcap` holds the *first*
-  fragment only: `tcpdump`'s `udp port 9999` cannot match the rest, because a
-  non-first fragment carries no UDP header to read a port from.  Capturing all
-  of them needs `'host H and (udp port P or (ip[6:2] & 0x1fff) != 0)'`, and
-  until one exists `packeteer.parse.defragment` has no real traffic.
+- **IPv6 extension headers**, including a fragmented IPv6 datagram.  The IPv4
+  side is covered by `udp_frag_nano.pcap`; the IPv6 side is not.
 - **An ICMPv4 Redirect.** Its gateway address lives in the header bytes a spec
   records as `identifier`/`sequence`, and `_sanitise_icmpv4_gateway` is the
   only code that treats them as an address.  Producing one needs two gateways

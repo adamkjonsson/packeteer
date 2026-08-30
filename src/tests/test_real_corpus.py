@@ -235,6 +235,29 @@ class TestRealTrafficCoversWhatSyntheticCannot(unittest.TestCase):
         self.assertGreater(transport["length"], len(first.payload))
         self.assertIn("checksum", transport)
 
+    def test_a_fragmented_datagram_reassembles(self) -> None:
+        """The OS split this one, so `defragment` finally sees real fragments."""
+        fragments = self._packets("udp_frag_nano.pcap")
+        self.assertGreater(len(fragments), 1, "one fragment proves no reassembly")
+        self.assertEqual(len({f.ip.identification for f in fragments}), 1,
+                         "every fragment of a datagram shares its IP id")
+        offsets = [f.ip.fragment_offset for f in fragments]
+        self.assertEqual(offsets, sorted(offsets))
+        self.assertEqual(offsets[0], 0)
+        self.assertFalse(fragments[-1].ip.flags & 0b001,
+                         "the last fragment is the one that clears MF")
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            with iter_packets(path=str(_CORPUS / "udp_frag_nano.pcap")) as capture:
+                whole = list(capture)
+        self.assertEqual(len(whole), 1, "the fragments should reassemble into one")
+        self.assertEqual(
+            len(whole[0].payload),
+            sum(len(f.payload or b"") for f in fragments),
+            "reassembly should lose nothing",
+        )
+
     def test_a_capture_carries_a_chunked_http_body(self) -> None:
         """#84's subject: the body stays as raw chunks, and spans two segments."""
         spec = self._spec("http_body.pcap")
