@@ -34,7 +34,7 @@ Before adding one:
 |------|---------|--------|
 | `arp.pcapng` | 86 | ARP request/reply on a real LAN.  34 of the frames are **58 bytes** — 42 of ARP and 16 of the sender's padding — which is the link-layer trailer case, and what `ethernet.pad` could not express (#129) |
 | `dhcp.pcapng` | 1 | A DHCP Request with real options — hostname, client identifier, parameter request list.  Found #125 |
-| `dns.pcapng` | 238 | Real DNS over UDP, with compression pointers throughout — the path packeteer's own uncompressed output cannot exercise |
+| `dns.pcapng` | 238 | 238 real DNS messages carrying CNAME, SOA, OPT (EDNS0) and HTTPS records, none of which packeteer's own generated captures emit.  It does **not** cover compression pointers, despite being collected for them — see the gap below |
 | `http_body.pcap` | 11 | A real HTTP exchange with a **chunked** response body, kept as raw chunks and finished by a `0\r\n\r\n` in its own TCP segment — #84's subject, in bytes.  Also the corpus's only **classic `.pcap`** file, which is what `tcpdump -w` writes and what sanitising to pcapng had been hiding |
 | `icmp_time_exceeded.pcapng` | 2 | An ICMP error quoting the packet that provoked it, from a real router |
 | `icmpv6_nd.pcapng` | 93 | Neighbour Discovery with link-layer options, and an ICMPv6 error.  Found #122 |
@@ -64,10 +64,15 @@ across 459 packets; everything below has **no** real traffic at all.
 - **IPv4 fragments and IPv6 extension headers.**  Tested only against packets
   packeteer fragmented itself.
 - **SCTP.**
-- **A compressed DNS message.**  `dns.pcapng` was collected for exactly this
-  and no longer has it: sanitising re-encodes every message uncompressed, so
-  the committed file is packeteer's own output
-  ([#130](https://github.com/adamkjonsson/packeteer/issues/130)).
+- **A compressed DNS message**, and this one cannot be closed by collecting
+  a better capture.  `parse` → `build` now reproduces a compressed message
+  byte for byte (#130) by keeping the bytes in `dns.raw` — but `sanitise`
+  must drop `raw` the moment it redacts a name, or the redacted name would
+  still be in it.  Every one of the 238 messages is redacted, so nothing
+  keeps its compression.  Fidelity and redaction genuinely conflict here, in
+  a way they did not for #126's truncation or #129's padding.  Committing a
+  compressed capture would need packeteer to *emit* compression, which is a
+  separate feature with no round-trip benefit.
 - **IPv6 extension headers**, including a fragmented IPv6 datagram.  The IPv4
   side is covered by `udp_frag_nano.pcap`; the IPv6 side is not.
 - **An ICMPv4 Redirect.** Its gateway address lives in the header bytes a spec

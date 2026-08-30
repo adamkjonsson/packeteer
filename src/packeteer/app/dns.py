@@ -9,6 +9,7 @@ holding a packet spec could not reach it without importing the CLI.
 """
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 from packeteer.generate.dns import (
@@ -139,6 +140,10 @@ def _rdata_from_spec(rtype: int, rdata: dict[str, Any]) -> _DNSRData:
 def from_spec(section: dict[str, Any]) -> DNSMessage:
     """Build a :class:`~packeteer.generate.dns.DNSMessage` from a spec section.
 
+    A ``raw`` key is carried across and **wins over the decoded fields** when
+    the message is encoded, so editing them has no effect while it is there —
+    see :attr:`~packeteer.generate.dns.DNSMessage.raw`.
+
     Args:
         section: The object found under ``"dns"`` in a packet spec.
 
@@ -186,11 +191,15 @@ def from_spec(section: dict[str, Any]) -> DNSMessage:
         answers=_rrs("answers"),
         authority=_rrs("authority"),
         additional=_rrs("additional"),
+        raw=bytes.fromhex(section.get("raw", "")),
     )
 
 
 def sanitise(section: dict[str, Any], replacer: Any, options: Any) -> None:
     """Redact *section* in place.
+
+    Drops ``raw`` if anything changed: it is written out in preference to the
+    decoded fields, so a redaction that left it in place would redact nothing.
 
     Args:
         section: A ``dns`` packet-spec section.
@@ -200,7 +209,14 @@ def sanitise(section: dict[str, Any], replacer: Any, options: Any) -> None:
     """
     from packeteer.sanitise import _sanitise_dns
 
+    before = json.dumps(section, sort_keys=True, default=str)
     _sanitise_dns(section, replacer, options)
+    if "raw" in section and json.dumps(section, sort_keys=True, default=str) != before:
+        # `raw` wins on build, so leaving it would put every redacted name
+        # straight back on the wire — a file that reports success and leaks.
+        # The rebuilt message loses its name compression; that is the right
+        # trade, and #130 records why.
+        del section["raw"]
 
 
 PROTOCOL = AppProtocol(

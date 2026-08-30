@@ -111,14 +111,11 @@ class TestADHCPTrailerSurvives(unittest.TestCase):
 
 _CAPTURES = Path(__file__).resolve().parents[2] / "captures"
 
-#: Packets carrying these spec sections are not compared, and why.
-_KNOWN_UNSUPPORTED = {
-    "dns": "a compressed DNS message re-encodes larger (#130)",
-}
-
-
 class TestTheOriginalsRoundTripToo(unittest.TestCase):
     """The check that found #129, run wherever the unsanitised captures are.
+
+    Every capture on hand rebuilds byte for byte, with no exceptions — the
+    DNS one was lifted when #130 landed.
 
     `testcases/real/` holds packeteer's own output — `sanitise` parsed and
     rebuilt every packet in it — so a round-trip sweep over it cannot catch
@@ -151,10 +148,6 @@ class TestTheOriginalsRoundTripToo(unittest.TestCase):
         for index, (packet, original) in enumerate(
             zip(spec["packets"], originals, strict=True), start=1,
         ):
-            skip = next((why for key, why in _KNOWN_UNSUPPORTED.items()
-                         if key in packet), None)
-            if skip is not None:
-                continue
             builder, _ = cli._apply_spec_to_builder(PacketBuilder(), packet, index)
             self.assertEqual(
                 builder.build().hex(), original.hex(),

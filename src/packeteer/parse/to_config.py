@@ -760,6 +760,11 @@ def _apply_dns(config: dict[str, Any], msg: DNSMessage) -> None:
         "authority":  [_serialise_dns_rr(rr) for rr in msg.authority],
         "additional": [_serialise_dns_rr(rr) for rr in msg.additional],
     }
+    if msg.raw:
+        # Only when the decoded fields do not re-encode to what was captured.
+        # It wins over them on build, and `sanitise` drops it when it edits
+        # the section — see `DNSMessage.raw`.
+        config["dns"]["raw"] = msg.raw.hex()
 
 
 # ── DHCP serialisation ────────────────────────────────────────────────────────

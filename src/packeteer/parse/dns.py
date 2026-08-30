@@ -221,7 +221,10 @@ def parse_dns_udp(data: bytes) -> DNSMessage:
         data: Raw DNS message bytes (no length prefix).
 
     Returns:
-        A populated :class:`~packeteer.generate.dns.DNSMessage`.
+        A populated :class:`~packeteer.generate.dns.DNSMessage`.  Its
+        :attr:`~packeteer.generate.dns.DNSMessage.raw` holds *data* unchanged
+        when re-encoding the decoded fields would not reproduce it — a
+        compressed message, in practice.
 
     Raises:
         ValueError: If the message is too short or malformed.
@@ -256,7 +259,7 @@ def parse_dns_udp(data: bytes) -> DNSMessage:
         rr, offset = _decode_rr(data, offset)
         additional.append(rr)
 
-    return DNSMessage(
+    msg = DNSMessage(
         id=msg_id,
         flags=flags,
         questions=questions,
@@ -264,6 +267,14 @@ def parse_dns_udp(data: bytes) -> DNSMessage:
         authority=authority,
         additional=additional,
     )
+    # The #68 rule: keep what a rebuild could not derive.  A sender that
+    # compressed names picks pointer targets no encoder reproduces, so the
+    # bytes are the only thing that round-trips.  Nothing is kept when the
+    # message re-encodes to what was captured, which is the uncompressed case.
+    from packeteer.generate.dns import _build_dns_message
+    if _build_dns_message(msg) != data:
+        msg.raw = bytes(data)
+    return msg
 
 
 def parse_dns_tcp(data: bytes) -> DNSMessage:

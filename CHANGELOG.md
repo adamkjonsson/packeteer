@@ -33,6 +33,12 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   (default `65535`, exported as `packeteer.pcap.SNAPLEN_UNLIMITED`).  Without
   them nothing could write a capture that says it was cut short.
 
+- **`raw` on `DNSMessage`** (#130) — the message exactly as captured, kept
+  when re-encoding the decoded fields would not reproduce it, and written out
+  verbatim.  It appears as `dns.raw` in a packet spec and **takes precedence
+  over the decoded keys**, so editing them has no effect while it is present.
+  `packeteer sanitise` deletes it whenever it changes the section.
+
 - **`trailer` on `EthernetHeader` and `DHCPMessage`** (#129) — the bytes
   carried after a structure's own content, written out verbatim.
   `PacketBuilder.ethernet(trailer=…)` takes it, and it appears as
@@ -96,6 +102,19 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   (`packets[0] == (data, 1, 0)`) must compare `tuple(packets[0])` instead.
 
 ### Fixed
+
+- **A compressed DNS message round-trips** (#130) — `parse` decodes name
+  compression correctly but `build` writes every name out in full, so a
+  compressed message re-encoded *larger* than it was captured and no packet
+  carrying one ever rebuilt: 118 of 238 in one capture, 347 of 12 270 in
+  another.
+
+  Emitting compression would not have fixed it.  RFC 1035 §4.1.4 lets a name
+  point at any earlier occurrence of a suffix and senders disagree about
+  which; across 476 real messages an encoder following the usual rule picks a
+  different target for 234 of 516 pointers.  So the bytes are kept instead,
+  under the rule the rest of the format follows — record what a rebuild
+  cannot derive.
 
 - **Bytes past the end of a datagram are no longer dropped** (#129) — a frame
   padded to anything other than the 60-byte Ethernet minimum could not be

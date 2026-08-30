@@ -152,14 +152,29 @@ class TestRealTrafficCoversWhatSyntheticCannot(unittest.TestCase):
             "tcp_v4.pcapng should carry both ends' option layouts",
         )
 
-    def test_dns_uses_compression_pointers(self) -> None:
-        """Packeteer's own encoder never emits one, so only real DNS tests them."""
-        pointers = 0
-        for pkt in self._packets("dns.pcapng"):
-            if pkt.payload and any(
-                    b & 0xC0 == 0xC0 for b in pkt.payload[12:]):
-                pointers += 1
-        self.assertGreater(pointers, 0)
+    def test_dns_carries_record_types_nobody_generates(self) -> None:
+        """What this capture actually covers, checked rather than assumed.
+
+        It used to claim compression pointers.  It has none: `sanitise`
+        re-encodes every message with its names written out in full, so the
+        committed file is packeteer's own output (#130).  The old test passed
+        anyway — it scanned for a byte with its top two bits set, and ordinary
+        data bytes are often >= 0xC0.  This asserts something true instead.
+        """
+        types = set()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            with iter_packets(path=str(_CORPUS / "dns.pcapng"),
+                              defragment=False) as capture:
+                for pkt in capture:
+                    message = pkt.app
+                    if message is None or type(message).__name__ != "DNSMessage":
+                        continue
+                    types.update(rr.rtype for rr in message.answers
+                                 + message.authority + message.additional)
+        # CNAME, SOA, OPT (EDNS0) and HTTPS — none of which packeteer's own
+        # generated captures emit, and each a separate decoder path.
+        self.assertTrue({5, 6, 41, 65} <= types, f"only found {sorted(types)}")
 
     def test_a_loopback_capture_uses_dlt_null(self) -> None:
         with open_pcap(path=str(_CORPUS / "tcp_v6_loopback.pcapng")) as capture:
