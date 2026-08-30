@@ -93,13 +93,25 @@ def _decode_options(data: bytes) -> tuple[list[DHCPOpt], bytes]:  # type: ignore
         if code == 0:    # PAD
             continue
         if pos >= len(data):
-            break
+            raise ValueError(
+                f"DHCP option {code} at offset {pos - 1} has no length byte: "
+                f"the message is cut short"
+            )
         length = data[pos]
         pos += 1
+        if pos + length > len(data):
+            raise ValueError(
+                f"DHCP option {code} declares {length} bytes but only "
+                f"{len(data) - pos} remain: the message is cut short"
+            )
         opt_data = data[pos: pos + length]
         pos += length
         options.append(_decode_option(code, opt_data))
-    return options, b""
+    # Falling out of the loop means the options ran out with no END.  Decoding
+    # that as a whole message would report the options it happened to reach
+    # and say nothing about the ones it did not — a spec claiming a
+    # snaplen-truncated message simply lacked them.
+    raise ValueError("DHCP options end without an END option (255)")
 
 
 def parse_dhcp(data: bytes) -> DHCPMessage:

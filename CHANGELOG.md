@@ -33,6 +33,24 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   (default `65535`, exported as `packeteer.pcap.SNAPLEN_UNLIMITED`).  Without
   them nothing could write a capture that says it was cut short.
 
+- **`packeteer.conformance`** (#120) — holds any registered protocol to the
+  contract every one must meet, whether it was written by hand or compiled
+  from a spec.  `check_protocol` returns every failure rather than raising at
+  the first, so one run says everything that is wrong.
+
+  It checks that encoding is stable, that a spec round trip is lossless, that
+  a section survives `json.dumps`, that truncated input raises at every byte
+  offset rather than decoding into a half-built object, that the registry
+  resolves the protocol by message type and by port, that sanitising leaves a
+  section usable, and that a whole packet built with `PacketBuilder.app`
+  rebuilds byte for byte through its spec — the last being the guarantee
+  packeteer exists for, and one that had been asserted for the two mechanisms
+  separately, in different files, with different fixtures.
+
+  A decoder may canonicalise — DNS returns `example.com.` for a name written
+  `example.com` — so the check is that the normalisation is *stable*, not that
+  it is absent.  `canonicalises` reports it as information.
+
 - **`packeteer stream --payload <protocol>`** (#119) — `--payload` was a
   closed set of `http` and `vpn`, so a user who had compiled a protocol could
   build single packets with it but not drive a generated conversation, which
@@ -169,6 +187,20 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   (`packets[0] == (data, 1, 0)`) must compare `tuple(packets[0])` instead.
 
 ### Fixed
+
+- **A `switch` arm that is a unit no longer reaches a spec as a dataclass**
+  (#133) — `to_spec` emitted the object itself, so a section could not be
+  written to JSON at all and `packeteer parse` produced something no file
+  could hold.  `from_spec` had the mirror of it, which meant the pair
+  round-tripped in memory and broke only through a file.
+  `examples/protocols/rpc.yaml` was affected.  Both now dispatch on the
+  selector, the way `decode` always has.
+
+- **A truncated DHCP message raises instead of decoding** (#134) — options
+  that ran out mid-way were silently accepted, so a message cut short by a
+  snaplen decoded into one missing whatever the capture did not hold, and
+  `parse` wrote a spec saying those options were *not there*.  That is a
+  different statement from "this was truncated", and the wrong one.
 
 - **A generated module with a forward unit reference now imports** (#132) —
   `default_factory` named the class directly, and it is evaluated when the

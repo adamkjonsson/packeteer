@@ -28,6 +28,7 @@ from __future__ import annotations
 import ast
 import keyword
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 
@@ -532,7 +533,12 @@ class _Generator:
             attr = self.names.field(unit.name, fld.name)
             key = fld.name
             value = f"_obj.{attr}"
-            if fld.repeat is not None:
+            if isinstance(fld.type, Switch) and fld.repeat is None:
+                self._emit_switch_convert(
+                    unit, fld, fld.type, f"_out[{key!r}]", value,
+                    self._spec_value,
+                )
+            elif fld.repeat is not None:
                 item = self._spec_value(fld.type, "_item")
                 self._emit(f"    _out[{key!r}] = [{item} for _item in {value}]")
             elif fld.derive is not None:
@@ -605,6 +611,38 @@ class _Generator:
         # A unit or a switch arm: the shape is only known at run time.
         return f"_redact_any({value})"
 
+    def _emit_switch_convert(
+        self, unit: Unit, fld: Field, switch: Switch, target: str,
+        value: str, convert: "Callable[[FieldType, str], str]",
+        pad: str = "    ",
+    ) -> None:
+        """Emit the selector dispatch a switch field needs outside decoding.
+
+        ``to_spec`` and ``from_spec`` both have to know which arm a value
+        belongs to, and the arm is chosen the same way the decoder chooses it:
+        by the selector expression, whose fields are already set on ``_obj``
+        because they precede the switch field.
+
+        Without this a unit-typed arm went into a spec **as the dataclass**,
+        so the section could not be written to JSON at all — `packeteer parse`
+        produced something no file could hold.
+        """
+        self._emit(f"{pad}_sel = {self._py(switch.on, unit, fld.loc)}")
+        first = True
+        for case, arm in sorted(switch.arms.items()):
+            self._emit(f"{pad}{'if' if first else 'elif'} _sel == {case}:")
+            self._emit(f"{pad}    {target} = {convert(arm, value)}")
+            first = False
+        self._emit(f"{pad}else:")
+        if switch.default is not None:
+            self._emit(f"{pad}    {target} = {convert(switch.default, value)}")
+        else:
+            # No arm and no default: the decoder refuses to guess, and neither
+            # does this — but the value is carried through unchanged rather
+            # than dropped, so nothing is silently lost on the way out.
+            self._emit(f"{pad}    {target} = {value}")
+        self._emit()
+
     def _spec_value(self, field_type: FieldType, value: str) -> str:
         """Return the JSON-safe form of a value for a packet spec."""
         if isinstance(field_type, BytesType):
@@ -629,7 +667,13 @@ class _Generator:
                 continue
             attr = self.names.field(unit.name, fld.name)
             key = fld.name
-            if fld.repeat is not None:
+            if isinstance(fld.type, Switch) and fld.repeat is None:
+                self._emit(f"    if {key!r} in _section:")
+                self._emit_switch_convert(
+                    unit, fld, fld.type, f"_obj.{attr}",
+                    f"_section[{key!r}]", self._from_spec_value, pad="        ",
+                )
+            elif fld.repeat is not None:
                 item = self._from_spec_value(fld.type, "_item")
                 self._emit(f"    _obj.{attr} = [{item} for _item in "
                            f"_section.get({key!r}, [])]")

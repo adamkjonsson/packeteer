@@ -245,6 +245,30 @@ def test_round_trip():
 If those pass, `packeteer parse` → edit the JSON → `packeteer build` works for
 your protocol, which is the point of registering it.
 
+### Or check the whole contract at once
+
+{func}`packeteer.conformance.check_protocol` holds a protocol to everything
+packeteer's own built-ins are held to — the round trips above, plus the ones
+easy to forget: that a section survives `json.dumps`, that a truncated message
+raises instead of decoding into a half-built object, that the registry
+resolves it by message type and by port, and that a whole packet built with
+`.app()` rebuilds byte for byte through its spec.
+
+```python
+from packeteer import conformance, protocols
+
+failures = conformance.check_protocol(
+    protocols.for_section("sensor"),
+    [Reading(version=1, samples=[(2, 21)])],
+)
+assert not failures, "\n".join(failures)
+```
+
+It returns every failure rather than raising at the first, and it is the same
+function packeteer runs over DNS, DHCP, HTTP and the example specs.  On its
+first run it found two defects in packeteer itself, which is the argument for
+using it.
+
 ## Replacing a built-in
 
 `register` refuses a name or port that is already claimed, so to take over one
