@@ -337,6 +337,12 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ### Documentation
 
+- **`packeteer protocol` has a CLI reference page** — the subcommand that
+  checks, shows and compiles protocol specs was documented in the protocol
+  guide but missing from the CLI section entirely, which still said packeteer
+  had six subcommands.  `docs/cli/protocol.md` covers all three verbs with
+  their flags, exit codes and real output, and the index lists seven.
+
 - **The guides describe both ways of adding a protocol** (#121) — they still
   described the world as it was before 0.10.0.  `parsing.md` named only
   `.dns`, `.dhcp` and `.http` and now documents
