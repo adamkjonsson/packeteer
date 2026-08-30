@@ -892,17 +892,57 @@ def _sanitise_payloads(pkt: dict, opts: SanitiseOptions) -> None:
                     chunk[key] = "00" * (len(chunk[key]) // 2)
 
 
-def _sanitise_app_layers(pkt: dict, r: _Replacer, opts: SanitiseOptions) -> None:
+def _sanitise_app_layers(
+    pkt: dict, r: _Replacer, opts: SanitiseOptions, packet_num: int = 0,
+) -> None:
     """Redact each registered protocol's section of *pkt* in-place.
 
     A protocol registered without a
     :attr:`~packeteer.protocols.AppProtocol.sanitise` callable is skipped, and
     its section passes through untouched — which is why the registry treats
-    that as a deliberate choice rather than a default worth having.
+    that as a deliberate choice rather than a default worth having.  One that
+    declares :attr:`~packeteer.protocols.AppProtocol.redacts_nothing` says so
+    out loud instead, and warns.
+
+    Every string anywhere in an app section is then scanned for PII, when
+    ``scan_pii`` is on.  A generated protocol's ``string`` fields are where a
+    name or an email is likeliest to be, and until now only the top-level
+    payload was ever looked at.
     """
     for proto in protocols.registered():
-        if proto.sanitise is not None and proto.name in pkt:
+        if proto.name not in pkt:
+            continue
+        if proto.redacts_nothing:
+            warnings.warn(
+                PersonalDataWarning(
+                    f"The {proto.name!r} section was not redacted: the "
+                    f"protocol declares that it redacts nothing, so anything "
+                    f"identifying in it is still there.  For a compiled "
+                    f"protocol, mark the fields that carry it 'sensitive:' "
+                    f"in its spec.",
+                    kind="unredacted",
+                    match=f"{proto.name} section",
+                    text=f"{proto.name} section",
+                    packet_num=packet_num,
+                ),
+                stacklevel=2,
+            )
+        if proto.sanitise is not None:
             proto.sanitise(pkt[proto.name], r, opts)
+        if opts.scan_pii:
+            _scan_section_text(pkt[proto.name], packet_num)
+
+
+def _scan_section_text(value: object, packet_num: int) -> None:
+    """Scan every string reachable in *value* for PII."""
+    if isinstance(value, str):
+        _scan_utf8_payload({"data": value}, packet_num)
+    elif isinstance(value, dict):
+        for item in value.values():
+            _scan_section_text(item, packet_num)
+    elif isinstance(value, list):
+        for item in value:
+            _scan_section_text(item, packet_num)
 
 
 #: Keys that mean at least part of a packet was understood.  A packet with a
@@ -987,7 +1027,7 @@ def _sanitise_packet(
             if key in meta:
                 meta[key] = 0
 
-    _sanitise_app_layers(pkt, r, opts)
+    _sanitise_app_layers(pkt, r, opts, packet_num)
 
     # ── Tunnel recursion ──────────────────────────────────────────────────────
     # AH protects cleartext content (transport mode) or an inner IP packet

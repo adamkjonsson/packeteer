@@ -330,14 +330,41 @@ fields.
 - {name: value, type: {bytes: {size: {expr: "length"}}}, sensitive: true}
 ```
 
-Marks a field `packeteer sanitise` should redact.
+Marks a field `packeteer sanitise` redacts.  The compiler emits a redaction
+function from these annotations and puts it on the protocol, so a compiled
+protocol is sanitised exactly like a built-in.
+
+What each type becomes:
+
+| Type | Redacted to |
+|---|---|
+| `string` | `"[redacted]"` |
+| `bytes` | zeros of the same length — a `size` field elsewhere may derive from it |
+| `int` | `0` |
+| a unit, or a `switch` arm | every leaf beneath it, blanked by the same rules |
+
+A field of a unit type that is *not* itself marked is still followed into, so
+annotating a field deep in a nested unit is enough; and a `repeat`ed field is
+redacted element by element.
 
 ```{warning}
-A field that carries anything identifying and is **not** marked is not
-redacted, and `sanitise` reports success.  For everything else in packeteer an
-unknown protocol means a feature you do not get; here it means data you meant
-to remove is still there.
+**A field that carries anything identifying and is not marked is not
+redacted.**  Only what is annotated is touched — marking nothing and expecting
+the compiler to guess would make `sanitise` useless on the very protocol you
+added in order to see your traffic.
+
+A spec that marks **no** field at all is the case worth knowing about: the
+protocol declares
+{attr}`~packeteer.protocols.AppProtocol.redacts_nothing`, and `packeteer
+sanitise` warns once per capture that the section passed through untouched.
+That warning is the only thing standing between you and a file that looks
+sanitised and is not, so do not silence it without reading it.
 ```
+
+`packeteer sanitise` also scans every string in an application section for
+email addresses and names, whether the field is marked or not, and reports
+what it finds.  A report is not a redaction: it tells you a field wants
+`sensitive: true`.
 
 ---
 

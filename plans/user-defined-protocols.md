@@ -573,10 +573,10 @@ it too, which is what stops the two mechanisms from drifting.
 
 ## Open questions
 
-**All settled.** Q1 and Q5 were decided for v0.10.0 and are now shipped; Q2,
-Q3, Q6 and Q7 were decided on 2026-08-28 before the v0.11.0 plan was written,
-and Q6's answer raised Q8 and Q9, settled the same day. Only Q4 remains open,
-and it belongs to v0.12.0.
+**All settled, and all shipped or in flight.** Q1 and Q5 were decided for
+v0.10.0 and are shipped; Q2, Q3, Q6 and Q7 were decided on 2026-08-28 before
+the v0.11.0 plan was written, and Q6's answer raised Q8 and Q9, settled the
+same day. Q4, the last, was settled on 2026-08-30 when #117 was implemented.
 
 <a id="q1"></a>
 **Q1 — Do the built-ins' *implementations* move into `app/`, or only their
@@ -633,12 +633,28 @@ packeteer spec declares both.
 protocol?** Options: nothing (silent, dangerous); zero everything not marked
 safe (safe, and makes the command useless on the protocol you added precisely
 to see it); or annotate-and-warn.
-*Recommendation: annotate, plus a one-shot warning when a spec carries no
-annotations at all.* **Still open** — decide before v0.12.0. The `sensitive:`
-grammar lands in v0.11.0 either way, so nothing is blocked. 0.10.0 settled the
-same question for hand-written protocols: an `AppProtocol` without a
-`sanitise` callable passes through untouched, documented as a deliberate
-choice.
+**Decided (2026-08-30): annotate, and warn when a spec annotates nothing.**
+Shipped in #117.
+
+Redacting only what is marked is the only answer that leaves the protocol
+usable — zeroing everything unmarked would blank the very fields someone
+compiled a spec in order to read. The cost is that a spec which misses a
+field is silent about it, and nothing can tell which of someone's fields
+carries a name.
+
+What the warning covers is the case that *can* be detected: a spec annotating
+**nothing at all**. The protocol then declares
+`AppProtocol.redacts_nothing`, and `sanitise` warns per capture rather than
+passing the section through quietly. That attribute is new, and hand-written
+protocols can set it too — a better option than the silence a missing
+`sanitise` callable buys, which is what 0.10.0 settled for them.
+
+Two things were added beyond the question as posed. Every string in an
+application section is now scanned for emails and names whichever route the
+protocol came from, so an unmarked field that *does* carry a name is reported
+even though it is not redacted — a report is not a redaction, but it is not
+silence either. And `sanitise` now receives the packet number, so those
+warnings name their packets like every other finding.
 
 <a id="q5"></a>
 **Q5 — Does a user protocol get its own `ParsedPacket` attribute?** `pkt.app`

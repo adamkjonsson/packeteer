@@ -176,8 +176,11 @@ number: a decoder that raises leaves the bytes as an opaque payload, which is
 what keeps someone else's traffic on the same port from being read as yours.
 
 **Mark what is sensitive.**  A field carrying anything identifying that is not
-marked [`sensitive`](sensitive) is not redacted by `packeteer sanitise`, and
-the command still reports success.
+marked [`sensitive`](sensitive) is not redacted by `packeteer sanitise`.  A
+spec that marks nothing at all makes the command warn, once per capture, that
+the section went through untouched — but a spec that marks *some* fields and
+misses one is silent about the one it missed, because nothing can tell which
+of your fields carries a name.
 
 **One message per packet.**  See [scope](protocols-scope): a protocol whose
 messages span TCP segments belongs in

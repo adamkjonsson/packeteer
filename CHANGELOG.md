@@ -33,6 +33,24 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   (default `65535`, exported as `packeteer.pcap.SNAPLEN_UNLIMITED`).  Without
   them nothing could write a capture that says it was cut short.
 
+- **A compiled protocol redacts its own sensitive fields** (#117) — `codegen`
+  emits a redaction function from the spec's `sensitive:` annotations and puts
+  it on the `AppProtocol`, so a compiled protocol is sanitised exactly like a
+  built-in.  `string` becomes `"[redacted]"`, `bytes` become zeros of the same
+  length, an `int` becomes `0`, and a unit or switch arm has every leaf
+  beneath it blanked.  Unit-typed fields are followed into and repeated fields
+  redacted element by element.
+
+  `sensitive: true` has been in the grammar since 0.11.0 and nothing read it:
+  a compiled protocol registered with `sanitise=None`, so its section flowed
+  through `packeteer sanitise` untouched and the command reported success.
+
+- **`AppProtocol.redacts_nothing`** (#117) — declares that a protocol's
+  `sanitise` redacts nothing, so `packeteer sanitise` warns rather than
+  passing the section through in silence.  A compiled protocol sets it when
+  its spec marks no field `sensitive:`; a hand-written one can set it to say
+  the same thing out loud.
+
 - **`raw` on `DNSMessage`** (#130) — the message exactly as captured, kept
   when re-encoding the decoded fields would not reproduce it, and written out
   verbatim.  It appears as `dns.raw` in a packet spec and **takes precedence
@@ -102,6 +120,20 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   (`packets[0] == (data, 1, 0)`) must compare `tuple(packets[0])` instead.
 
 ### Fixed
+
+- **A generated module with a forward unit reference now imports** (#132) —
+  `default_factory` named the class directly, and it is evaluated when the
+  class body runs, so a spec whose unit referenced one defined later in the
+  file compiled to a module that raised `NameError` on import.  Whether a spec
+  worked depended on the order its units happened to be written in.
+  `compile_spec` now imports what it generates as well as parsing it, so a
+  module that cannot load is caught by the compiler rather than by whoever
+  runs it next.
+
+- **Every string in an application section is scanned for PII** (#117) —
+  previously only the top-level payload was, so a name or an email in a
+  decoded field went unreported.  A report is not a redaction: it says a field
+  wants `sensitive: true`.
 
 - **A compressed DNS message round-trips** (#130) — `parse` decodes name
   compression correctly but `build` writes every name out in full, so a

@@ -132,6 +132,17 @@ untouched, and the command reports success.  For everything else in packeteer
 an unregistered protocol means a feature you do not get; here it means data
 you meant to remove is still there.  If in doubt, redact.
 
+If your protocol genuinely carries nothing identifying, say so out loud rather
+than by omission:
+
+```python
+register(AppProtocol(..., redacts_nothing=True))
+```
+
+`packeteer sanitise` then warns that the section was not redacted, instead of
+passing it through in silence.  A compiled protocol sets this automatically
+when its spec marks no field `sensitive:`.
+
 ### 5. Register it
 
 ```python

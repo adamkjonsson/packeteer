@@ -590,3 +590,50 @@ class TestStreamSpecsAreRefused(unittest.TestCase):
         """It is the framing that is out of scope, not TCP."""
         code = _source(self._STREAM.replace("input: stream", "input: datagram"))
         self.assertIn("PROTOCOL", code)
+
+
+class TestAForwardReferenceImports(unittest.TestCase):
+    """A unit may reference one defined later in the spec (#132).
+
+    `default_factory` is evaluated when the class body runs, so naming the
+    class directly failed on any spec whose units were not written in
+    dependency order — a `NameError` from generated code, at a line in a file
+    the spec author never saw.  Parsing could not catch it: the module is
+    syntactically fine and fails at import.
+    """
+
+    _SPEC = """
+        name: forward
+        version: "1.0"
+        over: udp
+        ports: [9500]
+        input: datagram
+        entry: Outer
+        units:
+          Outer:
+            fields:
+              - {name: inner, type: {unit: Inner}}
+          Inner:
+            fields:
+              - {name: keep, type: {int: {bits: 8}}}
+    """
+
+    def test_the_generated_module_imports(self) -> None:
+        from packeteer import protocols
+        from packeteer.protospec import loads
+        from packeteer.protospec.codegen import compile_spec
+
+        code = compile_spec(loads(textwrap.dedent(self._SPEC)))
+        namespace: dict = {}
+        exec(compile(code, "<forward>", "exec"), namespace)   # noqa: S102
+        self.addCleanup(protocols.unregister, "forward")
+        self.assertEqual(namespace["Outer"]().inner, namespace["Inner"]())
+
+    def test_compiling_alone_leaves_no_protocol_registered(self) -> None:
+        """`compile_spec` imports the module to check it; that must not leak."""
+        from packeteer import protocols
+        from packeteer.protospec import loads
+        from packeteer.protospec.codegen import compile_spec
+
+        compile_spec(loads(textwrap.dedent(self._SPEC)))
+        self.assertNotIn("forward", [p.name for p in protocols.registered()])

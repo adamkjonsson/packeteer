@@ -99,6 +99,12 @@ class AppProtocol:
             section in place.  ``None`` means **nothing is redacted**: a
             protocol registered without one flows through
             :func:`packeteer.sanitise.sanitise` untouched.
+        redacts_nothing: Declare that :attr:`sanitise` redacts nothing, so
+            ``packeteer sanitise`` warns instead of passing the section
+            through in silence.  A compiled protocol sets it when its spec
+            marks no field ``sensitive:``; a hand-written one can set it to
+            say the same thing out loud, which is better than the silence a
+            ``None`` *sanitise* buys.
 
     """
 
@@ -112,6 +118,7 @@ class AppProtocol:
     to_spec:   Callable[[object], dict[str, Any]]
     from_spec: Callable[[dict[str, Any]], object]
     sanitise:  Callable[[dict[str, Any], Any, Any], None] | None = None
+    redacts_nothing: bool = False
 
     def carries(self, transport: str) -> bool:
         """Whether this protocol can be carried over *transport*.
