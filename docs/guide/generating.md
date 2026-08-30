@@ -386,6 +386,29 @@ pkt = (PacketBuilder()
 # pkt is bytes — pass to write_pcap, send via socket, inspect, etc.
 ```
 
+### Application payloads
+
+`.dns()`, `.dhcp()` and `.http()` attach a message of the three protocols
+packeteer ships with.  {meth}`~packeteer.generate.builder.PacketBuilder.app`
+attaches a message of **any** registered protocol, including those three:
+
+```python
+from packeteer.generate import PacketBuilder
+
+pkt = (PacketBuilder()
+    .ethernet()
+    .ip(src="10.0.0.1", dst="10.0.0.2")
+    .udp(dst_port=9000)
+    .app(Reading(version=1, samples=[(2, 21)]))
+    .build()
+)
+```
+
+The protocol is found from the message's type, so nothing needs naming twice.
+A message of an unregistered type is an error rather than a guess — see
+{doc}`../protocols/index` for compiling a protocol from a spec, and
+{doc}`adding-a-protocol` for writing one by hand.
+
 IPv6 is auto-detected from the source address format:
 
 ```python

@@ -2,6 +2,7 @@
 
 ```
 packeteer build <spec.json> (--pcap FILE | --pcapng FILE)
+                            [--load-protocol FILE]
 ```
 
 Reads a packet spec file, assembles every packet described in it, and writes
@@ -15,8 +16,41 @@ automatically.
 | `spec.json` | JSON file with a top-level `"packets"` array |
 | `--pcap FILE` | Write to a libpcap (`.pcap`) file |
 | `--pcapng FILE` | Write to a pcapng (`.pcapng`) file |
+| `--load-protocol FILE` | Import a protocol module first, so a spec using it can be built (see below).  Repeatable |
 
 `--pcap` and `--pcapng` are mutually exclusive; exactly one is required.
+
+## Loading a protocol packeteer does not ship
+
+`--load-protocol FILE` imports a protocol module before running, so a
+protocol you compiled from a spec or wrote by hand is decoded like a
+built-in.  It is repeatable and accepted before or after the subcommand:
+
+```console
+$ packeteer build --load-protocol ./sensor.py spec.json --pcap out.pcap
+```
+
+Two other routes exist:
+
+| Route | Use it for |
+|---|---|
+| `--load-protocol FILE` | One invocation, explicit |
+| `"protocols": ["./sensor.py"]` in a packet spec | A spec that describes what it needs, resolved against the spec file's directory |
+| `PACKETEER_PROTOCOLS`, `:`-separated | A shell that always wants the same ones |
+
+```{warning}
+**A protocol module is code, and loading it runs it.**  That is no worse than
+`import` — you name the file — but it is no better either: treat a module
+someone sends you the way you would treat any other Python they send you.
+
+packeteer never takes such a path from a capture's contents.  A capture is
+something you may have been sent, and a path discovered while parsing traffic
+would let the traffic choose what code runs.  The `protocols` key is a path
+*you* wrote in a spec you are editing, and loading from a spec says on stderr
+what it is importing.
+```
+
+See {doc}`../protocols/index` for compiling a protocol from a spec.
 
 ## Packet spec structure
 

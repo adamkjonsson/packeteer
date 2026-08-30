@@ -15,7 +15,9 @@ through the same interface described here, in
 easier to describe in YAML and compile — see {doc}`../protocols/index`.  Write
 one by hand when the spec language cannot express yours: delimiter framing,
 compression pointers, a message spanning packets, or anything needing code.
-The two produce the same thing, and packeteer cannot tell them apart.
+The two produce the same thing, and packeteer cannot tell them apart, and
+**both are permanent** — DNS, DHCP and HTTP are not expressible in the spec
+subset, which is why they are hand-written and will stay so.
 ```
 
 ## The contract

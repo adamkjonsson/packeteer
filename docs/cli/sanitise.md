@@ -27,6 +27,7 @@ When none are given, the sanitised packet spec is printed to stdout.
 | `--output FILE` / `-o FILE` | Write sanitised packet spec (JSON) to FILE |
 | `--pcap FILE` | Build sanitised packets and write to a libpcap file |
 | `--pcapng FILE` | Build sanitised packets and write to a pcapng file |
+| `--load-protocol FILE` | Import a protocol module first, so its sections are redacted rather than passed through.  Repeatable; see [`packeteer parse`](parse) |
 
 ## What gets replaced
 

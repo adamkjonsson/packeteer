@@ -333,6 +333,23 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ### Documentation
 
+- **The guides describe both ways of adding a protocol** (#121) — they still
+  described the world as it was before 0.10.0.  `parsing.md` named only
+  `.dns`, `.dhcp` and `.http` and now documents
+  `ParsedPacket.app` / `.app_protocol` as how *any* protocol's message is
+  reached; `generating.md` gains `PacketBuilder.app` beside the three
+  per-protocol methods; `sanitising.md` says what happens to a registered
+  protocol's section, and says plainly that a field nobody marked
+  `sensitive:` is not redacted; `cli/parse.md`, `cli/build.md` and
+  `cli/sanitise.md` document `--load-protocol` and the three loading routes,
+  with the warning that a protocol module is code and is run as code.
+
+  Stated where a reader arrives rather than only where it is convenient:
+  **packeteer has two protocol mechanisms and keeps both.**  DNS, DHCP and
+  HTTP are not expressible in the spec subset, so the built-ins are
+  hand-written and will stay so — a reader who finds only one route would
+  reasonably assume the other was legacy.
+
 - **A chunked HTTP body is documented as the encoded body** (#84) — and, more
   to the point, *why*.  `parse_http` trims to `Content-Length` and leaves a
   `Transfer-Encoding: chunked` message's framing in `body`, which had been

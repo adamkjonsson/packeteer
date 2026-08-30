@@ -309,6 +309,26 @@ print(pkt.dns.questions[0].name)    # "example.com."
 When `pkt.dns` (or `pkt.http`) is set, `pkt.payload` is empty.  A failed parse
 leaves the raw bytes in `pkt.payload` unchanged.
 
+### Any protocol, not just the three
+
+`pkt.dns`, `pkt.dhcp` and `pkt.http` are conveniences for the protocols
+packeteer ships with.  **Every** decoded application message — those three and
+any protocol you register — is on
+{attr}`~packeteer.parse.core.ParsedPacket.app`, with
+{attr}`~packeteer.parse.core.ParsedPacket.app_protocol` naming the protocol
+that decoded it:
+
+```python
+pkt.app                             # DNSMessage(...) — or your own message
+pkt.app_protocol                    # "dns" — or "sensor"
+```
+
+`app_protocol` is also the packet-spec section key, so a `sensor` protocol
+puts a `"sensor"` object beside `"network"` and `"transport"`.  There is no
+privileged built-in path: the three ship registered, and yours is treated
+identically once it is.  See {doc}`../protocols/index` for compiling one from
+a spec and {doc}`adding-a-protocol` for writing one by hand.
+
 `pkt.http.body` is the body **as it appears on the wire**.  For a
 `Transfer-Encoding: chunked` message that means the chunk sizes and the
 terminating `0` are still in it — packeteer does not de-chunk, because chunk

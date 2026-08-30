@@ -9,6 +9,12 @@ first.  The other is {doc}`writing the protocol by hand <../guide/adding-a-proto
 which is what you need when the spec language cannot express your protocol —
 see [what a spec can and cannot describe](protocols-scope).
 
+**Both are permanent.**  DNS, DHCP and HTTP are not expressible in the spec
+subset, so the built-ins are hand-written and will stay so; neither route is
+on its way out.  They produce the same
+{class}`~packeteer.protocols.AppProtocol`, packeteer cannot tell them apart,
+and {func}`packeteer.conformance.check_protocol` holds both to one contract.
+
 ```{toctree}
 :maxdepth: 1
 
