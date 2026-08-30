@@ -31,7 +31,19 @@ _STRUCTURAL_KEYS = frozenset({
 
 
 def _captures() -> list[Path]:
-    return sorted(_CORPUS.glob("*.pcapng"))
+    """Every file in the corpus except the manifest, whatever it is called.
+
+    Deliberately not a ``*.pcapng`` glob.  These sweeps are the only thing
+    checking these files, and one they silently skip is worse than one that is
+    missing: a `.pcap` capture went unswept until the extension was noticed.
+    Anything dropped in here now fails the manifest and `.gitignore` checks
+    below, which is what makes adding a capture an act rather than an accident.
+    """
+    return sorted(
+        path for path in _CORPUS.iterdir()
+        if path.is_file() and path.name != "MANIFEST.md"
+        and not path.name.startswith(".")
+    )
 
 
 class TestTheCorpusIsThere(unittest.TestCase):
@@ -116,6 +128,11 @@ class TestRealTrafficCoversWhatSyntheticCannot(unittest.TestCase):
     failure — otherwise the corpus quietly becomes decoration.
     """
 
+    def _spec(self, name: str) -> dict:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return json.loads(parse_pcap_file(path=str(_CORPUS / name)))
+
     def _packets(self, name: str) -> list:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -186,6 +203,54 @@ class TestRealTrafficCoversWhatSyntheticCannot(unittest.TestCase):
         truncated = [p for p in spec["packets"]
                      if "declared_length" in p.get("network", {})]
         self.assertTrue(truncated, "the cut packets should keep their IP length")
+
+    def test_a_capture_is_a_classic_pcap_file(self) -> None:
+        """`tcpdump -w`'s own format, which sanitising to pcapng had hidden."""
+        formats = set()
+        for path in _captures():
+            with open_pcap(path=str(path)) as capture:
+                formats.add("pcapng" if capture.header.version_major == 1
+                            else "pcap")
+        self.assertIn("pcap", formats, "no capture exercises the classic format")
+        self.assertIn("pcapng", formats)
+
+    def test_a_capture_uses_nanosecond_timestamps(self) -> None:
+        """The `0xa1b23c4d` magic and `timestamp_ns`, which nothing else reaches."""
+        with open_pcap(path=str(_CORPUS / "udp_frag_nano.pcap")) as capture:
+            self.assertTrue(capture.header.nanoseconds)
+            self.assertEqual(capture.header.tick_hz, 1_000_000_000)
+        spec = self._spec("udp_frag_nano.pcap")
+        self.assertIn("timestamp_ns", spec["packets"][0]["packet_metadata"])
+        self.assertTrue(spec["metadata"]["nanoseconds"])
+
+    def test_a_first_fragment_describes_the_whole_datagram(self) -> None:
+        """#68's case in real bytes: the OS fragmented this, not packeteer."""
+        packets = self._packets("udp_frag_nano.pcap")
+        first = packets[0]
+        self.assertTrue(first.ip.flags & 0b001, "the MF flag should be set")
+        self.assertEqual(first.ip.fragment_offset, 0)
+        transport = self._spec("udp_frag_nano.pcap")["packets"][0]["transport"]
+        # The header covers 4008 bytes; only 1472 of them are in this packet,
+        # so a rebuild cannot derive either key and both have to be recorded.
+        self.assertGreater(transport["length"], len(first.payload))
+        self.assertIn("checksum", transport)
+
+    def test_a_capture_carries_a_chunked_http_body(self) -> None:
+        """#84's subject: the body stays as raw chunks, and spans two segments."""
+        spec = self._spec("http_body.pcap")
+        responses = [p["http"] for p in spec["packets"]
+                     if p.get("http", {}).get("type") == "response"]
+        self.assertTrue(responses, "the capture should hold an HTTP response")
+        body = responses[0]
+        self.assertEqual(body["headers"].get("Transfer-Encoding"), "chunked")
+        # A chunk header is "<hex size>\r\n"; de-chunked, the body would start
+        # with the document itself.
+        self.assertRegex(bytes.fromhex(body["body"]).decode("latin-1"),
+                         r"^[0-9a-fA-F]+\r\n")
+        # The terminating chunk arrived in its own segment.
+        tails = [p["payload"]["data"] for p in spec["packets"]
+                 if p.get("payload", {}).get("data", "").endswith("0d0a0d0a")]
+        self.assertTrue(tails, "the final 0-length chunk should be present")
 
     def test_icmpv6_carries_neighbour_discovery(self) -> None:
         types = {p.transport.type for p in self._packets("icmpv6_nd.pcapng")

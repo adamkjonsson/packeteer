@@ -35,11 +35,13 @@ Before adding one:
 | `arp.pcapng` | 86 | ARP request/reply on a real LAN |
 | `dhcp.pcapng` | 1 | A DHCP Request with real options — hostname, client identifier, parameter request list.  Found #125 |
 | `dns.pcapng` | 238 | Real DNS over UDP, with compression pointers throughout — the path packeteer's own uncompressed output cannot exercise |
+| `http_body.pcap` | 11 | A real HTTP exchange with a **chunked** response body, kept as raw chunks and finished by a `0\r\n\r\n` in its own TCP segment — #84's subject, in bytes.  Also the corpus's only **classic `.pcap`** file, which is what `tcpdump -w` writes and what sanitising to pcapng had been hiding |
 | `icmp_time_exceeded.pcapng` | 2 | An ICMP error quoting the packet that provoked it, from a real router |
 | `icmpv6_nd.pcapng` | 93 | Neighbour Discovery with link-layer options, and an ICMPv6 error.  Found #122 |
 | `ipv6_udp.pcapng` | 7 | IPv6 over Ethernet — the `0x86DD` path |
 | `tcp_v4.pcapng` | 11 | A complete TCP session with **two stacks' option layouts** — the client's in the SYN, the server's in the SYN-ACK.  This is #87's case |
 | `tcp_v4_snaplen.pcapng` | 11 | The same session captured with `tcpdump -s 96`: two packets hold less than their headers declare.  The only real coverage of #92, #94 and #126 — and the file whose sanitised copy #126 was filed about |
+| `udp_frag_nano.pcap` | 1 | The first fragment of a 4 008-byte UDP datagram, fragmented by the OS rather than by packeteer: its `transport.length` and `checksum` describe the whole datagram and not the 1 472 bytes present, which is #68's rule in real bytes.  Also the only **nanosecond-resolution** file |
 | `tcp_v6_loopback.pcapng` | 10 | TCP over IPv6 over `DLT_NULL` (link type 0), which #124 added support for.  Also carries offloaded checksums, so it exercises the preserved-`transport.checksum` path from #68 against real bytes |
 
 ## Known gaps
@@ -51,16 +53,22 @@ across 459 packets; everything below has **no** real traffic at all.
 - **VLAN, MPLS, and any tunnel.** packeteer supports nine such modules — GRE,
   VXLAN, Geneve, GTP-U, EtherIP, IPsec, MPLS, PPPoE, IP-in-IP — and has real
   traffic for none of them.
-- **A classic `.pcap` file.** Every capture here is pcapng, because sanitising
-  with `--pcapng` is what produced them.  The format `tcpdump -w` writes by
-  default has no example.
-- **A nanosecond-resolution capture.** Every one is microsecond.
+- **A *captured* nanosecond timestamp.** `udp_frag_nano.pcap` is in the
+  nanosecond format, but it was converted with `editcap -F nsecpcap` from a
+  microsecond capture, so every sub-microsecond digit is `0`.  macOS BPF has
+  no nanosecond mode — `tcpdump --nano` fails on every interface, and both
+  `en1` and `lo0` report only the `host` timestamp type — so a real one has to
+  come from the Linux capture below.
 - **Linux cooked capture** (link types 113 and 276).  Every capture came from
   one macOS laptop, which is a gap in the *collecting*, not in the traffic.
 - **IPv4 fragments and IPv6 extension headers.**  Tested only against packets
   packeteer fragmented itself.
-- **SCTP**, and an **HTTP body** of any kind — the two HTTP messages here are
-  a `GET /` and its response headers, so #84's chunked body has no coverage.
+- **SCTP.**
+- **A complete fragmented datagram.**  `udp_frag_nano.pcap` holds the *first*
+  fragment only: `tcpdump`'s `udp port 9999` cannot match the rest, because a
+  non-first fragment carries no UDP header to read a port from.  Capturing all
+  of them needs `'host H and (udp port P or (ip[6:2] & 0x1fff) != 0)'`, and
+  until one exists `packeteer.parse.defragment` has no real traffic.
 - **An ICMPv4 Redirect.** Its gateway address lives in the header bytes a spec
   records as `identifier`/`sequence`, and `_sanitise_icmpv4_gateway` is the
   only code that treats them as an address.  Producing one needs two gateways
