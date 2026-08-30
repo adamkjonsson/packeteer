@@ -309,6 +309,12 @@ print(pkt.dns.questions[0].name)    # "example.com."
 When `pkt.dns` (or `pkt.http`) is set, `pkt.payload` is empty.  A failed parse
 leaves the raw bytes in `pkt.payload` unchanged.
 
+`pkt.http.body` is the body **as it appears on the wire**.  For a
+`Transfer-Encoding: chunked` message that means the chunk sizes and the
+terminating `0` are still in it — packeteer does not de-chunk, because chunk
+boundaries are a sender's choice and a de-chunked body cannot be re-chunked to
+reproduce the capture.  See {doc}`../packet-spec/format` for the full reasoning.
+
 ### Keeping the payload as it appeared on the wire
 
 The decoded object is not a byte-exact substitute for the payload it replaced:

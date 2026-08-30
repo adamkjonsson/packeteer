@@ -333,6 +333,23 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ### Documentation
 
+- **A chunked HTTP body is documented as the encoded body** (#84) — and, more
+  to the point, *why*.  `parse_http` trims to `Content-Length` and leaves a
+  `Transfer-Encoding: chunked` message's framing in `body`, which had been
+  behaviour nobody had written down and the question had been raised twice.
+
+  Chunk boundaries are a **sender's choice, not a property of the payload**: a
+  70-byte body split `1c/c/18/6` and the same body split `40/6` are different
+  bytes on the wire and identical once de-chunked, so a de-chunked body could
+  not be re-chunked to reproduce the capture.  Keeping the framing is what
+  makes `parse` → `build` byte-exact for chunked traffic.
+
+  It is the same reasoning that put stream-shaped protocols outside packeteer
+  in 0.11.0 — reassembly and byte-exact reconstruction want opposite things.
+  The decision is now recorded in the `parse_http` docstring, the `http`
+  section of the packet-spec reference and the parsing guide, and asserted
+  against the real chunked capture in the corpus.
+
 - **`identifier` and `sequence` are documented as what they are** (#122) — the
   two halves of a type-specific field, named for what an Echo puts there.
   Every other ICMP message type uses those bytes for something else, and the

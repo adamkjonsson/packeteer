@@ -1177,7 +1177,7 @@ The `type` field selects between request and response:
 | `path` | `"/"` | Request-target (path, optionally with query string) |
 | `version` | `"1.1"` | HTTP version without the `"HTTP/"` prefix |
 | `headers` | `{}` | Object of header name → value string pairs |
-| `body` | `""` | Request body encoded as a hex string |
+| `body` | `""` | Request body as a hex string, **as it appears on the wire** — see the note below |
 
 ### `http` fields — response
 
@@ -1188,12 +1188,33 @@ The `type` field selects between request and response:
 | `status_code` | `200` | 3-digit integer status code |
 | `reason` | `"OK"` | Reason phrase |
 | `headers` | `{}` | Object of header name → value string pairs |
-| `body` | `""` | Response body encoded as a hex string |
+| `body` | `""` | Response body as a hex string, **as it appears on the wire** — see the note below |
 
 `Content-Length` is added automatically by the builder when `body` is
 non-empty and the message does not already frame itself — that is, when
 neither `Content-Length` nor `Transfer-Encoding` is present.  Header names are
 matched case-insensitively.
+
+```{note}
+**A chunked body keeps its framing.**  `body` for a
+`Transfer-Encoding: chunked` message is the chunked bytes — sizes, CRLFs and
+the terminating `0` — not the payload a recipient would reconstruct:
+
+```json
+"body": "22f0d0a3c21646f63747970652068746d6c3e…300d0a0d0a"
+```
+
+This is deliberate.  **Chunk boundaries are a sender's choice, not a property
+of the payload**: a 70-byte body split `1c/c/18/4` and the same body split
+`40/6` are different bytes on the wire and identical once de-chunked, so a
+de-chunked body could not be re-chunked to reproduce the capture.  Keeping the
+framing is what makes `parse` → `build` byte-exact for chunked traffic.
+
+It is the same reasoning that put stream-shaped protocols outside packeteer in
+0.11.0 — reassembly and byte-exact reconstruction want opposite things, and
+packeteer's guarantee is the second.  De-chunking is four lines in a consumer
+that wants the payload; un-de-chunking is not possible at all.
+```
 
 A message carrying `Transfer-Encoding: chunked` therefore gets no
 `Content-Length`, and its `body` must already be chunk-framed: the builder
