@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import json
 import socket
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
@@ -987,6 +988,7 @@ def to_packet_spec(
     packets: list[dict[str, Any]],
     *,
     metadata: dict[str, Any] | None = None,
+    protocols: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     """Wrap a list of per-packet dicts into a top-level packet spec dict.
 
@@ -999,6 +1001,14 @@ def to_packet_spec(
             (e.g. ``{"from_file": "capture.pcap", "type": "pcap",
             "nanoseconds": False}``).  ``nanoseconds`` is added automatically
             when absent.
+        protocols: Paths of protocol modules to record in the top-level
+            ``protocols`` key, so a spec naming a user protocol can be rebuilt
+            without passing ``--protocol`` again.  Omitted when empty.
+
+            These are **paths the user supplied**, never anything discovered
+            while parsing: ``packeteer build`` imports them, and a path taken
+            from a capture's contents would let a capture choose what code
+            runs.
 
     Returns:
         A packet spec dict accepted by ``packeteer build``.
@@ -1008,6 +1018,8 @@ def to_packet_spec(
     top_meta: dict[str, Any] = dict(metadata) if metadata is not None else {}
     top_meta.setdefault("nanoseconds", False)
     cfg["metadata"] = top_meta
+    if protocols:
+        cfg["protocols"] = list(protocols)
     cfg["packets"] = packets
     return cfg
 

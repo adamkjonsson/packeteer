@@ -39,11 +39,12 @@ Examples:
 import argparse
 import configparser
 import json
+import os
 import sys
 from importlib.metadata import PackageNotFoundError as _PkgNotFoundError
 from importlib.metadata import version as _pkg_version
 
-from packeteer import app
+from packeteer import app, protocols
 from packeteer.filter import PacketFilter
 from packeteer.fuzz import (
     ALL_MUTATION_NAMES,
@@ -939,6 +940,64 @@ def _cmd_protocol_check(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+#: Environment variable naming protocol modules to load, colon-separated.
+_PROTOCOL_ENV = "PACKETEER_PROTOCOLS"
+
+
+def _load_protocol_modules(paths: list[str], *, source: str) -> None:
+    """Import each protocol module in *paths*, or exit naming what failed.
+
+    *source* says where the paths came from, so a failure names the thing the
+    user can go and fix rather than just the file.
+    """
+    for path in paths:
+        try:
+            added = protocols.load_module(path)
+        except protocols.ProtocolError as exc:
+            print(f"Error loading protocol module ({source}): {exc}",
+                  file=sys.stderr)
+            sys.exit(1)
+        if not added:
+            # Importing it did nothing, which is not obviously wrong — a
+            # module may register on a later import — but silence here is
+            # indistinguishable from a protocol that failed to arrive.
+            print(f"Warning: {path} registered no protocol", file=sys.stderr)
+
+
+def _protocol_paths_from_args(args: argparse.Namespace) -> list[str]:
+    """Return the protocol paths given by flag or environment, in order."""
+    paths = list(getattr(args, "protocol", None) or [])
+    paths += list(getattr(args, "protocol_local", None) or [])
+    env = os.environ.get(_PROTOCOL_ENV, "")
+    paths += [part for part in env.split(os.pathsep) if part]
+    return paths
+
+
+def _load_spec_protocols(config: dict, spec_path: str) -> None:
+    """Import the modules a packet spec's ``protocols`` key names.
+
+    Paths resolve against the spec file's directory, so a spec and the module
+    beside it move together.
+
+    **This executes Python named in a data file**, which is why it says what
+    it is importing.  The key is one the *user* wrote in a spec they are
+    editing; nothing packeteer parses out of a capture ever reaches it.
+    """
+    listed = config.get("protocols")
+    if not listed:
+        return
+    if not isinstance(listed, list) or not all(isinstance(p, str) for p in listed):
+        print("Error: 'protocols' must be a list of module paths",
+              file=sys.stderr)
+        sys.exit(1)
+    base = os.path.dirname(os.path.abspath(spec_path))
+    resolved = [p if os.path.isabs(p) else os.path.join(base, p) for p in listed]
+    for path in resolved:
+        print(f"Loading protocol module named by {spec_path}: {path}",
+              file=sys.stderr)
+    _load_protocol_modules(resolved, source=f"named in {spec_path}")
+
+
 def _cmd_build(args: argparse.Namespace) -> None:
     try:
         with open(args.config) as f:
@@ -946,6 +1005,7 @@ def _cmd_build(args: argparse.Namespace) -> None:
     except (OSError, json.JSONDecodeError) as e:
         print(f"Error loading config '{args.config}': {e}", file=sys.stderr)
         sys.exit(1)
+    _load_spec_protocols(raw_cfg, args.config)
     _run_multi_packet(raw_cfg, pcap_path=args.pcap, pcapng_path=args.pcapng)
 
 
@@ -1031,6 +1091,23 @@ def _positive_int(value: str) -> int:
     return n
 
 
+def _spec_protocol_paths(args: argparse.Namespace) -> list[str]:
+    """Return the paths `parse` should record in the spec it writes.
+
+    Only what the user named on this invocation — the flag and the
+    environment variable — and written relative to the spec file so the two
+    move together.  Nothing here comes from the capture.
+    """
+    paths = _protocol_paths_from_args(args)
+    if not paths:
+        return []
+    output = getattr(args, "output", None)
+    if not output:
+        return [os.path.abspath(p) for p in paths]
+    base = os.path.dirname(os.path.abspath(output))
+    return [os.path.relpath(os.path.abspath(p), start=base) for p in paths]
+
+
 def _cmd_parse(args: argparse.Namespace) -> None:
     try:
         pf = _build_packet_filter(args)
@@ -1044,6 +1121,7 @@ def _cmd_parse(args: argparse.Namespace) -> None:
             link_type=getattr(args, "link_type", None),
             decode_app=not getattr(args, "no_decode_app", False),
             defragment=getattr(args, "defragment", False),
+            protocol_modules=_spec_protocol_paths(args),
         )
     except (OSError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -1102,6 +1180,7 @@ def _cmd_sanitise(args: argparse.Namespace) -> None:
         except json.JSONDecodeError as e:
             print(f"Invalid JSON in '{args.input}': {e}", file=sys.stderr)
             sys.exit(1)
+        _load_spec_protocols(config, args.input)
 
     opts = SanitiseOptions(
         ips=not args.no_ips,
@@ -1186,6 +1265,7 @@ def _cmd_fuzz(args: argparse.Namespace) -> None:
         except (OSError, json.JSONDecodeError) as e:
             print(f"Error reading '{args.input}': {e}", file=sys.stderr)
             sys.exit(1)
+        _load_spec_protocols(config, args.input)
 
     requested: list[str] = args.mutations or list(ALL_MUTATION_NAMES)
     opts = FuzzOptions(mutations=requested, count=args.count, seed=args.seed)
@@ -1874,6 +1954,14 @@ def main() -> None:
     except _PkgNotFoundError:
         _version = "unknown"
     parser.add_argument("--version", action="version", version=f"packeteer {_version}")
+    parser.add_argument(
+        "--load-protocol", metavar="FILE", action="append", dest="protocol",
+        help="Import a protocol module before running, so packeteer knows the "
+             "protocol it registers.  Repeatable, accepted after the "
+             f"subcommand too, and read from {_PROTOCOL_ENV} "
+             "(colon-separated).  A protocol module is code and is run as "
+             "code.",
+    )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -1944,6 +2032,12 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     build_parser.add_argument(
+        "--load-protocol", metavar="FILE", action="append",
+        dest="protocol_local",
+        help="Import a protocol module before running.  The global --load-protocol,\n"
+             "accepted here too because this is where it reads naturally.",
+    )
+    build_parser.add_argument(
         "config", metavar="FILE",
         help="Packet spec file with a 'packets' array",
     )
@@ -1962,6 +2056,12 @@ def main() -> None:
             " that can be replayed with 'packeteer build'"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parse_parser.add_argument(
+        "--load-protocol", metavar="FILE", action="append",
+        dest="protocol_local",
+        help="Import a protocol module before running.  The global --load-protocol,\n"
+             "accepted here too because this is where it reads naturally.",
     )
     parse_parser.add_argument(
         "pcap",
@@ -2062,6 +2162,12 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     info_parser.add_argument(
+        "--load-protocol", metavar="FILE", action="append",
+        dest="protocol_local",
+        help="Import a protocol module before running.  The global --load-protocol,\n"
+             "accepted here too because this is where it reads naturally.",
+    )
+    info_parser.add_argument(
         "pcap",
         metavar="FILE",
         help="Input .pcap or .pcapng file to inspect",
@@ -2111,6 +2217,12 @@ def main() -> None:
             "When a capture file is given, it is parsed automatically before sanitising."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    san_parser.add_argument(
+        "--load-protocol", metavar="FILE", action="append",
+        dest="protocol_local",
+        help="Import a protocol module before running.  The global --load-protocol,\n"
+             "accepted here too because this is where it reads naturally.",
     )
     san_parser.add_argument(
         "input", metavar="FILE",
@@ -2201,6 +2313,12 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     fuzz_parser.add_argument(
+        "--load-protocol", metavar="FILE", action="append",
+        dest="protocol_local",
+        help="Import a protocol module before running.  The global --load-protocol,\n"
+             "accepted here too because this is where it reads naturally.",
+    )
+    fuzz_parser.add_argument(
         "input", metavar="FILE",
         help="Input packet spec (.json) or capture file (.pcap/.pcapng)",
     )
@@ -2246,6 +2364,12 @@ def main() -> None:
             "DATA+SACK pairs, graceful shutdown; CRC-32c checksums computed automatically."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    stream_parser.add_argument(
+        "--load-protocol", metavar="FILE", action="append",
+        dest="protocol_local",
+        help="Import a protocol module before running.  The global --load-protocol,\n"
+             "accepted here too because this is where it reads naturally.",
     )
     # Config file (optional — CLI flags take precedence over config values)
     stream_parser.add_argument(
@@ -2706,6 +2830,7 @@ def main() -> None:
     stream_parser.set_defaults(func=_cmd_stream)
 
     args = parser.parse_args()
+    _load_protocol_modules(_protocol_paths_from_args(args), source="--load-protocol")
     args.func(args)
 
 

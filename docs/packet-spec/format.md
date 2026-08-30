@@ -1235,6 +1235,31 @@ hex.
 ---
 
 (packet-spec-metadata)=
+## `protocols` (top-level)
+
+An optional array of paths to protocol modules `packeteer build`,
+`packeteer sanitise` and `packeteer fuzz` import before reading the packets,
+so a spec using a protocol packeteer does not ship describes what it needs.
+
+```json
+"protocols": ["./sensor.py"]
+```
+
+Paths resolve against **the spec file's directory**, not the working
+directory, so a spec and the module beside it move together.
+`packeteer parse --load-protocol ./sensor.py -o spec.json` writes the key for
+you.
+
+```{warning}
+Importing a module runs it.  This key names Python that packeteer will
+execute, so treat a spec someone sends you the way you would treat any other
+Python they send you.  packeteer never writes a path here that it found while
+parsing a capture — only one you supplied — and it says on stderr what it is
+importing.
+```
+
+---
+
 ## `metadata` (top-level)
 
 Always present in configs produced by `packeteer parse` and

@@ -37,7 +37,7 @@ import socket
 import struct
 import warnings
 from collections import Counter
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -1318,6 +1318,7 @@ def parse_pcap_file(
     link_type: int | None = None,
     decode_app: bool = True,
     defragment: bool = False,
+    protocol_modules: Sequence[str] | None = None,
 ) -> str:
     """Parse every packet in a pcap file and return a packet spec string.
 
@@ -1353,6 +1354,11 @@ def parse_pcap_file(
             raw bytes in the spec's ``payload`` section instead of being
             decoded into ``dns`` / ``dhcp`` / ``http`` sections.  Use it when
             the byte-exact payload matters more than the decoded view.
+        protocol_modules: Paths to record in the spec's top-level
+            ``protocols`` key, so ``packeteer build`` reloads the same user
+            protocols without being told again.  These must be paths the
+            caller supplied; a path taken from a capture's contents would let
+            a capture choose what code runs.
         defragment: When ``True``, fragmented datagrams are reassembled and
             each appears once, as a whole packet.  Off by default because a
             spec is the round-trip format: a fragmented capture parses and
@@ -1465,7 +1471,9 @@ def parse_pcap_file(
     if path is not None:
         global_output.setdefault("from_file", str(path))
 
-    return to_json_string(to_packet_spec(packet_configs, metadata=global_output))
+    return to_json_string(to_packet_spec(
+        packet_configs, metadata=global_output, protocols=protocol_modules,
+    ))
 
 
 class PacketReader:

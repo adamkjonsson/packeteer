@@ -156,11 +156,37 @@ works them out.  Had the capture carried a length that *disagreed* with its
 data, the key would be there and the disagreement would be rebuilt exactly —
 see [`derive`](derive).
 
-```{note}
-The `packeteer` command line cannot yet load a compiled protocol — something
-has to `import` the module for it to register, which today means going through
-the Python API.  A `--protocol` flag is planned; see
-`plans/user-defined-protocols.md`.
+### Telling the command line about it
+
+Registration is a side effect of importing, so something has to import the
+module.  On the command line that is `--load-protocol`, which every subcommand
+accepts, before or after the verb:
+
+```console
+$ packeteer parse --load-protocol ./sensor.py capture.pcap
+```
+
+Two other routes exist for when repeating the flag becomes tiresome:
+
+| Route | Use it for |
+|---|---|
+| `--load-protocol FILE`, repeatable | One invocation, explicit |
+| `"protocols": ["./sensor.py"]` in a packet spec | A spec that describes itself, so `parse` → edit → `build` needs no flag |
+| `PACKETEER_PROTOCOLS`, `:`-separated | A shell that always wants the same ones |
+
+`packeteer parse --load-protocol …` writes the `protocols` key into the spec
+it produces, relative to the spec file, so the spec and the module beside it
+move together and `packeteer build` needs no flag.
+
+```{warning}
+**All three import Python from a path, and importing runs it.**  That is no
+worse than `import` — you name the file — but it is no better either.
+
+The `protocols` key is a path *you* wrote in a spec you are editing.  packeteer
+never takes such a path from a capture's contents, because a capture is
+something you may have been sent: a path discovered while parsing traffic would
+let the traffic choose what code runs.  Loading from a spec says on stderr what
+it is importing, for the same reason.
 ```
 
 ---

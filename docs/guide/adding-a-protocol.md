@@ -212,6 +212,17 @@ Registration is a side effect of importing your module, so something has to
 import it before the protocol is used.  In a script or a test, import it at
 the top.  In a package, import it from your `__init__`.
 
+On the command line, `--load-protocol` does it:
+
+```console
+$ packeteer parse --load-protocol ./sensor.py capture.pcap
+```
+
+It is repeatable, accepted before or after the subcommand, and mirrored by the
+`PACKETEER_PROTOCOLS` environment variable and by a `"protocols"` key in a
+packet spec.  {func}`packeteer.protocols.load_module` is the same thing from
+the API.
+
 A protocol module is **code**, and registering one runs it.  Treat a protocol
 someone sends you the way you would treat any other Python they send you.
 

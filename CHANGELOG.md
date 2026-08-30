@@ -33,6 +33,33 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   (default `65535`, exported as `packeteer.pcap.SNAPLEN_UNLIMITED`).  Without
   them nothing could write a capture that says it was cut short.
 
+- **The command line can load a user protocol** (#118) — three routes, and
+  until now there were none: a compiled protocol registers when its module is
+  imported, and nothing on the command line imported it, so `packeteer parse`
+  saw only an opaque payload where the Python API saw a decoded section.
+
+  - `--load-protocol FILE`, repeatable, accepted before or after the
+    subcommand;
+  - a top-level `"protocols": ["./sensor.py"]` key in a packet spec, resolved
+    against the spec file's directory, which `packeteer parse
+    --load-protocol …` writes for you so a spec describes what it needs;
+  - `PACKETEER_PROTOCOLS`, separated by the platform path separator.
+
+  The flag is **not** called `--protocol`, as the issue proposed: `packeteer
+  stream --protocol tcp` already means the transport to simulate, and one
+  spelling for two things is a trap.
+
+  All three import Python from a path, so loading from a spec says on stderr
+  what it is importing, and a path is never taken from a capture's contents —
+  a capture is something you may have been sent.
+
+- **`packeteer.protocols.load_module`** (#118) — imports a Python file so the
+  protocols it defines register themselves, and returns them.  The primitive
+  under the three routes above, so the API can do what the CLI does.
+
+- **`to_packet_spec(protocols=…)` and `parse_pcap_file(protocol_modules=…)`**
+  (#118) — record the `protocols` key from paths the caller supplied.
+
 - **A compiled protocol redacts its own sensitive fields** (#117) — `codegen`
   emits a redaction function from the spec's `sensitive:` annotations and puts
   it on the `AppProtocol`, so a compiled protocol is sanitised exactly like a
