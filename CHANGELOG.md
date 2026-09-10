@@ -105,6 +105,30 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   yet**, but now reported as the construct it is rather than as
   `a bytes or string field needs a size`.
 
+- **kober's specs are held to this loader by a test, not by a claim** (#144) —
+  the reference has called this dialect a superset of
+  [kober](https://github.com/adamkjonsson/zipline-kober)'s since 0.11.0, with a
+  caveat saying so was "documented and reasoned, not enforced by a test suite
+  shared between the projects".  That caveat is gone.
+
+  kober 0.2.0's shipped examples are vendored under `src/tests/kober/`, pinned
+  to a released version, and `src/tests/test_kober_dialect.py` asserts the
+  **outcome** for each rather than merely that they load: `dns.yaml` loads and
+  reports exactly four constructs as *not supported yet*, and `http.yaml` is
+  refused for stream framing and delimiters, which are out of scope by design.
+  Asserting the refusals is what makes the copies a drift detector rather than
+  a liability.
+
+  kober vendors packeteer's specs the same way, so the two projects notice each
+  other moving.
+
+- **kober's decode-only keys are declined by name** (#144) — `confirm` and
+  `reject` on a unit, and `emit` on a field, were unknown-key errors: the typo
+  message, for keys packeteer knows about and in `emit`'s case already declined
+  two levels up.  All three are now reported as *not supported yet*.
+
+  An unknown key is still an error.  These simply stopped being unknown.
+
 - **A `fill` size: everything left, less what the fields after it claim**
   (#146) — the body between a header and a fixed footer, which nothing else
   could express:

@@ -297,7 +297,8 @@ class _Checker:
         a warning: nothing is left for the author to weigh.
         """
         for index, fld in enumerate(unit.fields[:-1]):
-            if not _has_remaining(fld.type):
+            if not _has_remaining(fld.type) or _stands_in_for_unsupported(
+                    fld, self.spec):
                 continue
             after = unit.fields[index + 1].name
             self._error(
@@ -312,7 +313,7 @@ class _Checker:
     def _check_fill(self, unit: Unit) -> None:
         """Check every ``fill`` in *unit* has a trailer the spec fixes."""
         fills = [i for i, f in enumerate(unit.fields)
-                 if _has_fill(f.type)]
+                 if _has_fill(f.type) and not _stands_in_for_unsupported(f, self.spec)]
         if not fills:
             return
         if len(fills) > 1:
@@ -775,6 +776,8 @@ def run_relative_units(spec: Spec) -> dict[str, str]:
     direct: dict[str, str] = {}
     for unit in spec.units.values():
         for fld in unit.fields:
+            if _stands_in_for_unsupported(fld, spec):
+                continue
             if _is_run_relative_type(fld.type):
                 direct.setdefault(unit.name, fld.name or "<anonymous>")
                 break
@@ -793,6 +796,26 @@ def run_relative_units(spec: Spec) -> dict[str, str]:
                     changed = True
                     break
     return found
+
+
+def _stands_in_for_unsupported(fld: Field, spec: Spec) -> bool:
+    """Whether *fld*'s type is a stand-in for a construct this version lacks.
+
+    The loader substitutes something compilable for a construct it cannot
+    handle, and that stand-in is ``bytes`` sized ``remaining``.  Reading it as
+    though the author had written it would report a `remaining` they did not
+    write — the same trap :func:`packeteer.protospec.show._unsupported_at`
+    exists to avoid, reached from the other side.
+
+    Such a field's shape is *unknown*, not run-relative.  The spec is refused
+    either way, by the *not supported yet* error the stand-in stands for, so
+    staying quiet here costs nothing and inventing a second, wrong error costs
+    the reader a hunt.
+    """
+    return any(
+        item.loc.path == fld.loc.path or item.loc.path.startswith(fld.loc.path + ".")
+        for item in spec.unsupported
+    )
 
 
 def _has_remaining(field_type: FieldType) -> bool:

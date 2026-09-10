@@ -69,7 +69,7 @@ as unknown keys:
 | `computed` | A value derived at decode time; `derive` is the encode-direction answer and covers the cases that matter here |
 | `{size: {terminated: …}}`, `{string: {delimiter: …}}` | Delimiter framing, in either spelling |
 | `repeat: {until: …}`, `repeat: {to_end: true}` | Repeat by condition, or to the end of the run |
-| unit `params:` / `{unit: {args: …}}` | Unit parameters |
+| unit `params:` / `{unit: {args: …}}` | Unit parameters — see [kober's dialect](#protocols-kober) |
 | recursion | A recursive unit has no statically known size, which both the encoder and the framing checks need |
 
 ---
@@ -87,8 +87,26 @@ kober's meaning, and packeteer adds five of its own — [`over`](#over),
 A kober spec therefore loads here and describes the same messages; adding
 `derive` lines is what makes it describe an encoder too.
 
-This is documented and reasoned, **not enforced by a test suite shared between
-the projects**, so treat it as a strong intention rather than a guarantee.
+**This is enforced rather than intended.**  kober's own shipped examples are
+held under `src/tests/kober/`, pinned to a released version, and
+`src/tests/test_kober_dialect.py` asserts the outcome for each — including the
+refusals and the exact constructs reported as *not supported yet*, so a change
+in either dialect shows up as a failing test rather than as a stale sentence
+here.  kober vendors packeteer's specs the same way, so the two projects notice
+each other moving.
+
+Keys that are kober's alone are **recognised and declined**, never read as
+typos:
+
+| Key | Where | Why it has no meaning here |
+|---|---|---|
+| `confirm`, `reject` | unit | Guards evaluated once a unit is decoded.  A condition spanning more than one field, which [`const`](#const) cannot express — **not supported yet** |
+| `emit` | document, unit, field | kober's output granularity.  packeteer writes a packet spec, which has no such axis |
+| `params`, `{unit: {args: …}}` | unit | Unit parameters — **not supported yet** |
+
+An unknown key is still an error.  These simply stopped being unknown, which is
+strictly more informative than either accepting them silently or rejecting them
+as misspellings.
 
 ---
 

@@ -73,6 +73,14 @@ _UNSUPPORTED_KEYS: dict[str, str] = {
     "params": "unit parameters",
     "emit":   "kober's output granularity, which packeteer has no use for",
 }
+#: kober's unit-level guards.  A condition spanning more than one field, which
+#: `const` cannot express — recognised and declined rather than read as a typo.
+_UNSUPPORTED_UNIT_KEYS: dict[str, str] = {
+    "confirm": "abandon the unit unless a condition holds, once its fields "
+               "are decoded",
+    "reject":  "abandon the unit if a condition holds, once its fields are "
+               "decoded",
+}
 
 # Known keys, by where they appear.  Anything else is a typo, and a typo that
 # loads and does nothing is a decoder that silently does the wrong thing — so
@@ -82,7 +90,7 @@ _SPEC_KEYS: frozenset[str] = frozenset({
     "doc", "endian", *_UNSUPPORTED_KEYS,
 })
 _UNIT_KEYS: frozenset[str] = frozenset({
-    "fields", "doc", "endian", *_UNSUPPORTED_KEYS,
+    "fields", "doc", "endian", *_UNSUPPORTED_KEYS, *_UNSUPPORTED_UNIT_KEYS,
 })
 _SWITCH_KEYS: frozenset[str] = frozenset({"dispatch", "cases", "default"})
 
@@ -92,7 +100,7 @@ _SWITCH_KEYS: frozenset[str] = frozenset({"dispatch", "cases", "default"})
 # disjointness is asserted by the test suite rather than assumed.
 _FIELD_OWN_KEYS: frozenset[str] = frozenset({
     "name", "type", "repeat", "const", "derive", "sensitive", "doc",
-    "condition",
+    "condition", "emit",
 })
 #: ``bits`` names the integer kind, because the word says what the number
 #: counts: ``int: 8`` is shorter and cannot say whether the 8 is bits or bytes.
@@ -445,7 +453,7 @@ def _unit(name: str, data: Any, loc: Location, ctx: _Ctx) -> Unit:
     """Build one unit and its fields."""
     mapping = _as_mapping(data, loc, f"unit {name!r}")
     _reject_unknown(mapping, _UNIT_KEYS, f"unit {name!r}", loc)
-    for key, note in _UNSUPPORTED_KEYS.items():
+    for key, note in {**_UNSUPPORTED_KEYS, **_UNSUPPORTED_UNIT_KEYS}.items():
         if key in mapping:
             ctx.record(f"unit.{key}", loc.child(key), note)
     # A unit's byte order overrides the document's for the fields below it.
@@ -499,6 +507,9 @@ def _field(data: Any, loc: Location, ctx: _Ctx) -> Field:
     # `name: null` is kober's anonymous field — reserved bits that are decoded
     # and re-encoded but never named.
     name = None if raw_name is None else _as_str(raw_name, loc, "a field name")
+
+    if "emit" in mapping:
+        ctx.record("emit", loc.child("emit"), _UNSUPPORTED_KEYS["emit"])
 
     lifted_type = _lifted(mapping, _TYPE_KINDS, "type", "type", loc)
     if lifted_type is None:
