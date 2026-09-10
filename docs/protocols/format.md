@@ -102,6 +102,7 @@ the projects**, so treat it as a strong intention rather than a guarantee.
 | `enums` | `{}` | Named values for integer fields — see [Enums](#enums) |
 | `over` | `either` | Which transport carries it: `udp`, `tcp`, `either` |
 | `ports` | `[]` | Transport ports that identify it |
+| `endian` | `big` | Byte order for every integer below, unless it says otherwise — see [`endian`](#endian) |
 | `input` | `datagram` | The stream shape the spec is written against — see [`input`](#input) |
 | `doc` | — | Free-text description.  Becomes the generated module's docstring |
 
@@ -128,6 +129,55 @@ the destination port is consulted first.
 leaves the bytes as an opaque payload and parsing carries on, which is what
 makes claiming a busy port survivable.  Give the entry unit a
 [`const`](#const) so a mismatch is recognised rather than mangled.
+
+(endian)=
+### `endian`
+
+Byte order resolves **field → unit → document → `big`**, and network order is
+the default because the protocols this was written for are on a wire.
+
+```yaml
+endian: little          # every integer below, unless it says otherwise
+
+units:
+  header:
+    fields:
+      - {name: magic, bits: 32}
+      - {name: version, bits: 16}
+      - {name: crc, int: {bits: 32, endian: big}}   # the exception, stated
+```
+
+A unit may state its own, overriding the document's for the fields under it.
+
+It exists because of what the alternative costs.  A field needing `endian` must
+write `int: {bits: 32, endian: little}`, so **no integer field in a
+little-endian spec could use [`bits:`](#shorthands) at all** — which is most
+formats not on a wire: a filesystem structure, a USB descriptor, a capture
+container.
+
+Resolution happens **when the spec loads** and is folded into each field, so a
+spec written with an inherited default builds a spec equal to one with `endian`
+on every integer.  It is a shorthand, not a feature.
+
+The cost is that a field's meaning depends on a distant line: `bits: 32` no
+longer says how it is read.  `packeteer protocol show` prints the **resolved**
+byte order, so the question has a one-command answer:
+
+```console
+$ packeteer protocol show container.yaml
+header
+├── magic: u32 le
+├── version: u16 le
+└── crc: u32
+```
+
+Note what does **not** inherit: `signed`.  A protocol is little-endian; it is
+not *signed*.  Byte order is a property of the format as a whole, where
+signedness is a property of what an individual field means.
+
+`endian` beside `bits:` at field level is an unknown-key error — the key is on
+the document and the unit, and an individual integer still says it inside
+`int: {…}`.
 
 (input)=
 ### `input`
@@ -164,6 +214,7 @@ units:
 | Key | Default | Description |
 |-----|---------|-------------|
 | `fields` | *(required)* | The unit's fields, in wire order |
+| `endian` | *(the document's)* | Byte order for this unit's integers — see [`endian`](#endian) |
 | `doc` | — | Free-text description |
 
 ---
@@ -277,7 +328,7 @@ it.
 |-----|---------|-------------|
 | `bits` | *(required)* | Width, 1 to 64.  Sub-byte fields are read most-significant bit first, and consecutive ones must add up to whole bytes |
 | `signed` | `false` | Two's-complement when `true` |
-| `endian` | `big` | `big` or `little`.  Meaningless below 8 bits, and ignored there |
+| `endian` | *(the unit's, else the document's, else `big`)* | `big` or `little`.  Meaningless below 8 bits, and ignored there — see [`endian`](#endian) |
 | `enum` | — | Name of the enum labelling its values |
 
 #### `bytes` and `string`

@@ -70,6 +70,35 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   packeteer genuinely lacks.  `examples/protocols/sensor.yaml` and `rpc.yaml`
   are rewritten short, and compile byte-for-byte identically to before.
 
+- **`endian` on the document and on the unit** (#142) — byte order resolves
+  **field → unit → document → `big`**:
+
+  ```yaml
+  endian: little          # every integer below, unless it says otherwise
+
+  units:
+    header:
+      fields:
+        - {name: magic, bits: 32}
+        - {name: version, bits: 16}
+        - {name: crc, int: {bits: 32, endian: big}}   # the exception, stated
+  ```
+
+  The cost this removes is not the word.  A field needing `endian` had to write
+  `int: {bits: 32, endian: little}`, so **no integer field in a little-endian
+  spec could use `bits:` at all** — invisible in both shipped examples, which
+  are big-endian network protocols, and unavoidable in anything not on a wire.
+
+  Resolved **when the spec loads** and folded into each field, so nothing
+  downstream can tell which spelling was used: a spec written with an inherited
+  default builds a spec equal to one with `endian` on every integer.
+  `packeteer protocol show` prints the resolved byte order, which is where to
+  look when a field's own line no longer says.
+
+  `signed` does **not** inherit: a protocol is little-endian, it is not
+  *signed*.  `endian` beside `bits:` at field level remains an unknown-key
+  error.
+
 - **`{string: {delimiter: …}}` is recognised as delimiter framing** (#141) —
   kober's short spelling of `{size: {terminated: {delimiter: …}}}`, along with
   its `within`, `required` and `consume` companions.  Still **not supported

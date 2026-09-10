@@ -11,6 +11,7 @@ from packeteer.protospec.spec import (
     BytesType,
     Count,
     CountOf,
+    Endian,
     Fixed,
     FromExpr,
     InputShape,
@@ -778,3 +779,114 @@ class TestShorthandExamples(unittest.TestCase):
                   - {name: n, type: {int: {bits: 8}}, repeat: {count: "1"}}
         """)
         self.assertEqual(spec.units["m"].fields[0].type, IntType(bits=8))
+
+
+class TestInheritedEndian(unittest.TestCase):
+    """Byte order resolves field → unit → document → big (#142)."""
+
+    _DOC = """
+        name: c
+        version: "1"
+        entry: header
+        endian: little
+        units:
+          header:
+            fields:
+              - {name: magic, bits: 32}
+              - {name: crc, int: {bits: 32, endian: big}}
+              - {name: nested, unit: inner}
+          inner:
+            endian: big
+            fields:
+              - {name: be, bits: 16}
+              - {name: le, int: {bits: 16, endian: little}}
+    """
+
+    def test_resolution_order(self) -> None:
+        spec = _spec(self._DOC)
+        header = {f.name: f.type for f in spec.units["header"].fields}
+        inner = {f.name: f.type for f in spec.units["inner"].fields}
+        self.assertEqual(header["magic"].endian, Endian.LITTLE)   # document
+        self.assertEqual(header["crc"].endian, Endian.BIG)        # field wins
+        self.assertEqual(inner["be"].endian, Endian.BIG)          # unit wins
+        self.assertEqual(inner["le"].endian, Endian.LITTLE)       # field again
+
+    def test_an_inherited_default_builds_an_equal_spec(self) -> None:
+        """A shorthand, not a feature: nothing downstream can tell."""
+        explicit = _spec("""
+            name: c
+            version: "1"
+            entry: header
+            units:
+              header:
+                fields:
+                  - {name: magic, int: {bits: 32, endian: little}}
+                  - {name: crc, int: {bits: 32, endian: big}}
+                  - {name: nested, unit: inner}
+              inner:
+                fields:
+                  - {name: be, int: {bits: 16, endian: big}}
+                  - {name: le, int: {bits: 16, endian: little}}
+        """)
+        self.assertEqual(
+            [f.type for f in _spec(self._DOC).units["header"].fields],
+            [f.type for f in explicit.units["header"].fields],
+        )
+        self.assertEqual(
+            [f.type for f in _spec(self._DOC).units["inner"].fields],
+            [f.type for f in explicit.units["inner"].fields],
+        )
+
+    def test_big_is_still_the_default(self) -> None:
+        spec = _spec("""
+            name: c
+            version: "1"
+            entry: m
+            units:
+              m:
+                fields:
+                  - {name: f, bits: 32}
+        """)
+        self.assertEqual(spec.units["m"].fields[0].type.endian, Endian.BIG)
+
+    def test_signed_does_not_inherit(self) -> None:
+        """A protocol is little-endian; it is not *signed*."""
+        with self.assertRaises(SpecError) as ctx:
+            _spec("""
+                name: c
+                version: "1"
+                entry: m
+                signed: true
+                units:
+                  m:
+                    fields:
+                      - {name: f, bits: 32}
+            """)
+        self.assertIn("'signed'", str(ctx.exception))
+
+    def test_endian_beside_bits_at_field_level_is_an_unknown_key(self) -> None:
+        with self.assertRaises(SpecError) as ctx:
+            _spec("""
+                name: c
+                version: "1"
+                entry: m
+                units:
+                  m:
+                    fields:
+                      - {name: f, bits: 32, endian: little}
+            """)
+        self.assertIn("'endian'", str(ctx.exception))
+
+    def test_a_bad_endian_value_is_refused_where_it_is_written(self) -> None:
+        with self.assertRaises(SpecError) as ctx:
+            _spec("""
+                name: c
+                version: "1"
+                entry: m
+                endian: sideways
+                units:
+                  m:
+                    fields:
+                      - {name: f, bits: 32}
+            """)
+        self.assertIn("sideways", str(ctx.exception))

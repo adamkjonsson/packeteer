@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import dataclass, replace
 from typing import Any
 
 from packeteer.protospec.errors import SpecError
@@ -77,9 +78,11 @@ _UNSUPPORTED_KEYS: dict[str, str] = {
 # an unknown key is refused rather than ignored.  This is kober's rule.
 _SPEC_KEYS: frozenset[str] = frozenset({
     "name", "version", "entry", "units", "enums", "over", "ports", "input",
-    "doc", *_UNSUPPORTED_KEYS,
+    "doc", "endian", *_UNSUPPORTED_KEYS,
 })
-_UNIT_KEYS: frozenset[str] = frozenset({"fields", "doc", *_UNSUPPORTED_KEYS})
+_UNIT_KEYS: frozenset[str] = frozenset({
+    "fields", "doc", "endian", *_UNSUPPORTED_KEYS,
+})
 _SWITCH_KEYS: frozenset[str] = frozenset({"dispatch", "cases", "default"})
 
 # A field's keys come from three sets that share no member, which is what lets
@@ -321,6 +324,39 @@ def _enum_value(cls: Any, value: Any, loc: Location, what: str) -> Any:
 
 # ── the spec tree ─────────────────────────────────────────────────────────────
 
+@dataclass(frozen=True)
+class _Ctx:
+    """Loader state that descends with the spec tree.
+
+    One record rather than a parameter per value: the alternative is changing
+    every constructor's signature each time the format grows something that
+    inherits, and carrying a longer argument list forever.  It is private to
+    this module — nothing in the model or the public API learns about it.
+
+    Attributes:
+        unsupported: Accumulator for constructs kober has and this version
+            does not implement.  Shared by reference, so a nested type records
+            into the same list the spec is built from.
+        endian: Byte order an integer takes when it does not say.  Set from the
+            document, overridden by a unit, overridden by the field itself.
+
+    """
+
+    unsupported: list[Unsupported]
+    endian: Endian = Endian.BIG
+
+    def inherit(self, mapping: dict[str, Any], loc: Location) -> _Ctx:
+        """Return a context carrying *mapping*'s ``endian``, if it states one."""
+        if "endian" not in mapping:
+            return self
+        value = _enum_value(Endian, mapping["endian"], loc.child("endian"), "endian")
+        return replace(self, endian=value)
+
+    def record(self, construct: str, loc: Location, note: str) -> None:
+        """Note a construct this version reads but cannot compile."""
+        self.unsupported.append(Unsupported(construct, loc, note))
+
+
 def from_mapping(data: Any, *, source: str | None = None) -> Spec:
     """Build a :class:`~.spec.Spec` from already-parsed data.
 
@@ -341,18 +377,21 @@ def from_mapping(data: Any, *, source: str | None = None) -> Spec:
     root = _at(Location(path="", source=source), data)
     _as_mapping(data, root, "a spec")
     _reject_unknown(data, _SPEC_KEYS, "a spec", root)
-    unsupported: list[Unsupported] = []
+    # Byte order resolves field -> unit -> document -> big, and is folded into
+    # each integer as the spec loads, so nothing downstream can tell which
+    # spelling was used.
+    ctx = _Ctx(unsupported=[]).inherit(data, root)
 
     for key, note in _UNSUPPORTED_KEYS.items():
         if key in data:
-            unsupported.append(Unsupported(key, root.child(key), note))
+            ctx.record(key, root.child(key), note)
 
     units_data = _as_mapping(_require(data, "units", root), root.child("units"), "units")
     units: dict[str, Unit] = {}
     for unit_name, unit_data in units_data.items():
         loc = _at(root.child("units"), unit_data)
         name = _as_str(unit_name, loc, "a unit name")
-        units[name] = _unit(name, unit_data, loc.child(name), unsupported)
+        units[name] = _unit(name, unit_data, loc.child(name), ctx)
 
     enums: dict[str, EnumDef] = {}
     for enum_name, members in _as_mapping(
@@ -382,7 +421,7 @@ def from_mapping(data: Any, *, source: str | None = None) -> Spec:
         input=_enum_value(InputShape, data.get("input", "datagram"),
                           root.child("input"), "input"),
         doc=data.get("doc"),
-        unsupported=tuple(unsupported),
+        unsupported=tuple(ctx.unsupported),
         loc=root,
     )
 
@@ -401,20 +440,22 @@ def _enum_def(name: str, members: Any, loc: Location) -> EnumDef:
     )
 
 
-def _unit(name: str, data: Any, loc: Location, unsupported: list[Unsupported]) -> Unit:
+def _unit(name: str, data: Any, loc: Location, ctx: _Ctx) -> Unit:
     """Build one unit and its fields."""
     mapping = _as_mapping(data, loc, f"unit {name!r}")
     _reject_unknown(mapping, _UNIT_KEYS, f"unit {name!r}", loc)
     for key, note in _UNSUPPORTED_KEYS.items():
         if key in mapping:
-            unsupported.append(Unsupported(f"unit.{key}", loc.child(key), note))
+            ctx.record(f"unit.{key}", loc.child(key), note)
+    # A unit's byte order overrides the document's for the fields below it.
+    ctx = ctx.inherit(mapping, loc)
 
     fields_data = _require(mapping, "fields", loc)
     if not isinstance(fields_data, (list, tuple)):
         raise SpecError(f"unit {name!r}: fields must be a list", loc.child("fields"))
 
     fields = tuple(
-        _field(item, _at(loc.child("fields").child(f"[{i}]"), item), unsupported)
+        _field(item, _at(loc.child("fields").child(f"[{i}]"), item), ctx)
         for i, item in enumerate(fields_data)
     )
     return Unit(name=name, fields=fields, loc=loc, doc=mapping.get("doc"))
@@ -449,7 +490,7 @@ def _lifted(mapping: dict[str, Any], kinds: frozenset[str], wrapper: str,
     return kind, mapping[kind]
 
 
-def _field(data: Any, loc: Location, unsupported: list[Unsupported]) -> Field:
+def _field(data: Any, loc: Location, ctx: _Ctx) -> Field:
     """Build one field."""
     mapping = _as_mapping(data, loc, "a field")
     _reject_unknown_field_key(mapping, loc)
@@ -461,17 +502,17 @@ def _field(data: Any, loc: Location, unsupported: list[Unsupported]) -> Field:
     lifted_type = _lifted(mapping, _TYPE_KINDS, "type", "type", loc)
     if lifted_type is None:
         field_type = _field_type(_require(mapping, "type", loc),
-                                 loc.child("type"), unsupported)
+                                 loc.child("type"), ctx)
     else:
         kind, body = lifted_type
-        field_type = _one_type(kind, body, loc.child(kind), unsupported)
+        field_type = _one_type(kind, body, loc.child(kind), ctx)
 
     lifted_repeat = _lifted(mapping, _REPEAT_KINDS, "repeat", "repeat", loc)
     if lifted_repeat is None:
-        repeat = _repeat(mapping.get("repeat"), loc.child("repeat"), unsupported)
+        repeat = _repeat(mapping.get("repeat"), loc.child("repeat"), ctx)
     else:
         kind, body = lifted_repeat
-        repeat = _one_repeat(kind, body, loc.child(kind), unsupported)
+        repeat = _one_repeat(kind, body, loc.child(kind), ctx)
 
     return Field(
         name=name,
@@ -485,7 +526,7 @@ def _field(data: Any, loc: Location, unsupported: list[Unsupported]) -> Field:
     )
 
 
-def _field_type(data: Any, loc: Location, unsupported: list[Unsupported]) -> FieldType:
+def _field_type(data: Any, loc: Location, ctx: _Ctx) -> FieldType:
     """Build one field's type from a ``type:`` wrapper, or from a switch arm.
 
     The long form: a tagged mapping naming exactly one construct.  A field may
@@ -499,33 +540,32 @@ def _field_type(data: Any, loc: Location, unsupported: list[Unsupported]) -> Fie
             f"a field type names exactly one construct, not {len(mapping)}", loc,
         )
     (kind, body), = mapping.items()
-    return _one_type(str(kind), body, loc, unsupported)
+    return _one_type(str(kind), body, loc, ctx)
 
 
-def _one_type(kind: str, body: Any, loc: Location,
-              unsupported: list[Unsupported]) -> FieldType:
+def _one_type(kind: str, body: Any, loc: Location, ctx: _Ctx) -> FieldType:
     """Build the type named by *kind*, whether it was lifted or wrapped."""
     if kind in _UNSUPPORTED_TYPES:
-        unsupported.append(Unsupported(kind, loc, _UNSUPPORTED_TYPES[kind]))
+        ctx.record(kind, loc, _UNSUPPORTED_TYPES[kind])
         # Stand in for it so loading can finish and the checker can report
         # every fault at once rather than only the first.
         return BytesType(size=Remaining())
 
     # `bits: 16` is the integer kind spelled by what the number counts.
     if kind == "bits":
-        return _int_type({"bits": body}, loc)
+        return _int_type({"bits": body}, loc, ctx)
     if kind == "int":
-        return _int_type(body, loc)
+        return _int_type(body, loc, ctx)
     if kind == "bytes":
-        return BytesType(size=_size(body, loc, unsupported))
+        return BytesType(size=_size(body, loc, ctx))
     if kind == "string":
         body_map = _as_mapping(_sized_body(body), loc, "a string type")
-        return StringType(size=_size(body_map, loc, unsupported),
+        return StringType(size=_size(body_map, loc, ctx),
                           encoding=body_map.get("encoding", "utf-8"))
     if kind == "unit":
-        return _unit_ref(body, loc, unsupported)
+        return _unit_ref(body, loc, ctx)
     if kind == "switch":
-        return _switch(body, loc, unsupported)
+        return _switch(body, loc, ctx)
     raise SpecError(f"unknown field type {kind!r}", loc)
 
 
@@ -542,11 +582,16 @@ def _sized_body(body: Any) -> Any:
     return {"size": body}
 
 
-def _int_type(body: Any, loc: Location) -> IntType:
+def _int_type(body: Any, loc: Location, ctx: _Ctx) -> IntType:
     """Build an integer type.
 
     ``{int: 8}`` is a bare width — a scalar where a mapping is expected fills
     in the one key that matters, which for an integer is ``bits``.
+
+    Byte order falls back to the enclosing unit's, then the document's, then
+    ``big``.  ``signed`` deliberately does **not** inherit: a protocol is
+    little-endian, it is not *signed*.  Byte order is a property of the format
+    as a whole where signedness is a property of what one field means.
     """
     if not isinstance(body, bool) and isinstance(body, int):
         body = {"bits": body}
@@ -555,11 +600,13 @@ def _int_type(body: Any, loc: Location) -> IntType:
     if not 1 <= bits <= _MAX_INT_BITS:
         raise SpecError(f"bits must be 1 to {_MAX_INT_BITS}, not {bits}",
                         loc.child("bits"))
+    endian = (ctx.endian if "endian" not in mapping
+              else _enum_value(Endian, mapping["endian"],
+                               loc.child("endian"), "endian"))
     return IntType(
         bits=bits,
         signed=bool(mapping.get("signed", False)),
-        endian=_enum_value(Endian, mapping.get("endian", "big"),
-                           loc.child("endian"), "endian"),
+        endian=endian,
         enum=mapping.get("enum"),
     )
 
@@ -573,22 +620,20 @@ _TERMINATED_KEYS: frozenset[str] = frozenset({
 })
 
 
-def _size(body: Any, loc: Location, unsupported: list[Unsupported]) -> Size:
+def _size(body: Any, loc: Location, ctx: _Ctx) -> Size:
     """Build the size of a `bytes` or `string` field."""
     mapping = _as_mapping(_sized_body(body), loc, "a sized type")
     if "size" not in mapping:
         # Delimiter framing written the short way is still delimiter framing:
         # report it as the construct it is rather than as a missing size.
         if _TERMINATED_KEYS & {str(k) for k in mapping}:
-            unsupported.append(Unsupported(
-                "size.terminated", loc, _UNSUPPORTED_SIZES["terminated"],
-            ))
+            ctx.record("size.terminated", loc, _UNSUPPORTED_SIZES["terminated"])
             return Remaining()
         raise SpecError("a bytes or string field needs a size", loc)
-    return _size_value(mapping["size"], loc.child("size"), unsupported)
+    return _size_value(mapping["size"], loc.child("size"), ctx)
 
 
-def _size_value(size: Any, loc: Location, unsupported: list[Unsupported]) -> Size:
+def _size_value(size: Any, loc: Location, ctx: _Ctx) -> Size:
     """Build one size, in any of the forms kober accepts.
 
     ``4`` and ``{fixed: 4}`` are the same thing; ``{expr: "n"}`` reads the
@@ -607,7 +652,7 @@ def _size_value(size: Any, loc: Location, unsupported: list[Unsupported]) -> Siz
     (kind, body), = mapping.items()
 
     if kind in _UNSUPPORTED_SIZES:
-        unsupported.append(Unsupported(f"size.{kind}", loc, _UNSUPPORTED_SIZES[kind]))
+        ctx.record(f"size.{kind}", loc, _UNSUPPORTED_SIZES[kind])
         # Stand in for it so loading finishes and the checker can report every
         # fault at once rather than only the first.
         return Remaining()
@@ -623,7 +668,7 @@ def _size_value(size: Any, loc: Location, unsupported: list[Unsupported]) -> Siz
     )
 
 
-def _unit_ref(body: Any, loc: Location, unsupported: list[Unsupported]) -> UnitRef:
+def _unit_ref(body: Any, loc: Location, ctx: _Ctx) -> UnitRef:
     """Build a reference to another unit.
 
     ``{unit: name}`` and ``{unit: {name: name}}`` are the same thing.  The
@@ -634,9 +679,7 @@ def _unit_ref(body: Any, loc: Location, unsupported: list[Unsupported]) -> UnitR
         return UnitRef(unit=body)
     mapping = _as_mapping(body, loc, "a unit reference")
     if mapping.get("args"):
-        unsupported.append(Unsupported(
-            "unit.args", loc.child("args"), _UNSUPPORTED_KEYS["params"],
-        ))
+        ctx.record("unit.args", loc.child("args"), _UNSUPPORTED_KEYS["params"])
     return UnitRef(unit=_as_str(_require(mapping, "name", loc),
                                 loc.child("name"), "a unit name"))
 
@@ -687,7 +730,7 @@ def _reject_renamed_on(mapping: dict[str, Any], loc: Location) -> None:
         )
 
 
-def _switch(body: Any, loc: Location, unsupported: list[Unsupported]) -> Switch:
+def _switch(body: Any, loc: Location, ctx: _Ctx) -> Switch:
     """Build a switch and its cases."""
     mapping = _as_mapping(body, loc, "a switch")
     _reject_renamed_on(mapping, loc)
@@ -696,7 +739,7 @@ def _switch(body: Any, loc: Location, unsupported: list[Unsupported]) -> Switch:
                              loc.child("cases"), "switch cases")
     arms = {
         _int_key(value, loc.child("cases"), "a switch case value"):
-            _field_type(arm, loc.child("cases").child(str(value)), unsupported)
+            _field_type(arm, loc.child("cases").child(str(value)), ctx)
         for value, arm in cases_data.items()
     }
     default = mapping.get("default")
@@ -705,12 +748,11 @@ def _switch(body: Any, loc: Location, unsupported: list[Unsupported]) -> Switch:
                          loc.child("dispatch"), "a switch selector"),
         arms=arms,
         default=None if default is None
-        else _field_type(default, loc.child("default"), unsupported),
+        else _field_type(default, loc.child("default"), ctx),
     )
 
 
-def _repeat(data: Any, loc: Location,
-            unsupported: list[Unsupported]) -> Count | None:
+def _repeat(data: Any, loc: Location, ctx: _Ctx) -> Count | None:
     """Build a repeat from a ``repeat:`` wrapper.
 
     A field may also lift the repeat kind onto itself, which reaches
@@ -731,11 +773,10 @@ def _repeat(data: Any, loc: Location,
             f"only one", loc,
         )
     kind = present[0]
-    return _one_repeat(kind, mapping[kind], loc.child(kind), unsupported)
+    return _one_repeat(kind, mapping[kind], loc.child(kind), ctx)
 
 
-def _one_repeat(kind: str, body: Any, loc: Location,
-                unsupported: list[Unsupported]) -> Count | None:
+def _one_repeat(kind: str, body: Any, loc: Location, ctx: _Ctx) -> Count | None:
     """Build the repeat named by *kind*, whether it was lifted or wrapped.
 
     An unimplemented kind is recorded rather than refused, so it is reported as
@@ -743,9 +784,7 @@ def _one_repeat(kind: str, body: Any, loc: Location,
     lacks must not become an *unknown key* merely because it was written short.
     """
     if kind in _UNSUPPORTED_REPEATS:
-        unsupported.append(
-            Unsupported(f"repeat.{kind}", loc, _UNSUPPORTED_REPEATS[kind]),
-        )
+        ctx.record(f"repeat.{kind}", loc, _UNSUPPORTED_REPEATS[kind])
         return None
     return Count(expr=_as_str(body, loc, "a repeat count"))
 
