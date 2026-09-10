@@ -260,6 +260,30 @@ One breaking change: a switch dispatches on `dispatch:`, not `on:`.  See
   `derive` may not name a conditional field**, since a derivation cannot say
   whether it is deriving from nothing or from an empty value.
 
+### Documentation
+
+- **`packeteer.protospec` has an API reference** — the spec loader, checker,
+  compiler and renderer, and the frozen model behind them, had none: the
+  subsystem behind three releases was documented only by its format reference.
+  `docs/api/protospec.md` covers all four entry points and every public class,
+  and says which of the two easily-confused declarations is which (`input` is
+  the stream shape, `over` is the transport).
+
+- **The README says packeteer can be taught a protocol** (#144).  It described
+  the built-ins and never mentioned that you can add your own, which has been
+  possible since 0.11.0.  There is now a feature bullet, an entry in the
+  supported-protocol list, and a worked CLI example — checked, compiled and
+  parsed end to end rather than written from memory.
+
+- The superset claim is corrected wherever it appears: packeteer adds **four**
+  keys to kober's dialect, not five.  `const` was the fifth until kober `0.2.0`
+  adopted it — a magic number is how any decoder refuses traffic that is not
+  its own, so it was never an encoder's key.
+
+- Three transcripts showed stale generated output, one of them two releases
+  behind, and `condition` and `fill` reached the pages that describe
+  expressions, `derive` and what a spec cannot express.
+
 ---
 
 ## [0.12.0] - 2026-08-30

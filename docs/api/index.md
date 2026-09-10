@@ -34,6 +34,13 @@ every one must meet — {func}`~packeteer.conformance.check_protocol`.  It is
 what keeps hand-written and compiled protocols from drifting apart, and it is
 worth running against your own.
 
+**`packeteer.protospec`** reads a protocol spec and compiles it to a module
+that registers an {class}`~packeteer.protocols.AppProtocol` —
+{func}`~packeteer.protospec.load`, {func}`~packeteer.protospec.check` and
+{func}`~packeteer.protospec.compile_spec`, plus the frozen model in
+`packeteer.protospec.spec`.  The format itself is documented in
+{doc}`../protocols/format`.
+
 **`packeteer.fuzz`** provides {func}`~packeteer.fuzz.fuzz` and
 {func}`~packeteer.fuzz.fuzz_bytes` for generating adversarial packet variants, controlled
 by {class}`~packeteer.fuzz.FuzzOptions`.
@@ -52,4 +59,5 @@ sanitiser
 fuzzer
 protocols
 conformance
+protospec
 ```
