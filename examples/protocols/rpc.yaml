@@ -24,7 +24,7 @@ units:
         doc: Chosen by the opcode.  No default, so an unknown one is undecodable.
         type:
           switch:
-            on: "header.op"
+            dispatch: "header.op"
             cases:
               1: {unit: ping}
               2: {unit: read}

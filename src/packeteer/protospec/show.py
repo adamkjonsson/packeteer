@@ -208,7 +208,7 @@ def _type_text(field_type: FieldType, spec: Spec, seen: tuple[str, ...]) -> str:
             return f"→ {field_type.unit} (recursive)"
         return f"→ {field_type.unit}"
     if isinstance(field_type, Switch):
-        return f"switch on {_expr_text(field_type.on, None)}"
+        return f"switch on {_expr_text(field_type.dispatch, None)}"
     return type(field_type).__name__
 
 

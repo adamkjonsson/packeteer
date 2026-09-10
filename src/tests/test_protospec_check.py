@@ -300,7 +300,7 @@ class TestSwitchWarnings(unittest.TestCase):
             - name: rest
               type:
                 switch:
-                  on: "kind"
+                  dispatch: "kind"
                   cases:
                     1: {int: {bits: 8}}
         """)
@@ -313,7 +313,7 @@ class TestSwitchWarnings(unittest.TestCase):
             - name: rest
               type:
                 switch:
-                  on: "kind"
+                  dispatch: "kind"
                   cases:
                     1: {int: {bits: 8}}
                   default: {bytes: {size: {remaining: true}}}

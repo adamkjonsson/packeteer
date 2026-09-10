@@ -104,7 +104,7 @@ class TestSwitches(unittest.TestCase):
               - name: rest
                 type:
                   switch:
-                    on: "kind >> 6"
+                    dispatch: "kind >> 6"
                     cases:
                       0: {int: {bits: 8}}
                       3: {bytes: {size: 2}}
@@ -239,7 +239,7 @@ class TestEverythingAtOnce(unittest.TestCase):
               - name: rest
                 type:
                   switch:
-                    on: "length >> 6"
+                    dispatch: "length >> 6"
                     cases:
                       0: {string: {size: {expr: "length"}}}
                       3: {bytes: {size: 2}}

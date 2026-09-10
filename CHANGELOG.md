@@ -25,6 +25,37 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
+### Changed
+
+- **Breaking: a switch dispatches on `dispatch:`, not `on:`** (#143) — the key
+  is renamed to match
+  [kober](https://github.com/adamkjonsson/zipline-kober), which renamed it at
+  its own `0.1.0`.  A spec using `on:` must rename the key; it is refused with
+  a message naming the rename rather than as an unknown key.
+
+  ```yaml
+  type:
+    switch:
+      dispatch: "header.op"      # was: on: "header.op"
+      cases:
+        1: {unit: ping}
+  ```
+
+  The two projects describe the same protocols with one dialect, and this was
+  the single construct they spelled differently — so no amount of recognising
+  each other's keys could bridge it, and every spec containing a switch failed
+  to cross in one direction or the other.
+
+  The old key existed because `on` is a YAML 1.1 boolean: `on: kind` parses as
+  `{True: "kind"}`, and packeteer read the boolean back as the key the author
+  wrote.  That repair is gone.  It spared an author one papercut and cost the
+  compatibility this dialect is documented as having, and quoting the key was
+  never a workaround — the unquoted spelling is the one people write.
+
+  A switch now also refuses an **unknown key**, which it did not before, so a
+  misspelled `cases` or a stray `arms` is named instead of surfacing as
+  `missing required key`.
+
 ---
 
 ## [0.12.0] - 2026-08-30

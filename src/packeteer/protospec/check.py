@@ -322,7 +322,7 @@ class _Checker:
                     fld.loc,
                 )
         elif isinstance(field_type, Switch):
-            self._check_expr(unit, index, field_type.on, ExprType.INT,
+            self._check_expr(unit, index, field_type.dispatch, ExprType.INT,
                              "a switch selector", fld.loc)
             if field_type.default is None:
                 self._warn(

@@ -84,6 +84,7 @@ _FIELD_KEYS: frozenset[str] = frozenset({
     "name", "type", "repeat", "const", "derive", "sensitive", "doc",
     "condition",
 })
+_SWITCH_KEYS: frozenset[str] = frozenset({"dispatch", "cases", "default"})
 
 
 def load(path: str | os.PathLike[str]) -> Spec:
@@ -535,32 +536,35 @@ def _int_key(value: Any, loc: Location, what: str) -> int:
         )
 
 
-def _restore_on_key(mapping: dict[str, Any], loc: Location) -> dict[str, Any]:
-    """Restore the ``on`` key that YAML turned into ``True``.
+def _reject_renamed_on(mapping: dict[str, Any], loc: Location) -> None:
+    """Refuse a switch still written with the old ``on`` dispatch key.
 
     ``on`` is a YAML 1.1 boolean, so ``on: kind`` parses as ``{True: "kind"}``
-    — and ``on`` is a switch's dispatch key, which puts the trap on one of the
-    most common constructs in the language.  Requiring ``"on"`` in quotes
-    would work and would be a papercut every author hits exactly once, so the
-    boolean is read back as the key it was written as.
+    and never reaches this function as a string at all — which is why both
+    spellings are checked.  packeteer read the boolean back as the key it was
+    written as until 0.13.0; kober renamed the key instead, and one construct
+    with two spellings across two projects that claim one dialect is worse than
+    the papercut the repair avoided.
 
-    The repair is deliberately narrow, and matches kober's: only this mapping,
-    only a ``True`` key, only when a real ``on`` is not already there.
-    ``False`` is left alone — no spelling of ``off`` was ever meant to be a key
-    here — and JSON, which has no such coercion, is unaffected.
+    ``False`` is not consulted: no spelling of ``off`` was ever meant to be a
+    key here.
     """
-    if True not in mapping:
-        return mapping
-    if "on" in mapping:
+    if "dispatch" in mapping:
+        return
+    if "on" in mapping or True in mapping:
         raise SpecError(
-            "a switch has both 'on' and an unquoted on/yes/true key", loc,
+            "a switch dispatches on 'dispatch', not 'on'; the key was renamed "
+            "in 0.13.0 to match kober, because YAML 1.1 reads an unquoted "
+            "'on:' as the boolean true",
+            loc,
         )
-    return {("on" if key is True else key): value for key, value in mapping.items()}
 
 
 def _switch(body: Any, loc: Location, unsupported: list[Unsupported]) -> Switch:
     """Build a switch and its cases."""
-    mapping = _restore_on_key(_as_mapping(body, loc, "a switch"), loc)
+    mapping = _as_mapping(body, loc, "a switch")
+    _reject_renamed_on(mapping, loc)
+    _reject_unknown(mapping, _SWITCH_KEYS, "a switch", loc)
     cases_data = _as_mapping(_require(mapping, "cases", loc),
                              loc.child("cases"), "switch cases")
     arms = {
@@ -570,7 +574,8 @@ def _switch(body: Any, loc: Location, unsupported: list[Unsupported]) -> Switch:
     }
     default = mapping.get("default")
     return Switch(
-        on=_as_str(_require(mapping, "on", loc), loc.child("on"), "a switch selector"),
+        dispatch=_as_str(_require(mapping, "dispatch", loc),
+                         loc.child("dispatch"), "a switch selector"),
         arms=arms,
         default=None if default is None
         else _field_type(default, loc.child("default"), unsupported),

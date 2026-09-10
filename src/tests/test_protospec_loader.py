@@ -250,7 +250,7 @@ class TestSwitch(unittest.TestCase):
               - name: rest
                 type:
                   switch:
-                    on: "kind"
+                    dispatch: "kind"
                     cases:
                       1: {int: {bits: 8}}
                       2: {bytes: {size: 2}}
@@ -260,20 +260,31 @@ class TestSwitch(unittest.TestCase):
     def test_cases_and_default(self) -> None:
         switch = _spec(self._BODY).units["m"].fields[1].type
         self.assertIsInstance(switch, Switch)
-        self.assertEqual(switch.on, "kind")
+        self.assertEqual(switch.dispatch, "kind")
         self.assertEqual(set(switch.arms), {1, 2})
         self.assertIsInstance(switch.arms[1], IntType)
         self.assertIsInstance(switch.default, BytesType)
 
-    def test_the_yaml_on_key_is_restored(self) -> None:
-        """`on:` is a YAML 1.1 boolean, and it is a switch's dispatch key."""
-        self.assertEqual(_spec(self._BODY).units["m"].fields[1].type.on, "kind")
-
-    def test_both_on_and_true_is_refused(self) -> None:
-        body = self._BODY.replace('on: "kind"', 'on: "kind"\n                    "on": "kind"')
+    def test_the_unquoted_on_key_is_refused_by_name(self) -> None:
+        """`on:` is a YAML 1.1 boolean, so it arrives as `True` and never as a string."""
+        body = self._BODY.replace('dispatch: "kind"', 'on: "kind"')
         with self.assertRaises(SpecError) as ctx:
             _spec(body)
-        self.assertIn("on", str(ctx.exception))
+        self.assertIn("'dispatch', not 'on'", str(ctx.exception))
+
+    def test_the_quoted_on_key_is_refused_by_name(self) -> None:
+        """Quoting it reaches the loader as a string, and is the same mistake."""
+        body = self._BODY.replace('dispatch: "kind"', '"on": "kind"')
+        with self.assertRaises(SpecError) as ctx:
+            _spec(body)
+        self.assertIn("'dispatch', not 'on'", str(ctx.exception))
+
+    def test_an_unknown_switch_key_is_refused(self) -> None:
+        body = self._BODY.replace('dispatch: "kind"',
+                                  'dispatch: "kind"\n                    arms: {}')
+        with self.assertRaises(SpecError) as ctx:
+            _spec(body)
+        self.assertIn("'arms'", str(ctx.exception))
 
     def test_json_string_case_keys_mean_the_same_cases(self) -> None:
         data = json.loads(json.dumps({
@@ -281,7 +292,7 @@ class TestSwitch(unittest.TestCase):
             "units": {"m": {"fields": [
                 {"name": "kind", "type": {"int": {"bits": 8}}},
                 {"name": "rest", "type": {"switch": {
-                    "on": "kind", "cases": {"1": {"int": {"bits": 8}}},
+                    "dispatch": "kind", "cases": {"1": {"int": {"bits": 8}}},
                 }}},
             ]}},
         }))
@@ -396,7 +407,7 @@ class TestKoberSpecsLoad(unittest.TestCase):
               - name: rest
                 type:
                   switch:
-                    on: "length >> 6"
+                    dispatch: "length >> 6"
                     cases:
                       0: {string: {size: {expr: "length"}}}
                       3: {unit: {name: compressed, args: ["length"]}}

@@ -426,7 +426,7 @@ class _Generator:
 
     def _emit_switch_decode(self, unit: Unit, fld: Field, switch: Switch,
                             pad: str, target: str) -> None:
-        self._emit(f"{pad}_sel = {self._py(switch.on, unit, fld.loc)}")
+        self._emit(f"{pad}_sel = {self._py(switch.dispatch, unit, fld.loc)}")
         first = True
         for value, arm in sorted(switch.arms.items()):
             self._emit(f"{pad}{'if' if first else 'elif'} _sel == {value}:")
@@ -496,7 +496,7 @@ class _Generator:
 
     def _emit_switch_encode(self, unit: Unit, fld: Field, switch: Switch,
                             pad: str, value: str) -> None:
-        self._emit(f"{pad}_sel = {self._py(switch.on, unit, fld.loc)}")
+        self._emit(f"{pad}_sel = {self._py(switch.dispatch, unit, fld.loc)}")
         first = True
         for arm_value, arm in sorted(switch.arms.items()):
             self._emit(f"{pad}{'if' if first else 'elif'} _sel == {arm_value}:")
@@ -627,7 +627,7 @@ class _Generator:
         so the section could not be written to JSON at all — `packeteer parse`
         produced something no file could hold.
         """
-        self._emit(f"{pad}_sel = {self._py(switch.on, unit, fld.loc)}")
+        self._emit(f"{pad}_sel = {self._py(switch.dispatch, unit, fld.loc)}")
         first = True
         for case, arm in sorted(switch.arms.items()):
             self._emit(f"{pad}{'if' if first else 'elif'} _sel == {case}:")

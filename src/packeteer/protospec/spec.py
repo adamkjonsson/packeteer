@@ -268,14 +268,14 @@ class Switch:
     surfaces as an opaque payload rather than a guess.
 
     Attributes:
-        on: Expression source selecting the arm.
+        dispatch: Expression source selecting the arm.
         arms: Type to use, by selector value.
         default: Type for a value no arm matches, or ``None`` to leave the
             region undecoded.
 
     """
 
-    on: str
+    dispatch: str
     arms: Mapping[int, FieldType]
     default: FieldType | None = None
 

@@ -235,7 +235,7 @@ parameters, which are **not supported yet**.
 ```yaml
 type:
   switch:
-    on: "kind"
+    dispatch: "kind"
     cases:
       1: {int: {bits: 8}}
       2: {bytes: {size: 2}}
@@ -244,7 +244,7 @@ type:
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `on` | *(required)* | An integer [expression](#expressions) selecting the case |
+| `dispatch` | *(required)* | An integer [expression](#expressions) selecting the case |
 | `cases` | *(required)* | The type to use, by value |
 | `default` | — | The type for a value no case matches |
 
@@ -254,10 +254,14 @@ is often what you want, so `check` warns rather than refusing, to make it a
 choice rather than an oversight.
 
 ```{note}
-`on:` is a YAML 1.1 boolean.  packeteer reads it back as the key you wrote,
-because quoting it would be a papercut every author hits once.  Elsewhere,
-an unquoted `on`, `off`, `yes` or `no` becomes `true`/`false` and is refused
-with a message saying to quote it.
+**The key was `on` until 0.13.0.**  A spec still written that way is refused
+with a message naming the rename, whether or not the `on` was quoted.
+
+An unquoted `on:` is a YAML 1.1 boolean, so it never reaches the loader as a
+string at all — which is why the key was renamed rather than repaired, and why
+quoting it is not a workaround.  kober renamed it for the same reason, and one
+construct with two spellings across two projects claiming one dialect is worse
+than the papercut a repair avoids.
 ```
 
 (repeat)=
@@ -392,7 +396,7 @@ count, a switch selector — it is written as an expression string.
 ```yaml
 size:   {expr: "header.length * 4"}
 count:  "qdcount"
-on:     "length >> 6"
+dispatch: "length >> 6"
 ```
 
 | | |

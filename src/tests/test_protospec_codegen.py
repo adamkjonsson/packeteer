@@ -330,7 +330,7 @@ class TestSwitches(_CompileTestCase):
               - name: rest
                 type:
                   switch:
-                    on: "kind"
+                    dispatch: "kind"
                     cases:
                       1: {int: {bits: 8}}
                       2: {bytes: {size: 2}}
