@@ -80,11 +80,23 @@ _SPEC_KEYS: frozenset[str] = frozenset({
     "doc", *_UNSUPPORTED_KEYS,
 })
 _UNIT_KEYS: frozenset[str] = frozenset({"fields", "doc", *_UNSUPPORTED_KEYS})
-_FIELD_KEYS: frozenset[str] = frozenset({
+_SWITCH_KEYS: frozenset[str] = frozenset({"dispatch", "cases", "default"})
+
+# A field's keys come from three sets that share no member, which is what lets
+# a type kind and a repeat kind be written directly on the field rather than
+# inside a ``type:`` or ``repeat:`` wrapper.  This is kober's rule, and the
+# disjointness is asserted by the test suite rather than assumed.
+_FIELD_OWN_KEYS: frozenset[str] = frozenset({
     "name", "type", "repeat", "const", "derive", "sensitive", "doc",
     "condition",
 })
-_SWITCH_KEYS: frozenset[str] = frozenset({"dispatch", "cases", "default"})
+#: ``bits`` names the integer kind, because the word says what the number
+#: counts: ``int: 8`` is shorter and cannot say whether the 8 is bits or bytes.
+_TYPE_KINDS: frozenset[str] = frozenset({
+    "bits", "int", "bytes", "string", "unit", "switch", *_UNSUPPORTED_TYPES,
+})
+_REPEAT_KINDS: frozenset[str] = frozenset({"count", *_UNSUPPORTED_REPEATS})
+_FIELD_KEYS: frozenset[str] = _FIELD_OWN_KEYS | _TYPE_KINDS | _REPEAT_KINDS
 
 
 def load(path: str | os.PathLike[str]) -> Spec:
@@ -236,6 +248,30 @@ def _reject_unknown(mapping: dict[str, Any], known: frozenset[str],
     )
 
 
+def _reject_unknown_field_key(mapping: dict[str, Any], loc: Location) -> None:
+    """Refuse a field key, naming the set each allowed key belongs to.
+
+    A field's keys come from three sets, and printing them as one flat list
+    would say nothing about *why* each is allowed — which matters most for the
+    lifted kinds, where an author needs to know that ``bits`` is a type and
+    ``count`` a repetition rather than that both happen to be legal.
+    """
+    unknown = sorted(str(k) for k in mapping if str(k) not in _FIELD_KEYS)
+    if not unknown:
+        return
+    listed = ", ".join(repr(k) for k in unknown)
+    groups = (
+        ("a field's own keys", _FIELD_OWN_KEYS),
+        ("a type kind", _TYPE_KINDS),
+        ("a repeat kind", _REPEAT_KINDS),
+    )
+    known = "; ".join(
+        f"{label}: {', '.join(repr(k) for k in sorted(keys))}"
+        for label, keys in groups
+    )
+    raise SpecError(f"a field has no key {listed}; known keys are — {known}", loc)
+
+
 def _require(data: Any, key: str, loc: Location) -> Any:
     """Return ``data[key]``, or raise naming what is missing."""
     if not isinstance(data, dict) or key not in data:
@@ -384,22 +420,64 @@ def _unit(name: str, data: Any, loc: Location, unsupported: list[Unsupported]) -
     return Unit(name=name, fields=fields, loc=loc, doc=mapping.get("doc"))
 
 
+def _lifted(mapping: dict[str, Any], kinds: frozenset[str], wrapper: str,
+            what: str, loc: Location) -> tuple[str, Any] | None:
+    """Return the one lifted *kinds* key on a field, or ``None`` if there is none.
+
+    A tagged construct's kind may be written on the field rather than inside
+    its wrapper, which is unambiguous because a field's three key sets share no
+    member.  Exactly one kind is allowed; the wrapper and a lifted kind
+    together are refused rather than merged, since there is no sensible reading
+    of a field that names its type twice.
+    """
+    present = sorted(k for k in mapping if str(k) in kinds)
+    if not present:
+        return None
+    if len(present) > 1:
+        listed = ", ".join(repr(k) for k in present)
+        raise SpecError(
+            f"a field names {len(present)} {what} kinds ({listed}); it may "
+            f"name only one", loc,
+        )
+    kind = present[0]
+    if wrapper in mapping:
+        raise SpecError(
+            f"a field has both {kind!r} and {wrapper!r}; {kind!r} is the "
+            f"short form of {wrapper}: {{{kind}: …}} and the two cannot be "
+            f"combined", loc,
+        )
+    return kind, mapping[kind]
+
+
 def _field(data: Any, loc: Location, unsupported: list[Unsupported]) -> Field:
     """Build one field."""
     mapping = _as_mapping(data, loc, "a field")
-    _reject_unknown(mapping, _FIELD_KEYS, "a field", loc)
+    _reject_unknown_field_key(mapping, loc)
     raw_name = mapping.get("name")
     # `name: null` is kober's anonymous field — reserved bits that are decoded
     # and re-encoded but never named.
     name = None if raw_name is None else _as_str(raw_name, loc, "a field name")
 
-    field_type = _field_type(_require(mapping, "type", loc), loc.child("type"),
-                             unsupported)
+    lifted_type = _lifted(mapping, _TYPE_KINDS, "type", "type", loc)
+    if lifted_type is None:
+        field_type = _field_type(_require(mapping, "type", loc),
+                                 loc.child("type"), unsupported)
+    else:
+        kind, body = lifted_type
+        field_type = _one_type(kind, body, loc.child(kind), unsupported)
+
+    lifted_repeat = _lifted(mapping, _REPEAT_KINDS, "repeat", "repeat", loc)
+    if lifted_repeat is None:
+        repeat = _repeat(mapping.get("repeat"), loc.child("repeat"), unsupported)
+    else:
+        kind, body = lifted_repeat
+        repeat = _one_repeat(kind, body, loc.child(kind), unsupported)
+
     return Field(
         name=name,
         type=field_type,
         loc=loc,
-        repeat=_repeat(mapping.get("repeat"), loc.child("repeat"), unsupported),
+        repeat=repeat,
         const=None if "const" not in mapping else Const(value=mapping["const"]),
         derive=_derive(mapping.get("derive"), loc.child("derive")),
         sensitive=bool(mapping.get("sensitive", False)),
@@ -408,26 +486,40 @@ def _field(data: Any, loc: Location, unsupported: list[Unsupported]) -> Field:
 
 
 def _field_type(data: Any, loc: Location, unsupported: list[Unsupported]) -> FieldType:
-    """Build one field's type, recording constructs this version cannot compile."""
+    """Build one field's type from a ``type:`` wrapper, or from a switch arm.
+
+    The long form: a tagged mapping naming exactly one construct.  A field may
+    also lift the kind key onto itself, which reaches :func:`_one_type`
+    directly — both spellings build the identical type, so nothing downstream
+    can tell which was used.
+    """
     mapping = _as_mapping(data, loc, "a field type")
     if len(mapping) != 1:
         raise SpecError(
             f"a field type names exactly one construct, not {len(mapping)}", loc,
         )
     (kind, body), = mapping.items()
+    return _one_type(str(kind), body, loc, unsupported)
 
+
+def _one_type(kind: str, body: Any, loc: Location,
+              unsupported: list[Unsupported]) -> FieldType:
+    """Build the type named by *kind*, whether it was lifted or wrapped."""
     if kind in _UNSUPPORTED_TYPES:
         unsupported.append(Unsupported(kind, loc, _UNSUPPORTED_TYPES[kind]))
         # Stand in for it so loading can finish and the checker can report
         # every fault at once rather than only the first.
         return BytesType(size=Remaining())
 
+    # `bits: 16` is the integer kind spelled by what the number counts.
+    if kind == "bits":
+        return _int_type({"bits": body}, loc)
     if kind == "int":
         return _int_type(body, loc)
     if kind == "bytes":
         return BytesType(size=_size(body, loc, unsupported))
     if kind == "string":
-        body_map = _as_mapping(body, loc, "a string type")
+        body_map = _as_mapping(_sized_body(body), loc, "a string type")
         return StringType(size=_size(body_map, loc, unsupported),
                           encoding=body_map.get("encoding", "utf-8"))
     if kind == "unit":
@@ -437,8 +529,27 @@ def _field_type(data: Any, loc: Location, unsupported: list[Unsupported]) -> Fie
     raise SpecError(f"unknown field type {kind!r}", loc)
 
 
+def _sized_body(body: Any) -> Any:
+    """Expand a bare ``bytes``/``string`` body into the size it names.
+
+    ``{bytes: 4}`` and ``{bytes: {size: 4}}`` are the same thing: a scalar
+    where a mapping is expected fills in the one key that matters.
+    """
+    if isinstance(body, bool) or not isinstance(body, (int, str, dict)):
+        return body
+    if isinstance(body, dict):
+        return body
+    return {"size": body}
+
+
 def _int_type(body: Any, loc: Location) -> IntType:
-    """Build an integer type."""
+    """Build an integer type.
+
+    ``{int: 8}`` is a bare width — a scalar where a mapping is expected fills
+    in the one key that matters, which for an integer is ``bits``.
+    """
+    if not isinstance(body, bool) and isinstance(body, int):
+        body = {"bits": body}
     mapping = _as_mapping(body, loc, "an int type")
     bits = _as_int(_require(mapping, "bits", loc), loc.child("bits"), "bits")
     if not 1 <= bits <= _MAX_INT_BITS:
@@ -453,10 +564,26 @@ def _int_type(body: Any, loc: Location) -> IntType:
     )
 
 
+#: kober writes a delimiter beside ``size`` rather than under it, so
+#: ``{string: {delimiter: "\r\n"}}`` is its short spelling of
+#: ``{size: {terminated: {delimiter: "\r\n"}}}``.  ``consume``, ``required``
+#: and ``within`` sit alongside it.
+_TERMINATED_KEYS: frozenset[str] = frozenset({
+    "delimiter", "consume", "required", "within",
+})
+
+
 def _size(body: Any, loc: Location, unsupported: list[Unsupported]) -> Size:
     """Build the size of a `bytes` or `string` field."""
-    mapping = _as_mapping(body, loc, "a sized type")
+    mapping = _as_mapping(_sized_body(body), loc, "a sized type")
     if "size" not in mapping:
+        # Delimiter framing written the short way is still delimiter framing:
+        # report it as the construct it is rather than as a missing size.
+        if _TERMINATED_KEYS & {str(k) for k in mapping}:
+            unsupported.append(Unsupported(
+                "size.terminated", loc, _UNSUPPORTED_SIZES["terminated"],
+            ))
+            return Remaining()
         raise SpecError("a bytes or string field needs a size", loc)
     return _size_value(mapping["size"], loc.child("size"), unsupported)
 
@@ -584,20 +711,43 @@ def _switch(body: Any, loc: Location, unsupported: list[Unsupported]) -> Switch:
 
 def _repeat(data: Any, loc: Location,
             unsupported: list[Unsupported]) -> Count | None:
-    """Build a repeat, recording the forms this version cannot compile."""
+    """Build a repeat from a ``repeat:`` wrapper.
+
+    A field may also lift the repeat kind onto itself, which reaches
+    :func:`_one_repeat` directly; both spellings build the identical repeat.
+    """
     if data is None:
         return None
     mapping = _as_mapping(data, loc, "a repeat")
-    for key, note in _UNSUPPORTED_REPEATS.items():
-        if key in mapping:
-            unsupported.append(Unsupported(f"repeat.{key}", loc.child(key), note))
-            return None
-    if "count" not in mapping:
+    present = sorted(k for k in mapping if str(k) in _REPEAT_KINDS)
+    if not present:
         raise SpecError(
             "a repeat names one of 'count', 'until' or 'to_end'", loc,
         )
-    return Count(expr=_as_str(mapping["count"], loc.child("count"),
-                              "a repeat count"))
+    if len(present) > 1:
+        listed = ", ".join(repr(k) for k in present)
+        raise SpecError(
+            f"a repeat names {len(present)} kinds ({listed}); it may name "
+            f"only one", loc,
+        )
+    kind = present[0]
+    return _one_repeat(kind, mapping[kind], loc.child(kind), unsupported)
+
+
+def _one_repeat(kind: str, body: Any, loc: Location,
+                unsupported: list[Unsupported]) -> Count | None:
+    """Build the repeat named by *kind*, whether it was lifted or wrapped.
+
+    An unimplemented kind is recorded rather than refused, so it is reported as
+    *not supported yet* whichever spelling was used — a construct this version
+    lacks must not become an *unknown key* merely because it was written short.
+    """
+    if kind in _UNSUPPORTED_REPEATS:
+        unsupported.append(
+            Unsupported(f"repeat.{kind}", loc, _UNSUPPORTED_REPEATS[kind]),
+        )
+        return None
+    return Count(expr=_as_str(body, loc, "a repeat count"))
 
 
 def _derive(data: Any, loc: Location) -> Derive | None:

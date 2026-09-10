@@ -6,7 +6,7 @@ import pathlib
 import textwrap
 import unittest
 
-from packeteer.protospec import SpecError, from_mapping, load, loads
+from packeteer.protospec import SpecError, from_mapping, load, loader, loads
 from packeteer.protospec.spec import (
     BytesType,
     Count,
@@ -649,3 +649,132 @@ class TestUnknownKeysAreRefused(unittest.TestCase):
                   - {name: a, type: {int: {bits: 8}}}
         """)
         self.assertIn("unit.params", {u.construct for u in spec.unsupported})
+
+
+class TestShorthands(unittest.TestCase):
+    """kober's three rules: lifted kinds, bare scalars, and `bits` (#141)."""
+
+    def _field(self, line: str) -> object:
+        return _spec(f"""
+            name: t
+            version: "1"
+            entry: m
+            units:
+              m:
+                fields:
+                  - {{name: n, bits: 8}}
+                  {line}
+        """).units["m"].fields[1]
+
+    def test_bits_names_the_integer_kind(self) -> None:
+        self.assertEqual(self._field("- {name: f, bits: 4}").type,
+                         IntType(bits=4))
+
+    def test_a_lifted_kind_equals_its_wrapper(self) -> None:
+        """The whole point: both spellings build the identical type."""
+        for short, long in [
+            ("bits: 16", "type: {int: {bits: 16}}"),
+            ("int: {bits: 8, enum: e}", "type: {int: {bits: 8, enum: e}}"),
+            ("bytes: {size: 4}", "type: {bytes: {size: 4}}"),
+            ("unit: m", "type: {unit: m}"),
+        ]:
+            with self.subTest(short=short):
+                self.assertEqual(self._field(f"- {{name: f, {short}}}").type,
+                                 self._field(f"- {{name: f, {long}}}").type)
+
+    def test_a_bare_body_is_the_key_that_matters(self) -> None:
+        self.assertEqual(self._field("- {name: f, int: 8}").type, IntType(bits=8))
+        self.assertEqual(self._field("- {name: f, bytes: 4}").type,
+                         BytesType(size=Fixed(length=4)))
+        self.assertEqual(self._field("- {name: f, string: 4}").type.size,
+                         Fixed(length=4))
+
+    def test_a_lifted_repeat_equals_its_wrapper(self) -> None:
+        short = self._field("- {name: f, unit: m, count: n}")
+        long = self._field("- {name: f, type: {unit: m}, repeat: {count: n}}")
+        self.assertEqual(short.repeat, long.repeat)
+        self.assertEqual(short.repeat, Count(expr="n"))
+
+    def test_two_type_kinds_is_an_error(self) -> None:
+        with self.assertRaises(SpecError) as ctx:
+            self._field("- {name: f, bits: 8, bytes: 4}")
+        self.assertIn("may name only one", str(ctx.exception))
+
+    def test_a_kind_beside_its_own_wrapper_is_an_error(self) -> None:
+        with self.assertRaises(SpecError) as ctx:
+            self._field("- {name: f, bits: 8, type: {int: {bits: 8}}}")
+        self.assertIn("cannot be combined", str(ctx.exception))
+
+    def test_a_lifted_repeat_beside_repeat_is_an_error(self) -> None:
+        with self.assertRaises(SpecError) as ctx:
+            self._field("- {name: f, unit: m, count: n, repeat: {count: n}}")
+        self.assertIn("cannot be combined", str(ctx.exception))
+
+    def test_no_type_at_all_is_still_an_error(self) -> None:
+        with self.assertRaises(SpecError) as ctx:
+            self._field("- {name: f, doc: nothing}")
+        self.assertIn("type", str(ctx.exception))
+
+    def test_an_unknown_key_names_the_set_each_key_belongs_to(self) -> None:
+        with self.assertRaises(SpecError) as ctx:
+            self._field("- {name: f, bits: 8, conditon: 'n == 1'}")
+        message = str(ctx.exception)
+        self.assertIn("'conditon'", message)
+        self.assertIn("a field's own keys", message)
+        self.assertIn("a type kind", message)
+        self.assertIn("a repeat kind", message)
+
+    def test_a_lifted_unsupported_kind_is_still_not_supported_yet(self) -> None:
+        """Writing it short must not turn it into an unknown key."""
+        for line, construct in [
+            ("- {name: f, pointer: {at: n, type: {unit: m}}}", "pointer"),
+            ("- {name: f, unit: m, until: 'n == 0'}", "repeat.until"),
+            ("- {name: f, unit: m, to_end: true}", "repeat.to_end"),
+        ]:
+            with self.subTest(line=line):
+                spec = _spec(f"""
+                    name: t
+                    version: "1"
+                    entry: m
+                    units:
+                      m:
+                        fields:
+                          - {{name: n, bits: 8}}
+                          {line}
+                """)
+                self.assertIn(construct,
+                              [u.construct for u in spec.unsupported])
+
+    def test_the_three_key_sets_share_no_member(self) -> None:
+        """The property that makes lifting unambiguous, asserted not assumed."""
+        own, types, repeats = (loader._FIELD_OWN_KEYS, loader._TYPE_KINDS,
+                               loader._REPEAT_KINDS)
+        self.assertEqual(own & types, frozenset())
+        self.assertEqual(own & repeats, frozenset())
+        self.assertEqual(types & repeats, frozenset())
+        self.assertEqual(loader._FIELD_KEYS, own | types | repeats)
+
+
+class TestShorthandExamples(unittest.TestCase):
+    """The shipped examples are written short, and mean what they did (#141)."""
+
+    def test_sensor_is_written_short(self) -> None:
+        text = (_EXAMPLES / "sensor.yaml").read_text(encoding="utf-8")
+        self.assertNotIn("type: {", text)
+
+    def test_rpc_is_written_short(self) -> None:
+        text = (_EXAMPLES / "rpc.yaml").read_text(encoding="utf-8")
+        self.assertNotIn("type: {", text)
+
+    def test_the_long_form_still_loads(self) -> None:
+        """It is the fallback, not a removed spelling."""
+        spec = _spec("""
+            name: t
+            version: "1"
+            entry: m
+            units:
+              m:
+                fields:
+                  - {name: n, type: {int: {bits: 8}}, repeat: {count: "1"}}
+        """)
+        self.assertEqual(spec.units["m"].fields[0].type, IntType(bits=8))

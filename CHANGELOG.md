@@ -25,6 +25,57 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
+### Added
+
+- **A field may be written the short way** (#141) — kober's three shorthands,
+  which build the **identical** spec, so a document may mix them freely and
+  nothing downstream can tell which spelling was used:
+
+  ```yaml
+  - {name: count,   type: {int: {bits: 8}}}                        # still works
+  - {name: count,   bits: 8}                                       # and so does this
+
+  - {name: samples, type: {unit: sample}, repeat: {count: count}}  # still works
+  - {name: samples, unit: sample, count: count}                    # and so does this
+  ```
+
+  1. **A tagged construct's kind lifts into the field**, for its type and its
+     repetition alike.  A field's keys come from three sets that share no
+     member — its own, the type kinds (`bits`, `int`, `bytes`, `string`,
+     `unit`, `switch`), and the repeat kinds (`count`) — which is what makes
+     the lifting unambiguous.
+  2. **A scalar where a mapping is expected fills in the one key that
+     matters**: `{bytes: 4}` and `{string: 4}` are a size, `{int: 8}` a width,
+     alongside the bare size and bare unit name that already worked.
+  3. **`bits` names the integer kind**, because the word says what the number
+     counts.  `int: 8` is shorter and cannot say whether the 8 is bits or
+     bytes — Kaitai's `u8` means eight *bytes* — and sub-byte fields are the
+     ordinary case here.
+
+  The long form is unchanged and remains the fallback: a body with a second key
+  (`int: {bits: 4, enum: opcode}`), a type inside a construct such as a
+  switch's cases, or wherever a wrapper reads better.
+
+  **Strictness is not weakened.**  Exactly one key must name a type kind and at
+  most one a repeat kind; two kinds of the same construct is an error, a lifted
+  kind beside its own wrapper is an error, and an unknown key is still an
+  error — now reported with the set each allowed key belongs to rather than as
+  one flat list.  A construct this version does not implement is reported as
+  *not supported yet* in **either** spelling, so writing it short never turns
+  it into a typo.
+
+  This is what the reference means by calling the dialect a superset of
+  kober's: before this, kober's own `dns.yaml` and `http.yaml` failed here on
+  their first field.  Both now load, and are refused only for the constructs
+  packeteer genuinely lacks.  `examples/protocols/sensor.yaml` and `rpc.yaml`
+  are rewritten short, and compile byte-for-byte identically to before.
+
+- **`{string: {delimiter: …}}` is recognised as delimiter framing** (#141) —
+  kober's short spelling of `{size: {terminated: {delimiter: …}}}`, along with
+  its `within`, `required` and `consume` companions.  Still **not supported
+  yet**, but now reported as the construct it is rather than as
+  `a bytes or string field needs a size`.
+
 ### Changed
 
 - **Breaking: a switch dispatches on `dispatch:`, not `on:`** (#143) — the key

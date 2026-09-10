@@ -30,15 +30,15 @@ enums:
 units:
   reading:
     fields:
-      - {name: magic,   type: {int: {bits: 16}}, const: 0x5345}
-      - {name: count,   type: {int: {bits: 8}}, derive: {count_of: samples}}
-      - {name: samples, type: {unit: sample}, repeat: {count: "count"}}
+      - {name: magic,   bits: 16, const: 0x5345}
+      - {name: count,   bits: 8, derive: {count_of: samples}}
+      - {name: samples, unit: sample, count: count}
 
   sample:
     fields:
-      - {name: kind,   type: {int: {bits: 8, enum: kind}}}
-      - {name: length, type: {int: {bits: 8}}, derive: {size_of: value}}
-      - {name: value,  type: {bytes: {size: {expr: "length"}}}, sensitive: true}
+      - {name: kind,   int: {bits: 8, enum: kind}}
+      - {name: length, bits: 8, derive: {size_of: value}}
+      - {name: value,  bytes: {size: {expr: "length"}}, sensitive: true}
 ```
 
 ---
@@ -66,7 +66,7 @@ as unknown keys:
 | `pointer` | Decoding one is straightforward; *encoding* one needs a compression model, and packeteer's own DNS encoder declines to compress |
 | `select` | A question asked across a repeated field — what HTTP needs to decide its own framing |
 | `computed` | A value derived at decode time; `derive` is the encode-direction answer and covers the cases that matter here |
-| `{size: {terminated: …}}` | Delimiter framing |
+| `{size: {terminated: …}}`, `{string: {delimiter: …}}` | Delimiter framing, in either spelling |
 | `repeat: {until: …}`, `repeat: {to_end: true}` | Repeat by condition, or to the end of the run |
 | unit `params:` / `{unit: {args: …}}` | Unit parameters |
 | recursion | A recursive unit has no statically known size, which both the encoder and the framing checks need |
@@ -158,7 +158,7 @@ units:
   reading:
     doc: One datagram — a header and a run of samples.
     fields:
-      - {name: magic, type: {int: {bits: 16}}, const: 0x5345}
+      - {name: magic, bits: 16, const: 0x5345}
 ```
 
 | Key | Default | Description |
@@ -173,8 +173,10 @@ units:
 | Key | Default | Description |
 |-----|---------|-------------|
 | `name` | *(required)* | Field name.  Must be a Python identifier, since it becomes an attribute.  `null` makes the field anonymous — decoded and re-encoded, but not named |
-| `type` | *(required)* | What it holds — see [Types](#types) |
-| `repeat` | — | How many times it occurs — see [`repeat`](#repeat) |
+| *a type kind* | *(required)* | What it holds, written on the field — see [How a field is written](#shorthands) |
+| `type` | — | The long form of a type kind — see [Types](#types) |
+| *a repeat kind* | — | How many times it occurs, written on the field |
+| `repeat` | — | The long form of a repeat kind — see [`repeat`](#repeat) |
 | `const` | — | A value written on encode and checked on decode — see [`const`](#const) |
 | `derive` | — | How the encoder computes it — see [`derive`](#derive) |
 | `sensitive` | `false` | Whether `packeteer sanitise` redacts it — see [`sensitive`](#sensitive) |
@@ -188,10 +190,87 @@ is refused by `check`, naming the field and where it was declared.
 
 A type names exactly one construct.
 
+(shorthands)=
+#### How a field is written
+
+**A field says what it decodes on the field itself**, with the kind as one of
+its keys.  That is the spelling the shipped examples use and the one to write:
+
+```yaml
+- {name: qdcount, bits: 16}
+- {name: questions, unit: question, count: qdcount}
+- {name: body, bytes: {size: {expr: "length"}}}
+```
+
+Underneath it every construct is a **tagged mapping naming the kind**, and the
+lines above are three rules over that.  Each builds the *identical* spec —
+nothing downstream can tell which spelling was used — so a document may mix
+them freely.
+
+**1. A tagged construct's kind lifts into the field**, for its type and for its
+repetition alike:
+
+```yaml
+- {name: count, type: {int: {bits: 8}}}                          # the same
+- {name: count, int: {bits: 8}}
+
+- {name: samples, type: {unit: sample}, repeat: {count: count}}  # the same
+- {name: samples, unit: sample, count: count}
+```
+
+This is unambiguous because a field's keys come from **three sets that share no
+member**:
+
+| | Keys |
+|---|---|
+| **A field's own** | `name`, `const`, `derive`, `sensitive`, `doc`, and the `type`/`repeat` wrappers |
+| **A type kind** | `bits`, `int`, `bytes`, `string`, `unit`, `switch` |
+| **A repeat kind** | `count` |
+
+**2. A scalar where a mapping is expected fills in the one key that matters.**
+
+```yaml
+- {name: body, bytes: {size: {fixed: 4}}}   # long
+- {name: body, bytes: {size: 4}}            # a bare size is `fixed`
+- {name: body, bytes: 4}                    # a bare bytes/string body is its size
+- {name: n, int: 8}                         # a bare int body is its width
+- {name: q, unit: question}                 # a bare unit body is its name
+```
+
+**3. `bits` names the integer kind**, because the word says what the number
+counts.  `int: 8` is a character shorter and cannot say whether the 8 is bits
+or bytes — Kaitai's `u8` means eight *bytes* — and sub-byte fields are the
+ordinary case here rather than the exotic one.
+
+##### Strictness is unchanged
+
+Exactly one key must name a type kind, and at most one a repeat kind — a
+repetition is optional where a type is not.  Two kinds of the same construct is
+an error, a lifted kind beside its own wrapper (`count:` with `repeat:`) is an
+error, and a key in none of the three sets is still an error, reported with the
+set each allowed key belongs to rather than as one flat list.
+
+##### When the long form is needed
+
+It is the fallback rather than the norm, and there are three occasions for it:
+
+- **A body carrying a second key.**  `int: {bits: 4, enum: opcode}`, not
+  `{int: 4, enum: opcode}` — `enum`, `signed` or `endian` beside `bits:` is an
+  unknown-key error, which is loud rather than quiet.
+- **A type inside a construct rather than on a field.**  A [`switch`](#switch)'s
+  cases are written `type:`-style, since only a field has the three key sets
+  that make lifting unambiguous.
+- **Readability**, where a wrapper says more than a lifted key does.
+
+Each entry below leads with the short spelling and gives the long one beside
+it.
+
 #### `int`
 
 ```yaml
-type: {int: {bits: 16, signed: false, endian: big, enum: kind}}
+- {name: qr, bits: 1}                                # the common case
+- {name: op, int: {bits: 4, enum: opcode}}           # a second key
+- {name: id, type: {int: {bits: 16, signed: false}}} # the long form
 ```
 
 | Key | Default | Description |
@@ -204,9 +283,10 @@ type: {int: {bits: 16, signed: false, endian: big, enum: kind}}
 #### `bytes` and `string`
 
 ```yaml
-type: {bytes: {size: 4}}
-type: {bytes: {size: {expr: "length"}}}
-type: {string: {size: {remaining: true}, encoding: ascii}}
+- {name: b, bytes: 4}                                     # a bare body is its size
+- {name: b, bytes: {size: {expr: "length"}}}
+- {name: s, string: {size: {remaining: true}, encoding: ascii}}
+- {name: b, type: {bytes: {size: 4}}}                     # the long form
 ```
 
 | Size form | Meaning |
@@ -223,17 +303,19 @@ reaches a packet spec as a hex string.
 #### `unit`
 
 ```yaml
-type: {unit: sample}
-type: {unit: {name: sample}}
+- {name: s, unit: sample}                 # the common case
+- {name: s, type: {unit: sample}}         # the long form
+- {name: s, type: {unit: {name: sample}}}
 ```
 
-Both forms mean the same.  `{unit: {name: x, args: […]}}` is kober's unit
+All three mean the same.  `{unit: {name: x, args: […]}}` is kober's unit
 parameters, which are **not supported yet**.
 
+(switch)=
 #### `switch`
 
 ```yaml
-type:
+- name: body
   switch:
     dispatch: "kind"
     cases:
@@ -241,6 +323,10 @@ type:
       2: {bytes: {size: 2}}
     default: {bytes: {size: {remaining: true}}}
 ```
+
+A case's value is a **type**, so it is written as a tagged mapping and nothing
+lifts inside it: `{int: {bits: 8}}`, not `bits: 8`.  Only a field has the three
+key sets that make lifting unambiguous.
 
 | Key | Default | Description |
 |-----|---------|-------------|
@@ -268,11 +354,13 @@ than the papercut a repair avoids.
 ### `repeat`
 
 ```yaml
-repeat: {count: "qdcount"}
+- {name: questions, unit: question, count: qdcount}                 # the same
+- {name: questions, type: {unit: question}, repeat: {count: qdcount}}
 ```
 
-The count is an integer [expression](#expressions).  `repeat: {until: …}` and
-`repeat: {to_end: true}` are **not supported yet**.
+The count is an integer [expression](#expressions).  `until` and `to_end` — in
+either spelling — are **not supported yet**, and are reported as such rather
+than as unknown keys.
 
 A repeated field has no value an expression can read: the language has no list
 type, so referencing one is refused.
@@ -281,7 +369,7 @@ type, so referencing one is refused.
 ### `const`
 
 ```yaml
-- {name: magic, type: {int: {bits: 16}}, const: 0x5345}
+- {name: magic, bits: 16, const: 0x5345}
 ```
 
 The value is the field's default, and **decoding raises when the bytes
@@ -296,8 +384,8 @@ traffic can be built — packeteer generates it on purpose.
 ### `derive`
 
 ```yaml
-- {name: count,  type: {int: {bits: 8}}, derive: {count_of: samples}}
-- {name: length, type: {int: {bits: 8}}, derive: {size_of: value}}
+- {name: count,  bits: 8, derive: {count_of: samples}}
+- {name: length, bits: 8, derive: {size_of: value}}
 ```
 
 | Rule | Meaning |
@@ -331,7 +419,7 @@ fields.
 ### `sensitive`
 
 ```yaml
-- {name: value, type: {bytes: {size: {expr: "length"}}}, sensitive: true}
+- {name: value, bytes: {size: {expr: "length"}}, sensitive: true}
 ```
 
 Marks a field `packeteer sanitise` redacts.  The compiler emits a redaction
