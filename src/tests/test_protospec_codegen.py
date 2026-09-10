@@ -11,7 +11,7 @@ import uuid
 from pathlib import Path
 from types import ModuleType
 
-from packeteer import protocols
+from packeteer import conformance, protocols
 from packeteer.protospec import SpecError, check, compile_spec, load, loads
 
 _EXAMPLE = "examples/protocols/sensor.yaml"
@@ -637,3 +637,95 @@ class TestAForwardReferenceImports(unittest.TestCase):
 
         compile_spec(loads(textwrap.dedent(self._SPEC)))
         self.assertNotIn("forward", [p.name for p in protocols.registered()])
+
+
+class TestConditionalFields(_CompileTestCase):
+    """A field decoded only when its guard holds (#140)."""
+
+    _BODY = """
+        name: cond
+        version: "1.0"
+        entry: m
+        over: udp
+        ports: [9500]
+        units:
+          m:
+            fields:
+              - {name: flags, bits: 8}
+              - {name: extra, bits: 16, condition: "flags == 1"}
+              - {name: tail, bits: 8}
+    """
+
+    def setUp(self) -> None:
+        self.module = self.compile(self._BODY)
+        self.proto = protocols.for_section("cond")
+
+    def test_the_guard_holding_reads_the_field(self) -> None:
+        raw = bytes([1]) + (0xBEEF).to_bytes(2, "big") + bytes([9])
+        msg = self.proto.decode(raw, "udp")
+        self.assertEqual(msg.extra, 0xBEEF)
+        self.assertEqual(msg.tail, 9)
+
+    def test_the_guard_failing_makes_the_field_absent(self) -> None:
+        """Absent, not empty: nothing is consumed and `tail` still lines up."""
+        raw = bytes([0]) + bytes([9])
+        msg = self.proto.decode(raw, "udp")
+        self.assertIsNone(msg.extra)
+        self.assertEqual(msg.tail, 9)
+
+    def test_both_branches_rebuild_byte_for_byte(self) -> None:
+        for raw in (bytes([1]) + (0xBEEF).to_bytes(2, "big") + bytes([9]),
+                    bytes([0]) + bytes([9])):
+            with self.subTest(raw=raw.hex()):
+                msg = self.proto.decode(raw, "udp")
+                self.assertEqual(self.proto.encode(msg, "udp"), raw)
+
+    def test_an_absent_field_is_omitted_from_the_spec(self) -> None:
+        present = self.proto.to_spec(self.proto.decode(
+            bytes([1]) + (0xBEEF).to_bytes(2, "big") + bytes([9]), "udp"))
+        absent = self.proto.to_spec(self.proto.decode(bytes([0, 9]), "udp"))
+        self.assertIn("extra", present)
+        self.assertNotIn("extra", absent)
+
+    def test_a_spec_without_the_key_rebuilds_the_absent_field(self) -> None:
+        obj = self.proto.from_spec({"flags": 0, "tail": 9})
+        self.assertIsNone(obj.extra)
+        self.assertEqual(self.proto.encode(obj, "udp"), bytes([0, 9]))
+
+    def test_the_guard_wins_over_a_value_set_by_hand(self) -> None:
+        """Encode and decode must agree about what is on the wire."""
+        obj = self.module.M(flags=0, extra=0xBEEF, tail=9)
+        self.assertEqual(self.proto.encode(obj, "udp"), bytes([0, 9]))
+
+    def test_it_conforms(self) -> None:
+        messages = [self.module.M(flags=1, extra=0xBEEF, tail=9),
+                    self.module.M(flags=0, extra=None, tail=9)]
+        self.assertEqual(conformance.check_protocol(self.proto, messages), [])
+
+
+class TestConditionalRepeat(_CompileTestCase):
+    """A conditional field that also repeats is absent or a list (#140)."""
+
+    def test_absent_and_present(self) -> None:
+        module = self.compile("""
+            name: condrep
+            version: "1.0"
+            entry: m
+            over: udp
+            ports: [9501]
+            units:
+              m:
+                fields:
+                  - {name: n, bits: 8}
+                  - {name: items, bits: 8, count: n, condition: "n > 0"}
+        """)
+        proto = protocols.for_section("condrep")
+        present = proto.decode(bytes([2, 7, 8]), "udp")
+        self.assertEqual(present.items, [7, 8])
+        self.assertEqual(proto.encode(present, "udp"), bytes([2, 7, 8]))
+
+        absent = proto.decode(bytes([0]), "udp")
+        self.assertIsNone(absent.items)
+        self.assertNotIn("items", proto.to_spec(absent))
+        self.assertEqual(proto.encode(absent, "udp"), bytes([0]))
+        self.assertIsNotNone(module)

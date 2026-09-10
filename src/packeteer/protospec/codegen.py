@@ -31,6 +31,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
+from dataclasses import replace as dataclasses_replace
 
 from packeteer.protospec.errors import SpecError
 from packeteer.protospec.expr import (
@@ -278,10 +279,14 @@ class _Generator:
         """Return the type annotation for a field."""
         inner = self._type_annotation(fld.type)
         if fld.repeat is not None:
-            return f"list[{inner}]"
-        # A derived field is None when it is to be computed, which is what
-        # lets a captured value that disagrees with the derivation survive.
-        return f"{inner} | None" if fld.derive is not None else inner
+            inner = f"list[{inner}]"
+        elif fld.derive is not None:
+            # A derived field is None when it is to be computed, which is what
+            # lets a captured value that disagrees with the derivation survive.
+            return f"{inner} | None"
+        # A conditional field is None when its guard did not hold: absent,
+        # rather than empty.
+        return f"{inner} | None" if fld.condition is not None else inner
 
     def _type_annotation(self, field_type: FieldType) -> str:
         if isinstance(field_type, IntType):
@@ -296,6 +301,8 @@ class _Generator:
 
     def _default(self, fld: Field) -> str:
         """Return the default value expression for a field."""
+        if fld.condition is not None:
+            return "None"
         if fld.repeat is not None:
             return "field(default_factory=list)"
         if fld.derive is not None:
@@ -334,6 +341,11 @@ class _Generator:
         self._emit()
 
     def _emit_field_decode(self, unit: Unit, fld: Field, pad: str) -> None:
+        if fld.condition is not None:
+            # Absent, not empty: the guard fails and nothing is consumed.
+            self._emit(f"{pad}if {self._py(fld.condition, unit, fld.loc)}:")
+            self._emit_field_decode(unit, _unguarded(fld), pad + "    ")
+            return
         target = (f"_obj.{self.names.field(unit.name, fld.name)}"
                   if fld.name is not None else "_discard")
         if fld.repeat is not None:
@@ -456,6 +468,13 @@ class _Generator:
         self._emit()
 
     def _emit_field_encode(self, unit: Unit, fld: Field, pad: str) -> None:
+        if fld.condition is not None:
+            # The guard is authoritative in both directions, so a value set on
+            # an object whose guard is false is not written — which is what
+            # keeps encode and decode agreeing about what is on the wire.
+            self._emit(f"{pad}if {self._py(fld.condition, unit, fld.loc)}:")
+            self._emit_field_encode(unit, _unguarded(fld), pad + "    ")
+            return
         if fld.name is None:
             # An anonymous field is reserved bits; write them as zero.
             self._emit_write(unit, fld, fld.type, pad, "0")
@@ -540,9 +559,19 @@ class _Generator:
                 )
             elif fld.repeat is not None:
                 item = self._spec_value(fld.type, "_item")
-                self._emit(f"    _out[{key!r}] = [{item} for _item in {value}]")
+                if fld.condition is not None:
+                    self._emit(f"    if {value} is not None:")
+                    self._emit(f"        _out[{key!r}] = "
+                               f"[{item} for _item in {value}]")
+                else:
+                    self._emit(f"    _out[{key!r}] = [{item} for _item in {value}]")
             elif fld.derive is not None:
                 # Present only when the capture disagreed with the derivation.
+                self._emit(f"    if {value} is not None:")
+                self._emit(f"        _out[{key!r}] = "
+                           f"{self._spec_value(fld.type, value)}")
+            elif fld.condition is not None:
+                # Absent when the guard did not hold, so the key is not there.
                 self._emit(f"    if {value} is not None:")
                 self._emit(f"        _out[{key!r}] = "
                            f"{self._spec_value(fld.type, value)}")
@@ -675,8 +704,13 @@ class _Generator:
                 )
             elif fld.repeat is not None:
                 item = self._from_spec_value(fld.type, "_item")
-                self._emit(f"    _obj.{attr} = [{item} for _item in "
-                           f"_section.get({key!r}, [])]")
+                if fld.condition is not None:
+                    self._emit(f"    if {key!r} in _section:")
+                    self._emit(f"        _obj.{attr} = [{item} for _item in "
+                               f"_section[{key!r}]]")
+                else:
+                    self._emit(f"    _obj.{attr} = [{item} for _item in "
+                               f"_section.get({key!r}, [])]")
             else:
                 self._emit(f"    if {key!r} in _section:")
                 self._emit(f"        _obj.{attr} = "
@@ -828,6 +862,16 @@ class _Generator:
                 parts.append(_attr_name(name, loc))
                 current = None
         return ".".join(parts)
+
+
+def _unguarded(fld: Field) -> Field:
+    """Return *fld* without its condition, for emitting the guarded body.
+
+    The guard is emitted once, by the caller; the body is then the same code
+    an unconditional field of the same type produces, so there is one emitter
+    per construct rather than a guarded and an unguarded variant of each.
+    """
+    return dataclasses_replace(fld, condition=None)
 
 
 # ── names ─────────────────────────────────────────────────────────────────────

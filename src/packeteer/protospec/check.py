@@ -301,6 +301,9 @@ class _Checker:
         if fld.repeat is not None:
             self._check_expr(unit, index, fld.repeat.expr, ExprType.INT,
                              "a repeat count", fld.loc)
+        if fld.condition is not None:
+            self._check_expr(unit, index, fld.condition, ExprType.BOOL,
+                             "a condition", fld.loc)
 
     def _check_type(self, unit: Unit, index: int, fld: Field,
                     field_type: FieldType) -> None:
@@ -446,6 +449,16 @@ class _Checker:
             self._error(
                 f"'size_of' names {fld.derive.field!r}, which repeats; use "
                 f"'count_of', or size a single element",
+                fld.loc,
+            )
+        if target.condition is not None:
+            # An absent field has no length and no elements to count, and
+            # which it is cannot be known from the spec.  Refusing beats
+            # deriving a zero that silently means "the guard was false".
+            self._error(
+                f"'derive' names {fld.derive.field!r}, which has a "
+                f"'condition' and so may be absent; a derivation cannot say "
+                f"whether it is deriving from nothing or from an empty value",
                 fld.loc,
             )
 
@@ -665,8 +678,14 @@ def _type_of_field(field_type: FieldType, name: str, loc: Location) -> ExprType:
 
 
 def _fixed_bits(fld: Field, spec: Spec) -> int | None:
-    """Return a field's encoded width in bits, or ``None`` when it varies."""
-    if fld.repeat is not None:
+    """Return a field's encoded width in bits, or ``None`` when it varies.
+
+    A field with a ``condition`` has no fixed width whatever its type: it
+    occupies its width or nothing at all, and which of those is not knowable
+    from the spec.  Refusing here rather than approximating is what keeps a
+    guessed boundary out of the framing checks that read this.
+    """
+    if fld.repeat is not None or fld.condition is not None:
         return None
     return _fixed_bits_of_type(fld.type, spec)
 

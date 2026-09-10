@@ -105,6 +105,39 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   yet**, but now reported as the construct it is rather than as
   `a bytes or string field needs a size`.
 
+### Fixed
+
+- **A field's `condition` is honoured rather than silently dropped** (#140) —
+  `condition` was listed as a known field key, was never read, and was not
+  recorded as unsupported, so a spec using it loaded clean and the guard
+  vanished.  The compiled decoder then read a field that is not on the wire
+  whenever the guard was false, and the unknown-key error advertised
+  `condition` as supported while nothing implemented it.
+
+  It is now implemented rather than merely declined, since a guard is
+  **symmetric** — the same predicate in both directions — where `pointer`,
+  `select` and `computed` are not:
+
+  ```yaml
+  - {name: flags, bits: 8}
+  - {name: extra, bits: 16, condition: "flags == 1"}
+  - {name: tail,  bits: 8}
+  ```
+
+  **A field whose guard is false is absent, not empty**: it consumes nothing,
+  so `tail` is read from the byte straight after `flags`.  The guard is
+  authoritative in both directions — decode does not read the field, encode
+  does not write it *even when the attribute holds a value*, and `to_spec`
+  omits the key.  A conditional field compiles to `T | None`, a repeated one
+  to `list[T] | None`, where `None` means absent.
+
+  Two refusals come with it, both because a guessed boundary is what `check`
+  exists to prevent.  **A conditional field has no fixed width**, so anything
+  needing a static layout — the `input: stream` prefix check — refuses it
+  rather than computing an offset for a field that may not be there.  And **a
+  `derive` may not name a conditional field**, since a derivation cannot say
+  whether it is deriving from nothing or from an empty value.
+
 ### Changed
 
 - **Breaking: a switch dispatches on `dispatch:`, not `on:`** (#143) — the key

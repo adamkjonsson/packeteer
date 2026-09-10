@@ -341,6 +341,9 @@ class Field:
         loc: Where it is in the spec.
         repeat: How many times it occurs, or ``None`` for exactly once.
         const: A value the encoder writes and the decoder checks, or ``None``.
+        condition: Expression source guarding the field, or ``None`` when it is
+            always present.  A field whose guard is false is **absent** rather
+            than empty: it consumes nothing and produces no value.
         derive: How the encoder computes it, or ``None`` when the value is the
             author's to choose.
         sensitive: Whether ``packeteer sanitise`` should redact it.
@@ -353,6 +356,7 @@ class Field:
     loc: Location
     repeat: Count | None = None
     const: Const | None = None
+    condition: str | None = None
     derive: Derive | None = None
     sensitive: bool = False
     doc: str | None = None

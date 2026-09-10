@@ -432,3 +432,66 @@ class TestUnsupportedConstructsAreReportedAsSuch(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestConditionChecks(unittest.TestCase):
+    """A guard is an expression, and it costs a field its fixed width (#140)."""
+
+    def _findings(self, field_line: str, extra: str = "") -> list[str]:
+        return [d.message for d in _check(f"""
+            name: t
+            version: "1"
+            entry: m
+            units:
+              m:
+                fields:
+                  - {{name: a, bits: 8}}
+                  {field_line}
+                  {extra}
+        """).diagnostics]
+
+    def test_a_condition_must_be_boolean(self) -> None:
+        found = self._findings('- {name: b, bits: 8, condition: "a"}')
+        self.assertTrue(any("a condition is int, expected bool" in m
+                            for m in found), found)
+
+    def test_a_condition_may_not_reference_a_later_field(self) -> None:
+        found = self._findings('- {name: b, bits: 8, condition: "z == 1"}',
+                               "- {name: z, bits: 8}")
+        self.assertTrue(any("z" in m for m in found), found)
+
+    def test_a_valid_condition_is_clean(self) -> None:
+        self.assertEqual(self._findings('- {name: b, bits: 8, condition: "a == 1"}'),
+                         [])
+
+    def test_deriving_from_a_conditional_field_is_refused(self) -> None:
+        """An absent field has no length, and the spec cannot say which it is."""
+        found = [d.message for d in _check("""
+            name: t
+            version: "1"
+            entry: m
+            units:
+              m:
+                fields:
+                  - {name: a, bits: 8}
+                  - {name: n, bits: 8, derive: {size_of: body}}
+                  - {name: body, bytes: {size: {expr: "n"}}, condition: "a == 1"}
+        """).diagnostics]
+        self.assertTrue(any("may be absent" in m for m in found), found)
+
+    def test_a_conditional_field_has_no_fixed_width(self) -> None:
+        """A stream prefix cannot sit at a fixed offset behind a guard."""
+        found = [d.message for d in _check("""
+            name: t
+            version: "1"
+            input: stream
+            entry: m
+            units:
+              m:
+                fields:
+                  - {name: a, bits: 8}
+                  - {name: maybe, bits: 8, condition: "a == 1"}
+                  - {name: n, bits: 8, derive: {size_of: body}}
+                  - {name: body, bytes: {size: {expr: "n"}}}
+        """).diagnostics]
+        self.assertTrue(any("no fixed width" in m for m in found), found)

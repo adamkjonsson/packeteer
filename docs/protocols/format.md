@@ -228,6 +228,7 @@ units:
 | `type` | — | The long form of a type kind — see [Types](#types) |
 | *a repeat kind* | — | How many times it occurs, written on the field |
 | `repeat` | — | The long form of a repeat kind — see [`repeat`](#repeat) |
+| `condition` | — | A guard: the field is present only when it holds — see [`condition`](#condition) |
 | `const` | — | A value written on encode and checked on decode — see [`const`](#const) |
 | `derive` | — | How the encoder computes it — see [`derive`](#derive) |
 | `sensitive` | `false` | Whether `packeteer sanitise` redacts it — see [`sensitive`](#sensitive) |
@@ -274,7 +275,7 @@ member**:
 
 | | Keys |
 |---|---|
-| **A field's own** | `name`, `const`, `derive`, `sensitive`, `doc`, and the `type`/`repeat` wrappers |
+| **A field's own** | `name`, `const`, `condition`, `derive`, `sensitive`, `doc`, and the `type`/`repeat` wrappers |
 | **A type kind** | `bits`, `int`, `bytes`, `string`, `unit`, `switch` |
 | **A repeat kind** | `count` |
 
@@ -430,6 +431,44 @@ a mangled message.
 
 An explicit override is still written on encode, so deliberately malformed
 traffic can be built — packeteer generates it on purpose.
+
+(condition)=
+### `condition`
+
+```yaml
+- {name: flags, bits: 8}
+- {name: extra, bits: 16, condition: "flags == 1"}
+- {name: tail,  bits: 8}
+```
+
+A boolean [expression](#expressions).  **A field whose guard is false is
+absent, not empty**: it consumes nothing, so `tail` above is read from the byte
+straight after `flags`.
+
+The guard is **authoritative in both directions**, which is what keeps encode
+and decode agreeing about what is on the wire:
+
+- **decode** — the guard is evaluated against the fields already read; when it
+  is false the field is not read and its attribute is `None`;
+- **encode** — the guard is evaluated against the object; when it is false
+  nothing is written, *even if the attribute holds a value*.  Setting `extra`
+  by hand on a message whose `flags` is 0 does not put it on the wire;
+- **`to_spec`** — an absent field's key is omitted, the way a derived field's
+  is.
+
+A conditional field compiles to `T | None`, and a repeated one to
+`list[T] | None`, where `None` means *absent*.
+
+Two consequences worth knowing:
+
+**A conditional field has no fixed width**, because whether it occupies its
+width or nothing is not knowable from the spec.  Anything needing a static
+layout refuses it rather than guessing — notably the `input: stream` prefix
+check, which needs a length field at a known offset.
+
+**A `derive` may not name a conditional field.**  An absent field has no length
+and no elements, and a derivation cannot say whether it is deriving from
+nothing or from an empty value, so `check` refuses it.
 
 (derive)=
 ### `derive`

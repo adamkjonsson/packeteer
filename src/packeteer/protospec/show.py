@@ -173,6 +173,8 @@ def _field_line(fld: Field, spec: Spec, seen: tuple[str, ...] = ()) -> str:
 
     if fld.repeat is not None:
         parts.append(f"×{_expr_text(fld.repeat.expr, fld.loc)}")
+    if fld.condition is not None:
+        parts.append(f"if {_expr_text(fld.condition, fld.loc)}")
     if fld.derive is not None:
         rule = "size_of" if isinstance(fld.derive, SizeOf) else "count_of"
         parts.append(f"(derived: {rule} {fld.derive.field})")

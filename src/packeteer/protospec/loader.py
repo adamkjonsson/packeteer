@@ -520,6 +520,8 @@ def _field(data: Any, loc: Location, ctx: _Ctx) -> Field:
         loc=loc,
         repeat=repeat,
         const=None if "const" not in mapping else Const(value=mapping["const"]),
+        condition=None if "condition" not in mapping else _as_str(
+            mapping["condition"], loc.child("condition"), "a condition"),
         derive=_derive(mapping.get("derive"), loc.child("derive")),
         sensitive=bool(mapping.get("sensitive", False)),
         doc=mapping.get("doc"),
