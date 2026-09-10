@@ -44,17 +44,17 @@ enums:
 units:
   reading:
     fields:
-      - {name: magic,   type: {int: {bits: 16}}, const: 0x5345}
-      - {name: version, type: {int: {bits: 8}}}
-      - {name: count,   type: {int: {bits: 8}}, derive: {count_of: samples}}
-      - {name: samples, type: {unit: sample}, repeat: {count: "count"}}
+      - {name: magic,   bits: 16, const: 0x5345}
+      - {name: version, bits: 8}
+      - {name: count,   bits: 8, derive: {count_of: samples}}
+      - {name: samples, unit: sample, count: count}
 
   sample:
     fields:
-      - {name: kind,    type: {int: {bits: 8, enum: kind}}}
-      - {name: length,  type: {int: {bits: 8}}, derive: {size_of: value}}
-      - {name: value,   type: {bytes: {size: {expr: "length"}}}, sensitive: true}
-      - {name: reading, type: {int: {bits: 32, signed: true, endian: little}}}
+      - {name: kind,    int: {bits: 8, enum: kind}}
+      - {name: length,  bits: 8, derive: {size_of: value}}
+      - {name: value,   bytes: {size: {expr: "length"}}, sensitive: true}
+      - {name: reading, int: {bits: 32, signed: true, endian: little}}
 ```
 
 ### 1. Check it
@@ -98,7 +98,7 @@ yet check, which is when you most want it.
 
 ```console
 $ packeteer protocol compile sensor.yaml
-Wrote sensor.py (sensor 1.0, packeteer 0.11.0)
+Wrote sensor.py (sensor 1.0, packeteer 0.13.0)
 ```
 
 The module lands beside the spec, because it is meant to be committed and

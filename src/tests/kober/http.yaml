@@ -1,0 +1,207 @@
+# HTTP/1.1 over TCP, RFC 7230.
+#
+# Decodes the start line, every header split into its name and value, and the
+# body — framed by asking the headers rather than by assuming an answer.
+#
+# The framing is the whole point of this spec. A message's body may be
+# chunk-encoded, or counted by `Content-Length`, or absent, and which one it is
+# can only be learned by asking a question about the *set* of headers. That is
+# what `select:` is for, and until the language had it this spec assumed
+# chunked framing and called every other body `truncated` — declaring a hole in
+# a stream that had none.
+name: http
+version: "1.0"
+entry: message
+input: stream
+doc: HTTP/1.1 messages, start line, headers, and a body framed by them.
+
+units:
+  message:
+    doc: >
+      One request or response. Framing is decided here, from the headers, and
+      the two body fields are mutually exclusive by construction: a message
+      reads at most one of them, and a message with neither framing header
+      reads no body at all.
+    fields:
+      - name: start_line
+        string: {delimiter: "\r\n"}
+        doc: Request line or status line, whichever direction this is.
+
+      - name: headers
+        unit: header
+        until: "headers.name == '' and headers.value == ''"
+        doc: >
+          Header lines up to and including the blank line that ends them. The
+          blank line is kept as the last element rather than dropped: it is
+          input, and every byte has to be accounted for.
+
+          It is recognised by being empty on both halves. A header with an
+          empty value is ordinary (`X-Trace:` with nothing after it), so the
+          name alone would not tell them apart.
+
+      - name: content_length
+        select:
+          from: headers
+          where: "lower(headers.name) == 'content-length'"
+          value: "to_int(headers.value)"
+          default: "-1"
+        doc: >
+          The declared body length, or -1 when no header declared one.
+
+          **-1 rather than 0, because `Content-Length: 0` is a real header** and
+          means something different from its absence: it says *this message has
+          a body and the body is empty*, where absence says nothing about a body
+          at all. Collapsing the two would make a bodyless `GET` indistinguishable
+          from a `204`, and — worse here — would give the reader no way to tell
+          "the spec found a length" from "the spec found nothing and guessed".
+
+          Header names are matched case-insensitively because RFC 7230 §3.2
+          says they are. The value needs no trimming: `to_int` allows the
+          surrounding whitespace an HTTP field value is permitted.
+
+      - name: chunked
+        select:
+          from: headers
+          where: "lower(headers.name) == 'transfer-encoding'"
+          value: "trim(lower(headers.value)) == 'chunked'"
+          default: "false"
+        doc: >
+          Whether the body is chunk-framed.
+
+          Only the *first* `Transfer-Encoding` is consulted, which is what a
+          select does and what RFC 7230 §3.3.1 wants: the header is a list in
+          order of application, and `chunked` must be its final coding, so a
+          message whose first such header does not say `chunked` is not chunked
+          however many follow.
+
+          `trim` is not decoration. A field value carries the optional
+          whitespace RFC 7230 §3.2.3 permits, so the value read here is
+          ` chunked` with a leading space. `to_int` strips it internally, which
+          is why `content_length` above needs nothing; a string *comparison*
+          has nothing to strip it, and without `trim` this silently answers
+          false on every real chunked message.
+
+          **A known limit:** `Transfer-Encoding: gzip, chunked` is legal and is
+          not recognised here, because saying "ends with chunked" needs a
+          function the language does not have. Such a message reads as
+          unframed rather than as mis-framed, which is the safe direction.
+
+      - name: chunks
+        unit: chunk
+        condition: "chunked"
+        until: "chunks.length == 0"
+        doc: >
+          A chunk-framed body, read down to its terminating zero-size chunk.
+
+          **Chunked wins over a length**, which is RFC 7230 §3.3.3's rule and
+          not a preference: a message carrying both is an attempt to make two
+          recipients disagree about where it ends, and the specification
+          resolves it by saying `Transfer-Encoding` overrides `Content-Length`.
+          Reading the length instead would be the request-smuggling reading.
+
+      - name: trailers
+        unit: trailer_section
+        condition: "chunked"
+        doc: >
+          The trailer section that closes a chunked body, and the CRLF that
+          ends it — RFC 7230 §4.1's `trailer-part CRLF`.
+
+          It is the same shape as the header block and so is the same unit,
+          read the same way and ended by the same blank line. That blank line
+          is the body's final CRLF, which is why a body with no trailers needs
+          no special case: the repetition reads one empty element and stops,
+          having consumed exactly those two bytes.
+
+          A trailer is legal, is what `Trailer:` announces, and is widely
+          forgotten. Forgetting it here did not look like a hole: the chunk
+          CRLF above swallowed two bytes of the first trailer line and the
+          driver read the rest as further messages, so every byte stayed
+          cited and the decode was nonsense — the failure `docs/dev/testing.md`
+          warns about, found by the traffic `packeteer` 0.9.0 can now generate.
+
+      - name: body
+        bytes: {size: {expr: "content_length"}}
+        condition: "not chunked and content_length > 0"
+        doc: >
+          A length-framed body, exactly as long as the header said.
+
+          Absent three ways, all of them ordinary and none of them a hole: the
+          message is chunked and read above; no header declared a length, so
+          there is no body (a `GET`, a `204`, a `HEAD` reply); or the length is
+          zero, so there is nothing to read. A field that is not there consumes
+          nothing and gets no node, which is why this needs no empty-body case.
+
+          Opaque bytes. A `Content-Encoding: gzip` body is decompressed by
+          nobody here — that is a byte transform, which is a different layer
+          from value computation and needs an extension point of its own.
+
+  header:
+    doc: >
+      One header line, split into its name and its value where it is read
+      rather than pulled apart by expressions afterwards.
+
+      The blank line that ends a header block falls out of this with no special
+      case: it has no colon before its CRLF, so the bounded terminator finds
+      nothing, takes nothing, and both halves come back empty.
+    fields:
+      - name: name
+        string: {delimiter: ":", within: "\r\n", required: false}
+        doc: >
+          Up to the colon, but never past the end of the line. Without the
+          bound this would run into the *next* header, or past the end of the
+          headers entirely, on any line that has no colon in it.
+      - name: value
+        string: {delimiter: "\r\n"}
+        doc: >
+          The rest of the line, **leading whitespace included** — RFC 7230
+          §3.2.3 permits it and this is where it survives. `to_int` strips it
+          on the way past, so a length needs nothing; a comparison needs
+          `trim`, which is what `chunked` above does and why.
+
+  trailer_section:
+    doc: >
+      The trailer section that closes a chunked body: zero or more header
+      lines, then the blank line that ends them.
+
+      It has a unit of its own rather than being a repetition inside
+      `message` because it *is* one thing — RFC 7230 §4.1's `trailer-part
+      CRLF` — and naming it says so. The elements are `header`, unchanged: a
+      trailer field is a header field, and reading it as anything else would
+      be inventing a difference the grammar does not have.
+    fields:
+      - name: fields
+        unit: header
+        until: "fields.name == '' and fields.value == ''"
+        doc: >
+          Up to and including the blank line, exactly as the header block
+          above is read. A body with no trailers is not a special case: the
+          repetition reads one empty element and stops, consuming the two
+          bytes of the body's final CRLF and nothing more.
+
+  chunk:
+    doc: >
+      One chunk: a hexadecimal size line, that many bytes, and the CRLF after
+      them. The last chunk of a body has size zero and no data.
+    fields:
+      - name: size
+        string: {delimiter: "\r\n"}
+        doc: The size in hexadecimal, as text — this is what `to_int` is for.
+      - name: length
+        computed: "to_int(size, 16)"
+        doc: The same number, converted once and named.
+      - name: data
+        bytes: {size: {expr: "length"}}
+        doc: Opaque, for the reason the length-framed body gives.
+      - name: null
+        bytes: 2
+        condition: "length > 0"
+        doc: >
+          The CRLF after the data — and only after data.
+
+          RFC 7230 §4.1 gives the terminating chunk no such CRLF: it is
+          `1*("0") [chunk-ext] CRLF` and nothing more, because what follows it
+          is the trailer section, not another chunk. Reading two bytes here
+          unconditionally ate the first two of whatever came next, which is
+          harmless only when the trailer section is empty and the bytes eaten
+          happen to be the CRLF that closes it.
+

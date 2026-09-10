@@ -8,9 +8,13 @@ frozen data — :mod:`packeteer.protospec.loader` produces it,
 implementing :class:`packeteer.protocols.AppProtocol`.
 
 The dialect is a **superset of kober's**: kober's keys keep kober's meaning,
-and packeteer adds five of its own — ``over``, ``ports``, ``const``,
-``derive`` and ``sensitive``.  A kober spec therefore loads and describes a
-decoder; adding ``derive`` lines is what makes it describe an encoder too.
+and packeteer adds four of its own — ``over``, ``ports``, ``derive`` and
+``sensitive``.  A kober spec therefore loads and describes a decoder; adding
+``derive`` lines is what makes it describe an encoder too.
+
+``const`` was packeteer's fifth until kober 0.2.0 adopted it, and is now
+shared: a magic number is how any decoder refuses traffic that is not its own,
+so it was never an encoder's key.
 
 Two declarations are easy to confuse and are independent:
 
@@ -45,6 +49,7 @@ __all__ = [
     "EnumDef",
     "Field",
     "FieldType",
+    "Fill",
     "Fixed",
     "FromExpr",
     "InputShape",
@@ -185,7 +190,20 @@ class Remaining:
     """A size covering the rest of the enclosing run of bytes."""
 
 
-Size = Union[Fixed, FromExpr, Remaining]
+@dataclass(frozen=True)
+class Fill:
+    """A size covering the rest of the run, less what the fields after it claim.
+
+    The ordinary shape of a body between a header and a fixed footer, which
+    :class:`Remaining` cannot express — it takes the footer's bytes too.
+
+    The trailing width must be computable from the spec alone, or the spec is
+    refused: a guessed boundary is exactly what the checker exists to prevent.
+    See :func:`packeteer.protospec.check.trailing_width`.
+    """
+
+
+Size = Union[Fixed, FromExpr, Remaining, Fill]
 
 
 # ── repeats ───────────────────────────────────────────────────────────────────
@@ -268,14 +286,14 @@ class Switch:
     surfaces as an opaque payload rather than a guess.
 
     Attributes:
-        on: Expression source selecting the arm.
+        dispatch: Expression source selecting the arm.
         arms: Type to use, by selector value.
         default: Type for a value no arm matches, or ``None`` to leave the
             region undecoded.
 
     """
 
-    on: str
+    dispatch: str
     arms: Mapping[int, FieldType]
     default: FieldType | None = None
 
@@ -341,6 +359,9 @@ class Field:
         loc: Where it is in the spec.
         repeat: How many times it occurs, or ``None`` for exactly once.
         const: A value the encoder writes and the decoder checks, or ``None``.
+        condition: Expression source guarding the field, or ``None`` when it is
+            always present.  A field whose guard is false is **absent** rather
+            than empty: it consumes nothing and produces no value.
         derive: How the encoder computes it, or ``None`` when the value is the
             author's to choose.
         sensitive: Whether ``packeteer sanitise`` should redact it.
@@ -353,6 +374,7 @@ class Field:
     loc: Location
     repeat: Count | None = None
     const: Const | None = None
+    condition: str | None = None
     derive: Derive | None = None
     sensitive: bool = False
     doc: str | None = None

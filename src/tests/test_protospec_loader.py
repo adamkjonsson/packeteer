@@ -6,11 +6,12 @@ import pathlib
 import textwrap
 import unittest
 
-from packeteer.protospec import SpecError, from_mapping, load, loads
+from packeteer.protospec import SpecError, from_mapping, load, loader, loads
 from packeteer.protospec.spec import (
     BytesType,
     Count,
     CountOf,
+    Endian,
     Fixed,
     FromExpr,
     InputShape,
@@ -250,7 +251,7 @@ class TestSwitch(unittest.TestCase):
               - name: rest
                 type:
                   switch:
-                    on: "kind"
+                    dispatch: "kind"
                     cases:
                       1: {int: {bits: 8}}
                       2: {bytes: {size: 2}}
@@ -260,20 +261,31 @@ class TestSwitch(unittest.TestCase):
     def test_cases_and_default(self) -> None:
         switch = _spec(self._BODY).units["m"].fields[1].type
         self.assertIsInstance(switch, Switch)
-        self.assertEqual(switch.on, "kind")
+        self.assertEqual(switch.dispatch, "kind")
         self.assertEqual(set(switch.arms), {1, 2})
         self.assertIsInstance(switch.arms[1], IntType)
         self.assertIsInstance(switch.default, BytesType)
 
-    def test_the_yaml_on_key_is_restored(self) -> None:
-        """`on:` is a YAML 1.1 boolean, and it is a switch's dispatch key."""
-        self.assertEqual(_spec(self._BODY).units["m"].fields[1].type.on, "kind")
-
-    def test_both_on_and_true_is_refused(self) -> None:
-        body = self._BODY.replace('on: "kind"', 'on: "kind"\n                    "on": "kind"')
+    def test_the_unquoted_on_key_is_refused_by_name(self) -> None:
+        """`on:` is a YAML 1.1 boolean, so it arrives as `True` and never as a string."""
+        body = self._BODY.replace('dispatch: "kind"', 'on: "kind"')
         with self.assertRaises(SpecError) as ctx:
             _spec(body)
-        self.assertIn("on", str(ctx.exception))
+        self.assertIn("'dispatch', not 'on'", str(ctx.exception))
+
+    def test_the_quoted_on_key_is_refused_by_name(self) -> None:
+        """Quoting it reaches the loader as a string, and is the same mistake."""
+        body = self._BODY.replace('dispatch: "kind"', '"on": "kind"')
+        with self.assertRaises(SpecError) as ctx:
+            _spec(body)
+        self.assertIn("'dispatch', not 'on'", str(ctx.exception))
+
+    def test_an_unknown_switch_key_is_refused(self) -> None:
+        body = self._BODY.replace('dispatch: "kind"',
+                                  'dispatch: "kind"\n                    arms: {}')
+        with self.assertRaises(SpecError) as ctx:
+            _spec(body)
+        self.assertIn("'arms'", str(ctx.exception))
 
     def test_json_string_case_keys_mean_the_same_cases(self) -> None:
         data = json.loads(json.dumps({
@@ -281,7 +293,7 @@ class TestSwitch(unittest.TestCase):
             "units": {"m": {"fields": [
                 {"name": "kind", "type": {"int": {"bits": 8}}},
                 {"name": "rest", "type": {"switch": {
-                    "on": "kind", "cases": {"1": {"int": {"bits": 8}}},
+                    "dispatch": "kind", "cases": {"1": {"int": {"bits": 8}}},
                 }}},
             ]}},
         }))
@@ -396,7 +408,7 @@ class TestKoberSpecsLoad(unittest.TestCase):
               - name: rest
                 type:
                   switch:
-                    on: "length >> 6"
+                    dispatch: "length >> 6"
                     cases:
                       0: {string: {size: {expr: "length"}}}
                       3: {unit: {name: compressed, args: ["length"]}}
@@ -638,3 +650,243 @@ class TestUnknownKeysAreRefused(unittest.TestCase):
                   - {name: a, type: {int: {bits: 8}}}
         """)
         self.assertIn("unit.params", {u.construct for u in spec.unsupported})
+
+
+class TestShorthands(unittest.TestCase):
+    """kober's three rules: lifted kinds, bare scalars, and `bits` (#141)."""
+
+    def _field(self, line: str) -> object:
+        return _spec(f"""
+            name: t
+            version: "1"
+            entry: m
+            units:
+              m:
+                fields:
+                  - {{name: n, bits: 8}}
+                  {line}
+        """).units["m"].fields[1]
+
+    def test_bits_names_the_integer_kind(self) -> None:
+        self.assertEqual(self._field("- {name: f, bits: 4}").type,
+                         IntType(bits=4))
+
+    def test_a_lifted_kind_equals_its_wrapper(self) -> None:
+        """The whole point: both spellings build the identical type."""
+        for short, long in [
+            ("bits: 16", "type: {int: {bits: 16}}"),
+            ("int: {bits: 8, enum: e}", "type: {int: {bits: 8, enum: e}}"),
+            ("bytes: {size: 4}", "type: {bytes: {size: 4}}"),
+            ("unit: m", "type: {unit: m}"),
+        ]:
+            with self.subTest(short=short):
+                self.assertEqual(self._field(f"- {{name: f, {short}}}").type,
+                                 self._field(f"- {{name: f, {long}}}").type)
+
+    def test_a_bare_body_is_the_key_that_matters(self) -> None:
+        self.assertEqual(self._field("- {name: f, int: 8}").type, IntType(bits=8))
+        self.assertEqual(self._field("- {name: f, bytes: 4}").type,
+                         BytesType(size=Fixed(length=4)))
+        self.assertEqual(self._field("- {name: f, string: 4}").type.size,
+                         Fixed(length=4))
+
+    def test_a_lifted_repeat_equals_its_wrapper(self) -> None:
+        short = self._field("- {name: f, unit: m, count: n}")
+        long = self._field("- {name: f, type: {unit: m}, repeat: {count: n}}")
+        self.assertEqual(short.repeat, long.repeat)
+        self.assertEqual(short.repeat, Count(expr="n"))
+
+    def test_two_type_kinds_is_an_error(self) -> None:
+        with self.assertRaises(SpecError) as ctx:
+            self._field("- {name: f, bits: 8, bytes: 4}")
+        self.assertIn("may name only one", str(ctx.exception))
+
+    def test_a_kind_beside_its_own_wrapper_is_an_error(self) -> None:
+        with self.assertRaises(SpecError) as ctx:
+            self._field("- {name: f, bits: 8, type: {int: {bits: 8}}}")
+        self.assertIn("cannot be combined", str(ctx.exception))
+
+    def test_a_lifted_repeat_beside_repeat_is_an_error(self) -> None:
+        with self.assertRaises(SpecError) as ctx:
+            self._field("- {name: f, unit: m, count: n, repeat: {count: n}}")
+        self.assertIn("cannot be combined", str(ctx.exception))
+
+    def test_no_type_at_all_is_still_an_error(self) -> None:
+        with self.assertRaises(SpecError) as ctx:
+            self._field("- {name: f, doc: nothing}")
+        self.assertIn("type", str(ctx.exception))
+
+    def test_an_unknown_key_names_the_set_each_key_belongs_to(self) -> None:
+        with self.assertRaises(SpecError) as ctx:
+            self._field("- {name: f, bits: 8, conditon: 'n == 1'}")
+        message = str(ctx.exception)
+        self.assertIn("'conditon'", message)
+        self.assertIn("a field's own keys", message)
+        self.assertIn("a type kind", message)
+        self.assertIn("a repeat kind", message)
+
+    def test_a_lifted_unsupported_kind_is_still_not_supported_yet(self) -> None:
+        """Writing it short must not turn it into an unknown key."""
+        for line, construct in [
+            ("- {name: f, pointer: {at: n, type: {unit: m}}}", "pointer"),
+            ("- {name: f, unit: m, until: 'n == 0'}", "repeat.until"),
+            ("- {name: f, unit: m, to_end: true}", "repeat.to_end"),
+        ]:
+            with self.subTest(line=line):
+                spec = _spec(f"""
+                    name: t
+                    version: "1"
+                    entry: m
+                    units:
+                      m:
+                        fields:
+                          - {{name: n, bits: 8}}
+                          {line}
+                """)
+                self.assertIn(construct,
+                              [u.construct for u in spec.unsupported])
+
+    def test_the_three_key_sets_share_no_member(self) -> None:
+        """The property that makes lifting unambiguous, asserted not assumed."""
+        own, types, repeats = (loader._FIELD_OWN_KEYS, loader._TYPE_KINDS,
+                               loader._REPEAT_KINDS)
+        self.assertEqual(own & types, frozenset())
+        self.assertEqual(own & repeats, frozenset())
+        self.assertEqual(types & repeats, frozenset())
+        self.assertEqual(loader._FIELD_KEYS, own | types | repeats)
+
+
+class TestShorthandExamples(unittest.TestCase):
+    """The shipped examples are written short, and mean what they did (#141)."""
+
+    def test_sensor_is_written_short(self) -> None:
+        text = (_EXAMPLES / "sensor.yaml").read_text(encoding="utf-8")
+        self.assertNotIn("type: {", text)
+
+    def test_rpc_is_written_short(self) -> None:
+        text = (_EXAMPLES / "rpc.yaml").read_text(encoding="utf-8")
+        self.assertNotIn("type: {", text)
+
+    def test_the_long_form_still_loads(self) -> None:
+        """It is the fallback, not a removed spelling."""
+        spec = _spec("""
+            name: t
+            version: "1"
+            entry: m
+            units:
+              m:
+                fields:
+                  - {name: n, type: {int: {bits: 8}}, repeat: {count: "1"}}
+        """)
+        self.assertEqual(spec.units["m"].fields[0].type, IntType(bits=8))
+
+
+class TestInheritedEndian(unittest.TestCase):
+    """Byte order resolves field → unit → document → big (#142)."""
+
+    _DOC = """
+        name: c
+        version: "1"
+        entry: header
+        endian: little
+        units:
+          header:
+            fields:
+              - {name: magic, bits: 32}
+              - {name: crc, int: {bits: 32, endian: big}}
+              - {name: nested, unit: inner}
+          inner:
+            endian: big
+            fields:
+              - {name: be, bits: 16}
+              - {name: le, int: {bits: 16, endian: little}}
+    """
+
+    def test_resolution_order(self) -> None:
+        spec = _spec(self._DOC)
+        header = {f.name: f.type for f in spec.units["header"].fields}
+        inner = {f.name: f.type for f in spec.units["inner"].fields}
+        self.assertEqual(header["magic"].endian, Endian.LITTLE)   # document
+        self.assertEqual(header["crc"].endian, Endian.BIG)        # field wins
+        self.assertEqual(inner["be"].endian, Endian.BIG)          # unit wins
+        self.assertEqual(inner["le"].endian, Endian.LITTLE)       # field again
+
+    def test_an_inherited_default_builds_an_equal_spec(self) -> None:
+        """A shorthand, not a feature: nothing downstream can tell."""
+        explicit = _spec("""
+            name: c
+            version: "1"
+            entry: header
+            units:
+              header:
+                fields:
+                  - {name: magic, int: {bits: 32, endian: little}}
+                  - {name: crc, int: {bits: 32, endian: big}}
+                  - {name: nested, unit: inner}
+              inner:
+                fields:
+                  - {name: be, int: {bits: 16, endian: big}}
+                  - {name: le, int: {bits: 16, endian: little}}
+        """)
+        self.assertEqual(
+            [f.type for f in _spec(self._DOC).units["header"].fields],
+            [f.type for f in explicit.units["header"].fields],
+        )
+        self.assertEqual(
+            [f.type for f in _spec(self._DOC).units["inner"].fields],
+            [f.type for f in explicit.units["inner"].fields],
+        )
+
+    def test_big_is_still_the_default(self) -> None:
+        spec = _spec("""
+            name: c
+            version: "1"
+            entry: m
+            units:
+              m:
+                fields:
+                  - {name: f, bits: 32}
+        """)
+        self.assertEqual(spec.units["m"].fields[0].type.endian, Endian.BIG)
+
+    def test_signed_does_not_inherit(self) -> None:
+        """A protocol is little-endian; it is not *signed*."""
+        with self.assertRaises(SpecError) as ctx:
+            _spec("""
+                name: c
+                version: "1"
+                entry: m
+                signed: true
+                units:
+                  m:
+                    fields:
+                      - {name: f, bits: 32}
+            """)
+        self.assertIn("'signed'", str(ctx.exception))
+
+    def test_endian_beside_bits_at_field_level_is_an_unknown_key(self) -> None:
+        with self.assertRaises(SpecError) as ctx:
+            _spec("""
+                name: c
+                version: "1"
+                entry: m
+                units:
+                  m:
+                    fields:
+                      - {name: f, bits: 32, endian: little}
+            """)
+        self.assertIn("'endian'", str(ctx.exception))
+
+    def test_a_bad_endian_value_is_refused_where_it_is_written(self) -> None:
+        with self.assertRaises(SpecError) as ctx:
+            _spec("""
+                name: c
+                version: "1"
+                entry: m
+                endian: sideways
+                units:
+                  m:
+                    fields:
+                      - {name: f, bits: 32}
+            """)
+        self.assertIn("sideways", str(ctx.exception))

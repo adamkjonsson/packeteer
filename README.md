@@ -17,6 +17,7 @@ compiled extensions — Python 3.10+ and the standard library only.
 - **CLI** (`packeteer`) — build packets from a packet spec, parse captures to a packet spec, sanitise specs by replacing sensitive fields with synthetic data, generate synthetic streams with `packeteer stream`, or generate adversarial variants with `packeteer fuzz`
 - **Python API** - giving you the flexibility to combine, script, or extend the building blocks however your project needs
 - **Stream generation** — complete TCP / UDP / SCTP flows written to pcap, pcapng, or packet spec; all streams can be wrapped in any encapsulation layer (VLAN, QinQ, MPLS, PPPoE, GRE, EtherIP, IP-in-IP), combined as a stack, and fragmented through a simulated low-MTU middlebox
+- **Your own protocols** — describe one in YAML and compile it with `packeteer protocol compile`; the result is parsed, built, serialised and redacted exactly like a built-in, with no packeteer-specific loader in the generated module.  The dialect is a superset of [kober](https://github.com/adamkjonsson/zipline-kober)'s, so a spec written for either project loads in both
 - **Capture filtering** — `packeteer parse` accepts filter flags (`--proto`, `--port`, `--src`, `--dst`, `--host`, `--app`, …) to keep only the traffic you care about; values can be negated with `!` and addresses accept CIDR notation for both IPv4 and IPv6
 - **PII scanning** — `packeteer sanitise` scans UTF-8 payloads for email addresses and personal names by default; findings are consolidated across packets and reported as structured `PersonalDataWarning` instances (`--no-scan-pii` to disable)
 - **Fuzzing** — `packeteer fuzz` produces adversarial packet variants for decoder robustness testing: boundary values, reserved-bit settings, pathological TCP flag combinations, truncated/extended payloads, bit flips, wrong checksums, and wrong length fields; full Python API via `packeteer.fuzz`
@@ -33,6 +34,7 @@ compiled extensions — Python 3.10+ and the standard library only.
 - **UTF-8 payload encoding** — packet specs use readable strings for text-protocol payloads; `packeteer parse` auto-detects printable ASCII and encodes accordingly
 - **IPv4 and IPv6 fragmentation** in one call
 - **pcap and pcapng** file I/O with microsecond or nanosecond timestamps
+- **Anything else you describe** — a proprietary telemetry format or an internal RPC, written as a [protocol spec](docs/protocols/format.md) and compiled; packeteer cannot tell it from the built-ins above
 
 ## Quick start
 
@@ -68,7 +70,47 @@ packeteer fuzz capture.pcap --pcap fuzzed.pcap
 
 # Apply only boundary-value and TCP-flag mutations, reproducibly
 packeteer fuzz capture.pcap --mutations boundary tcp-flags --seed 42 --pcap fuzzed.pcap
+
+# Check a protocol spec, see what it describes, and compile it
+packeteer protocol check sensor.yaml
+packeteer protocol show sensor.yaml
+packeteer protocol compile sensor.yaml
+
+# Then parse with it: the capture gets a "sensor" section of its own
+packeteer parse capture.pcap --load-protocol sensor.py --output parsed.json
 ```
+
+A spec is a short YAML document — this one is
+[`examples/protocols/sensor.yaml`](examples/protocols/sensor.yaml):
+
+```yaml
+name: sensor
+version: "1.0"
+entry: reading
+over: udp
+ports: [9000]
+
+enums:
+  kind: {0: temperature, 1: humidity, 2: pressure}
+
+units:
+  reading:
+    fields:
+      - {name: magic,   bits: 16, const: 0x5345}
+      - {name: count,   bits: 8, derive: {count_of: samples}}
+      - {name: samples, unit: sample, count: count}
+
+  sample:
+    fields:
+      - {name: kind,   int: {bits: 8, enum: kind}}
+      - {name: length, bits: 8, derive: {size_of: value}}
+      - {name: value,  bytes: {size: {expr: "length"}}, sensitive: true}
+```
+
+`derive` is what makes it describe an **encoder** and not just a decoder: a
+length nobody set is computed on the way out, and a capture whose length
+disagrees with its data still rebuilds byte for byte.  `sensitive` is what
+`packeteer sanitise` redacts.
 
 ### Python API
 

@@ -21,6 +21,7 @@ from packeteer.protospec.spec import (
     Endian,
     Field,
     FieldType,
+    Fill,
     Fixed,
     FromExpr,
     IntType,
@@ -173,6 +174,8 @@ def _field_line(fld: Field, spec: Spec, seen: tuple[str, ...] = ()) -> str:
 
     if fld.repeat is not None:
         parts.append(f"×{_expr_text(fld.repeat.expr, fld.loc)}")
+    if fld.condition is not None:
+        parts.append(f"if {_expr_text(fld.condition, fld.loc)}")
     if fld.derive is not None:
         rule = "size_of" if isinstance(fld.derive, SizeOf) else "count_of"
         parts.append(f"(derived: {rule} {fld.derive.field})")
@@ -208,7 +211,7 @@ def _type_text(field_type: FieldType, spec: Spec, seen: tuple[str, ...]) -> str:
             return f"→ {field_type.unit} (recursive)"
         return f"→ {field_type.unit}"
     if isinstance(field_type, Switch):
-        return f"switch on {_expr_text(field_type.on, None)}"
+        return f"switch on {_expr_text(field_type.dispatch, None)}"
     return type(field_type).__name__
 
 
@@ -220,6 +223,8 @@ def _size_text(size: Size) -> str:
         return _expr_text(size.expr, None)
     if isinstance(size, Remaining):
         return "rest"
+    if isinstance(size, Fill):
+        return "fill"
     return "?"
 
 

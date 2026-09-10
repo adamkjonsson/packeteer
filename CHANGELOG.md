@@ -27,6 +27,265 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ---
 
+## [0.13.0] - 2026-09-10
+
+**The dialect release.**  packeteer and
+[kober](https://github.com/adamkjonsson/zipline-kober) describe the same
+protocols with one dialect, and until now neither project could read the
+other's shipped examples.  Both now can, and a test says so rather than a
+sentence in a reference.
+
+Two strands.  A spec is **shorter to write** — the type and repeat kinds lift
+onto the field, `bits:` names an integer, and byte order inherits, which is
+what makes a little-endian spec able to use `bits:` at all.  And **three
+sizing faults are fixed**, two of which `check` previously called `ok`: a
+`condition` that loaded and did nothing, and a `remaining` that ate the fields
+after it.
+
+One breaking change: a switch dispatches on `dispatch:`, not `on:`.  See
+**Changed**.
+
+### Added
+
+- **A field may be written the short way** (#141) — kober's three shorthands,
+  which build the **identical** spec, so a document may mix them freely and
+  nothing downstream can tell which spelling was used:
+
+  ```yaml
+  - {name: count,   type: {int: {bits: 8}}}                        # still works
+  - {name: count,   bits: 8}                                       # and so does this
+
+  - {name: samples, type: {unit: sample}, repeat: {count: count}}  # still works
+  - {name: samples, unit: sample, count: count}                    # and so does this
+  ```
+
+  1. **A tagged construct's kind lifts into the field**, for its type and its
+     repetition alike.  A field's keys come from three sets that share no
+     member — its own, the type kinds (`bits`, `int`, `bytes`, `string`,
+     `unit`, `switch`), and the repeat kinds (`count`) — which is what makes
+     the lifting unambiguous.
+  2. **A scalar where a mapping is expected fills in the one key that
+     matters**: `{bytes: 4}` and `{string: 4}` are a size, `{int: 8}` a width,
+     alongside the bare size and bare unit name that already worked.
+  3. **`bits` names the integer kind**, because the word says what the number
+     counts.  `int: 8` is shorter and cannot say whether the 8 is bits or
+     bytes — Kaitai's `u8` means eight *bytes* — and sub-byte fields are the
+     ordinary case here.
+
+  The long form is unchanged and remains the fallback: a body with a second key
+  (`int: {bits: 4, enum: opcode}`), a type inside a construct such as a
+  switch's cases, or wherever a wrapper reads better.
+
+  **Strictness is not weakened.**  Exactly one key must name a type kind and at
+  most one a repeat kind; two kinds of the same construct is an error, a lifted
+  kind beside its own wrapper is an error, and an unknown key is still an
+  error — now reported with the set each allowed key belongs to rather than as
+  one flat list.  A construct this version does not implement is reported as
+  *not supported yet* in **either** spelling, so writing it short never turns
+  it into a typo.
+
+  This is what the reference means by calling the dialect a superset of
+  kober's: before this, kober's own `dns.yaml` and `http.yaml` failed here on
+  their first field.  Both now load, and are refused only for the constructs
+  packeteer genuinely lacks.  `examples/protocols/sensor.yaml` and `rpc.yaml`
+  are rewritten short, and compile byte-for-byte identically to before.
+
+- **`endian` on the document and on the unit** (#142) — byte order resolves
+  **field → unit → document → `big`**:
+
+  ```yaml
+  endian: little          # every integer below, unless it says otherwise
+
+  units:
+    header:
+      fields:
+        - {name: magic, bits: 32}
+        - {name: version, bits: 16}
+        - {name: crc, int: {bits: 32, endian: big}}   # the exception, stated
+  ```
+
+  The cost this removes is not the word.  A field needing `endian` had to write
+  `int: {bits: 32, endian: little}`, so **no integer field in a little-endian
+  spec could use `bits:` at all** — invisible in both shipped examples, which
+  are big-endian network protocols, and unavoidable in anything not on a wire.
+
+  Resolved **when the spec loads** and folded into each field, so nothing
+  downstream can tell which spelling was used: a spec written with an inherited
+  default builds a spec equal to one with `endian` on every integer.
+  `packeteer protocol show` prints the resolved byte order, which is where to
+  look when a field's own line no longer says.
+
+  `signed` does **not** inherit: a protocol is little-endian, it is not
+  *signed*.  `endian` beside `bits:` at field level remains an unknown-key
+  error.
+
+- **`{string: {delimiter: …}}` is recognised as delimiter framing** (#141) —
+  kober's short spelling of `{size: {terminated: {delimiter: …}}}`, along with
+  its `within`, `required` and `consume` companions.  Still **not supported
+  yet**, but now reported as the construct it is rather than as
+  `a bytes or string field needs a size`.
+
+- **kober's specs are held to this loader by a test, not by a claim** (#144) —
+  the reference has called this dialect a superset of
+  [kober](https://github.com/adamkjonsson/zipline-kober)'s since 0.11.0, with a
+  caveat saying so was "documented and reasoned, not enforced by a test suite
+  shared between the projects".  That caveat is gone.
+
+  kober 0.2.0's shipped examples are vendored under `src/tests/kober/`, pinned
+  to a released version, and `src/tests/test_kober_dialect.py` asserts the
+  **outcome** for each rather than merely that they load: `dns.yaml` loads and
+  reports exactly four constructs as *not supported yet*, and `http.yaml` is
+  refused for stream framing and delimiters, which are out of scope by design.
+  Asserting the refusals is what makes the copies a drift detector rather than
+  a liability.
+
+  kober vendors packeteer's specs the same way, so the two projects notice each
+  other moving.
+
+- **kober's decode-only keys are declined by name** (#144) — `confirm` and
+  `reject` on a unit, and `emit` on a field, were unknown-key errors: the typo
+  message, for keys packeteer knows about and in `emit`'s case already declined
+  two levels up.  All three are now reported as *not supported yet*.
+
+  An unknown key is still an error.  These simply stopped being unknown.
+
+- **A `fill` size: everything left, less what the fields after it claim**
+  (#146) — the body between a header and a fixed footer, which nothing else
+  could express:
+
+  ```yaml
+  - {name: count,     bits: 8}
+  - {name: data,      bytes: {size: {fill: true}}}
+  - {name: data_type, bits: 32}
+  ```
+
+  `{remaining: true}` is the closest and is wrong: it takes the footer's four
+  bytes too, leaving the trailing field to read an exhausted cursor — which is
+  #145.
+
+  **The trailing width must be computable from the spec alone**, or the spec is
+  refused, because a guessed boundary is what `check` exists to prevent.
+  Refused, each naming the field responsible: a trailing field whose width the
+  spec does not fix (a repeat, a dynamic size, a `condition`, a `switch`), a
+  second `fill` in one unit, a `fill` that repeats, and a trailer that is not a
+  whole number of bytes.  A message too short to hold the trailing fields
+  raises as a truncation rather than yielding an empty body.
+
+  `packeteer.protospec.check.trailing_width` is exported, and the compiler
+  reads the width from it rather than working it out again, so the checker and
+  the generated decoder cannot disagree about where a body ends.
+
+### Changed
+
+- **Breaking: a switch dispatches on `dispatch:`, not `on:`** (#143) — the key
+  is renamed to match
+  [kober](https://github.com/adamkjonsson/zipline-kober), which renamed it at
+  its own `0.1.0`.  A spec using `on:` must rename the key; it is refused with
+  a message naming the rename rather than as an unknown key.
+
+  ```yaml
+  - name: body
+    switch:
+      dispatch: "header.op"      # was: on: "header.op"
+      cases:
+        1: {unit: ping}
+  ```
+
+  The two projects describe the same protocols with one dialect, and this was
+  the single construct they spelled differently — so no amount of recognising
+  each other's keys could bridge it, and every spec containing a switch failed
+  to cross in one direction or the other.
+
+  The old key existed because `on` is a YAML 1.1 boolean: `on: kind` parses as
+  `{True: "kind"}`, and packeteer read the boolean back as the key the author
+  wrote.  That repair is gone.  It spared an author one papercut and cost the
+  compatibility this dialect is documented as having, and quoting the key was
+  never a workaround — the unquoted spelling is the one people write.
+
+  A switch now also refuses an **unknown key**, which it did not before, so a
+  misspelled `cases` or a stray `arms` is named instead of surfacing as
+  `missing required key`.
+
+### Fixed
+
+- **A `remaining` field with anything decoded after it is refused** (#145) —
+  it took the following fields' bytes, so the spec compiled to a decoder that
+  failed on **every** message, and `check` called it `ok`:
+
+  ```yaml
+  - {name: count,   bits: 8}
+  - {name: data,    bytes: {size: {remaining: true}}}   # refused
+  - {name: trailer, bits: 32}
+  ```
+
+  The sharpest form was that such a protocol **encoded messages it could not
+  decode**, which is the round trip packeteer exists for.  The refusal names
+  [`fill`](#146) as what to write instead.
+
+  `remaining` and `fill` are both measured against the **message**, not the
+  enclosing unit, so the rule reaches through nesting: a unit containing either
+  at any depth may only be referenced from the last position of its own unit,
+  transitively.  That case is the one worth knowing, because the offending unit
+  is correct on its own — a `remaining` that *is* its unit's last field, whose
+  parent has a trailer, is only visible at the reference site.
+
+- **A field's `condition` is honoured rather than silently dropped** (#140) —
+  `condition` was listed as a known field key, was never read, and was not
+  recorded as unsupported, so a spec using it loaded clean and the guard
+  vanished.  The compiled decoder then read a field that is not on the wire
+  whenever the guard was false, and the unknown-key error advertised
+  `condition` as supported while nothing implemented it.
+
+  It is now implemented rather than merely declined, since a guard is
+  **symmetric** — the same predicate in both directions — where `pointer`,
+  `select` and `computed` are not:
+
+  ```yaml
+  - {name: flags, bits: 8}
+  - {name: extra, bits: 16, condition: "flags == 1"}
+  - {name: tail,  bits: 8}
+  ```
+
+  **A field whose guard is false is absent, not empty**: it consumes nothing,
+  so `tail` is read from the byte straight after `flags`.  The guard is
+  authoritative in both directions — decode does not read the field, encode
+  does not write it *even when the attribute holds a value*, and `to_spec`
+  omits the key.  A conditional field compiles to `T | None`, a repeated one
+  to `list[T] | None`, where `None` means absent.
+
+  Two refusals come with it, both because a guessed boundary is what `check`
+  exists to prevent.  **A conditional field has no fixed width**, so anything
+  needing a static layout — the `input: stream` prefix check — refuses it
+  rather than computing an offset for a field that may not be there.  And **a
+  `derive` may not name a conditional field**, since a derivation cannot say
+  whether it is deriving from nothing or from an empty value.
+
+### Documentation
+
+- **`packeteer.protospec` has an API reference** — the spec loader, checker,
+  compiler and renderer, and the frozen model behind them, had none: the
+  subsystem behind three releases was documented only by its format reference.
+  `docs/api/protospec.md` covers all four entry points and every public class,
+  and says which of the two easily-confused declarations is which (`input` is
+  the stream shape, `over` is the transport).
+
+- **The README says packeteer can be taught a protocol** (#144).  It described
+  the built-ins and never mentioned that you can add your own, which has been
+  possible since 0.11.0.  There is now a feature bullet, an entry in the
+  supported-protocol list, and a worked CLI example — checked, compiled and
+  parsed end to end rather than written from memory.
+
+- The superset claim is corrected wherever it appears: packeteer adds **four**
+  keys to kober's dialect, not five.  `const` was the fifth until kober `0.2.0`
+  adopted it — a magic number is how any decoder refuses traffic that is not
+  its own, so it was never an encoder's key.
+
+- Three transcripts showed stale generated output, one of them two releases
+  behind, and `condition` and `fill` reached the pages that describe
+  expressions, `derive` and what a spec cannot express.
+
+---
+
 ## [0.12.0] - 2026-08-30
 
 ### Added
@@ -2772,7 +3031,8 @@ the exhaustive API reference.
      tagged with names that predate this convention, so only the entries below
      carry compare links. -->
 
-[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/adamkjonsson/packeteer/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/adamkjonsson/packeteer/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/adamkjonsson/packeteer/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/adamkjonsson/packeteer/compare/v0.9.1...v0.10.0

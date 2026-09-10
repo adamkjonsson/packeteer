@@ -44,11 +44,13 @@ from packeteer.protospec.spec import (
     CountOf,
     Field,
     FieldType,
+    Fill,
     Fixed,
     FromExpr,
     InputShape,
     IntType,
     Location,
+    Remaining,
     Size,
     SizeOf,
     Spec,
@@ -58,7 +60,8 @@ from packeteer.protospec.spec import (
     UnitRef,
 )
 
-__all__ = ["Diagnostic", "CheckResult", "check"]
+__all__ = ["Diagnostic", "CheckResult", "check", "trailing_width",
+           "run_relative_units"]
 
 _BITS_PER_BYTE = 8
 
@@ -281,6 +284,86 @@ class _Checker:
     def _check_units(self) -> None:
         for unit in self.spec.units.values():
             self._check_unit(unit)
+            self._check_fill(unit)
+            self._check_remaining(unit)
+        self._check_run_relative()
+
+    def _check_remaining(self, unit: Unit) -> None:
+        """Refuse a ``remaining`` with anything decoded after it.
+
+        ``remaining`` takes everything left, so a field after one is read from
+        an exhausted cursor for every input there will ever be.  There is no
+        message such a spec decodes, which is why this is an error rather than
+        a warning: nothing is left for the author to weigh.
+        """
+        for index, fld in enumerate(unit.fields[:-1]):
+            if not _has_remaining(fld.type) or _stands_in_for_unsupported(
+                    fld, self.spec):
+                continue
+            after = unit.fields[index + 1].name
+            self._error(
+                f"{fld.name!r} is sized 'remaining', which takes everything "
+                f"left, but {after!r} is decoded after it and would have no "
+                f"bytes to read; size it 'fill' to leave the trailing fields "
+                f"their bytes",
+                fld.loc,
+            )
+            return
+
+    def _check_fill(self, unit: Unit) -> None:
+        """Check every ``fill`` in *unit* has a trailer the spec fixes."""
+        fills = [i for i, f in enumerate(unit.fields)
+                 if _has_fill(f.type) and not _stands_in_for_unsupported(f, self.spec)]
+        if not fills:
+            return
+        if len(fills) > 1:
+            named = ", ".join(repr(unit.fields[i].name) for i in fills)
+            self._error(
+                f"unit {unit.name!r} has {len(fills)} 'fill' fields ({named}); "
+                f"only one can take what is left",
+                unit.fields[fills[1]].loc,
+            )
+            return
+        index = fills[0]
+        fld = unit.fields[index]
+        if fld.repeat is not None:
+            self._error(
+                "a 'fill' field cannot repeat: the first element would take "
+                "everything left and no later one could read anything",
+                fld.loc,
+            )
+            return
+        if trailing_width(unit, index, self.spec) is None:
+            self._error(
+                f"the fields after {fld.name!r} do not have a width the spec "
+                f"fixes, so 'fill' cannot say where it ends; give every "
+                f"trailing field a fixed width, or size this one another way",
+                fld.loc,
+            )
+
+    def _check_run_relative(self) -> None:
+        """Refuse a run-relative unit referenced from anywhere but last.
+
+        A ``remaining`` reads to the end of the run and a ``fill`` reads to the
+        end of the run less its own unit's trailer.  Either one inside a unit
+        that is not the last thing decoded eats the bytes of whatever follows.
+        """
+        relative = run_relative_units(self.spec)
+        if not relative:
+            return
+        for unit in self.spec.units.values():
+            for index, fld in enumerate(unit.fields[:-1]):
+                culprits = [r for r in _unit_refs(fld.type) if r in relative]
+                if not culprits:
+                    continue
+                after = unit.fields[index + 1].name
+                self._error(
+                    f"{fld.name!r} is unit {culprits[0]!r}, which reads to the "
+                    f"end of the message through {relative[culprits[0]]!r}, but "
+                    f"{after!r} is decoded after it and would have no bytes "
+                    f"left",
+                    fld.loc,
+                )
 
     def _check_unit(self, unit: Unit) -> None:
         seen: set[str] = set()
@@ -301,6 +384,9 @@ class _Checker:
         if fld.repeat is not None:
             self._check_expr(unit, index, fld.repeat.expr, ExprType.INT,
                              "a repeat count", fld.loc)
+        if fld.condition is not None:
+            self._check_expr(unit, index, fld.condition, ExprType.BOOL,
+                             "a condition", fld.loc)
 
     def _check_type(self, unit: Unit, index: int, fld: Field,
                     field_type: FieldType) -> None:
@@ -322,7 +408,7 @@ class _Checker:
                     fld.loc,
                 )
         elif isinstance(field_type, Switch):
-            self._check_expr(unit, index, field_type.on, ExprType.INT,
+            self._check_expr(unit, index, field_type.dispatch, ExprType.INT,
                              "a switch selector", fld.loc)
             if field_type.default is None:
                 self._warn(
@@ -446,6 +532,16 @@ class _Checker:
             self._error(
                 f"'size_of' names {fld.derive.field!r}, which repeats; use "
                 f"'count_of', or size a single element",
+                fld.loc,
+            )
+        if target.condition is not None:
+            # An absent field has no length and no elements to count, and
+            # which it is cannot be known from the spec.  Refusing beats
+            # deriving a zero that silently means "the guard was false".
+            self._error(
+                f"'derive' names {fld.derive.field!r}, which has a "
+                f"'condition' and so may be absent; a derivation cannot say "
+                f"whether it is deriving from nothing or from an empty value",
                 fld.loc,
             )
 
@@ -627,6 +723,137 @@ class _Checker:
         return prefix_bits // _BITS_PER_BYTE
 
 
+# ── widths a `fill` and the framing checks both need ──────────────────────────
+
+def trailing_width(unit: Unit, index: int, spec: Spec) -> int | None:
+    """Return the bytes the fields after *index* claim, or ``None`` if unknown.
+
+    Total by **refusal** rather than by approximation: a field whose width the
+    spec does not fix returns ``None`` rather than a guess, because a guessed
+    boundary is exactly what this module exists to prevent.  A trailer that is
+    not a whole number of bytes is unknown for the same reason.
+
+    Args:
+        unit: The unit the ``fill`` is in.
+        index: Position of the ``fill`` field within *unit*.
+        spec: The spec, for resolving nested units.
+
+    Returns:
+        The trailing width in bytes, or ``None`` when the spec does not fix it.
+
+    """
+    total = 0
+    for fld in unit.fields[index + 1:]:
+        width = _fixed_bits(fld, spec)
+        if width is None:
+            return None
+        total += width
+    if total % _BITS_PER_BYTE:
+        return None
+    return total // _BITS_PER_BYTE
+
+
+def run_relative_units(spec: Spec) -> dict[str, str]:
+    """Return each unit whose extent is the run's, and the field that makes it so.
+
+    A ``remaining`` reads to the end of the run and a ``fill`` reads to the end
+    of the run less its own unit's trailer.  Both are measured against the
+    **run**, not against the enclosing unit, so a unit containing either is
+    only correct where nothing is decoded after it.  Referencing one from any
+    earlier position makes it eat bytes that belong to the fields that follow.
+
+    The property is transitive: a unit referencing a run-relative unit is
+    itself run-relative.
+
+    Args:
+        spec: The spec to walk.
+
+    Returns:
+        Unit name to the field name that makes it run-relative, for every unit
+        that is.
+
+    """
+    direct: dict[str, str] = {}
+    for unit in spec.units.values():
+        for fld in unit.fields:
+            if _stands_in_for_unsupported(fld, spec):
+                continue
+            if _is_run_relative_type(fld.type):
+                direct.setdefault(unit.name, fld.name or "<anonymous>")
+                break
+
+    found = dict(direct)
+    changed = True
+    while changed:                       # transitive closure, units are finite
+        changed = False
+        for unit in spec.units.values():
+            if unit.name in found:
+                continue
+            for fld in unit.fields:
+                names = _unit_refs(fld.type)
+                if any(ref in found for ref in names):
+                    found[unit.name] = fld.name or "<anonymous>"
+                    changed = True
+                    break
+    return found
+
+
+def _stands_in_for_unsupported(fld: Field, spec: Spec) -> bool:
+    """Whether *fld*'s type is a stand-in for a construct this version lacks.
+
+    The loader substitutes something compilable for a construct it cannot
+    handle, and that stand-in is ``bytes`` sized ``remaining``.  Reading it as
+    though the author had written it would report a `remaining` they did not
+    write — the same trap :func:`packeteer.protospec.show._unsupported_at`
+    exists to avoid, reached from the other side.
+
+    Such a field's shape is *unknown*, not run-relative.  The spec is refused
+    either way, by the *not supported yet* error the stand-in stands for, so
+    staying quiet here costs nothing and inventing a second, wrong error costs
+    the reader a hunt.
+    """
+    return any(
+        item.loc.path == fld.loc.path or item.loc.path.startswith(fld.loc.path + ".")
+        for item in spec.unsupported
+    )
+
+
+def _has_remaining(field_type: FieldType) -> bool:
+    """Whether a type is, or contains, a ``remaining``-sized region."""
+    if isinstance(field_type, (BytesType, StringType)):
+        return isinstance(field_type.size, Remaining)
+    if isinstance(field_type, Switch):
+        arms = list(field_type.arms.values())
+        if field_type.default is not None:
+            arms.append(field_type.default)
+        return any(_has_remaining(arm) for arm in arms)
+    return False
+
+
+def _has_fill(field_type: FieldType) -> bool:
+    """Whether a type is, or contains, a ``fill``-sized region."""
+    if isinstance(field_type, (BytesType, StringType)):
+        return isinstance(field_type.size, Fill)
+    if isinstance(field_type, Switch):
+        arms = list(field_type.arms.values())
+        if field_type.default is not None:
+            arms.append(field_type.default)
+        return any(_has_fill(arm) for arm in arms)
+    return False
+
+
+def _is_run_relative_type(field_type: FieldType) -> bool:
+    """Whether a type reads to the end of the run rather than a stated length."""
+    if isinstance(field_type, (BytesType, StringType)):
+        return isinstance(field_type.size, (Remaining, Fill))
+    if isinstance(field_type, Switch):
+        arms = list(field_type.arms.values())
+        if field_type.default is not None:
+            arms.append(field_type.default)
+        return any(_is_run_relative_type(arm) for arm in arms)
+    return False
+
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _unit_refs(field_type: FieldType) -> list[str]:
@@ -665,8 +892,14 @@ def _type_of_field(field_type: FieldType, name: str, loc: Location) -> ExprType:
 
 
 def _fixed_bits(fld: Field, spec: Spec) -> int | None:
-    """Return a field's encoded width in bits, or ``None`` when it varies."""
-    if fld.repeat is not None:
+    """Return a field's encoded width in bits, or ``None`` when it varies.
+
+    A field with a ``condition`` has no fixed width whatever its type: it
+    occupies its width or nothing at all, and which of those is not knowable
+    from the spec.  Refusing here rather than approximating is what keeps a
+    guessed boundary out of the framing checks that read this.
+    """
+    if fld.repeat is not None or fld.condition is not None:
         return None
     return _fixed_bits_of_type(fld.type, spec)
 

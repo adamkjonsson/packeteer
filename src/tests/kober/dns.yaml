@@ -1,0 +1,102 @@
+# DNS over UDP or TCP, RFC 1035.
+#
+# Decodes a whole message: the header, the question section, and the answer,
+# authority, and additional sections. An owner name may be a compression
+# pointer (RFC 1035 §4.1.4) — two bytes meaning "the name at offset N" — which
+# the `pointer:` type follows.
+#
+# Record data stays opaque bytes. That is a choice rather than a limitation:
+# what is inside RDATA depends on the record type, and a switch over the
+# type registry would be most of this file for none of the point.
+name: dns
+version: "1.0"
+entry: message
+input: either
+doc: DNS messages, header, question section, and resource records.
+
+enums:
+  opcode: {0: query, 1: iquery, 2: status, 4: notify, 5: update}
+  rcode: {0: noerror, 1: formerr, 2: servfail, 3: nxdomain, 4: notimp, 5: refused}
+  rrtype: {1: a, 2: ns, 5: cname, 6: soa, 12: ptr, 15: mx, 16: txt, 28: aaaa, 255: any}
+  rrclass: {1: internet, 3: chaos, 4: hesiod, 255: any}
+
+units:
+  message:
+    doc: One DNS message.
+    fields:
+      - {name: id, bits: 16, doc: Copied into the reply; matches responses to requests.}
+      - {name: flags, unit: flags}
+      - {name: qdcount, bits: 16, doc: Number of entries in the question section.}
+      - {name: ancount, bits: 16}
+      - {name: nscount, bits: 16}
+      - {name: arcount, bits: 16}
+      - {name: questions, unit: question, count: qdcount}
+      - {name: answers, unit: rr, count: ancount}
+      - {name: authority, unit: rr, count: nscount}
+      - {name: additional, unit: rr, count: arcount}
+
+  flags:
+    doc: The 16-bit flags word, MSB first.
+    fields:
+      - {name: qr, bits: 1, doc: "0 query, 1 response."}
+      - {name: opcode, int: {bits: 4, enum: opcode}}
+      - {name: aa, bits: 1, doc: "Authoritative answer."}
+      - {name: tc, bits: 1, doc: "Truncated."}
+      - {name: rd, bits: 1, doc: "Recursion desired."}
+      - {name: ra, bits: 1, doc: "Recursion available."}
+      - {name: null, bits: 3, doc: "Reserved, must be zero."}
+      - {name: rcode, int: {bits: 4, enum: rcode}}
+
+  question:
+    fields:
+      - {name: qname, unit: name}
+      - {name: qtype, int: {bits: 16, enum: rrtype}}
+      - {name: qclass, int: {bits: 16, enum: rrclass}}
+
+  rr:
+    doc: One resource record, in the answer, authority, or additional section.
+    fields:
+      - {name: name, unit: name, doc: "The owner name, often a pointer."}
+      - {name: type, int: {bits: 16, enum: rrtype}}
+      - {name: class, int: {bits: 16, enum: rrclass}}
+      - {name: ttl, bits: 32}
+      - {name: rdlength, bits: 16}
+      - name: rdata
+        bytes: {size: {expr: "rdlength"}}
+        doc: Opaque here; what is inside depends on the record type.
+
+  name:
+    doc: >
+      A sequence of labels, ending either in a zero-length label or in a
+      compression pointer, which is always the last thing in a name.
+    fields:
+      - name: labels
+        unit: label
+        until: "labels.length == 0 or labels.length >= 192"
+
+  label:
+    doc: >
+      A length byte, then the rest of the label. The top two bits of the
+      length decide which: 00 means that many bytes of text, and 11 means the
+      byte is the high half of a compression pointer. 01 and 10 are reserved,
+      and there is no default, so a message using one is undecodable rather
+      than guessed at.
+    fields:
+      - {name: length, bits: 8}
+      - name: rest
+        switch:
+          dispatch: "length >> 6"
+          cases:
+            0: {string: {size: {expr: "length"}}}
+            3: {unit: {name: compressed, args: ["length"]}}
+
+  compressed:
+    doc: >
+      The second half of a compression pointer: the offset is the low 14 bits
+      of the two bytes, counted from the start of the message.
+    params: [{high: int}]
+    fields:
+      - {name: low, bits: 8}
+      - name: target
+        pointer: {at: "((high & 63) << 8) | low", type: {unit: name}}
+        doc: The name already at that offset, read there and returned from.

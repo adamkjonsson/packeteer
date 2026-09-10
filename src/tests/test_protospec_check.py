@@ -300,7 +300,7 @@ class TestSwitchWarnings(unittest.TestCase):
             - name: rest
               type:
                 switch:
-                  on: "kind"
+                  dispatch: "kind"
                   cases:
                     1: {int: {bits: 8}}
         """)
@@ -313,7 +313,7 @@ class TestSwitchWarnings(unittest.TestCase):
             - name: rest
               type:
                 switch:
-                  on: "kind"
+                  dispatch: "kind"
                   cases:
                     1: {int: {bits: 8}}
                   default: {bytes: {size: {remaining: true}}}
@@ -432,3 +432,217 @@ class TestUnsupportedConstructsAreReportedAsSuch(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestConditionChecks(unittest.TestCase):
+    """A guard is an expression, and it costs a field its fixed width (#140)."""
+
+    def _findings(self, field_line: str, extra: str = "") -> list[str]:
+        return [d.message for d in _check(f"""
+            name: t
+            version: "1"
+            entry: m
+            units:
+              m:
+                fields:
+                  - {{name: a, bits: 8}}
+                  {field_line}
+                  {extra}
+        """).diagnostics]
+
+    def test_a_condition_must_be_boolean(self) -> None:
+        found = self._findings('- {name: b, bits: 8, condition: "a"}')
+        self.assertTrue(any("a condition is int, expected bool" in m
+                            for m in found), found)
+
+    def test_a_condition_may_not_reference_a_later_field(self) -> None:
+        found = self._findings('- {name: b, bits: 8, condition: "z == 1"}',
+                               "- {name: z, bits: 8}")
+        self.assertTrue(any("z" in m for m in found), found)
+
+    def test_a_valid_condition_is_clean(self) -> None:
+        self.assertEqual(self._findings('- {name: b, bits: 8, condition: "a == 1"}'),
+                         [])
+
+    def test_deriving_from_a_conditional_field_is_refused(self) -> None:
+        """An absent field has no length, and the spec cannot say which it is."""
+        found = [d.message for d in _check("""
+            name: t
+            version: "1"
+            entry: m
+            units:
+              m:
+                fields:
+                  - {name: a, bits: 8}
+                  - {name: n, bits: 8, derive: {size_of: body}}
+                  - {name: body, bytes: {size: {expr: "n"}}, condition: "a == 1"}
+        """).diagnostics]
+        self.assertTrue(any("may be absent" in m for m in found), found)
+
+    def test_a_conditional_field_has_no_fixed_width(self) -> None:
+        """A stream prefix cannot sit at a fixed offset behind a guard."""
+        found = [d.message for d in _check("""
+            name: t
+            version: "1"
+            input: stream
+            entry: m
+            units:
+              m:
+                fields:
+                  - {name: a, bits: 8}
+                  - {name: maybe, bits: 8, condition: "a == 1"}
+                  - {name: n, bits: 8, derive: {size_of: body}}
+                  - {name: body, bytes: {size: {expr: "n"}}}
+        """).diagnostics]
+        self.assertTrue(any("no fixed width" in m for m in found), found)
+
+
+class TestFill(unittest.TestCase):
+    """`fill` needs a trailer the spec fixes, or it is refused (#146)."""
+
+    def _errors(self, units: str) -> list[str]:
+        body = textwrap.indent(textwrap.dedent(units).strip("\n"), "  ")
+        header = 'name: t\nversion: "1"\nentry: m\nunits:\n'
+        return [d.message for d in _check(header + body + "\n").diagnostics]
+
+    def test_a_fixed_trailer_is_accepted(self) -> None:
+        self.assertEqual(self._errors("""
+              m:
+                fields:
+                  - {name: n, bits: 8}
+                  - {name: d, bytes: {size: {fill: true}}}
+                  - {name: t2, bits: 32}
+        """), [])
+
+    def test_a_dynamic_trailer_is_refused(self) -> None:
+        found = self._errors("""
+              m:
+                fields:
+                  - {name: n, bits: 8}
+                  - {name: d, bytes: {size: {fill: true}}}
+                  - {name: t2, bytes: {size: {expr: "n"}}}
+        """)
+        self.assertTrue(any("do not have a width the spec fixes" in m
+                            for m in found), found)
+
+    def test_a_conditional_trailer_is_refused(self) -> None:
+        """A guarded field occupies its width or nothing, and which is unknown."""
+        found = self._errors("""
+              m:
+                fields:
+                  - {name: a, bits: 8}
+                  - {name: d, bytes: {size: {fill: true}}}
+                  - {name: t2, bits: 8, condition: "a == 1"}
+        """)
+        self.assertTrue(any("do not have a width the spec fixes" in m
+                            for m in found), found)
+
+    def test_a_trailer_that_is_not_whole_bytes_is_refused(self) -> None:
+        found = self._errors("""
+              m:
+                fields:
+                  - {name: d, bytes: {size: {fill: true}}}
+                  - {name: t2, bits: 4}
+        """)
+        self.assertTrue(any("do not have a width the spec fixes" in m
+                            for m in found), found)
+
+    def test_two_fills_in_one_unit_are_refused(self) -> None:
+        found = self._errors("""
+              m:
+                fields:
+                  - {name: a, bytes: {size: {fill: true}}}
+                  - {name: b, bytes: {size: {fill: true}}}
+                  - {name: c, bits: 8}
+        """)
+        self.assertTrue(any("only one can take what is left" in m
+                            for m in found), found)
+
+    def test_a_repeating_fill_is_refused(self) -> None:
+        found = self._errors("""
+              m:
+                fields:
+                  - {name: n, bits: 8}
+                  - {name: d, bytes: {size: {fill: true}}, count: n}
+                  - {name: c, bits: 8}
+        """)
+        self.assertTrue(any("cannot repeat" in m for m in found), found)
+
+    def test_a_nested_unit_ending_in_the_run_may_not_be_followed(self) -> None:
+        """`fill` measures against the run, so its unit must be decoded last."""
+        found = self._errors("""
+              m:
+                fields:
+                  - {name: body, unit: inner}
+                  - {name: trailer, bits: 32}
+              inner:
+                fields:
+                  - {name: n, bits: 8}
+                  - {name: d, bytes: {size: {fill: true}}}
+                  - {name: c, bits: 8}
+        """)
+        self.assertTrue(any("would have no bytes left" in m for m in found), found)
+
+
+class TestRemainingIsNotFollowed(unittest.TestCase):
+    """A `remaining` with anything after it decodes no message at all (#145)."""
+
+    def _errors(self, units: str) -> list[str]:
+        body = textwrap.indent(textwrap.dedent(units).strip("\n"), "  ")
+        header = 'name: t\nversion: "1"\nentry: m\nunits:\n'
+        return [d.message for d in _check(header + body + "\n").diagnostics]
+
+    def test_a_field_after_remaining_is_refused(self) -> None:
+        found = self._errors("""
+              m:
+                fields:
+                  - {name: count, bits: 8}
+                  - {name: data, bytes: {size: {remaining: true}}}
+                  - {name: trailer, bits: 32}
+        """)
+        self.assertTrue(any("would have no bytes to read" in m for m in found),
+                        found)
+
+    def test_the_refusal_names_fill_as_the_answer(self) -> None:
+        found = self._errors("""
+              m:
+                fields:
+                  - {name: data, bytes: {size: {remaining: true}}}
+                  - {name: trailer, bits: 32}
+        """)
+        self.assertTrue(any("'fill'" in m for m in found), found)
+
+    def test_remaining_as_the_last_field_is_fine(self) -> None:
+        self.assertEqual(self._errors("""
+              m:
+                fields:
+                  - {name: count, bits: 8}
+                  - {name: data, bytes: {size: {remaining: true}}}
+        """), [])
+
+    def test_a_nested_unit_ending_in_remaining_may_not_be_followed(self) -> None:
+        """`data` is last in its own unit, so only the reference site shows it."""
+        found = self._errors("""
+              m:
+                fields:
+                  - {name: body, unit: inner}
+                  - {name: trailer, bits: 32}
+              inner:
+                fields:
+                  - {name: data, bytes: {size: {remaining: true}}}
+        """)
+        self.assertTrue(any("would have no bytes left" in m for m in found), found)
+
+    def test_a_switch_arm_sized_remaining_carries_the_same_rule(self) -> None:
+        found = self._errors("""
+              m:
+                fields:
+                  - {name: kind, bits: 8}
+                  - name: body
+                    switch:
+                      dispatch: "kind"
+                      cases:
+                        1: {bytes: {size: {remaining: true}}}
+                  - {name: trailer, bits: 32}
+        """)
+        self.assertTrue(any("would have no bytes" in m for m in found), found)
