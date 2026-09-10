@@ -21,6 +21,7 @@ from packeteer.protospec.spec import (
     Endian,
     Field,
     FieldType,
+    Fill,
     Fixed,
     FromExpr,
     IntType,
@@ -222,6 +223,8 @@ def _size_text(size: Size) -> str:
         return _expr_text(size.expr, None)
     if isinstance(size, Remaining):
         return "rest"
+    if isinstance(size, Fill):
+        return "fill"
     return "?"
 
 

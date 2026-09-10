@@ -729,3 +729,63 @@ class TestConditionalRepeat(_CompileTestCase):
         self.assertNotIn("items", proto.to_spec(absent))
         self.assertEqual(proto.encode(absent, "udp"), bytes([0]))
         self.assertIsNotNone(module)
+
+
+class TestFillDecoding(_CompileTestCase):
+    """A body between a header and a fixed footer (#146)."""
+
+    def setUp(self) -> None:
+        self.module = self.compile("""
+            name: fillp
+            version: "1.0"
+            entry: m
+            over: udp
+            ports: [9600]
+            units:
+              m:
+                fields:
+                  - {name: count, bits: 8}
+                  - {name: data, bytes: {size: {fill: true}}}
+                  - {name: data_type, bits: 32}
+        """)
+        self.proto = protocols.for_section("fillp")
+
+    def test_the_body_stops_before_the_footer(self) -> None:
+        raw = bytes([3]) + b"BODYBODY" + (7).to_bytes(4, "big")
+        msg = self.proto.decode(raw, "udp")
+        self.assertEqual(msg.data, b"BODYBODY")
+        self.assertEqual(msg.data_type, 7)
+
+    def test_it_rebuilds_byte_for_byte(self) -> None:
+        raw = bytes([3]) + b"BODYBODY" + (7).to_bytes(4, "big")
+        self.assertEqual(self.proto.encode(self.proto.decode(raw, "udp"), "udp"),
+                         raw)
+
+    def test_an_empty_body_is_legal(self) -> None:
+        raw = bytes([0]) + (7).to_bytes(4, "big")
+        msg = self.proto.decode(raw, "udp")
+        self.assertEqual(msg.data, b"")
+        self.assertEqual(msg.data_type, 7)
+
+    def test_too_short_for_the_footer_raises(self) -> None:
+        """The message cannot hold the fields after the fill, so it is truncated."""
+        with self.assertRaises(ValueError) as ctx:
+            self.proto.decode(bytes([0]) + b"ab", "udp")
+        self.assertIn("fill", str(ctx.exception))
+
+    def test_a_fill_with_no_trailer_is_just_the_rest(self) -> None:
+        self.compile("""
+            name: fillrest
+            version: "1.0"
+            entry: m
+            over: udp
+            ports: [9602]
+            units:
+              m:
+                fields:
+                  - {name: n, bits: 8}
+                  - {name: d, bytes: {size: {fill: true}}}
+        """)
+        proto = protocols.for_section("fillrest")
+        msg = proto.decode(bytes([1]) + b"tail", "udp")
+        self.assertEqual(msg.d, b"tail")

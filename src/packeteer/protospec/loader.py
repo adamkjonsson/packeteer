@@ -32,6 +32,7 @@ from packeteer.protospec.spec import (
     EnumDef,
     Field,
     FieldType,
+    Fill,
     Fixed,
     FromExpr,
     InputShape,
@@ -664,9 +665,11 @@ def _size_value(size: Any, loc: Location, ctx: _Ctx) -> Size:
         return FromExpr(expr=_as_str(body, loc, "a size expression"))
     if kind == "remaining":
         return Remaining()
+    if kind == "fill":
+        return Fill()
     raise SpecError(
-        f"unknown size {kind!r}; expected 'fixed', 'expr', 'remaining' "
-        f"or 'terminated'", loc,
+        f"unknown size {kind!r}; expected 'fixed', 'expr', 'remaining', "
+        f"'fill' or 'terminated'", loc,
     )
 
 

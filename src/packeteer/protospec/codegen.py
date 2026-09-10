@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from dataclasses import replace as dataclasses_replace
 
+from packeteer.protospec.check import trailing_width
 from packeteer.protospec.errors import SpecError
 from packeteer.protospec.expr import (
     BinOp,
@@ -52,6 +53,7 @@ from packeteer.protospec.spec import (
     Endian,
     Field,
     FieldType,
+    Fill,
     Fixed,
     FromExpr,
     InputShape,
@@ -434,6 +436,18 @@ class _Generator:
             return f"_r.read_bytes({size.length})"
         if isinstance(size, FromExpr):
             return f"_r.read_bytes({self._py(size.expr, unit, fld.loc)})"
+        if isinstance(size, Fill):
+            # Everything left, less what the fields after it claim.  The width
+            # comes from the checker's resolver rather than being worked out
+            # again here, so the two cannot disagree about where a body ends.
+            index = next(i for i, f in enumerate(unit.fields) if f is fld)
+            width = trailing_width(unit, index, self.spec)
+            if width is None:               # pragma: no cover - check refuses it
+                raise SpecError(
+                    "a 'fill' field whose trailer the spec does not fix "
+                    "reached the compiler", fld.loc,
+                )
+            return "_r.read_rest()" if width == 0 else f"_r.read_fill({width})"
         return "_r.read_rest()"
 
     def _emit_switch_decode(self, unit: Unit, fld: Field, switch: Switch,

@@ -45,6 +45,7 @@ __all__ = [
     "EnumDef",
     "Field",
     "FieldType",
+    "Fill",
     "Fixed",
     "FromExpr",
     "InputShape",
@@ -185,7 +186,20 @@ class Remaining:
     """A size covering the rest of the enclosing run of bytes."""
 
 
-Size = Union[Fixed, FromExpr, Remaining]
+@dataclass(frozen=True)
+class Fill:
+    """A size covering the rest of the run, less what the fields after it claim.
+
+    The ordinary shape of a body between a header and a fixed footer, which
+    :class:`Remaining` cannot express — it takes the footer's bytes too.
+
+    The trailing width must be computable from the spec alone, or the spec is
+    refused: a guessed boundary is exactly what the checker exists to prevent.
+    See :func:`packeteer.protospec.check.trailing_width`.
+    """
+
+
+Size = Union[Fixed, FromExpr, Remaining, Fill]
 
 
 # ── repeats ───────────────────────────────────────────────────────────────────

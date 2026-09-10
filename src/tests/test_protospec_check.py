@@ -495,3 +495,154 @@ class TestConditionChecks(unittest.TestCase):
                   - {name: body, bytes: {size: {expr: "n"}}}
         """).diagnostics]
         self.assertTrue(any("no fixed width" in m for m in found), found)
+
+
+class TestFill(unittest.TestCase):
+    """`fill` needs a trailer the spec fixes, or it is refused (#146)."""
+
+    def _errors(self, units: str) -> list[str]:
+        body = textwrap.indent(textwrap.dedent(units).strip("\n"), "  ")
+        header = 'name: t\nversion: "1"\nentry: m\nunits:\n'
+        return [d.message for d in _check(header + body + "\n").diagnostics]
+
+    def test_a_fixed_trailer_is_accepted(self) -> None:
+        self.assertEqual(self._errors("""
+              m:
+                fields:
+                  - {name: n, bits: 8}
+                  - {name: d, bytes: {size: {fill: true}}}
+                  - {name: t2, bits: 32}
+        """), [])
+
+    def test_a_dynamic_trailer_is_refused(self) -> None:
+        found = self._errors("""
+              m:
+                fields:
+                  - {name: n, bits: 8}
+                  - {name: d, bytes: {size: {fill: true}}}
+                  - {name: t2, bytes: {size: {expr: "n"}}}
+        """)
+        self.assertTrue(any("do not have a width the spec fixes" in m
+                            for m in found), found)
+
+    def test_a_conditional_trailer_is_refused(self) -> None:
+        """A guarded field occupies its width or nothing, and which is unknown."""
+        found = self._errors("""
+              m:
+                fields:
+                  - {name: a, bits: 8}
+                  - {name: d, bytes: {size: {fill: true}}}
+                  - {name: t2, bits: 8, condition: "a == 1"}
+        """)
+        self.assertTrue(any("do not have a width the spec fixes" in m
+                            for m in found), found)
+
+    def test_a_trailer_that_is_not_whole_bytes_is_refused(self) -> None:
+        found = self._errors("""
+              m:
+                fields:
+                  - {name: d, bytes: {size: {fill: true}}}
+                  - {name: t2, bits: 4}
+        """)
+        self.assertTrue(any("do not have a width the spec fixes" in m
+                            for m in found), found)
+
+    def test_two_fills_in_one_unit_are_refused(self) -> None:
+        found = self._errors("""
+              m:
+                fields:
+                  - {name: a, bytes: {size: {fill: true}}}
+                  - {name: b, bytes: {size: {fill: true}}}
+                  - {name: c, bits: 8}
+        """)
+        self.assertTrue(any("only one can take what is left" in m
+                            for m in found), found)
+
+    def test_a_repeating_fill_is_refused(self) -> None:
+        found = self._errors("""
+              m:
+                fields:
+                  - {name: n, bits: 8}
+                  - {name: d, bytes: {size: {fill: true}}, count: n}
+                  - {name: c, bits: 8}
+        """)
+        self.assertTrue(any("cannot repeat" in m for m in found), found)
+
+    def test_a_nested_unit_ending_in_the_run_may_not_be_followed(self) -> None:
+        """`fill` measures against the run, so its unit must be decoded last."""
+        found = self._errors("""
+              m:
+                fields:
+                  - {name: body, unit: inner}
+                  - {name: trailer, bits: 32}
+              inner:
+                fields:
+                  - {name: n, bits: 8}
+                  - {name: d, bytes: {size: {fill: true}}}
+                  - {name: c, bits: 8}
+        """)
+        self.assertTrue(any("would have no bytes left" in m for m in found), found)
+
+
+class TestRemainingIsNotFollowed(unittest.TestCase):
+    """A `remaining` with anything after it decodes no message at all (#145)."""
+
+    def _errors(self, units: str) -> list[str]:
+        body = textwrap.indent(textwrap.dedent(units).strip("\n"), "  ")
+        header = 'name: t\nversion: "1"\nentry: m\nunits:\n'
+        return [d.message for d in _check(header + body + "\n").diagnostics]
+
+    def test_a_field_after_remaining_is_refused(self) -> None:
+        found = self._errors("""
+              m:
+                fields:
+                  - {name: count, bits: 8}
+                  - {name: data, bytes: {size: {remaining: true}}}
+                  - {name: trailer, bits: 32}
+        """)
+        self.assertTrue(any("would have no bytes to read" in m for m in found),
+                        found)
+
+    def test_the_refusal_names_fill_as_the_answer(self) -> None:
+        found = self._errors("""
+              m:
+                fields:
+                  - {name: data, bytes: {size: {remaining: true}}}
+                  - {name: trailer, bits: 32}
+        """)
+        self.assertTrue(any("'fill'" in m for m in found), found)
+
+    def test_remaining_as_the_last_field_is_fine(self) -> None:
+        self.assertEqual(self._errors("""
+              m:
+                fields:
+                  - {name: count, bits: 8}
+                  - {name: data, bytes: {size: {remaining: true}}}
+        """), [])
+
+    def test_a_nested_unit_ending_in_remaining_may_not_be_followed(self) -> None:
+        """`data` is last in its own unit, so only the reference site shows it."""
+        found = self._errors("""
+              m:
+                fields:
+                  - {name: body, unit: inner}
+                  - {name: trailer, bits: 32}
+              inner:
+                fields:
+                  - {name: data, bytes: {size: {remaining: true}}}
+        """)
+        self.assertTrue(any("would have no bytes left" in m for m in found), found)
+
+    def test_a_switch_arm_sized_remaining_carries_the_same_rule(self) -> None:
+        found = self._errors("""
+              m:
+                fields:
+                  - {name: kind, bits: 8}
+                  - name: body
+                    switch:
+                      dispatch: "kind"
+                      cases:
+                        1: {bytes: {size: {remaining: true}}}
+                  - {name: trailer, bits: 32}
+        """)
+        self.assertTrue(any("would have no bytes" in m for m in found), found)

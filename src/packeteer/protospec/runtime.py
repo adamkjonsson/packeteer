@@ -138,6 +138,38 @@ class Reader:
         self._bit = len(self.data) * _BITS_PER_BYTE
         return self.data[start:]
 
+    def read_fill(self, trailing: int) -> bytes:
+        """Read everything left except the last *trailing* bytes.
+
+        The body between a header and a fixed footer.  *trailing* is resolved
+        from the spec by the compiler, so it is a constant here.
+
+        Args:
+            trailing: Bytes to leave for the fields that follow.
+
+        Returns:
+            The bytes read, empty when the trailer is all that is left.
+
+        Raises:
+            ValueError: If the cursor is not byte-aligned, or fewer than
+                *trailing* bytes remain — the message is too short to hold the
+                fields that come after this one, which is a truncation rather
+                than an empty body.
+
+        """
+        if self._bit % _BITS_PER_BYTE:
+            raise ValueError("a bytes field must start on a byte boundary")
+        start = self._bit // _BITS_PER_BYTE
+        available = len(self.data) - start
+        if available < trailing:
+            raise ValueError(
+                f"need {trailing} bytes at offset {start} for the fields after "
+                f"a fill, but only {available} remain",
+            )
+        count = available - trailing
+        self._bit += count * _BITS_PER_BYTE
+        return self.data[start:start + count]
+
 
 class Writer:
     """A growing buffer a message is encoded into."""

@@ -54,7 +54,8 @@ reassembling one could never participate in `parse` → edit → `build` — see
 [kober](https://github.com/adamkjonsson/zipline-kober)'s, not packeteer's.
 
 **Binary framing, not delimiters.**  A field's length comes from a constant, an
-earlier field, or the rest of the message.  A field that ends at a byte
+earlier field, the rest of the message, or the rest less a fixed trailer
+([`fill`](#fill)).  A field that ends at a byte
 sequence — an HTTP header line ending at `\r\n` — is not expressible.
 
 Constructs kober has that this version does not implement are reported by
@@ -346,11 +347,65 @@ it.
 | `4` | Exactly four bytes — shorthand for `{fixed: 4}` |
 | `{fixed: 4}` | The same |
 | `{expr: "n * 2"}` | An integer [expression](#expressions), read from earlier fields |
-| `{remaining: true}` | Everything left in the message |
+| `{remaining: true}` | Everything left in the message — see [run-relative sizes](#run-relative) |
+| `{fill: true}` | Everything left, **less what the fields after it claim** — see [`fill`](#fill) |
 | `{terminated: …}` | Delimiter framing — **not supported yet** |
 
 `string` takes an `encoding` as well, defaulting to `utf-8`.  A `bytes` field
 reaches a packet spec as a hex string.
+
+(fill)=
+##### `fill`
+
+A body between a header and a fixed footer, which nothing else here can say:
+
+```yaml
+- {name: count,     bits: 8}
+- {name: data,      bytes: {size: {fill: true}}}
+- {name: data_type, bits: 32}
+```
+
+`data` is everything left except the four bytes `data_type` still needs.
+
+**The trailing width must be computable from the spec alone**, or the spec is
+refused, because a guessed boundary is what `check` exists to prevent.  An
+integer contributes its `bits`, a `fixed`-sized `bytes` or `string` its length,
+and a nested unit the sum of its fields.  Refused, each naming the field
+responsible: a trailing field the spec does not fix a width for — a repeat, a
+dynamic size, a [`condition`](#condition), or a `switch` — a second `fill` in
+the same unit, a `fill` that repeats, and a trailer that is not a whole number
+of bytes.
+
+A message too short to hold the fields after a `fill` is a **truncation** and
+raises, rather than yielding an empty body.
+
+(run-relative)=
+##### `remaining` and `fill` are measured against the message
+
+Both read to the end of the message rather than to the end of their unit, so
+**neither may have anything decoded after it**:
+
+- a field after a `remaining` in the same unit is refused — `remaining` takes
+  its bytes too, so there is no input such a spec decodes;
+- a unit *containing* either, at any depth, may only be referenced from the
+  last position of its own unit.  The property is transitive.
+
+The second is the one worth knowing, because the offending unit looks correct
+on its own:
+
+```yaml
+units:
+  m:
+    fields:
+      - {name: body, unit: inner}       # refused: `trailer` follows
+      - {name: trailer, bits: 32}
+  inner:
+    fields:
+      - {name: data, bytes: {size: {remaining: true}}}
+```
+
+`data` *is* the last field of `inner`, and `inner` is perfectly correct as long
+as nothing follows it.  Only the reference site shows the fault.
 
 #### `unit`
 

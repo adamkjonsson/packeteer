@@ -105,7 +105,55 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   yet**, but now reported as the construct it is rather than as
   `a bytes or string field needs a size`.
 
+- **A `fill` size: everything left, less what the fields after it claim**
+  (#146) — the body between a header and a fixed footer, which nothing else
+  could express:
+
+  ```yaml
+  - {name: count,     bits: 8}
+  - {name: data,      bytes: {size: {fill: true}}}
+  - {name: data_type, bits: 32}
+  ```
+
+  `{remaining: true}` is the closest and is wrong: it takes the footer's four
+  bytes too, leaving the trailing field to read an exhausted cursor — which is
+  #145.
+
+  **The trailing width must be computable from the spec alone**, or the spec is
+  refused, because a guessed boundary is what `check` exists to prevent.
+  Refused, each naming the field responsible: a trailing field whose width the
+  spec does not fix (a repeat, a dynamic size, a `condition`, a `switch`), a
+  second `fill` in one unit, a `fill` that repeats, and a trailer that is not a
+  whole number of bytes.  A message too short to hold the trailing fields
+  raises as a truncation rather than yielding an empty body.
+
+  `packeteer.protospec.check.trailing_width` is exported, and the compiler
+  reads the width from it rather than working it out again, so the checker and
+  the generated decoder cannot disagree about where a body ends.
+
 ### Fixed
+
+- **A `remaining` field with anything decoded after it is refused** (#145) —
+  it took the following fields' bytes, so the spec compiled to a decoder that
+  failed on **every** message, and `check` called it `ok`:
+
+  ```yaml
+  - {name: count,   bits: 8}
+  - {name: data,    bytes: {size: {remaining: true}}}   # refused
+  - {name: trailer, bits: 32}
+  ```
+
+  The sharpest form was that such a protocol **encoded messages it could not
+  decode**, which is the round trip packeteer exists for.  The refusal names
+  [`fill`](#146) as what to write instead.
+
+  `remaining` and `fill` are both measured against the **message**, not the
+  enclosing unit, so the rule reaches through nesting: a unit containing either
+  at any depth may only be referenced from the last position of its own unit,
+  transitively.  That case is the one worth knowing, because the offending unit
+  is correct on its own — a `remaining` that *is* its unit's last field, whose
+  parent has a trailer, is only visible at the reference site.
+
 
 - **A field's `condition` is honoured rather than silently dropped** (#140) —
   `condition` was listed as a known field key, was never read, and was not
