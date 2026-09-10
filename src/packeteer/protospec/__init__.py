@@ -8,9 +8,11 @@ parsed, built, serialised and redacted exactly like a built-in.  See
 :doc:`../guide/adding-a-protocol` for the hand-written alternative.
 
 The dialect is a superset of `kober <https://github.com/adamkjonsson/zipline-kober>`_'s:
-kober's keys keep kober's meaning, and packeteer adds ``over``, ``ports``,
-``const``, ``derive`` and ``sensitive`` — the last four being what a spec needs
-in order to describe an **encoder**, which kober never had to.
+kober's keys keep kober's meaning, and packeteer adds ``over`` and ``ports``,
+which say when a protocol is used, plus ``derive`` and ``sensitive``, which are
+what a spec needs in order to describe an **encoder** — something a decoder
+never had to.  ``const`` was packeteer's too until kober 0.2.0 adopted it, and
+is now shared.
 """
 from __future__ import annotations
 

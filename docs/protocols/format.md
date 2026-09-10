@@ -70,6 +70,7 @@ as unknown keys:
 | `{size: {terminated: …}}`, `{string: {delimiter: …}}` | Delimiter framing, in either spelling |
 | `repeat: {until: …}`, `repeat: {to_end: true}` | Repeat by condition, or to the end of the run |
 | unit `params:` / `{unit: {args: …}}` | Unit parameters — see [kober's dialect](#protocols-kober) |
+| unit `confirm:` / `reject:` | A guard spanning several fields, evaluated once the unit is decoded.  [`const`](#const) covers the single-field case, and [`condition`](#condition) guards one field rather than abandoning a unit |
 | recursion | A recursive unit has no statically known size, which both the encoder and the framing checks need |
 
 ---
@@ -79,10 +80,15 @@ as unknown keys:
 
 The dialect is a **superset of
 [kober](https://github.com/adamkjonsson/zipline-kober)'s**.  kober's keys keep
-kober's meaning, and packeteer adds five of its own — [`over`](#over),
-[`ports`](#ports), [`const`](#const), [`derive`](#derive) and
-[`sensitive`](#sensitive) — which are what a spec needs in order to describe an
-**encoder**.  kober decodes only, and so never had to.
+kober's meaning, and packeteer adds four of its own — [`over`](#over),
+[`ports`](#ports), [`derive`](#derive) and [`sensitive`](#sensitive) — which
+are what a spec needs in order to describe an **encoder**, and what a decoder
+never had to have.
+
+[`const`](#const) was packeteer's fifth until kober `0.2.0` adopted it: a magic
+number is how *any* decoder refuses traffic that is not its own, so it turned
+out not to be an encoder's key at all.  It is now shared, and means the same
+thing in both.
 
 A kober spec therefore loads here and describes the same messages; adding
 `derive` lines is what makes it describe an encoder too.
@@ -574,8 +580,12 @@ rebuilds byte for byte.  This is the rule `transport.length` and
 A length used to **read** its target can never disagree with it: exactly that
 many bytes were read, so the derivation always matches and the field is always
 cleared.  `derive` earns its keep when the target is read some other way — as
-`{remaining: true}`, at a fixed size, or where one length covers several
-fields.
+`{remaining: true}` or `{fill: true}`, at a fixed size, or where one length
+covers several fields.
+
+A [`condition`](#condition) on the target is the one case `derive` refuses: an
+absent field has no length and no elements, and a derivation cannot say whether
+it is deriving from nothing or from an empty value.
 ```
 
 (sensitive)=
@@ -642,13 +652,17 @@ JSON object keys are always strings.
 ## Expressions
 
 Wherever a spec needs a value it cannot know in advance — a size, a repeat
-count, a switch selector — it is written as an expression string.
+count, a switch selector, a [`condition`](#condition) — it is written as an
+expression string.
 
 ```yaml
-size:   {expr: "header.length * 4"}
-count:  "qdcount"
-dispatch: "length >> 6"
+size:      {expr: "header.length * 4"}
+count:     "qdcount"
+dispatch:  "length >> 6"
+condition: "flags.qr == 0"
 ```
+
+Most are integer expressions; a `condition` is the one that must be boolean.
 
 | | |
 |---|---|

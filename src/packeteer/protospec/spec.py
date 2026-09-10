@@ -8,9 +8,13 @@ frozen data — :mod:`packeteer.protospec.loader` produces it,
 implementing :class:`packeteer.protocols.AppProtocol`.
 
 The dialect is a **superset of kober's**: kober's keys keep kober's meaning,
-and packeteer adds five of its own — ``over``, ``ports``, ``const``,
-``derive`` and ``sensitive``.  A kober spec therefore loads and describes a
-decoder; adding ``derive`` lines is what makes it describe an encoder too.
+and packeteer adds four of its own — ``over``, ``ports``, ``derive`` and
+``sensitive``.  A kober spec therefore loads and describes a decoder; adding
+``derive`` lines is what makes it describe an encoder too.
+
+``const`` was packeteer's fifth until kober 0.2.0 adopted it, and is now
+shared: a magic number is how any decoder refuses traffic that is not its own,
+so it was never an encoder's key.
 
 Two declarations are easy to confuse and are independent:
 
