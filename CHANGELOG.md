@@ -25,6 +25,26 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
+---
+
+## [0.13.0] - 2026-09-10
+
+**The dialect release.**  packeteer and
+[kober](https://github.com/adamkjonsson/zipline-kober) describe the same
+protocols with one dialect, and until now neither project could read the
+other's shipped examples.  Both now can, and a test says so rather than a
+sentence in a reference.
+
+Two strands.  A spec is **shorter to write** — the type and repeat kinds lift
+onto the field, `bits:` names an integer, and byte order inherits, which is
+what makes a little-endian spec able to use `bits:` at all.  And **three
+sizing faults are fixed**, two of which `check` previously called `ok`: a
+`condition` that loaded and did nothing, and a `remaining` that ate the fields
+after it.
+
+One breaking change: a switch dispatches on `dispatch:`, not `on:`.  See
+**Changed**.
+
 ### Added
 
 - **A field may be written the short way** (#141) — kober's three shorthands,
@@ -155,6 +175,37 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   reads the width from it rather than working it out again, so the checker and
   the generated decoder cannot disagree about where a body ends.
 
+### Changed
+
+- **Breaking: a switch dispatches on `dispatch:`, not `on:`** (#143) — the key
+  is renamed to match
+  [kober](https://github.com/adamkjonsson/zipline-kober), which renamed it at
+  its own `0.1.0`.  A spec using `on:` must rename the key; it is refused with
+  a message naming the rename rather than as an unknown key.
+
+  ```yaml
+  - name: body
+    switch:
+      dispatch: "header.op"      # was: on: "header.op"
+      cases:
+        1: {unit: ping}
+  ```
+
+  The two projects describe the same protocols with one dialect, and this was
+  the single construct they spelled differently — so no amount of recognising
+  each other's keys could bridge it, and every spec containing a switch failed
+  to cross in one direction or the other.
+
+  The old key existed because `on` is a YAML 1.1 boolean: `on: kind` parses as
+  `{True: "kind"}`, and packeteer read the boolean back as the key the author
+  wrote.  That repair is gone.  It spared an author one papercut and cost the
+  compatibility this dialect is documented as having, and quoting the key was
+  never a workaround — the unquoted spelling is the one people write.
+
+  A switch now also refuses an **unknown key**, which it did not before, so a
+  misspelled `cases` or a stray `arms` is named instead of surfacing as
+  `missing required key`.
+
 ### Fixed
 
 - **A `remaining` field with anything decoded after it is refused** (#145) —
@@ -177,7 +228,6 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   transitively.  That case is the one worth knowing, because the offending unit
   is correct on its own — a `remaining` that *is* its unit's last field, whose
   parent has a trailer, is only visible at the reference site.
-
 
 - **A field's `condition` is honoured rather than silently dropped** (#140) —
   `condition` was listed as a known field key, was never read, and was not
@@ -209,37 +259,6 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   rather than computing an offset for a field that may not be there.  And **a
   `derive` may not name a conditional field**, since a derivation cannot say
   whether it is deriving from nothing or from an empty value.
-
-### Changed
-
-- **Breaking: a switch dispatches on `dispatch:`, not `on:`** (#143) — the key
-  is renamed to match
-  [kober](https://github.com/adamkjonsson/zipline-kober), which renamed it at
-  its own `0.1.0`.  A spec using `on:` must rename the key; it is refused with
-  a message naming the rename rather than as an unknown key.
-
-  ```yaml
-  type:
-    switch:
-      dispatch: "header.op"      # was: on: "header.op"
-      cases:
-        1: {unit: ping}
-  ```
-
-  The two projects describe the same protocols with one dialect, and this was
-  the single construct they spelled differently — so no amount of recognising
-  each other's keys could bridge it, and every spec containing a switch failed
-  to cross in one direction or the other.
-
-  The old key existed because `on` is a YAML 1.1 boolean: `on: kind` parses as
-  `{True: "kind"}`, and packeteer read the boolean back as the key the author
-  wrote.  That repair is gone.  It spared an author one papercut and cost the
-  compatibility this dialect is documented as having, and quoting the key was
-  never a workaround — the unquoted spelling is the one people write.
-
-  A switch now also refuses an **unknown key**, which it did not before, so a
-  misspelled `cases` or a stray `arms` is named instead of surfacing as
-  `missing required key`.
 
 ---
 
@@ -2988,7 +3007,8 @@ the exhaustive API reference.
      tagged with names that predate this convention, so only the entries below
      carry compare links. -->
 
-[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/adamkjonsson/packeteer/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/adamkjonsson/packeteer/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/adamkjonsson/packeteer/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/adamkjonsson/packeteer/compare/v0.9.1...v0.10.0
