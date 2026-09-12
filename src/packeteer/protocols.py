@@ -36,7 +36,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -50,6 +50,7 @@ __all__ = [
     "for_section",
     "for_message",
     "load_module",
+    "check_section",
 ]
 
 # Top-level packet-spec keys that describe a packet's structure rather than an
@@ -98,7 +99,12 @@ class AppProtocol:
             without a protocol-specific keyword argument.
         to_spec: ``message -> spec section``, the object written under
             :attr:`name` in a packet spec.
-        from_spec: ``spec section -> message``, the inverse.
+        from_spec: ``spec section -> message``, the inverse.  A key it does
+            not read is an absent field, so a partial section builds a
+            message with defaults — but a **non-empty section none of whose
+            keys it reads must raise** rather than build a default message.
+            :func:`check_section` is that guard, one call at the top; see
+            it for why.
         sanitise: ``(section, replacer, options) -> None``, redacting the
             section in place.  ``None`` means **nothing is redacted**: a
             protocol registered without one flows through
@@ -312,6 +318,68 @@ def load_module(path: str | os.PathLike) -> tuple[AppProtocol, ...]:
     added = tuple(p for p in registered() if p.name not in before)
     _loaded[resolved] = tuple(proto.name for proto in added)
     return added
+
+
+def check_section(
+    name: str, section: Mapping[str, Any], known: Iterable[str],
+) -> None:
+    """Refuse a spec section that is not a section of protocol *name*.
+
+    The guard every ``from_spec`` should open with.  A key ``from_spec`` does
+    not read is an absent field, which is the right reading of a *partial*
+    section — a spec is edited by hand, and a message with one key set is a
+    message with defaults everywhere else.  It is the wrong reading of a
+    section in which **nothing** is recognised, because by then the
+    difference between "this message has no questions" and "this is not a
+    section" has been lost, and what comes out is a default message that is
+    indistinguishable from a deliberate one (#137: a generated stream carried
+    forty empty DNS headers, and a decoder run over it reported forty
+    messages decoded).
+
+    An empty section is allowed through: ``{}`` is an explicit request for a
+    default message.
+
+    Args:
+        name: The protocol's :attr:`~AppProtocol.name`, for the message.
+        section: The object handed to ``from_spec``.
+        known: Every key ``from_spec`` reads.
+
+    Raises:
+        ValueError: If *section* is non-empty and shares no key with
+            *known*.  When *section* carries *name* itself as a key, the
+            message says so — that is the shape ``packeteer parse`` writes,
+            and the object under that key is what was meant.
+
+    Example::
+
+        _SECTION_KEYS = frozenset({"id", "flags", "questions", "answers"})
+
+        def from_spec(section: dict[str, Any]) -> DNSMessage:
+            protocols.check_section("dns", section, _SECTION_KEYS)
+            ...
+
+    """
+    if not section:
+        return
+    expected = frozenset(known)
+    if section.keys() & expected:
+        return
+    seen = sorted(section)
+    shown = ", ".join(repr(k) for k in seen[:6])
+    if len(seen) > 6:
+        shown += f", … ({len(seen)} keys)"
+    if isinstance(section.get(name), Mapping):
+        hint = (
+            f"; this looks like a whole packet spec, which is what "
+            f"'packeteer parse' writes — the object under {name!r} is the "
+            f"section"
+        )
+    else:
+        hint = ""
+    raise ValueError(
+        f"{name}: not a {name} section — none of its keys ({shown}) is one "
+        f"{name} reads ({', '.join(sorted(expected))}){hint}"
+    )
 
 
 def registered() -> tuple[AppProtocol, ...]:

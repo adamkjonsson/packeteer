@@ -35,6 +35,7 @@ everything wrong rather than the first thing.
 | Decoding is exact | `decode(encode(m1)) == m1` for the canonicalised message |
 | The spec round trip is lossless | `from_spec(to_spec(m)) == m` |
 | A section is JSON | A packet spec gets written to a file |
+| A section that is not one is refused | `from_spec` of a non-empty object with no key it reads must raise.  A default message built from something that is not a section is indistinguishable from a deliberate one — #137 was a generated stream of forty empty DNS headers that a decoder run reported as forty messages decoded.  {func}`packeteer.protocols.check_section` meets it in one line |
 | Truncated input raises | At **every** byte offset.  A decoder returning a half-built object from a short read turns a snaplen-truncated capture into a spec that quietly says the missing fields were absent |
 | The registry resolves it | By message type, and by every declared port on its transport |
 | Sanitising leaves a section usable | Still JSON, and no new keys |

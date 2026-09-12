@@ -36,7 +36,7 @@ Exactly one output flag is required; they are mutually exclusive.
 | `--sessions N` | `1` | Number of independent sessions (IP pairs) to generate (see below) |
 | `--session-stagger SECONDS` | `1.0` | Window over which session start times are spread when `--sessions > 1` |
 | `--payload NAME` | off | Application-layer payload to generate instead of random bytes: `http`, `vpn`, or any registered protocol's name (see below) |
-| `--protocol-messages FILE` | — | JSON array of packet-spec sections for `--payload <protocol>`, sent in order and cycled |
+| `--protocol-messages FILE` | — | JSON array of packet-spec sections for `--payload <protocol>`, sent in order and cycled; the packets `packeteer parse` writes are accepted as they are |
 | `--requests N` | `10` | HTTP only: total request/response transactions |
 | `--requests-per-connection K` | all | HTTP only: transactions per connection (`1` = a new connection per request) |
 | `--error-rate P` | `0.1` | HTTP only: probability a response is a 4xx/5xx error |
@@ -132,6 +132,30 @@ packeteer stream --load-protocol ./sensor.py \
 {doc}`../protocols/index`.  The name must match the protocol's own, and the
 protocol must be carried over the transport you asked for — a UDP protocol
 with `--protocol tcp` is refused rather than quietly mis-encoded.
+
+**A parsed capture replays as it is.**  The file may also be what
+`packeteer parse` writes — the whole document, or an array of its packets —
+and the protocol's section is taken from each packet that carries one; a
+packet that carries none, such as an ACK, is not a message and is passed
+over.  So captured messages go through an impaired stream without editing
+the file:
+
+```bash
+packeteer parse --load-protocol ./sensor.py sensors.pcap --output msgs.json
+packeteer stream --load-protocol ./sensor.py \
+    --protocol udp --payload sensor --protocol-messages msgs.json \
+    --client-ip 10.0.0.1 --server-ip 10.0.0.2 --server-port 9000 \
+    --packets 100 --packet-loss 0.05 --seed 5 --pcap impaired.pcap
+```
+
+An element that is none of these — an object with no key the protocol reads
+— is refused, naming its index and the keys a section has.  It used to build
+a default message in silence, which for DNS is a bare 12-byte header: a
+stream of those converts cleanly and a decoder run over it reports every
+message decoded, so the failure was indistinguishable from success (#137).
+The same is available from Python as
+{func}`packeteer.app.protocol_payload_fn`, which returns the `payload_fn` the
+stream generators take.
 
 **Every anomaly option applies**, because this is the ordinary stream
 generator with the payloads fed in rather than a path of its own: the packet

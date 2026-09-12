@@ -93,6 +93,12 @@ def check_protocol(
       canonicalised *m1*.
     - **A spec round trip is lossless.** ``from_spec(to_spec(m)) == m``.
     - **A section is JSON.**  A packet spec is written to a file.
+    - **A section that is not one is refused.**  ``from_spec`` of a
+      non-empty object with no key it reads must raise, not build a default
+      message.  #137 was forty such messages in a generated stream, and a
+      decoder run over it reported forty decoded — the failure is
+      indistinguishable from success, so the refusal is part of the contract.
+      :func:`packeteer.protocols.check_section` is the one-line way to meet it.
     - **Truncated input raises.**  At *every* byte offset: a decoder that
       returns a half-built object from a short read turns a snaplen-truncated
       capture into a spec that quietly says the missing fields were absent.
@@ -156,8 +162,25 @@ def check_protocol(
         failures += _check_sanitise(proto, decoded, index)
         failures += _check_packet_round_trip(proto, decoded, t, index)
 
+    failures += _check_unknown_section(proto)
     failures += _check_registry(proto, messages, t)
     return failures
+
+
+def _check_unknown_section(proto: AppProtocol) -> list[str]:
+    """Check that ``from_spec`` refuses an object that is not a section."""
+    bogus = {"no_such_key_": 0}
+    try:
+        built = proto.from_spec(bogus)
+    except _CODEC_ERRORS:
+        return []
+    return [
+        f"{proto.name}: from_spec built {type(built).__name__} from a section "
+        f"with no key it reads ({sorted(bogus)}) rather than raising.  A "
+        f"default message from an object that is not a section is "
+        f"indistinguishable from a deliberate one; open from_spec with "
+        f"packeteer.protocols.check_section."
+    ]
 
 
 def _check_spec(proto: AppProtocol, message: object, index: int) -> list[str]:

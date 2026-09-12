@@ -70,6 +70,11 @@ over `"tcp"` or `"udp"` — `True` when `over` is that transport or `"either"`.
    :no-index:
 ```
 
+```{eval-rst}
+.. autofunction:: packeteer.protocols.check_section
+   :no-index:
+```
+
 ---
 
 ## The built-ins
@@ -84,6 +89,11 @@ and a message object.
 
 ```{eval-rst}
 .. autofunction:: packeteer.app.apply_app_section
+   :no-index:
+```
+
+```{eval-rst}
+.. autofunction:: packeteer.app.protocol_payload_fn
    :no-index:
 ```
 

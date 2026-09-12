@@ -25,6 +25,34 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
+### Added
+
+- `packeteer.protocols.check_section(name, section, known)` — the guard a
+  `from_spec` opens with: it refuses a non-empty section none of whose keys
+  the protocol reads, lets `{}` through as an explicit default message, and
+  names the shape `packeteer parse` writes when that is what it was handed.
+  `AppProtocol.from_spec`'s contract now requires the refusal, and
+  `packeteer.conformance.check_protocol` checks for it.  (#137)
+- `packeteer.app.protocol_payload_fn(proto, messages, transport)` — the API
+  behind `packeteer stream --payload <protocol> --protocol-messages`: turns a
+  list of sections, or a `packeteer parse` document, into the cycling
+  `payload_fn` the stream generators take.  (#137)
+
+### Fixed
+
+- `--protocol-messages` built an **empty message** from a section wrapped
+  under the protocol's name — `{"dns": {…}}`, which is the shape
+  `packeteer parse` writes — because every `from_spec` read an unrecognised
+  key as an absent field.  A generated stream then carried bare 12-byte DNS
+  headers that converted cleanly and decoded as forty messages, so the
+  failure looked like success.  Two changes: the file may now be a `parse`
+  document, an array of its packets, or an array of sections, and the
+  protocol's section is taken from each element (a packet carrying none,
+  such as an ACK, is not a message and is passed over); and an element that
+  is not a section at all is refused, naming its index and the keys a
+  section has.  This holds for the three built-ins and for every compiled
+  protocol, and `packeteer build` gets the same refusal.  (#137)
+
 ---
 
 ## [0.13.0] - 2026-09-10

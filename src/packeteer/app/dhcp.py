@@ -39,7 +39,7 @@ from packeteer.generate.dhcp import (
     DHCPOptVendorClassID,
     _build_dhcp_message,
 )
-from packeteer.protocols import AppProtocol
+from packeteer.protocols import AppProtocol, check_section
 
 
 def encode(msg: object, transport: str = "udp") -> bytes:
@@ -118,6 +118,14 @@ def _option_from_spec(d: dict[str, Any]) -> DHCPOpt:  # type: ignore[valid-type]
     return DHCPOptRaw(code=code, data=bytes.fromhex(d.get("data", "")))
 
 
+#: Every key ``from_spec`` reads.  A non-empty section with none of them is
+#: not a section — see :func:`packeteer.protocols.check_section`.
+_SECTION_KEYS: frozenset[str] = frozenset({
+    "op", "htype", "hlen", "hops", "xid", "secs", "flags", "ciaddr", "yiaddr",
+    "siaddr", "giaddr", "chaddr", "sname", "file", "options", "trailer",
+})
+
+
 def from_spec(section: dict[str, Any]) -> DHCPMessage:
     """Build a :class:`~packeteer.generate.dhcp.DHCPMessage` from a spec section.
 
@@ -127,7 +135,13 @@ def from_spec(section: dict[str, Any]) -> DHCPMessage:
     Returns:
         The message it describes.
 
+    Raises:
+        ValueError: If *section* is non-empty and none of its keys is one a
+            DHCP section has — most often a whole packet spec passed where
+            its ``"dhcp"`` object was meant.
+
     """
+    check_section("dhcp", section, _SECTION_KEYS)
     chaddr_hex = section.get("chaddr", "00" * 16)
     chaddr = bytes.fromhex(chaddr_hex).ljust(16, b"\x00")[:16]
     sname_str = section.get("sname", "")

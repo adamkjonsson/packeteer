@@ -100,6 +100,48 @@ class TestTheMessagesAreWhatWasAskedFor(_Workspace):
         self.assertEqual(sections, [_MESSAGES[i % 2] for i in range(5)])
 
 
+class TestParseOutputRoundTrips(_Workspace):
+    """#137: what `packeteer parse` writes is accepted as it is."""
+
+    def test_wrapped_sections_carry_their_content(self) -> None:
+        self.messages.write_text(json.dumps([{self.name: m} for m in _MESSAGES]))
+        out = self.dir / "s.pcap"
+        done = self._stream("--pcap", str(out), packets=2)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(self._sections(out), _MESSAGES)
+
+    def test_a_parsed_capture_replays(self) -> None:
+        """Generate, parse, feed the parse file straight back in: same messages.
+
+        The file is the whole `parse` document — metadata and every packet,
+        including the ones that carry no message — because that is what a
+        user has in hand, and editing it down is the step this removes.
+        """
+        first = self.dir / "first.pcap"
+        done = self._stream("--pcap", str(first), packets=2)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        parsed = _packeteer("parse", "--load-protocol", str(self.module),
+                            str(first), "--output", str(self.messages))
+        self.assertEqual(parsed.returncode, 0, parsed.stderr)
+        document = json.loads(self.messages.read_text())
+        self.assertIn("metadata", document, "the whole document, unedited")
+        self.assertEqual(len([p for p in document["packets"] if self.name in p]), 2)
+
+        second = self.dir / "second.pcap"
+        done = self._stream("--pcap", str(second), packets=2)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(self._sections(second), _MESSAGES)
+
+    def test_a_section_with_nothing_recognised_is_refused(self) -> None:
+        """The silent path: this used to build a default message."""
+        self.messages.write_text(json.dumps([_MESSAGES[0], {"nonsense": 1}]))
+        done = self._stream("--pcap", str(self.dir / "o.pcap"))
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("msgs.json", done.stderr)
+        self.assertIn("message 1", done.stderr)
+        self.assertIn(f"not a {self.name} section", done.stderr)
+
+
 class TestOverTCP(_Workspace):
     """The same, over a TCP session — and impairments must still apply."""
 

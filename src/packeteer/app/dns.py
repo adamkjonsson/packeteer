@@ -39,7 +39,7 @@ from packeteer.generate.dns import (
     _build_dns_message,
     _build_dns_message_tcp,
 )
-from packeteer.protocols import AppProtocol
+from packeteer.protocols import AppProtocol, check_section
 
 if TYPE_CHECKING:
     from packeteer.generate.dns import _DNSRData
@@ -137,6 +137,13 @@ def _rdata_from_spec(rtype: int, rdata: dict[str, Any]) -> _DNSRData:
     return DNSRDataRaw(rtype=rtype, data=bytes.fromhex(rdata.get("data", "")))
 
 
+#: Every key ``from_spec`` reads.  A non-empty section with none of them is
+#: not a section — see :func:`packeteer.protocols.check_section`.
+_SECTION_KEYS: frozenset[str] = frozenset({
+    "id", "flags", "questions", "answers", "authority", "additional", "raw",
+})
+
+
 def from_spec(section: dict[str, Any]) -> DNSMessage:
     """Build a :class:`~packeteer.generate.dns.DNSMessage` from a spec section.
 
@@ -150,7 +157,13 @@ def from_spec(section: dict[str, Any]) -> DNSMessage:
     Returns:
         The message it describes.
 
+    Raises:
+        ValueError: If *section* is non-empty and none of its keys is one a
+            DNS section has — most often a whole packet spec passed where its
+            ``"dns"`` object was meant.
+
     """
+    check_section("dns", section, _SECTION_KEYS)
     flags_d = section.get("flags", {})
     flags = DNSFlags(
         qr=flags_d.get("qr", False),

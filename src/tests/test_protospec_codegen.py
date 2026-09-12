@@ -131,6 +131,16 @@ class TestItWorksThroughPacketeer(_CompileTestCase):
         self.assertEqual(pkt.app_protocol, "sensor")
         self.assertEqual(pkt.app, self.msg)
 
+    def test_from_spec_refuses_what_is_not_a_section(self) -> None:
+        """#137: the guard is emitted into every compiled module."""
+        with self.assertRaises(ValueError) as ctx:
+            self.mod.from_spec({"nonsense": 1})
+        self.assertIn("not a sensor section", str(ctx.exception))
+        with self.assertRaises(ValueError):
+            self.mod.from_spec({"sensor": {"version": 1}})
+        self.mod.from_spec({})                      # a default is still allowed
+        self.assertEqual(self.mod.from_spec({"version": 1}).version, 1)
+
     def test_parse_build_is_byte_identical(self) -> None:
         import packeteer.__main__ as cli
         from packeteer.generate import PacketBuilder

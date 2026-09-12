@@ -107,7 +107,10 @@ def to_spec(msg: Reading) -> dict:
         "samples": [{"kind": k, "value": v} for k, v in msg.samples],
     }
 
+_SECTION_KEYS = frozenset({"version", "samples"})
+
 def from_spec(section: dict) -> Reading:
+    protocols.check_section("sensor", section, _SECTION_KEYS)
     return Reading(
         version=section.get("version", 1),
         samples=[(s["kind"], s["value"]) for s in section.get("samples", [])],
@@ -116,6 +119,15 @@ def from_spec(section: dict) -> Reading:
 
 Use `.get()` with defaults.  A spec is something a person edits by hand, and
 `from_spec` should not fail on a missing optional key.
+
+**But open with {func}`~packeteer.protocols.check_section`.**  Reading an
+unknown key as an absent field is right for a *partial* section and wrong
+for an object in which nothing is recognised — by then the difference between
+"no samples" and "not a section" is gone, and what comes out is a default
+message that looks deliberate.  The guard refuses a non-empty section with no
+key `from_spec` reads, lets `{}` through as an explicit default, and names
+the shape `packeteer parse` writes when that is what it was handed.
+{func}`~packeteer.conformance.check_protocol` insists on it.
 
 ### 4. Redaction
 

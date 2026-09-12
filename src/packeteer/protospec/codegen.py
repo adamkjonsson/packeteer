@@ -75,8 +75,8 @@ _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # these is refused rather than renamed around.
 _RESERVED: frozenset[str] = frozenset({
     "AppProtocol", "Any", "Reader", "Writer", "PROTOCOL", "annotations",
-    "dataclass", "decode", "encode", "field", "from_spec", "register",
-    "to_spec", "frame_length",
+    "check_section", "dataclass", "decode", "encode", "field", "from_spec",
+    "register", "to_spec", "frame_length",
 })
 
 _SCOPE_VARS: dict[str, str] = {"this": "_obj", "parent": "_parent", "root": "_root"}
@@ -254,7 +254,8 @@ class _Generator:
         self._emit("from dataclasses import dataclass, field")
         self._emit("from typing import Any")
         self._emit()
-        self._emit("from packeteer.protocols import AppProtocol, register")
+        self._emit("from packeteer.protocols import AppProtocol, check_section, "
+                   "register")
         self._emit("from packeteer.protospec.runtime import Reader, Writer")
         self._emit()
 
@@ -790,8 +791,20 @@ class _Generator:
         self._emit(f"    return _to_spec_{entry}(msg)")
         self._emit()
         self._emit()
+        keys = ", ".join(
+            repr(f.name) for f in self.spec.units[self.spec.entry].fields
+            if f.name is not None
+        )
+        self._emit("# Every key from_spec reads.  A non-empty section with none "
+                   "of them is not a")
+        self._emit("# section, and building a default message from it would "
+                   "hide that.")
+        self._emit(f"_SECTION_KEYS = frozenset({{{keys}}})")
+        self._emit()
+        self._emit()
         self._emit(f"def from_spec(section: dict[str, Any]) -> {cls}:")
         self._emit(f'    """Build a {cls} from a packet-spec section."""')
+        self._emit(f"    check_section({self.spec.name!r}, section, _SECTION_KEYS)")
         self._emit(f"    return _from_spec_{entry}(section)")
         self._emit()
         self._emit()
