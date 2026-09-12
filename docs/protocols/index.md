@@ -98,7 +98,7 @@ yet check, which is when you most want it.
 
 ```console
 $ packeteer protocol compile sensor.yaml
-Wrote sensor.py (sensor 1.0, packeteer 0.13.0)
+Wrote sensor.py (sensor 1.0, packeteer 0.14.0)
 ```
 
 The module lands beside the spec, because it is meant to be committed and

@@ -27,7 +27,8 @@ before sharing or archiving.
 {class}`~packeteer.protocols.AppProtocol` and
 {func}`~packeteer.protocols.register`.  DNS, DHCP and HTTP are entries in it,
 and a caller's own protocol registered there is decoded, built, serialised and
-redacted on the same footing.
+redacted on the same footing — and reached by its own name, `pkt.sensor` on a
+parsed packet and `.sensor(msg)` on the builder, as the three are.
 
 **`packeteer.conformance`** holds any registered protocol to the contract
 every one must meet — {func}`~packeteer.conformance.check_protocol`.  It is

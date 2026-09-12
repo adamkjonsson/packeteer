@@ -149,6 +149,22 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   section has.  This holds for the three built-ins and for every compiled
   protocol, and `packeteer build` gets the same refusal.  (#137)
 
+### Documentation
+
+- A pre-release pass over every page against what the branch now does.
+  Stale, and fixed: the `--app` filter and `--no-decode-app` were documented
+  as taking `dns`, `dhcp` or `http` only, when the filter has matched any
+  registered protocol's section since 0.12.0; the overview's protocol table
+  and `--link-type`'s accepted names omitted the BSD loopback types from the
+  same release; the packet-spec reference's `metadata.link_type` row listed
+  two of the six link types; and the hand-written-protocol guide's own test
+  still reached its protocol through `.app()`.  The transcripts in the
+  `protocol` CLI page and the protocols guide were regenerated (the compiled
+  module now carries the `from_spec` guard, so the excerpt shows it).  The
+  README gained the one-line demonstration that a compiled protocol is a peer
+  of the built-ins — `pkt.sensor`, `.sensor(msg)` — and says DNS is built
+  compressed and TCP streams carry timestamps.
+
 ---
 
 ## [0.13.0] - 2026-09-10

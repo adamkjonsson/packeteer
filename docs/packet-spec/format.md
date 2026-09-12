@@ -27,10 +27,19 @@ all with `ethernet` or all with `ethernet.enabled: false`.
 
 Every `##` heading below is a **reserved** section name: it describes how a
 packet is structured, and
-{func}`packeteer.protocols.register` refuses a protocol that asks for one.  An
-application protocol registered there contributes a section of its own, named
-after it, beside `transport` — `dns`, `dhcp` and `http` are simply the three
-that packeteer registers for you.  See {doc}`../guide/adding-a-protocol`.
+{func}`packeteer.protocols.register` refuses a protocol that asks for one
+(along with any public name on `ParsedPacket` or `PacketBuilder`, since a
+protocol's name is also the attribute it is reached by).  An application
+protocol registered there contributes a section of its own, named after it,
+beside `transport` — `dns`, `dhcp` and `http` are simply the three that
+packeteer registers for you.  See {doc}`../guide/adding-a-protocol`.
+
+Within an application section, a key the protocol does not read is an absent
+field — a spec is edited by hand, and a partial section builds a message
+with defaults.  A non-empty section with **no** key the protocol reads is
+refused, since the difference between "this message has no questions" and
+"this is not a section" has been lost by then; `{}` is an explicit request
+for a default message and is allowed.
 
 ---
 
@@ -933,7 +942,10 @@ packet payload and the `payload` key is ignored.  Set `transport.dst_port` or
 `transport.src_port` to `53` and use `"udp"` or `"tcp"` as the protocol.
 
 For TCP, the builder prepends the mandatory 2-byte big-endian length field
-automatically (RFC 1035 §4.2.2) when the enclosing transport is TCP.
+automatically (RFC 1035 §4.2.2) when the enclosing transport is TCP.  Names
+are compressed on the way out as a resolver compresses them (RFC 1035
+§4.1.4); a captured message whose sender chose different pointer targets is
+reproduced from [`raw`](#dns-top-level-fields) instead.
 
 ```json
 "transport": { "src_port": 54321, "dst_port": 53 },
@@ -1293,7 +1305,7 @@ Always present in configs produced by `packeteer parse` and
 | Field | Required | Description |
 |-------|----------|-------------|
 | `nanoseconds` | **yes** | `true` when `packet_metadata` timestamps use nanosecond resolution; `false` for microsecond.  Always `false` in stream JSON output. |
-| `link_type` | no | pcap link-layer type integer for the whole file — `1` = Ethernet (default), `101` = Raw IP.  Written by `packeteer parse`; read by `packeteer build` to set the link-layer type of the output pcap/pcapng.  When absent, `packeteer build` infers the type from the packet contents. |
+| `link_type` | no | pcap link-layer type integer for the whole file — `1` = Ethernet (default), `101` = raw IP, `113` / `276` = Linux cooked, `0` / `108` = BSD loopback; the set {func}`packeteer.parse.supports_link_type` answers for.  Written by `packeteer parse`; read by `packeteer build` to set the link-layer type of the output pcap/pcapng.  When absent, `packeteer build` infers the type from the packet contents. |
 | `from_file` | no | Path of the source pcap or pcapng file — written automatically by `packeteer parse` (informational only; ignored by `packeteer build`) |
 | `type` | no | Source file format: `"pcap"` or `"pcapng"` — written automatically by `packeteer parse`; read by `packeteer build` to choose the output file format (overridable via `--pcap` / `--pcapng` flags) |
 | `snaplen` | no (default `65535`) | The capture limit the source file declared, in bytes.  Written by `packeteer parse` only when the file named a real limit; read by `packeteer build` and written into the output's file header.  See [truncated captures](packet-spec-truncation). |

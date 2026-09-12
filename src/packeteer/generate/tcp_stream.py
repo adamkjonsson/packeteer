@@ -5,9 +5,10 @@ TCP connection: three-way handshake, data transfer (client→server), and
 four-way teardown.
 
 Sequence and acknowledgement numbers are tracked correctly across both sides,
-including 32-bit wrap-around.  Each packet is assembled via
-:class:`~packeteer.generate.builder.PacketBuilder`, so all IP and TCP checksums
-are computed automatically.
+including 32-bit wrap-around, and so are TCP timestamps (RFC 7323) once the
+handshake has negotiated them — see :class:`TCPStreamConfig`.  Each packet is
+assembled via :class:`~packeteer.generate.builder.PacketBuilder`, so all IP
+and TCP checksums are computed automatically.
 
 Typical usage::
 

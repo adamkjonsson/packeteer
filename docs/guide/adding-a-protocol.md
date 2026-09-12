@@ -260,8 +260,8 @@ def test_round_trip():
 
     frame = (PacketBuilder().ethernet()
              .ip(src="10.0.0.1", dst="10.0.0.2").udp(dst_port=9000)
-             .app(msg).build())
-    assert parse_packet(frame).app == msg
+             .sensor(msg).build())
+    assert parse_packet(frame).sensor == msg
 ```
 
 If those pass, `packeteer parse` → edit the JSON → `packeteer build` works for

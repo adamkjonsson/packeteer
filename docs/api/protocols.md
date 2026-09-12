@@ -5,7 +5,10 @@
 `packeteer.protocols` is the registry of application-layer protocols packeteer
 knows how to decode, build, serialise and redact.  DNS, DHCP and HTTP are
 registered by {mod}`packeteer.app`; anything a caller registers is treated
-identically.
+identically — including being reached by its own name, `pkt.sensor` on a
+{class}`~packeteer.parse.core.ParsedPacket` and `.sensor(msg)` on a
+{class}`~packeteer.generate.builder.PacketBuilder`, exactly as `pkt.dns` and
+`.dns()` reach the built-in.
 
 See {doc}`../guide/adding-a-protocol` for a worked example.
 
@@ -24,7 +27,7 @@ worked example.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `name` | `str` | Short identifier, and the packet-spec section key — `"dns"` produces a `"dns"` object in a spec.  May not be one of the structural keys in {doc}`../packet-spec/format`. |
+| `name` | `str` | Short identifier; the packet-spec section key — `"dns"` produces a `"dns"` object in a spec — and the attribute the message is reached by.  A plain Python identifier, not starting with an underscore, and none of the structural keys in {doc}`../packet-spec/format` or the public names on `ParsedPacket` / `PacketBuilder`; {func}`~packeteer.protocols.check_name` is the rule. |
 | `over` | `str` | `"udp"`, `"tcp"`, or `"either"` for a protocol that runs over both, as DNS does |
 | `ports` | `frozenset[int]` | Transport ports that identify it.  A weak signal: `decode` raising is what settles a collision, so claiming a busy port is survivable. |
 | `messages` | `tuple` of classes | The message classes this protocol decodes to and encodes from.  {func}`~packeteer.protocols.for_message` dispatches on them, so they may not be shared with another protocol. |
@@ -34,7 +37,7 @@ worked example.
 | `decode` | `(payload, transport) -> message` | Raises `ValueError` or `struct.error` when *payload* is not this protocol after all, which leaves the bytes as an opaque payload |
 | `encode` | `(message, transport) -> payload` | *transport* is what lets DNS add its 2-byte length prefix over TCP (RFC 1035 §4.2.2) without a protocol-specific argument |
 | `to_spec` | `(message) -> dict` | The object written under `name` in a packet spec |
-| `from_spec` | `(dict) -> message` | The inverse |
+| `from_spec` | `(dict) -> message` | The inverse.  A key it does not read is an absent field, but a non-empty section with **no** key it reads must raise rather than build a default — {func}`~packeteer.protocols.check_section` is the one-line guard, and {func}`~packeteer.conformance.check_protocol` insists on it |
 | `sanitise` | `(section, replacer, options) -> None` | Redacts the section in place.  **`None` means nothing is redacted** — a protocol registered without one flows through {func}`~packeteer.sanitise.sanitise` untouched. |
 
 `AppProtocol.carries(transport)` returns whether the protocol can be carried

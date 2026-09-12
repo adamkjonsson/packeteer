@@ -23,7 +23,10 @@ is treated identically — there is no privileged built-in path.
 
 The *name* doubles as the packet-spec section key, so ``"sensor"`` above makes
 ``packeteer parse`` emit a ``"sensor"`` object beside ``"network"`` and
-``"transport"``, and ``packeteer build`` read it back.
+``"transport"``, and ``packeteer build`` read it back — and as the attribute
+the message is reached by: ``pkt.sensor`` on a parsed packet,
+``PacketBuilder().sensor(msg)`` on the builder.  :func:`check_name` says what
+that requires of it.
 
 **This module imports only the standard library, and must keep doing so.**
 Both :mod:`packeteer.generate` and :mod:`packeteer.parse` depend on it, and

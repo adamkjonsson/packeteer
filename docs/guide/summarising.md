@@ -55,6 +55,13 @@ Pass `link_type=` to force a specific type (disabling the heuristic), or
 `auto_link_type=False` to always trust the header.  See
 {doc}`pcap` for the link-type constants.
 
+`info.link_type_supported` says whether the type actually used is one the
+parser decodes at all.  When it is `False`, every packet was an opaque
+payload and `layer_counts` is empty *for that reason*, not because the file
+is malformed — which is the distinction a tool deciding whether to read a
+capture needs, and the question {func}`packeteer.parse.supports_link_type`
+answers on its own.
+
 ## Sampling large files
 
 `num` limits the analysis to the first *N* packets.  Reading stops early
