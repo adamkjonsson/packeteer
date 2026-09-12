@@ -44,6 +44,19 @@ record, or a single frame.
 
 ---
 
+## Where things are in the frame
+
+{attr}`~packeteer.parse.core.ParsedPacket.payload_offset` is the index of
+the first payload byte within the frame; {attr}`~packeteer.parse.core.ParsedPacket.offsets`
+is the same for every parsed header, keyed by the attribute the header is on
+(`"ip"`, `"transport"`, `"gre"`, …), plus `"app"` for a decoded application
+message — the one position `payload_offset` cannot give, since decoding
+empties the payload.  Both are relative to the outermost frame at any tunnel
+depth and add to {attr}`~packeteer.pcap.PcapRecord.data_offset` for a
+position in the capture file.  See {doc}`../guide/parsing` for the
+reasoning and the padding case that makes `len(frame) - len(payload)`
+wrong.
+
 ## Capture summary
 
 {func}`~packeteer.parse.info.pcap_info` reports on a whole capture — packet

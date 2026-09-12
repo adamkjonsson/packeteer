@@ -75,8 +75,8 @@ _RESERVED_NAMES: frozenset[str] = frozenset({
     # ParsedPacket attributes and PacketBuilder methods not already above
     "app", "app_protocol", "build", "datagram_truncated", "fragment",
     "fragment_header", "hop_by_hop_options", "icmp", "icmpv6", "ip", "loopback",
-    "payload_offset", "sctp", "source_records", "tcp", "tick_hz", "timestamp",
-    "ts_frac", "ts_sec", "tunneled", "udp", "vlan",
+    "offsets", "payload_offset", "sctp", "source_records", "tcp", "tick_hz",
+    "timestamp", "ts_frac", "ts_sec", "tunneled", "udp", "vlan",
 })
 
 _TRANSPORTS: frozenset[str] = frozenset({"tcp", "udp"})

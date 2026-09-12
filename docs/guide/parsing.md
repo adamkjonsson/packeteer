@@ -258,6 +258,42 @@ inner = pkt.tunneled
 frame[inner.payload_offset:][:len(inner.payload)] == inner.payload    # True
 ```
 
+## Where each header was in the frame
+
+`pkt.offsets` is the same fact for every header, keyed by the name of the
+attribute the header is on:
+
+```python
+pkt = parse_packet(frame)
+pkt.offsets                # {"ethernet": 0, "ip": 14, "transport": 34, "app": 42}
+frame[pkt.offsets["ip"]] >> 4                   # 4 — the IP version nibble
+frame[pkt.offsets["transport"]:][:20]           # the TCP header, as captured
+```
+
+A key is present exactly when the layer is — `"ip" in pkt.offsets` and
+`pkt.ip is not None` agree — and `"mpls"` is the first label of a stack.
+The conventions are `payload_offset`'s: relative to the outermost frame at
+any tunnel depth, so an inner header of a GRE or VXLAN packet, which sits an
+arbitrary distance in, is found by lookup rather than arithmetic; and
+additive with {attr}`~packeteer.pcap.PcapRecord.data_offset` for a position
+in the capture file.
+
+**`"app"` is where a decoded application message's bytes start**, and it is
+the entry `payload_offset` cannot provide: once DNS, HTTP or your own
+protocol has decoded the payload, `pkt.payload` is empty and
+`payload_offset` is `None`.  A tool citing "the DNS message at file offset
+X" reads `pkt.offsets["app"]`:
+
+```python
+if pkt.dns is not None:
+    start = record.data_offset + pkt.offsets["app"]
+```
+
+The other uses are verifying a checksum against the bytes as captured
+without re-parsing, and citing a header rather than a payload.  The mapping
+is not written to the packet spec: it is provenance about a frame, not a
+description of one.
+
 ## Reading a pcap file packet-by-packet
 
 When you need the capture timestamp alongside each parsed packet, read the

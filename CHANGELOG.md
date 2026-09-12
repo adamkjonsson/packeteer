@@ -54,6 +54,16 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   behind `packeteer stream --payload <protocol> --protocol-messages`: turns a
   list of sections, or a `packeteer parse` document, into the cycling
   `payload_fn` the stream generators take.  (#137)
+- `ParsedPacket.offsets: dict[str, int]` — where each parsed header starts
+  within the frame, keyed by the attribute the header is on (`"ethernet"`,
+  `"ip"`, `"transport"`, `"gre"`, … ; `"mpls"` is the first label), plus
+  `"app"` for the start of a decoded application message.  That last entry
+  closes the gap `payload_offset` leaves: once a protocol has decoded the
+  payload, `payload` is empty and `payload_offset` is `None`, so nothing
+  could say where a DNS message sat in the file.  Same conventions as
+  `payload_offset` — relative to the outermost frame at any tunnel depth,
+  additive with `PcapRecord.data_offset` — and not written to the packet
+  spec.  (#74)
 - `packeteer.parse.supports_link_type(link_type)` and
   `packeteer.parse.SUPPORTED_LINK_TYPES` — whether `parse_packet` can decode
   a pcap link type, so a consumer can ask before reading a capture instead of
