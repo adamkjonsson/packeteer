@@ -30,9 +30,18 @@ from dataclasses import dataclass, replace
 from random import Random
 from typing import TYPE_CHECKING, Callable
 
-from ._stream_common import _alloc_usec, _build_packet, _pkt_usec, _TCPEndpoint
+from ._stream_common import (
+    _alloc_usec,
+    _build_packet,
+    _clocks_from,
+    _pkt_usec,
+    _tcp_payload,
+    _TCPEndpoint,
+    _TimestampClock,
+    _tsecr_at,
+)
 from .stream_encap import EncapSpec
-from .tcp import TCP_ACK, TCP_FIN, TCP_PSH, TCP_RST, TCP_SYN
+from .tcp import TCP_ACK, TCP_FIN, TCP_PSH, TCP_RST, TCP_SYN, TCPOptions
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle avoided at runtime
     from .tcp_stream import TCPStreamPacket
@@ -141,6 +150,75 @@ class FlowEndpoints:
     include_ethernet: bool = True
     ip_ttl: int = 64
     encap: EncapSpec = None
+
+
+# ── Rebuilding a segment with a fresh timestamp ─────────────────────────────
+#
+# On a connection that negotiated timestamps, a retransmission carries the
+# clock at the moment it was *re*sent, not a copy of the original's — that is
+# what RTT measurement across a retransmission relies on (RFC 7323 §4.1), and
+# it is how an analyser tells a retransmission from a duplicate.  So the passes
+# cannot copy `raw` verbatim; they rebuild it with the option region redone.
+# Without timestamps a copy is exactly right, and that path is unchanged.
+
+Clocks = dict[str, _TimestampClock] | None
+
+
+def _endpoints_for(
+    direction: str, pkt: "TCPStreamPacket", flow: FlowEndpoints,
+) -> tuple[_TCPEndpoint, _TCPEndpoint]:
+    """Return (src, dst) endpoints to rebuild *pkt* in *direction*."""
+    if direction == "c2s":
+        src = _TCPEndpoint(ip=flow.client_ip, port=flow.client_port, mac=flow.client_mac,
+                           seq=pkt.seq, ack=pkt.ack, window=flow.window)
+        dst = _TCPEndpoint(ip=flow.server_ip, port=flow.server_port, mac=flow.server_mac,
+                           seq=0, ack=0, window=flow.window)
+    else:
+        src = _TCPEndpoint(ip=flow.server_ip, port=flow.server_port, mac=flow.server_mac,
+                           seq=pkt.seq, ack=pkt.ack, window=flow.window)
+        dst = _TCPEndpoint(ip=flow.client_ip, port=flow.client_port, mac=flow.client_mac,
+                           seq=0, ack=0, window=flow.window)
+    return src, dst
+
+
+def _restamped(
+    pkt: "TCPStreamPacket", usec: int, label: str, *,
+    flow: FlowEndpoints, clocks: Clocks, among: list["TCPStreamPacket"],
+) -> "TCPStreamPacket":
+    """Return *pkt* re-sent at *usec*: same bytes, or fresh timestamps.
+
+    Args:
+        pkt: The segment being retransmitted.
+        usec: When the copy goes out.
+        label: The copy's label.
+        flow: The connection's endpoints, to rebuild the frame.
+        clocks: Both directions' TSval clocks, or ``None`` when the
+            connection carries no timestamps and a verbatim copy is right.
+        among: The packets the copy joins, for finding what it should echo.
+
+    """
+    sec, frac = divmod(usec, 1_000_000)
+    if clocks is None or pkt.timestamps is None:
+        return replace(pkt, ts_sec=sec, ts_usec=frac, label=label)
+    timestamps = (clocks[pkt.direction].at(usec), _tsecr_at(among, pkt.direction, usec))
+    src, dst = _endpoints_for(pkt.direction, pkt, flow)
+    raw = _build_packet(
+        src, dst, pkt.flags, _tcp_payload(pkt.raw, flow.include_ethernet),
+        flow.include_ethernet, flow.ip_ttl, TCPOptions(timestamps=timestamps),
+        flow.encap,
+    )
+    return replace(pkt, raw=raw, ts_sec=sec, ts_usec=frac, label=label,
+                   timestamps=timestamps)
+
+
+def _options_for(
+    direction: str, usec: int, *, clocks: Clocks, among: list["TCPStreamPacket"],
+) -> tuple[TCPOptions | None, tuple[int, int] | None]:
+    """Return the option region and timestamps for a new segment a pass builds."""
+    if clocks is None:
+        return None, None
+    timestamps = (clocks[direction].at(usec), _tsecr_at(among, direction, usec))
+    return TCPOptions(timestamps=timestamps), timestamps
 
 
 # ── Structural packet classification ─────────────────────────────────────────
@@ -366,6 +444,7 @@ def apply_loss_recovery(
     rto_usec = int(config.retransmission_timeout * 1_000_000)
     used_ts = {_pkt_usec(p) for p in packets}
     out = list(packets)
+    clocks = _clocks_from(packets)
 
     # Where each side's byte stream begins, from the SYN it sent.
     starts = {
@@ -378,10 +457,9 @@ def apply_loss_recovery(
 
     for pkt in sorted(lost, key=_pkt_usec):
         rt_usec = _alloc_usec(_pkt_usec(pkt) + rto_usec, used_ts)
-        rt_sec, rt_frac = divmod(rt_usec, 1_000_000)
-        recovered = replace(
-            pkt, ts_sec=rt_sec, ts_usec=rt_frac,
-            label=_derive_label("RETRANS", pkt.label),
+        recovered = _restamped(
+            pkt, rt_usec, _derive_label("RETRANS", pkt.label),
+            flow=flow, clocks=clocks, among=out,
         )
         out.append(recovered)
 
@@ -406,15 +484,16 @@ def apply_loss_recovery(
                            seq=reference.seq, ack=ack_value, window=flow.window)
         dst = _TCPEndpoint(ip=dst_ip, port=dst_port, mac=dst_mac,
                            seq=0, ack=0, window=flow.window)
-        ack_sec, ack_frac = divmod(
-            _alloc_usec(rt_usec + gap_usec, used_ts), 1_000_000,
-        )
+        ack_usec = _alloc_usec(rt_usec + gap_usec, used_ts)
+        ack_sec, ack_frac = divmod(ack_usec, 1_000_000)
+        options, timestamps = _options_for(ack_dir, ack_usec, clocks=clocks, among=out)
         out.append(make(
             raw=_build_packet(src, dst, TCP_ACK, b"", flow.include_ethernet,
-                              flow.ip_ttl, None, flow.encap),
+                              flow.ip_ttl, options, flow.encap),
             ts_sec=ack_sec, ts_usec=ack_frac, direction=ack_dir, flags=TCP_ACK,
             seq=reference.seq, ack=ack_value, payload_len=0,
             label=_derive_label("ACK-RECOVER", pkt.label),
+            timestamps=timestamps,
         ))
     return out
 
@@ -522,6 +601,8 @@ def _apply_retransmission(
     rng: Random,
     config: ImpairmentConfig,
     jitter_usec: int,
+    flow: FlowEndpoints,
+    clocks: Clocks,
 ) -> list["TCPStreamPacket"]:
     """Duplicate a share of the data segments after the retransmission timer."""
     rto_usec = int(config.retransmission_timeout * 1_000_000)
@@ -532,12 +613,10 @@ def _apply_retransmission(
             continue
         pkt = packets[i]
         delay_usec = rng.randint(0, jitter_usec) if jitter_usec else 0
-        rt_sec, rt_usec = divmod(
-            _alloc_usec(_pkt_usec(pkt) + rto_usec + delay_usec, used_ts), 1_000_000,
-        )
-        retransmits.append(replace(
-            pkt, ts_sec=rt_sec, ts_usec=rt_usec,
-            label=_derive_label("RETRANS", pkt.label),
+        rt_usec = _alloc_usec(_pkt_usec(pkt) + rto_usec + delay_usec, used_ts)
+        retransmits.append(_restamped(
+            pkt, rt_usec, _derive_label("RETRANS", pkt.label),
+            flow=flow, clocks=clocks, among=packets,
         ))
     return packets + retransmits
 
@@ -549,12 +628,17 @@ def _apply_corruption(
     config: ImpairmentConfig,
     jitter_usec: int,
     gap_usec: int,
+    flow: FlowEndpoints,
+    clocks: Clocks,
 ) -> list["TCPStreamPacket"]:
     """Corrupt a share of the data segments, then retransmit them cleanly.
 
     The acknowledgement of a corrupted segment is pushed out behind the
     retransmission, since a receiver cannot acknowledge what failed its
-    checksum.
+    checksum.  The corrupted copy keeps its option region — it *is* the
+    original transmission, with a byte flipped in flight — while the clean
+    retransmission, and the acknowledgement that now answers it, carry the
+    clock at their new times.
     """
     rto_usec = int(config.retransmission_timeout * 1_000_000)
     acks = _ack_positions(packets)
@@ -573,18 +657,17 @@ def _apply_corruption(
 
         delay_usec = rng.randint(0, jitter_usec) if jitter_usec else 0
         rt_usec = _alloc_usec(_pkt_usec(pkt) + rto_usec + delay_usec, used_ts)
-        rt_sec, rt_usec_part = divmod(rt_usec, 1_000_000)
-        additions.append(replace(
-            pkt, ts_sec=rt_sec, ts_usec=rt_usec_part,
-            label=_derive_label("RETRANS", pkt.label),
-        ))
+        retransmitted = _restamped(
+            pkt, rt_usec, _derive_label("RETRANS", pkt.label),
+            flow=flow, clocks=clocks, among=packets + additions,
+        )
+        additions.append(retransmitted)
 
         if i in acks:
-            ack_sec, ack_usec = divmod(
-                _alloc_usec(rt_usec + gap_usec, used_ts), 1_000_000,
-            )
-            packets[acks[i]] = replace(
-                packets[acks[i]], ts_sec=ack_sec, ts_usec=ack_usec,
+            ack_usec = _alloc_usec(rt_usec + gap_usec, used_ts)
+            packets[acks[i]] = _restamped(
+                packets[acks[i]], ack_usec, packets[acks[i]].label,
+                flow=flow, clocks=clocks, among=packets + additions,
             )
     return packets + additions
 
@@ -704,13 +787,16 @@ def apply_impairments(
     # pass appends: retransmitted and stray packets carry payload too, and
     # neither is a candidate for being retransmitted, corrupted, or stolen from.
     data_idx = [i for i, p in enumerate(packets) if _is_data(p)]
+    clocks = _clocks_from(packets)
 
     if config.retransmission_probability:
-        packets = _apply_retransmission(packets, data_idx, rng, config, jitter_usec)
+        packets = _apply_retransmission(
+            packets, data_idx, rng, config, jitter_usec, flow, clocks,
+        )
 
     if config.payload_corruption_probability:
         packets = _apply_corruption(
-            packets, data_idx, rng, config, jitter_usec, gap_usec,
+            packets, data_idx, rng, config, jitter_usec, gap_usec, flow, clocks,
         )
 
     if config.stray_packet_count:

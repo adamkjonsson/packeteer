@@ -68,7 +68,7 @@ Silently ignored for `--protocol udp` and `--protocol sctp`.
 | `--psh-probability PROB` | `0.5` | Probability (0–1) PSH is set on each data segment |
 | `--packet-loss PROB` | `0.0` | Probability a packet is lost on the wire (see below) |
 | `--retransmit-lost` | off | Retransmit a lost segment so the connection recovers |
-| `--no-tcp-options` | off | Send a bare SYN with no TCP options (see below) |
+| `--no-tcp-options` | off | Send a bare handshake with no TCP options, and therefore no timestamps on any segment (see below) |
 | `--retransmission-probability PROB` | `0.0` | Probability each data segment is retransmitted |
 | `--retransmission-timeout SECONDS` | `0.2` | RTO — seconds after send that the retransmit fires |
 | `--payload-corruption PROB` | `0.0` | Probability a segment payload is corrupted |
@@ -221,25 +221,34 @@ packeteer stream --client-ip 10.0.0.1 --server-ip 10.1.0.1 \
 Request bodies are always counted with `Content-Length`; the framing knobs
 apply to responses only.
 
-### The handshake
+### The handshake, and timestamps
 
 The generated handshake advertises what a modern client does: a Maximum
-Segment Size, SACK permitted, and a window scale.  A SYN carrying **no**
-options at all — a bare 20-byte header — is the most conspicuous mark of
-generated traffic in a TCP capture, and packeteer exists to feed tools that
+Segment Size, SACK permitted, a window scale, and timestamps.  A SYN carrying
+**no** options at all — a bare 20-byte header — is the most conspicuous mark
+of generated traffic in a TCP capture, and packeteer exists to feed tools that
 read captures.
 
 The advertised MSS follows `--mss` where that applies, so a capture does not
 contradict its own segmentation: `--mss 512` both splits the payload at 512
 bytes and says so on the SYN.
 
-`--no-tcp-options` sends a bare SYN instead, for a test that wants one.
+**Timestamps are negotiated and then carried on every segment** (RFC 7323),
+the way every modern connection carries them.  Each side runs a 1 ms clock
+from a seeded random start; TSval is that clock, TSecr echoes the latest
+value that arrived in order from the peer — so after a loss the duplicate
+ACKs echo the last in-sequence segment, as their acknowledgement number
+repeats it — and a retransmission, whether spurious or recovering a loss,
+carries the clock at the moment it was *re*sent rather than a copy of the
+original's, which is how an analyser tells the two apart.  A corrupted
+segment keeps its original stamp: it is the original transmission with a
+byte flipped in flight.  The option takes 12 bytes of every segment, so data
+is segmented at the MSS less twelve, as a real sender does; a full-size
+segment is 1448 bytes of payload on a 1500-byte MTU.
 
-Timestamps are deliberately not advertised.  A connection that negotiates them
-carries one on **every** segment, and only the handshake carries options, so
-advertising them and then never sending one would be a worse inconsistency than
-leaving them out.  Carrying them properly is
-[#90](https://github.com/adamkjonsson/packeteer/issues/90).
+`--no-tcp-options` sends a bare handshake instead, for a test that wants one
+— and with nothing advertised, nothing is negotiated, so no segment carries
+a timestamp either.
 
 ### What packet loss means
 

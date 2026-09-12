@@ -2640,10 +2640,11 @@ def main() -> None:
     stream_parser.add_argument(
         "--no-tcp-options", action="store_true", default=None,
         help=(
-            "Send a bare SYN with no TCP options. By default the handshake "
-            "advertises what a modern client does (MSS, SACK permitted, window "
-            "scale), since a SYN carrying no options is the most conspicuous "
-            "mark of generated traffic"
+            "Send a bare handshake with no TCP options, so no segment carries "
+            "a timestamp either. By default the handshake advertises what a "
+            "modern client does (MSS, SACK permitted, window scale, "
+            "timestamps), since a SYN carrying no options is the most "
+            "conspicuous mark of generated traffic"
         ),
     )
     stream_parser.add_argument(

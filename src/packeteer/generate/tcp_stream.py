@@ -31,6 +31,7 @@ from dataclasses import dataclass, field, replace
 from random import Random
 
 from ._stream_common import (
+    TCP_TIMESTAMPS_OVERHEAD,
     _advance_seq,
     _alloc_usec,
     _build_packet,
@@ -39,6 +40,7 @@ from ._stream_common import (
     _pkt_usec,
     _repeat_payload,
     _TCPEndpoint,
+    _TimestampClock,
 )
 from .impairments import (
     FlowEndpoints,
@@ -54,6 +56,7 @@ from .stream_encap import (  # noqa: F401  (StreamEncap needed for Sphinx type r
     _encap_ip_start,
 )
 from .tcp import (
+    DEFAULT_MSS,
     TCP_ACK,
     TCP_FIN,
     TCP_PSH,
@@ -83,6 +86,10 @@ class TCPStreamPacket:
         payload_len: Application payload length in bytes.
         label: Human-readable label (e.g. ``"SYN"``, ``"DATA[3]"``,
             ``"FIN-ACK"``).  Useful for targeting specific packets in hooks.
+        timestamps: The ``(TSval, TSecr)`` the segment carries (RFC 7323),
+            or ``None`` when it carries no Timestamps option.  Mirrors
+            :attr:`~packeteer.generate.tcp.TCPOptions.timestamps`; what
+            lets a later pass echo the right value without re-parsing.
 
     """
 
@@ -95,6 +102,7 @@ class TCPStreamPacket:
     ack: int
     payload_len: int
     label: str
+    timestamps: tuple[int, int] | None = None
 
 
 @dataclass
@@ -154,13 +162,25 @@ class TCPStreamConfig:
             each data segment.  Defaults to ``0.5``.
         window: TCP receive-window size advertised by both endpoints.
             Defaults to ``65535``.
-        client_options: TCP options encoded on the client SYN only (e.g. MSS,
+        client_options: TCP options encoded on the client SYN (e.g. MSS,
             window scale, SACK permitted).  Defaults to
             :func:`~packeteer.generate.tcp.default_syn_options` — what a
             plausible modern client advertises — since a SYN carrying no
             options is the most conspicuous mark of generated traffic.  Pass
             ``None`` for a bare SYN.
-        server_options: TCP options encoded on the server SYN-ACK only.  Same
+
+            **Timestamps are negotiated here.**  When both this and
+            *server_options* carry
+            :attr:`~packeteer.generate.tcp.TCPOptions.timestamps`, the
+            connection carries a Timestamps option on every segment
+            (RFC 7323): TSval from a per-side 1 ms clock that starts at the
+            advertised value, or at a seeded random one when it is ``0``,
+            and TSecr echoing the latest TSval that arrived in order from the
+            peer.  Retransmissions carry a fresh TSval.  Data segments are
+            then capped at the peer's MSS less the 12 bytes the option takes.
+            When only one side advertises them, none are sent after the
+            handshake, as RFC 7323 §3.2 requires.
+        server_options: TCP options encoded on the server SYN-ACK.  Same
             default, and ``None`` for a bare SYN-ACK.
         packet_loss_probability: Probability (0.0–1.0) that a packet is lost
             on the wire.  Neither the capture point nor the far end sees it, so
@@ -470,6 +490,23 @@ def generate_tcp_stream(
         window=window,
     )
 
+    # Timestamps (RFC 7323).  A side that advertises them on its SYN gets a
+    # clock; the connection uses them only when both sides did.  The clock's
+    # start is the advertised TSval, or seeded random when that is 0 — drawn
+    # only when needed, so a stream without timestamps reproduces from its
+    # seed exactly as before.
+    for endpoint, opts in ((client, client_options), (server, server_options)):
+        if opts is not None and opts.timestamps is not None:
+            start = opts.timestamps[0] or rng.randint(0, _WRAP - 1)
+            endpoint.ts_clock = _TimestampClock(start=start, origin_usec=base_usec)
+    negotiated = client.ts_clock is not None and server.ts_clock is not None
+    if negotiated and config.payload_sizes is None and payload_fn is None:
+        # Twelve bytes of every segment are now the option, so a full-MSS
+        # payload would overrun the MTU; a real sender segments at MSS - 12.
+        assert server_options is not None
+        limit = (server_options.mss or DEFAULT_MSS) - TCP_TIMESTAMPS_OVERHEAD
+        max_payload = min(max_payload, limit)
+        min_payload = min(min_payload, max_payload)
 
     packets: list[TCPStreamPacket] = []
     lost_segments: list[TCPStreamPacket] = []
@@ -490,14 +527,30 @@ def generate_tcp_stream(
         seq_before = src.seq
         ack_before = src.ack
 
+        delay_usec = rng.randint(0, jitter_usec) if jitter_usec else 0
+        sent_usec = base_usec + global_index * gap_usec + delay_usec
+
+        # The option region: the handshake's advertised options, with the
+        # timestamp filled in; every later segment a Timestamps option alone
+        # when the connection negotiated them, else nothing.
+        timestamps: tuple[int, int] | None = None
+        if flags & TCP_SYN:
+            if options is not None and options.timestamps is not None:
+                if src.ts_clock is not None and (negotiated or not flags & TCP_ACK):
+                    # A SYN-ACK may carry the option only if the SYN did.
+                    timestamps = (src.tsval_at(sent_usec), src.ts_recent)
+                options = replace(options, timestamps=timestamps)
+        elif negotiated:
+            timestamps = (src.tsval_at(sent_usec), src.ts_recent)
+            options = TCPOptions(timestamps=timestamps)
+
         raw = _build_packet(src, dst, flags, payload, include_ethernet, ip_ttl, options, encap)
         # The sender's sequence number advances whether or not the packet
         # arrives — it sent those bytes.  The receiver's acknowledgement is
         # what depends on delivery, and is updated below only if it arrives.
         _advance_seq(src, flags, len(payload))
 
-        delay_usec = rng.randint(0, jitter_usec) if jitter_usec else 0
-        ts_sec, ts_usec = divmod(base_usec + global_index * gap_usec + delay_usec, 1_000_000)
+        ts_sec, ts_usec = divmod(sent_usec, 1_000_000)
         pkt: TCPStreamPacket | None = TCPStreamPacket(
             raw=raw,
             ts_sec=ts_sec,
@@ -508,6 +561,7 @@ def generate_tcp_stream(
             ack=ack_before if (flags & TCP_ACK) else 0,
             payload_len=len(payload),
             label=label,
+            timestamps=timestamps,
         )
 
         # A SYN is never dropped.  Each side learns the other's initial
@@ -531,6 +585,11 @@ def generate_tcp_stream(
             # from.
             if flags & TCP_SYN or seq_before == dst.ack:
                 dst.ack = src.seq
+                # RFC 7323 §4.3: TS.Recent follows in-order arrivals only, so
+                # after a loss the echo sticks at the last value that arrived
+                # in sequence, as the acknowledgement number does.
+                if timestamps is not None:
+                    dst.ts_recent = timestamps[0]
         else:
             if payload:
                 lost_segments.append(pkt)

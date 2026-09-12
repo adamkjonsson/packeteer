@@ -54,6 +54,11 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   behind `packeteer stream --payload <protocol> --protocol-messages`: turns a
   list of sections, or a `packeteer parse` document, into the cycling
   `payload_fn` the stream generators take.  (#137)
+- `TCPStreamPacket.timestamps` — the `(TSval, TSecr)` a generated segment
+  carries, or `None`; what lets a hook or a later pass echo the right value
+  without re-parsing.  (#90)
+- `packeteer.generate._stream_common.TCP_TIMESTAMPS_OVERHEAD` (12), the
+  bytes the option takes on every segment.  (#90)
 - `compress=` on `packeteer.generate.dns._build_dns_message`,
   `_build_dns_message_tcp` and `PacketBuilder.dns()` — `False` writes every
   name in full, which is what 0.13.0 did.  The registry path (`.app()`,
@@ -81,6 +86,25 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ### Changed
 
+- **Generated TCP connections negotiate timestamps and carry them on every
+  segment** (RFC 7323).  `default_syn_options()` now advertises the option,
+  and when both the SYN and the SYN-ACK carry it — the default on
+  `generate_tcp_stream`, and on `TCPSession` and `--payload http` wherever
+  the handshake options are passed — every later segment carries a
+  Timestamps option: TSval from a per-side 1 ms clock started at a seeded
+  random value (or at the advertised TSval when non-zero), TSecr echoing
+  the latest value that arrived *in order* from the peer, so after a loss
+  the duplicate ACKs echo the last in-sequence segment.  A retransmission,
+  spurious or recovering a loss, is **rebuilt** with the clock at its resend
+  time rather than copied — how an analyser tells it from a duplicate — and
+  the acknowledgement that answers it echoes the new value; a corrupted
+  segment keeps the original's stamp.  Data is segmented at the MSS less
+  the option's 12 bytes, so a full segment is 1448 bytes on a 1500-byte MTU
+  instead of overrunning it.  Every generated TCP capture therefore
+  **differs in bytes from 0.13.0's**: twelve bytes more per segment, and
+  different seeded output.  With only one side advertising, no segment
+  carries the option, as the RFC requires; `--no-tcp-options`, or handshake
+  options without `timestamps`, gives 0.13.0's layout.  (#90)
 - **Generated DNS now compresses names** (RFC 1035 §4.1.4), as every real
   resolver does: a name whose suffix has already been written becomes a
   pointer to the earlier occurrence — the longest suffix, pointing backwards

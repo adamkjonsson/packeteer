@@ -178,28 +178,52 @@ mix = generate_http_stream(
 )
 ```
 
-## What the handshake advertises
+## What the handshake advertises, and what the connection carries
 
 Every generated TCP handshake carries the options a modern client sends — a
-Maximum Segment Size, SACK permitted, and a window scale — because a SYN with
-no options at all is the most conspicuous mark of generated traffic in a
-capture, and packeteer exists to feed tools that read captures.
+Maximum Segment Size, SACK permitted, a window scale, and timestamps — because
+a SYN with no options at all is the most conspicuous mark of generated
+traffic in a capture, and packeteer exists to feed tools that read captures.
 
 The advertised MSS follows the `mss` the traffic is segmented at, so a capture
 does not contradict itself.  Override the set, or pass `None` for a bare SYN:
 
 ```python
-from packeteer.generate import TCPStreamConfig, default_syn_options
+from packeteer.generate import TCPOptions, TCPStreamConfig, default_syn_options
 
 realistic = TCPStreamConfig()                          # the default set
 custom    = TCPStreamConfig(client_options=default_syn_options(mss=1200))
 bare      = TCPStreamConfig(client_options=None, server_options=None)
+no_ts     = TCPStreamConfig(                           # everything but timestamps
+    client_options=TCPOptions(mss=1460, sack_permitted=True, window_scale=7),
+    server_options=TCPOptions(mss=1460, sack_permitted=True, window_scale=7),
+)
 ```
 
-Timestamps are deliberately not advertised: only the handshake carries
-options, and a connection that negotiates timestamps carries one on every
-segment, so advertising them without sending them would trade one
-implausibility for another.
+**The handshake options are the switch for timestamps** (RFC 7323).  When
+both the SYN and the SYN-ACK advertise them, the connection carries a
+Timestamps option on every segment after the handshake, and the generator
+owns the values: each side runs a 1 ms clock from the advertised TSval, or
+from a seeded random start when that is `0` — the same convention as an
+initial sequence number — and TSecr echoes the latest TSval that arrived in
+order from the peer, so after a loss the duplicate ACKs echo the last
+in-sequence segment just as their acknowledgement number repeats it.  When
+only one side advertises them, no segment carries one, as the RFC requires.
+
+Two consequences are visible in a capture.  Data is segmented at the MSS
+less the 12 bytes the option takes, so a full segment carries 1448 bytes on
+a 1500-byte MTU rather than overrunning it.  And a retransmission — spurious,
+or recovering a loss — is **rebuilt** with the clock at the moment it was
+resent, not copied from the original; that is what RTT measurement across a
+retransmission relies on, and it is how an analyser tells a retransmission
+from a duplicate.  A corrupted segment keeps the original's stamp, since it
+*is* the original with a byte flipped in flight.  Every
+{class}`~packeteer.generate.tcp_stream.TCPStreamPacket` records what it
+carries in `timestamps`.
+
+{class}`~packeteer.generate.session.TCPSession` negotiates on the same
+rule from its `client_options` / `server_options`, which is what puts
+timestamps on `--payload http`'s connections too.
 
 ## Impairing a generated stream
 
