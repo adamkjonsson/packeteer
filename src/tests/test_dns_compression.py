@@ -1,4 +1,9 @@
-"""A compressed DNS message round-trips byte for byte (#130)."""
+"""A compressed DNS message round-trips byte for byte (#130).
+
+Since #131 packeteer compresses too, so the fixture here has to be a message
+whose sender chose a pointer target packeteer's encoder would not — that is
+the case `raw` exists for, and the only case in which it is set.
+"""
 from __future__ import annotations
 
 import struct
@@ -12,33 +17,45 @@ from packeteer.parse.dns import parse_dns_udp
 
 
 def _compressed_query() -> bytes:
-    """Hand-build a response whose answer name is a pointer to the question.
+    """Hand-build a response whose answer name points at a *shorter* suffix.
 
-    RFC 1035 §4.1.4: `0b11` followed by a 14-bit offset.  Here the answer's
-    name is `0xC00C` — offset 12, the question name — which is the shape no
-    encoder that writes names in full can produce.
+    RFC 1035 §4.1.4: `0b11` followed by a 14-bit offset, and any suffix of
+    an earlier name may be the target.  The question `example.com` is at
+    offset 12, with `com` at offset 20.  The answer's name is written as the
+    label `example` followed by `0xC014` — a pointer to `com` — where a
+    canonical encoder, packeteer's included, would point the whole name at
+    offset 12 as `0xC00C`.  Both are legal; only the bytes tell them apart.
     """
     header = struct.pack("!HHHHHH", 0x1234, 0x8180, 1, 1, 0, 0)
     question = b"\x07example\x03com\x00" + struct.pack("!HH", 1, 1)
-    answer = (struct.pack("!H", 0xC00C)             # pointer to offset 12
-              + struct.pack("!HHIH", 1, 1, 300, 4)  # A, IN, ttl, rdlength
+    answer = (b"\x07example" + struct.pack("!H", 0xC014)   # pointer to `com`
+              + struct.pack("!HHIH", 1, 1, 300, 4)          # A, IN, ttl, rdlength
               + bytes([93, 184, 216, 34]))
     return header + question + answer
 
 
 class TestTheFixtureIsActuallyCompressed(unittest.TestCase):
-    """If the fixture stops being compressed, everything below proves nothing."""
+    """If the fixture stops being non-canonical, everything below proves nothing."""
 
     def test_it_holds_a_pointer(self) -> None:
         message = _compressed_query()
-        self.assertEqual(message[len(message) - 16:len(message) - 14].hex(), "c00c")
+        self.assertEqual(message[len(message) - 16:len(message) - 14].hex(), "c014")
 
-    def test_writing_the_names_out_in_full_is_longer(self) -> None:
+    def test_the_canonical_encoding_differs(self) -> None:
         """Which is exactly why re-encoding cannot reproduce it."""
         decoded = parse_dns_udp(_compressed_query())
         decoded.raw = b""                       # force a real encode
-        self.assertGreater(len(_build_dns_message(decoded)),
-                           len(_compressed_query()))
+        canonical = _build_dns_message(decoded)
+        self.assertNotEqual(canonical, _compressed_query())
+        self.assertIn(b"\xc0\x0c", canonical, "packeteer points at the longest suffix")
+
+    def test_a_canonically_compressed_message_records_nothing(self) -> None:
+        """The #131 half: a sender who chose as packeteer does needs no raw."""
+        decoded = parse_dns_udp(_compressed_query())
+        decoded.raw = b""
+        canonical = _build_dns_message(decoded)
+        self.assertEqual(parse_dns_udp(canonical).raw, b"")
+        self.assertEqual(parse_dns_udp(canonical), decoded)
 
 
 class TestCompressionSurvivesTheRoundTrip(unittest.TestCase):

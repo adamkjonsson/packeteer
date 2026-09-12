@@ -1481,7 +1481,9 @@ class PacketBuilder:
         ))
         return self
 
-    def dns(self, msg: DNSMessage, *, tcp: bool = False) -> "PacketBuilder":
+    def dns(
+        self, msg: DNSMessage, *, tcp: bool = False, compress: bool = True,
+    ) -> "PacketBuilder":
         """Set the payload to a serialised DNS message.
 
         A convenience wrapper around :meth:`payload` for DNS traffic.  Pass
@@ -1492,9 +1494,14 @@ class PacketBuilder:
             msg: The :class:`~packeteer.generate.dns.DNSMessage` to encode.
             tcp: When ``True``, prefix the encoded message with a 2-byte
                 big-endian length field as required by DNS-over-TCP.
+            compress: Whether to compress repeated names with pointers
+                (RFC 1035 §4.1.4), as real resolvers do.  ``False`` writes
+                every name in full.  Ignored when ``msg.raw`` is set, which
+                always wins.
 
         """
-        data = _build_dns_message_tcp(msg) if tcp else _build_dns_message(msg)
+        data = (_build_dns_message_tcp(msg, compress=compress) if tcp
+                else _build_dns_message(msg, compress=compress))
         return self.payload(data=data)
 
     def dhcp(self, msg: DHCPMessage) -> "PacketBuilder":

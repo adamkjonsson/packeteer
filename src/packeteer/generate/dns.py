@@ -19,9 +19,14 @@ Supported record types: A (1), NS (2), CNAME (5), SOA (6), PTR (12),
 MX (15), TXT (16), AAAA (28).  Unknown types are represented as
 :class:`DNSRDataRaw`.
 
-Name compression is **not** used when encoding — all names are written as
-fully-expanded label sequences.  The parser handles compressed names when
-reading real captures.
+Names are **compressed** when encoding (RFC 1035 §4.1.4), as every real
+resolver does: a name whose suffix has already been written becomes a
+pointer to that earlier occurrence.  The encoder chooses canonically — the
+longest suffix already present, pointing backwards — which is one of the
+choices the RFC permits and not the only one, so a captured message does not
+necessarily re-encode to the bytes it came in with; :attr:`DNSMessage.raw`
+is what carries those.  Pass ``compress=False`` to :func:`_build_dns_message`
+to write every name out in full.
 """
 from __future__ import annotations
 
@@ -306,16 +311,20 @@ class DNSMessage:
         authority: Entries in the authority section.
         additional: Entries in the additional section.
         raw: The message exactly as captured, when re-encoding the decoded
-            fields would not reproduce it.  Written out verbatim, so a
-            compressed message round-trips; empty otherwise.
+            fields would not reproduce it.  Written out verbatim, so such a
+            message round-trips; empty otherwise.
 
             **Name compression is why this exists.** RFC 1035 §4.1.4 lets a
             name be a pointer to any earlier occurrence, and senders disagree
-            about which one to pick — across 476 real messages, a canonical
-            encoder chooses a different target for 234 of 516 pointers.  So
-            there is no encoder that reproduces captured bytes, and the only
+            about which one to pick — across 476 real messages, packeteer's
+            own encoder (longest suffix, pointing backwards) chooses a
+            different target for 234 of 516 pointers.  So no single encoder
+            reproduces every capture, and for the ones it does not the only
             thing that does is the bytes.  Same reasoning as
-            :attr:`~packeteer.generate.tcp.TCPOptions.raw`.
+            :attr:`~packeteer.generate.tcp.TCPOptions.raw`.  A message
+            packeteer compressed itself, and any capture whose sender chose
+            as packeteer does, re-encodes from its fields and carries no
+            *raw*.
 
             It takes precedence over the decoded fields, so **editing them has
             no effect while it is set** — clear it to hand-edit a captured
@@ -336,16 +345,63 @@ class DNSMessage:
 
 # ── Wire encoder ──────────────────────────────────────────────────────────────
 
+#: The largest offset a compression pointer can hold: 14 bits (RFC 1035 §4.1.4).
+_MAX_POINTER_OFFSET: int = 0x3FFF
+
+
+class _NameWriter:
+    """Accumulates a message and compresses the names written into it.
+
+    RFC 1035 §4.1.4: a name, or any suffix of one, may be replaced by a
+    two-byte pointer to an earlier occurrence of that suffix in the message.
+    This writer remembers where every suffix it has written in full starts,
+    and when a later name shares a suffix it writes the leading labels and a
+    pointer to the longest match.  Matching is **case-sensitive**: the RFC
+    permits a case-insensitive match, but a pointer resolves to the target's
+    spelling, and a message with ``Example.COM`` and ``example.com`` would
+    come back with one of them — which breaks ``decode(encode(m)) == m``,
+    the contract every protocol is held to.  The cost is a pointer a real
+    sender might have emitted; the trade is the right one.
+
+    Compression is off when *compress* is ``False``, in which case every
+    name is written out in full and the writer is a plain buffer.
+    """
+
+    def __init__(self, compress: bool) -> None:
+        self.buf = bytearray()
+        self.compress = compress
+        self._suffixes: dict[tuple[str, ...], int] = {}
+
+    def write(self, data: bytes) -> None:
+        self.buf += data
+
+    def name(self, name: str) -> None:
+        """Write *name*, as labels and possibly a trailing pointer."""
+        labels = tuple(name.rstrip(".").split(".")) if name.rstrip(".") else ()
+        for index in range(len(labels)):
+            suffix = labels[index:]
+            target = self._suffixes.get(suffix) if self.compress else None
+            if target is not None and target <= _MAX_POINTER_OFFSET:
+                self.buf += struct.pack("!H", 0xC000 | target)
+                return
+            # This suffix starts here; a later name may point at it.  Only an
+            # offset a pointer can address is worth remembering.
+            if len(self.buf) <= _MAX_POINTER_OFFSET:
+                self._suffixes[suffix] = len(self.buf)
+            encoded = labels[index].encode("ascii")
+            self.buf += bytes([len(encoded)]) + encoded
+        self.buf += b"\x00"
+
+
 def _encode_name(name: str) -> bytes:
-    """Encode a DNS domain name as length-prefixed labels."""
-    name = name.rstrip(".")
-    if not name:
-        return b"\x00"
-    result = b""
-    for label in name.split("."):
-        encoded = label.encode("ascii")
-        result += bytes([len(encoded)]) + encoded
-    return result + b"\x00"
+    """Encode a DNS domain name as length-prefixed labels, uncompressed.
+
+    The standalone form, for a name that is not part of a message — a
+    pointer needs a message to point into.
+    """
+    w = _NameWriter(compress=False)
+    w.name(name)
+    return bytes(w.buf)
 
 
 def _encode_rdata(
@@ -353,54 +409,65 @@ def _encode_rdata(
         DNSRDataA | DNSRDataAAAA | DNSRDataCNAME | DNSRDataNS | DNSRDataPTR
         | DNSRDataMX | DNSRDataSOA | DNSRDataTXT | DNSRDataRaw
     ),
-) -> bytes:
+    w: _NameWriter,
+) -> None:
+    """Write RDATA into *w*.
+
+    Names inside RDATA compress for the types RFC 1035 defines with them —
+    CNAME, NS, PTR, MX and SOA — and for no other: RFC 3597 §4 forbids
+    compression in the RDATA of any type not in the original RFC, so TXT,
+    A, AAAA and raw RDATA are written as they are.
+    """
     if isinstance(rdata, DNSRDataA):
-        return socket.inet_aton(rdata.address)
-    if isinstance(rdata, DNSRDataAAAA):
-        return socket.inet_pton(socket.AF_INET6, rdata.address)
-    if isinstance(rdata, (DNSRDataCNAME, DNSRDataNS, DNSRDataPTR)):
-        return _encode_name(rdata.name)
-    if isinstance(rdata, DNSRDataMX):
-        return struct.pack("!H", rdata.preference) + _encode_name(rdata.exchange)
-    if isinstance(rdata, DNSRDataSOA):
-        return (
-            _encode_name(rdata.mname)
-            + _encode_name(rdata.rname)
-            + struct.pack("!IIIII",
-                          rdata.serial, rdata.refresh, rdata.retry,
-                          rdata.expire, rdata.minimum)
-        )
-    if isinstance(rdata, DNSRDataTXT):
-        result = b""
-        for s in rdata.strings:
-            result += bytes([len(s)]) + s
-        return result
-    return rdata.data  # DNSRDataRaw
+        w.write(socket.inet_aton(rdata.address))
+    elif isinstance(rdata, DNSRDataAAAA):
+        w.write(socket.inet_pton(socket.AF_INET6, rdata.address))
+    elif isinstance(rdata, (DNSRDataCNAME, DNSRDataNS, DNSRDataPTR)):
+        w.name(rdata.name)
+    elif isinstance(rdata, DNSRDataMX):
+        w.write(struct.pack("!H", rdata.preference))
+        w.name(rdata.exchange)
+    elif isinstance(rdata, DNSRDataSOA):
+        w.name(rdata.mname)
+        w.name(rdata.rname)
+        w.write(struct.pack("!IIIII",
+                            rdata.serial, rdata.refresh, rdata.retry,
+                            rdata.expire, rdata.minimum))
+    elif isinstance(rdata, DNSRDataTXT):
+        for string in rdata.strings:
+            w.write(bytes([len(string)]) + string)
+    else:
+        w.write(rdata.data)  # DNSRDataRaw
 
 
-def _encode_question(q: DNSQuestion) -> bytes:
+def _encode_question(q: DNSQuestion, w: _NameWriter) -> None:
     qclass = q.qclass | (_MDNS_QU_BIT if q.unicast_response else 0)
-    return _encode_name(q.name) + struct.pack("!HH", q.qtype, qclass)
+    w.name(q.name)
+    w.write(struct.pack("!HH", q.qtype, qclass))
 
 
-def _encode_rr(rr: DNSResourceRecord) -> bytes:
-    rdata = _encode_rdata(rr.rdata)
+def _encode_rr(rr: DNSResourceRecord, w: _NameWriter) -> None:
     rrclass = rr.rclass | (_MDNS_CF_BIT if rr.cache_flush else 0)
-    return (
-        _encode_name(rr.name)
-        + struct.pack("!HHIH", rr.rtype, rrclass, rr.ttl, len(rdata))
-        + rdata
-    )
+    w.name(rr.name)
+    w.write(struct.pack("!HHIH", rr.rtype, rrclass, rr.ttl, 0))
+    # RDLENGTH is the *compressed* length, so it can only be known once the
+    # RDATA has been written; patch it in afterwards.
+    length_at = len(w.buf) - 2
+    _encode_rdata(rr.rdata, w)
+    struct.pack_into("!H", w.buf, length_at, len(w.buf) - length_at - 2)
 
 
-def _build_dns_message(msg: DNSMessage) -> bytes:
+def _build_dns_message(msg: DNSMessage, *, compress: bool = True) -> bytes:
     """Build a DNS message as wire-format bytes (no TCP length prefix).
 
-    Returns ``msg.raw`` unchanged when it is set; names are otherwise written
-    out in full, since packeteer does not emit compression pointers.
+    Returns ``msg.raw`` unchanged when it is set.  Otherwise names are
+    compressed (RFC 1035 §4.1.4) unless *compress* is ``False``.
 
     Args:
         msg: The DNS message to encode.
+        compress: Whether to replace a repeated name suffix with a pointer to
+            its earlier occurrence, as real resolvers do.  ``False`` writes
+            every name in full, which is what packeteer did before 0.14.0.
 
     Returns:
         Wire-format bytes suitable for use as a UDP payload.
@@ -408,9 +475,10 @@ def _build_dns_message(msg: DNSMessage) -> bytes:
     """
     if msg.raw:
         # The captured bytes, which an encoder cannot reproduce when the
-        # sender compressed names — see `DNSMessage.raw`.
+        # sender chose pointer targets this one would not — see `DNSMessage.raw`.
         return msg.raw
-    header = struct.pack(
+    w = _NameWriter(compress)
+    w.write(struct.pack(
         "!HHHHHH",
         msg.id,
         _pack_flags(msg.flags),
@@ -418,25 +486,26 @@ def _build_dns_message(msg: DNSMessage) -> bytes:
         len(msg.answers),
         len(msg.authority),
         len(msg.additional),
-    )
-    body = b"".join(_encode_question(q) for q in msg.questions)
-    body += b"".join(
-        _encode_rr(rr)
-        for rr in msg.answers + msg.authority + msg.additional
-    )
-    return header + body
+    ))
+    for q in msg.questions:
+        _encode_question(q, w)
+    for rr in msg.answers + msg.authority + msg.additional:
+        _encode_rr(rr, w)
+    return bytes(w.buf)
 
 
-def _build_dns_message_tcp(msg: DNSMessage) -> bytes:
+def _build_dns_message_tcp(msg: DNSMessage, *, compress: bool = True) -> bytes:
     """Build a DNS message with a 2-byte TCP length prefix (RFC 1035 §4.2.2).
 
     Args:
         msg: The DNS message to encode.
+        compress: As for :func:`_build_dns_message`.  Pointer offsets are
+            relative to the message, not the prefix.
 
     Returns:
         Wire-format bytes with a 2-byte big-endian length prefix, suitable
         for use as a TCP payload.
 
     """
-    payload = _build_dns_message(msg)
+    payload = _build_dns_message(msg, compress=compress)
     return struct.pack("!H", len(payload)) + payload

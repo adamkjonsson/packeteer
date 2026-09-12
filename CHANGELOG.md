@@ -54,6 +54,10 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   behind `packeteer stream --payload <protocol> --protocol-messages`: turns a
   list of sections, or a `packeteer parse` document, into the cycling
   `payload_fn` the stream generators take.  (#137)
+- `compress=` on `packeteer.generate.dns._build_dns_message`,
+  `_build_dns_message_tcp` and `PacketBuilder.dns()` — `False` writes every
+  name in full, which is what 0.13.0 did.  The registry path (`.app()`,
+  `build`, `stream`) always compresses.  (#131)
 - `ParsedPacket.offsets: dict[str, int]` — where each parsed header starts
   within the frame, keyed by the attribute the header is on (`"ethernet"`,
   `"ip"`, `"transport"`, `"gre"`, … ; `"mpls"` is the first label), plus
@@ -77,6 +81,23 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ### Changed
 
+- **Generated DNS now compresses names** (RFC 1035 §4.1.4), as every real
+  resolver does: a name whose suffix has already been written becomes a
+  pointer to the earlier occurrence — the longest suffix, pointing backwards
+  — in questions, record names, and the RDATA of CNAME, NS, PTR, MX and SOA
+  (and not TXT or unknown types, per RFC 3597).  Every DNS message
+  `packeteer build`, `packeteer stream --payload dns`, `.dns()` and `.app()`
+  produce therefore **differs in bytes from 0.13.0's** wherever a name
+  repeats, which is every response; a test pinned to those bytes will see
+  it.  A decoder tested against packeteer's DNS is now shown pointers.  The
+  parser's `dns.raw` rule is unchanged and gets better for it: `raw` is
+  kept when the decoded fields would not re-encode to the captured bytes,
+  and a message packeteer compressed itself — or one whose sender chose the
+  same targets — now re-encodes from its fields and carries none.  In the
+  other direction, a captured message written *without* compression now
+  gains `raw`, since the default rebuild differs.  Matching is
+  case-sensitive so the round trip stays lossless.  `dns.raw` still wins
+  whenever it is set.  (#131)
 - **Breaking:** a protocol's name must now be a plain Python identifier, not
   a keyword, not starting with an underscore, and not one of a longer list
   of reserved names — because it is an attribute name from here on.  The

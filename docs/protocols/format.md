@@ -64,7 +64,7 @@ as unknown keys:
 
 | Construct | Why not |
 |---|---|
-| `pointer` | Decoding one is straightforward; *encoding* one needs a compression model, and packeteer's own DNS encoder declines to compress |
+| `pointer` | Decoding one is straightforward; *encoding* one needs a compression model of the protocol's own, which is what makes DNS a hand-written protocol here rather than a spec |
 | `select` | A question asked across a repeated field — what HTTP needs to decide its own framing |
 | `computed` | A value derived at decode time; `derive` is the encode-direction answer and covers the cases that matter here |
 | `{size: {terminated: …}}`, `{string: {delimiter: …}}` | Delimiter framing, in either spelling |

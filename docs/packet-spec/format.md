@@ -751,14 +751,18 @@ you want to edit `mss` or `timestamps` by hand and have the change take effect.
 ```{note}
 **Why `dns.raw` exists.**  RFC 1035 §4.1.4 lets a name be a pointer to any
 earlier occurrence of the same suffix, and senders disagree about which one to
-point at.  Across 476 real DNS messages, an encoder following the usual
-"first occurrence wins" rule picks a different target for 234 of 516
-pointers — so no encoder reproduces captured bytes, and the only thing that
-does is the bytes themselves.  It is the same reasoning as
-[`options.raw`](packet-spec-transport-overrides) for TCP options.
+point at.  packeteer's own encoder compresses the way most do — the longest
+suffix already written, pointing backwards — and across 476 real DNS
+messages that rule picks a different target for 234 of 516 pointers.  So no
+single encoder reproduces every capture, and for the ones it does not the
+only thing that does is the bytes themselves.  It is the same reasoning as
+[`options.raw`](packet-spec-transport-overrides) for TCP options.  A message
+whose sender chose as packeteer does — and every message packeteer generated
+itself — re-encodes from its fields and carries no `raw`.
 
 The cost is that a captured DNS message and a redacted one cannot both be had:
-`sanitise` drops `raw`, and the rebuilt message loses its compression.
+`sanitise` drops `raw`, and the rebuilt message is compressed packeteer's way
+rather than the sender's.
 ```
 
 (packet-spec-transport-overrides)=
@@ -963,7 +967,7 @@ automatically (RFC 1035 §4.2.2) when the enclosing transport is TCP.
 | `answers` | Array of resource records in the answer section |
 | `authority` | Array of resource records in the authority section |
 | `additional` | Array of resource records in the additional section |
-| `raw` | — | The message exactly as captured, hex-encoded, written by `parse` only when re-encoding the decoded fields would not reproduce it — a **compressed** message, in practice.  It is written out verbatim and **takes precedence over every other key here**, so editing them has no effect while it is present; delete it to hand-edit a captured message.  `packeteer sanitise` deletes it whenever it changes the section, since a redacted name that is still in `raw` is not redacted |
+| `raw` | — | The message exactly as captured, hex-encoded, written by `parse` only when re-encoding the decoded fields would not reproduce it — a message whose sender **compressed names differently** from packeteer's encoder, in practice.  It is written out verbatim and **takes precedence over every other key here**, so editing them has no effect while it is present; delete it to hand-edit a captured message.  `packeteer sanitise` deletes it whenever it changes the section, since a redacted name that is still in `raw` is not redacted |
 
 ### `dns.flags`
 
