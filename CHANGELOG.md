@@ -25,6 +25,34 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
+---
+
+## [0.14.0] - 2026-09-12
+
+**The downstream release.**  0.12.0 made a user's protocol first-class and
+0.13.0 made the spec dialect shared with kober; this is the first release
+shaped by what happened when those were used.  Three of its six changes were
+found downstream against 0.12.0 — a consumer that could not ask whether a
+link type is supported, a decoder test fed a generated stream that carried
+nothing, and a registry whose generic `app` accessor turned out worse than
+the three-name convenience it was meant to replace.
+
+**Generated captures differ from 0.13.0's.**  Every DNS response now carries
+compression pointers and every TCP connection negotiates timestamps and
+carries one on each segment, so a test pinned to a seeded 0.13.0 capture will
+see new bytes.  Both are the same kind of change: a decoder tested only
+against packeteer's output had never been shown either, and now is.
+
+**One breaking change**: a protocol's name is now an attribute name, so it
+must be a plain identifier and not one of a longer reserved list.  See
+**Changed**.
+
+Beside those: a protocol is reached by its own name on both front doors
+(`pkt.sensor`, `.sensor(msg)`); a section that is not a section is refused
+instead of built into an empty message, and `parse` output replays through
+`--protocol-messages` as it is; `supports_link_type` answers before a
+capture is read; and `ParsedPacket.offsets` says where every header sits.
+
 ### Added
 
 - **A registered protocol is reached by its own name, on both front doors.**
@@ -3171,7 +3199,8 @@ the exhaustive API reference.
      tagged with names that predate this convention, so only the entries below
      carry compare links. -->
 
-[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/adamkjonsson/packeteer/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/adamkjonsson/packeteer/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/adamkjonsson/packeteer/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/adamkjonsson/packeteer/compare/v0.10.0...v0.11.0
