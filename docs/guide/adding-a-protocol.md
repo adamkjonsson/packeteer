@@ -190,7 +190,8 @@ Everything the built-ins get.  Parsing:
 from packeteer.parse import parse_packet
 
 pkt = parse_packet(frame)
-pkt.app             # Reading(version=1, samples=[(2, 21)])
+pkt.sensor          # Reading(version=1, samples=[(2, 21)]) — None on any other packet
+pkt.app             # the same object, for code that does not know the protocol
 pkt.app_protocol    # "sensor"
 ```
 
@@ -203,9 +204,16 @@ frame = (PacketBuilder()
     .ethernet()
     .ip(src="10.0.0.1", dst="10.0.0.2")
     .udp(dst_port=9000)
-    .app(Reading(samples=[(2, 21)]))
+    .sensor(Reading(samples=[(2, 21)]))
     .build())
 ```
+
+The attribute and the method exist because the protocol is registered, and
+are named after it — which is why the name must be a plain identifier and
+not one that `ParsedPacket` or `PacketBuilder` already has.
+{func}`~packeteer.protocols.register` refuses a name that is not; so does
+{func}`~packeteer.protocols.check_name`, which is the same rule on its own
+for asking before you write anything.
 
 And the command line, with no packeteer changes at all:
 

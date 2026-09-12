@@ -311,10 +311,24 @@ leaves the raw bytes in `pkt.payload` unchanged.
 
 ### Any protocol, not just the three
 
-`pkt.dns`, `pkt.dhcp` and `pkt.http` are conveniences for the protocols
-packeteer ships with.  **Every** decoded application message — those three and
-any protocol you register — is on
-{attr}`~packeteer.parse.core.ParsedPacket.app`, with
+**Every registered protocol is an attribute on the packet, named after it.**
+`pkt.dns`, `pkt.dhcp` and `pkt.http` are the three packeteer ships with; a
+protocol you register — by hand, or compiled from a spec — is reached the
+same way, and has the same shape: the decoded message when this packet is
+that protocol, `None` when it is not.
+
+```python
+pkt.dns                             # DNSMessage(...) on a DNS packet, else None
+pkt.sensor                          # Reading(...) on a sensor packet, else None
+```
+
+A name no protocol is registered under is an `AttributeError`, so a typo
+still fails loudly.  `dir(pkt)` lists the registered names, which is what the
+REPL completes on; a static type checker cannot see them, and the three
+built-ins are declared fields so that it can see those.
+
+For code that does not know which protocol it is looking at, the same object
+is on {attr}`~packeteer.parse.core.ParsedPacket.app`, with
 {attr}`~packeteer.parse.core.ParsedPacket.app_protocol` naming the protocol
 that decoded it:
 

@@ -51,7 +51,8 @@ multiple times to produce advanced encapsulations:
 | `.loopback(family=None, big_endian=False)` | BSD loopback framing — `DLT_NULL` (link type 0) or `DLT_LOOP` (108).  Call instead of `.ethernet()`; the address family is derived from the IP version unless given. |
 | `.fragment_header(fragment_offset=0, more_fragments=False, identification=0)` | IPv6 Fragment extension header (RFC 8200 §4.5).  Call after `.ip()` for an IPv6 address. |
 | `.dns(message)` / `.dhcp(message)` / `.http(message)` | Attach a message of one of the three built-in application protocols. |
-| `.app(message)` | Attach a message of **any** registered protocol, the three above included.  The protocol is found from the message's type, so nothing is named twice.  See {doc}`protocols`. |
+| `.<name>(message)` | Attach a message of the protocol registered as `<name>` — `.sensor(msg)` for a compiled `sensor` spec — exactly as the three above attach theirs.  Checks the message belongs to that protocol.  See {doc}`protocols`. |
+| `.app(message)` | Attach a message of **any** registered protocol, the three above included.  The protocol is found from the message's type, so nothing is named at all — for code that dispatches on whatever it is handed. |
 | `.payload(size=0, data=None)` | Set the payload.  `data` (bytes) takes precedence over `size` (random bytes). |
 
 ## Assembly methods

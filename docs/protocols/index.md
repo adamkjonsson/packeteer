@@ -123,13 +123,17 @@ frame = (PacketBuilder()
     .ethernet()
     .ip(src="10.0.0.1", dst="10.0.0.2")
     .udp(dst_port=9000)
-    .app(msg)
+    .sensor(msg)
     .build())
 
 pkt = parse_packet(frame)
+pkt.sensor            # Reading(magic=21317, version=1, count=None, samples=[…])
 pkt.app_protocol      # "sensor"
-pkt.app               # Reading(magic=21317, version=1, count=None, samples=[…])
 ```
+
+The protocol is reached by the name the spec gave it, on both sides, exactly
+as `pkt.dns` and `.dns()` reach the built-in.  `pkt.app` holds the same
+object for code that does not know which protocol it is looking at.
 
 Note `count=None`.  It is derived, so it is computed on encode and cleared on
 decode whenever the capture agreed with the derivation — see

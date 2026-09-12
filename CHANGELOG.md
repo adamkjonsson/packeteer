@@ -27,6 +27,23 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ### Added
 
+- **A registered protocol is reached by its own name, on both front doors.**
+  `pkt.sensor` on a `ParsedPacket` is the decoded message when the packet is
+  that protocol and `None` when it is not — the shape `pkt.dns` has always
+  had — and `PacketBuilder().sensor(msg)` attaches one, checking that the
+  message actually belongs to `sensor` (a `TypeError` naming the protocol it
+  *does* belong to otherwise).  Both resolve on demand for every protocol in
+  the registry, so a compiled spec gets them the moment it is loaded; a name
+  no protocol is registered under is an `AttributeError`, and `dir()` on
+  either object lists what is registered.  `pkt.app`, `pkt.app_protocol` and
+  `.app()` are unchanged, for generic code that dispatches on whatever it is
+  handed.  `dns`, `dhcp` and `http` stay declared, typed fields; the note
+  marking them for removal at 1.0 is gone — they were the model, not the
+  exception.  (#139)
+- `packeteer.protocols.check_name(name)` — the rule `register()` now applies
+  to a name, on its own, so it can be asked before anything is written.
+  `packeteer protocol check` uses it to refuse a spec whose `name:` would
+  fail at import.  (#139)
 - `packeteer.protocols.check_section(name, section, known)` — the guard a
   `from_spec` opens with: it refuses a non-empty section none of whose keys
   the protocol reads, lets `{}` through as an explicit default message, and
@@ -47,6 +64,20 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   the `Link-type` line, and in its closing note, when the link type is one
   packeteer cannot decode — rather than suggesting the file may be malformed.
   The two BSD loopback types now have names on that report.  (#138)
+
+### Changed
+
+- **Breaking:** a protocol's name must now be a plain Python identifier, not
+  a keyword, not starting with an underscore, and not one of a longer list
+  of reserved names — because it is an attribute name from here on.  The
+  reserved list grows from the packet-spec structural keys to every public
+  name on `ParsedPacket` and `PacketBuilder` (`app`, `build`, `fragment`,
+  `ip`, `tcp`, `udp`, `timestamp`, `payload_offset`, …), which a protocol so
+  named would silently shadow.  A name such as `my-sensor` or `build`
+  registered in 0.13.0 and is refused by `register()` and by
+  `packeteer protocol check` now; rename it — a prefix in the spec's own
+  `name:` (`acme_sensor`) is the convention for keeping a library of
+  protocols apart.  (#139)
 
 ### Fixed
 

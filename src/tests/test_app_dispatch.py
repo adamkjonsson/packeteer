@@ -96,10 +96,11 @@ class TestRegisteredProtocolsDecode(unittest.TestCase):
         self.assertEqual(pkt.app_protocol, "sensor")
         self.assertEqual(pkt.payload, b"")
 
-    def test_it_does_not_land_on_a_named_attribute(self) -> None:
-        """Only the three built-ins get one; everything else uses `.app`."""
+    def test_it_lands_on_the_attribute_named_after_it(self) -> None:
+        """Since #139 every protocol gets one, not only the three built-ins."""
         pkt = parse_packet(_udp(b"\x01\x02"))
-        self.assertFalse(hasattr(pkt, "sensor"))
+        self.assertEqual(pkt.sensor, Reading(258))
+        self.assertIs(pkt.sensor, pkt.app)
 
     def test_decode_app_false_skips_it(self) -> None:
         pkt = parse_packet(_udp(b"\x01\x02"), decode_app=False)

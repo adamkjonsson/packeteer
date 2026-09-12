@@ -388,9 +388,10 @@ pkt = (PacketBuilder()
 
 ### Application payloads
 
-`.dns()`, `.dhcp()` and `.http()` attach a message of the three protocols
-packeteer ships with.  {meth}`~packeteer.generate.builder.PacketBuilder.app`
-attaches a message of **any** registered protocol, including those three:
+**Every registered protocol is a payload method, named after it.**  `.dns()`,
+`.dhcp()` and `.http()` are the three packeteer ships with; a protocol you
+register — by hand, or compiled from a spec — is attached the same way, by
+its own name:
 
 ```python
 from packeteer.generate import PacketBuilder
@@ -399,13 +400,21 @@ pkt = (PacketBuilder()
     .ethernet()
     .ip(src="10.0.0.1", dst="10.0.0.2")
     .udp(dst_port=9000)
-    .app(Reading(version=1, samples=[(2, 21)]))
+    .sensor(Reading(version=1, samples=[(2, 21)]))
     .build()
 )
 ```
 
-The protocol is found from the message's type, so nothing needs naming twice.
-A message of an unregistered type is an error rather than a guess — see
+The method checks that the message actually belongs to the protocol it
+names, and raises `TypeError` — saying which protocol the message *is* of —
+when it does not.  A name no protocol is registered under is an
+`AttributeError`, so a typo fails loudly; `dir(PacketBuilder())` lists what is
+registered, though a static type checker cannot see the names.
+
+{meth}`~packeteer.generate.builder.PacketBuilder.app` is the generic form,
+for code that dispatches on whatever message it is handed: the protocol is
+found from the message's type, so nothing is named at all.  A message of an
+unregistered type is an error rather than a guess.  See
 {doc}`../protocols/index` for compiling a protocol from a spec, and
 {doc}`adding-a-protocol` for writing one by hand.
 

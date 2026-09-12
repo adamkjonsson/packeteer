@@ -71,6 +71,11 @@ over `"tcp"` or `"udp"` — `True` when `over` is that transport or `"either"`.
 ```
 
 ```{eval-rst}
+.. autofunction:: packeteer.protocols.check_name
+   :no-index:
+```
+
+```{eval-rst}
 .. autofunction:: packeteer.protocols.check_section
    :no-index:
 ```

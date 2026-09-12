@@ -30,6 +30,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 
+from packeteer import protocols
 from packeteer.protospec.errors import SpecError
 from packeteer.protospec.expr import (
     ExprType,
@@ -171,6 +172,7 @@ class _Checker:
     def run(self) -> CheckResult:
         """Run every check and return the result."""
         self._report_unsupported()
+        self._check_name()
         self._check_entry()
         self._build_reference_map()
         self._check_units()
@@ -203,6 +205,20 @@ class _Checker:
             self._error(f"not supported yet: {item.construct}{note}", item.loc)
 
     # ── structure ─────────────────────────────────────────────────────────────
+
+    def _check_name(self) -> None:
+        """Refuse a name the registry would refuse, here rather than at import.
+
+        The name becomes a packet-spec section key and an attribute on
+        :class:`~packeteer.parse.core.ParsedPacket` (#139), so the rule lives
+        in :mod:`packeteer.protocols`; asking it here means a spec named
+        ``build`` fails ``check`` instead of compiling to a module that raises
+        the moment it is loaded.
+        """
+        try:
+            protocols.check_name(self.spec.name)
+        except protocols.ProtocolError as exc:
+            self._error(str(exc), self.spec.loc.child("name"))
 
     def _check_entry(self) -> None:
         if self.spec.entry not in self.spec.units:

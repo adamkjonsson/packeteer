@@ -346,14 +346,16 @@ class ParsedPacket:
             on port 80 or 8080, otherwise ``None``.  On parse failure the
             raw bytes remain in :attr:`payload` and this field is ``None``.
         app: The decoded application-layer message, whichever protocol
-            produced it — including the three above, which are also set.  A
-            protocol registered with :func:`packeteer.protocols.register`
-            lands here and nowhere else.  ``None`` when no registered protocol
-            claimed the transport ports, when the one that did rejected the
-            bytes, or when ``decode_app`` was ``False``.
+            produced it — including the three above, which are also set.
+            ``None`` when no registered protocol claimed the transport ports,
+            when the one that did rejected the bytes, or when ``decode_app``
+            was ``False``.  This is the accessor for *generic* code that
+            dispatches on whatever it is handed; code that knows which
+            protocol it wants reads the attribute named after it instead.
         app_protocol: The :attr:`~packeteer.protocols.AppProtocol.name` of the
             protocol that decoded :attr:`app` — also the packet-spec section
             it is written to — or ``None`` alongside an ``None`` :attr:`app`.
+
         datagram_truncated: ``True`` when the IP header declares more payload
             than the packet holds, as after a capture taken with a snaplen.
             This is the *datagram* sense of truncation, not the capture's: it
@@ -398,6 +400,21 @@ class ParsedPacket:
             ordinary packet; for a reassembled datagram, every fragment that
             contributed, in arrival order.
 
+    **Every registered protocol is an attribute, named after it.**  The
+    three above are declared fields because they are typed; any other
+    protocol is reached the same way, resolved on demand::
+
+        pkt.sensor        # Reading(…) when pkt.app_protocol == "sensor", else None
+
+    That is, a registered name evaluates to :attr:`app` when this packet is
+    that protocol and to ``None`` when it is not — the shape ``pkt.dns`` has
+    always had — and a name **no** protocol is registered under is an
+    ``AttributeError``, so a typo still fails loudly.  ``dir(pkt)`` lists the
+    registered names, which is what the REPL completes on; a static type
+    checker cannot see them.  Register with
+    :func:`packeteer.protocols.register` or load a compiled module and the
+    attribute exists from then on, for every packet.
+
     """
 
     ethernet:    EthernetHeader | None = None
@@ -441,6 +458,24 @@ class ParsedPacket:
         *tick_hz* where exactness matters.
         """
         return self.ts_sec + self.ts_frac / self.tick_hz
+
+    def __getattr__(self, name: str) -> object:
+        # Only reached for a name that is not a field or method — the declared
+        # fields, dns/dhcp/http among them, never arrive here.  Dunders are
+        # refused before the registry is consulted: copy, pickle and
+        # dataclasses probe for __deepcopy__, __getstate__ and the like
+        # through getattr, and a protocol name cannot start with an
+        # underscore anyway.
+        if name.startswith("_") or protocols.for_section(name) is None:
+            raise AttributeError(
+                f"{type(self).__name__!r} object has no attribute {name!r}; "
+                f"no protocol is registered as {name!r}"
+            )
+        return self.app if self.app_protocol == name else None
+
+    def __dir__(self) -> list[str]:
+        return sorted(set(super().__dir__())
+                      | {proto.name for proto in protocols.registered()})
 
 
 def _set_payload(pkt: ParsedPacket, payload: bytes, offset: int) -> None:
@@ -635,10 +670,12 @@ def _parse_pppoe_and_mpls(
 _IPV6_FIXED_HEADER_LEN: int = 40
 
 
-# ParsedPacket.dns / .dhcp / .http predate the registry and remain part of the
-# public API, so a built-in lands on its own attribute as well as on .app.
-# Nothing else does; drop this at 1.0.
-_LEGACY_APP_ATTRS: frozenset[str] = frozenset({"dns", "dhcp", "http"})
+# The three protocols with a *declared*, typed field on ParsedPacket.  A
+# declared field shadows __getattr__, so these have to be set explicitly;
+# every other protocol is reached through ParsedPacket.__getattr__ by the
+# same name and with the same None-when-absent shape.  No behaviour differs —
+# only that mypy can see these three (#139).
+_TYPED_APP_ATTRS: frozenset[str] = frozenset({"dns", "dhcp", "http"})
 
 
 def _try_parse_app(pkt: ParsedPacket, payload: bytes) -> bytes:
@@ -646,9 +683,10 @@ def _try_parse_app(pkt: ParsedPacket, payload: bytes) -> bytes:
 
     Looks the transport ports up in :mod:`packeteer.protocols`, destination
     first.  On success sets :attr:`ParsedPacket.app` and
-    :attr:`ParsedPacket.app_protocol` — and, for a built-in, the attribute
-    named after it — then returns ``b""`` because the payload has been
-    consumed.
+    :attr:`ParsedPacket.app_protocol` — and, for one of the three with a
+    declared field, that field — then returns ``b""`` because the payload
+    has been consumed.  Every other protocol's named attribute resolves
+    through ``__getattr__`` from those two.
 
     A port claim is a weak signal, so a decoder that rejects the bytes is not
     an error: the payload is returned unchanged and stays an opaque payload.
@@ -676,7 +714,7 @@ def _try_parse_app(pkt: ParsedPacket, payload: bytes) -> bytes:
         return payload
     pkt.app = message
     pkt.app_protocol = proto.name
-    if proto.name in _LEGACY_APP_ATTRS:
+    if proto.name in _TYPED_APP_ATTRS:
         setattr(pkt, proto.name, message)
     return b""
 
