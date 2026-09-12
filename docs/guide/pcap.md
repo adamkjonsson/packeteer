@@ -295,6 +295,22 @@ print(pcap.header.link_type)   # 101, regardless of what the header said
 {func}`packeteer.parse.core.parse_pcap_file` accepts the same `link_type`
 keyword and forwards it to `read_pcap`.
 
+A link type can also be *right* and still not one packeteer decodes — a
+Wi-Fi or Bluetooth capture, say.  Every packet then comes back as an opaque
+payload, so a tool that reads captures it did not make should ask first:
+
+```python
+from packeteer.parse import supports_link_type
+from packeteer.pcap import open_pcap
+
+with open_pcap(path="capture.pcap") as reader:
+    if not supports_link_type(reader.header.link_type):
+        print(f"link type {reader.header.link_type}: nothing will decode")
+```
+
+See [the parser reference](../api/parser.md#link-types) for what is
+supported and why the warning alone is not a good way to find out.
+
 ## Next steps
 
 - {doc}`parsing` — decode packets into typed dataclasses

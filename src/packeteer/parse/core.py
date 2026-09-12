@@ -111,6 +111,46 @@ from .to_config import apply_tunneled, to_json_string, to_packet_spec, update_co
 from .udp import packet_parser as _udp_parser
 from .vxlan import packet_parser as _vxlan_parser
 
+#: Every link type :func:`parse_packet` can decode.  The definition, not a
+#: summary of one: :func:`_parse_link_layer` tests membership before it does
+#: anything else, so a link type reaches the unsupported branch by not being
+#: here rather than by falling off the end of the ``if`` ladder.  Adding a link
+#: type means adding it here, and a test holds the two in step both ways.
+SUPPORTED_LINK_TYPES: frozenset[int] = frozenset({
+    LINKTYPE_ETHERNET, LINKTYPE_RAW, LINKTYPE_LINUX_SLL, LINKTYPE_LINUX_SLL2,
+    LINKTYPE_NULL, LINKTYPE_LOOP,
+})
+
+
+def supports_link_type(link_type: int) -> bool:
+    """Return whether :func:`parse_packet` can decode frames of *link_type*.
+
+    A capture whose link type is not supported yields nothing above the link
+    layer — every packet comes back as an opaque payload, with
+    :class:`UnsupportedLinkTypeWarning` raised once — so this is the question
+    to ask **before** reading the first record.  It is a static property of
+    the number, and the answer is the same one the parser gives.
+
+    Args:
+        link_type: A pcap link-layer type, as in
+            :attr:`packeteer.pcap.PcapFileHeader.link_type`.
+
+    Returns:
+        ``True`` when *link_type* is in :data:`SUPPORTED_LINK_TYPES`.
+
+    Example::
+
+        from packeteer.parse import supports_link_type
+        from packeteer.pcap import open_pcap
+
+        with open_pcap(path="capture.pcap") as reader:
+            if not supports_link_type(reader.header.link_type):
+                raise SystemExit(f"link type {reader.header.link_type}: "
+                                 "packeteer cannot decode this capture")
+
+    """
+    return link_type in SUPPORTED_LINK_TYPES
+
 
 class UnsupportedLinkTypeWarning(UserWarning):
     """Emitted when a capture's link type is not one the parser knows.
@@ -123,7 +163,11 @@ class UnsupportedLinkTypeWarning(UserWarning):
     address is still in it.
 
     The numeric link type is on the :attr:`link_type` attribute, so a caller
-    can act on it without reading the message.
+    can act on it without reading the message.  To know in advance — before a
+    file is read, or per packet without a warnings filter — ask
+    :func:`supports_link_type` instead; under the default filter this warning
+    fires once per file, so it answers "did this file have one" rather than
+    the per-packet question.
 
     Attributes:
         link_type: The unrecognised link type, as recorded in the capture.
@@ -475,6 +519,18 @@ def _parse_link_layer(
             return None
         return remaining, ethertype
 
+    if link_type not in SUPPORTED_LINK_TYPES:
+        warnings.warn(
+            UnsupportedLinkTypeWarning(
+                f"link type {link_type} is not supported; the whole frame is "
+                f"stored in the payload field, so no addresses, ports or "
+                f"protocol were decoded from it",
+                link_type,
+            ),
+            stacklevel=3,
+        )
+        _set_payload(pkt, data, 0)
+        return None
     if link_type == LINKTYPE_ETHERNET:
         eth_size, ethertype, eth_hdr = _ethernet_parser(data)
         pkt.ethernet = eth_hdr
@@ -495,19 +551,8 @@ def _parse_link_layer(
         )
         pkt.loopback = l_hdr
         return _after_l2(l_size, ethertype)
-    if link_type == LINKTYPE_RAW:
-        return data, None   # raw IP — skip MPLS loop below
-    warnings.warn(
-        UnsupportedLinkTypeWarning(
-            f"link type {link_type} is not supported; the whole frame is "
-            f"stored in the payload field, so no addresses, ports or protocol "
-            f"were decoded from it",
-            link_type,
-        ),
-        stacklevel=3,
-    )
-    _set_payload(pkt, data, 0)
-    return None
+    # LINKTYPE_RAW: raw IP, nothing to strip — skip the MPLS loop below.
+    return data, None
 
 
 def _parse_pppoe_and_mpls(

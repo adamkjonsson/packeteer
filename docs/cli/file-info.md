@@ -67,6 +67,21 @@ Link-type: raw (101)  [auto-corrected from ethernet (1)]
 Pass `--link-type` to force a specific type (which disables auto-detection), or
 `--no-auto-link-type` to always trust the file header.
 
+When the link type used is one packeteer cannot decode at all, the report says
+so on the same line and in a closing note, since every packet is then an
+opaque payload and the empty layer table is the consequence rather than a
+sign of a malformed file:
+
+```
+Link-type: 191  [not supported: nothing above the link layer is decoded]
+…
+Note: link type 191 is not one packeteer can decode, so no packet was decoded
+past the link layer.  If the header is wrong, --link-type overrides it.
+```
+
+The same fact is `link_type_supported` in `--json` output, and
+{func}`packeteer.parse.supports_link_type` from Python.
+
 ## Limiting to the first N packets
 
 `--num N` analyses only the first `N` packets.  Reading stops as soon as `N`

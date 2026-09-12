@@ -67,6 +67,50 @@ renders the same human-readable report the CLI prints.
 
 ---
 
+## Link types
+
+{func}`~packeteer.parse.core.parse_packet` decodes six pcap link-layer types:
+Ethernet (1), raw IP (101), Linux cooked v1 (113) and v2 (276), and the two
+BSD loopback encodings (`DLT_NULL` 0 and `DLT_LOOP` 108).  Any other link
+type leaves the whole frame as an opaque payload — no addresses, no ports,
+no protocol — and emits an {class}`~packeteer.parse.core.UnsupportedLinkTypeWarning`
+once per file.
+
+Whether a link type is supported is a static property of the number, so ask
+before reading the file rather than inferring it from what came back:
+
+```python
+from packeteer.parse import supports_link_type
+from packeteer.pcap import open_pcap
+
+with open_pcap(path="capture.pcap") as reader:
+    if not supports_link_type(reader.header.link_type):
+        raise SystemExit("packeteer cannot decode this capture")
+```
+
+Inferring it from `pkt.ethernet is None and pkt.sll is None` is wrong for
+raw-IP captures, which have no link-layer header at all: a raw-IP packet whose
+IP header is malformed would be filed as a link-layer problem.  The warning
+is not a substitute either — it fires once per file under the default filter,
+so it answers "did this file have one" rather than the per-packet question.
+{attr}`~packeteer.parse.info.PcapInfo.link_type_supported` carries the same
+answer on a `file-info` report.
+
+```{eval-rst}
+.. autofunction:: packeteer.parse.core.supports_link_type
+```
+
+```{eval-rst}
+.. autodata:: packeteer.parse.core.SUPPORTED_LINK_TYPES
+```
+
+```{eval-rst}
+.. autoclass:: packeteer.parse.core.UnsupportedLinkTypeWarning
+   :members:
+```
+
+---
+
 ## Unsupported IP protocol numbers
 
 packeteer recognises the following IP protocol numbers at the transport layer:

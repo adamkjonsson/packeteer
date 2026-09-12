@@ -5,6 +5,7 @@ from packeteer.filter import PacketFilter
 
 from .arp import packet_parser as arp_packet_parser
 from .core import (
+    SUPPORTED_LINK_TYPES,
     PacketReader,
     ParsedPacket,
     TimestampResolutionWarning,
@@ -14,6 +15,7 @@ from .core import (
     parse_packet,
     parse_pcap_file,
     parse_pcap_packet,
+    supports_link_type,
 )
 from .defragment import (
     AssembledFrame,
@@ -59,6 +61,8 @@ __all__ = [
     "PacketReader",
     "UnsupportedIPProtocolWarning",
     "UnsupportedLinkTypeWarning",
+    "SUPPORTED_LINK_TYPES",
+    "supports_link_type",
     "TimestampResolutionWarning",
     "defragment",
     "defragment_ipv4",

@@ -37,6 +37,16 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   behind `packeteer stream --payload <protocol> --protocol-messages`: turns a
   list of sections, or a `packeteer parse` document, into the cycling
   `payload_fn` the stream generators take.  (#137)
+- `packeteer.parse.supports_link_type(link_type)` and
+  `packeteer.parse.SUPPORTED_LINK_TYPES` — whether `parse_packet` can decode
+  a pcap link type, so a consumer can ask before reading a capture instead of
+  inferring it from which header objects came back `None` (which misfiles a
+  raw-IP packet with a bad IP header as a link-layer problem).  The set is
+  the parser's own definition: the link-layer ladder tests membership first.
+  `PcapInfo` gains `link_type_supported`, and `packeteer file-info` says on
+  the `Link-type` line, and in its closing note, when the link type is one
+  packeteer cannot decode — rather than suggesting the file may be malformed.
+  The two BSD loopback types now have names on that report.  (#138)
 
 ### Fixed
 
