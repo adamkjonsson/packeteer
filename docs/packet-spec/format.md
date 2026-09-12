@@ -27,10 +27,19 @@ all with `ethernet` or all with `ethernet.enabled: false`.
 
 Every `##` heading below is a **reserved** section name: it describes how a
 packet is structured, and
-{func}`packeteer.protocols.register` refuses a protocol that asks for one.  An
-application protocol registered there contributes a section of its own, named
-after it, beside `transport` — `dns`, `dhcp` and `http` are simply the three
-that packeteer registers for you.  See {doc}`../guide/adding-a-protocol`.
+{func}`packeteer.protocols.register` refuses a protocol that asks for one
+(along with any public name on `ParsedPacket` or `PacketBuilder`, since a
+protocol's name is also the attribute it is reached by).  An application
+protocol registered there contributes a section of its own, named after it,
+beside `transport` — `dns`, `dhcp` and `http` are simply the three that
+packeteer registers for you.  See {doc}`../guide/adding-a-protocol`.
+
+Within an application section, a key the protocol does not read is an absent
+field — a spec is edited by hand, and a partial section builds a message
+with defaults.  A non-empty section with **no** key the protocol reads is
+refused, since the difference between "this message has no questions" and
+"this is not a section" has been lost by then; `{}` is an explicit request
+for a default message and is allowed.
 
 ---
 
@@ -751,14 +760,18 @@ you want to edit `mss` or `timestamps` by hand and have the change take effect.
 ```{note}
 **Why `dns.raw` exists.**  RFC 1035 §4.1.4 lets a name be a pointer to any
 earlier occurrence of the same suffix, and senders disagree about which one to
-point at.  Across 476 real DNS messages, an encoder following the usual
-"first occurrence wins" rule picks a different target for 234 of 516
-pointers — so no encoder reproduces captured bytes, and the only thing that
-does is the bytes themselves.  It is the same reasoning as
-[`options.raw`](packet-spec-transport-overrides) for TCP options.
+point at.  packeteer's own encoder compresses the way most do — the longest
+suffix already written, pointing backwards — and across 476 real DNS
+messages that rule picks a different target for 234 of 516 pointers.  So no
+single encoder reproduces every capture, and for the ones it does not the
+only thing that does is the bytes themselves.  It is the same reasoning as
+[`options.raw`](packet-spec-transport-overrides) for TCP options.  A message
+whose sender chose as packeteer does — and every message packeteer generated
+itself — re-encodes from its fields and carries no `raw`.
 
 The cost is that a captured DNS message and a redacted one cannot both be had:
-`sanitise` drops `raw`, and the rebuilt message loses its compression.
+`sanitise` drops `raw`, and the rebuilt message is compressed packeteer's way
+rather than the sender's.
 ```
 
 (packet-spec-transport-overrides)=
@@ -929,7 +942,10 @@ packet payload and the `payload` key is ignored.  Set `transport.dst_port` or
 `transport.src_port` to `53` and use `"udp"` or `"tcp"` as the protocol.
 
 For TCP, the builder prepends the mandatory 2-byte big-endian length field
-automatically (RFC 1035 §4.2.2) when the enclosing transport is TCP.
+automatically (RFC 1035 §4.2.2) when the enclosing transport is TCP.  Names
+are compressed on the way out as a resolver compresses them (RFC 1035
+§4.1.4); a captured message whose sender chose different pointer targets is
+reproduced from [`raw`](#dns-top-level-fields) instead.
 
 ```json
 "transport": { "src_port": 54321, "dst_port": 53 },
@@ -963,7 +979,7 @@ automatically (RFC 1035 §4.2.2) when the enclosing transport is TCP.
 | `answers` | Array of resource records in the answer section |
 | `authority` | Array of resource records in the authority section |
 | `additional` | Array of resource records in the additional section |
-| `raw` | — | The message exactly as captured, hex-encoded, written by `parse` only when re-encoding the decoded fields would not reproduce it — a **compressed** message, in practice.  It is written out verbatim and **takes precedence over every other key here**, so editing them has no effect while it is present; delete it to hand-edit a captured message.  `packeteer sanitise` deletes it whenever it changes the section, since a redacted name that is still in `raw` is not redacted |
+| `raw` | — | The message exactly as captured, hex-encoded, written by `parse` only when re-encoding the decoded fields would not reproduce it — a message whose sender **compressed names differently** from packeteer's encoder, in practice.  It is written out verbatim and **takes precedence over every other key here**, so editing them has no effect while it is present; delete it to hand-edit a captured message.  `packeteer sanitise` deletes it whenever it changes the section, since a redacted name that is still in `raw` is not redacted |
 
 ### `dns.flags`
 
@@ -1289,7 +1305,7 @@ Always present in configs produced by `packeteer parse` and
 | Field | Required | Description |
 |-------|----------|-------------|
 | `nanoseconds` | **yes** | `true` when `packet_metadata` timestamps use nanosecond resolution; `false` for microsecond.  Always `false` in stream JSON output. |
-| `link_type` | no | pcap link-layer type integer for the whole file — `1` = Ethernet (default), `101` = Raw IP.  Written by `packeteer parse`; read by `packeteer build` to set the link-layer type of the output pcap/pcapng.  When absent, `packeteer build` infers the type from the packet contents. |
+| `link_type` | no | pcap link-layer type integer for the whole file — `1` = Ethernet (default), `101` = raw IP, `113` / `276` = Linux cooked, `0` / `108` = BSD loopback; the set {func}`packeteer.parse.supports_link_type` answers for.  Written by `packeteer parse`; read by `packeteer build` to set the link-layer type of the output pcap/pcapng.  When absent, `packeteer build` infers the type from the packet contents. |
 | `from_file` | no | Path of the source pcap or pcapng file — written automatically by `packeteer parse` (informational only; ignored by `packeteer build`) |
 | `type` | no | Source file format: `"pcap"` or `"pcapng"` — written automatically by `packeteer parse`; read by `packeteer build` to choose the output file format (overridable via `--pcap` / `--pcapng` flags) |
 | `snaplen` | no (default `65535`) | The capture limit the source file declared, in bytes.  Written by `packeteer parse` only when the file named a real limit; read by `packeteer build` and written into the output's file header.  See [truncated captures](packet-spec-truncation). |

@@ -107,7 +107,10 @@ def to_spec(msg: Reading) -> dict:
         "samples": [{"kind": k, "value": v} for k, v in msg.samples],
     }
 
+_SECTION_KEYS = frozenset({"version", "samples"})
+
 def from_spec(section: dict) -> Reading:
+    protocols.check_section("sensor", section, _SECTION_KEYS)
     return Reading(
         version=section.get("version", 1),
         samples=[(s["kind"], s["value"]) for s in section.get("samples", [])],
@@ -116,6 +119,15 @@ def from_spec(section: dict) -> Reading:
 
 Use `.get()` with defaults.  A spec is something a person edits by hand, and
 `from_spec` should not fail on a missing optional key.
+
+**But open with {func}`~packeteer.protocols.check_section`.**  Reading an
+unknown key as an absent field is right for a *partial* section and wrong
+for an object in which nothing is recognised — by then the difference between
+"no samples" and "not a section" is gone, and what comes out is a default
+message that looks deliberate.  The guard refuses a non-empty section with no
+key `from_spec` reads, lets `{}` through as an explicit default, and names
+the shape `packeteer parse` writes when that is what it was handed.
+{func}`~packeteer.conformance.check_protocol` insists on it.
 
 ### 4. Redaction
 
@@ -178,7 +190,8 @@ Everything the built-ins get.  Parsing:
 from packeteer.parse import parse_packet
 
 pkt = parse_packet(frame)
-pkt.app             # Reading(version=1, samples=[(2, 21)])
+pkt.sensor          # Reading(version=1, samples=[(2, 21)]) — None on any other packet
+pkt.app             # the same object, for code that does not know the protocol
 pkt.app_protocol    # "sensor"
 ```
 
@@ -191,9 +204,16 @@ frame = (PacketBuilder()
     .ethernet()
     .ip(src="10.0.0.1", dst="10.0.0.2")
     .udp(dst_port=9000)
-    .app(Reading(samples=[(2, 21)]))
+    .sensor(Reading(samples=[(2, 21)]))
     .build())
 ```
+
+The attribute and the method exist because the protocol is registered, and
+are named after it — which is why the name must be a plain identifier and
+not one that `ParsedPacket` or `PacketBuilder` already has.
+{func}`~packeteer.protocols.register` refuses a name that is not; so does
+{func}`~packeteer.protocols.check_name`, which is the same rule on its own
+for asking before you write anything.
 
 And the command line, with no packeteer changes at all:
 
@@ -240,8 +260,8 @@ def test_round_trip():
 
     frame = (PacketBuilder().ethernet()
              .ip(src="10.0.0.1", dst="10.0.0.2").udp(dst_port=9000)
-             .app(msg).build())
-    assert parse_packet(frame).app == msg
+             .sensor(msg).build())
+    assert parse_packet(frame).sensor == msg
 ```
 
 If those pass, `packeteer parse` → edit the JSON → `packeteer build` works for

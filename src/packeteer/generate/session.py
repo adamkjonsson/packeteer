@@ -44,9 +44,10 @@ import random
 import struct
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from random import Random
 
-from ._stream_common import _alloc_usec
+from ._stream_common import TCP_TIMESTAMPS_OVERHEAD, _alloc_usec, _TimestampClock
 from .impairments import (
     FlowEndpoints,
     ImpairmentConfig,
@@ -163,12 +164,18 @@ class TCPSession:
                 and ``retransmit_lost``.  The rest are passes over the finished
                 connection and are applied by the caller.  ``None`` (the
                 default) draws no randomness at all.
-            loss_rng: Seeded generator driving the loss draws, so a capture
-                with loss reproduces from its seed.
+            loss_rng: Seeded generator driving the session's random draws —
+                packet loss, and the start of each side's timestamp clock —
+                so a capture reproduces from its seed.
             client_options: TCP options carried on the client SYN, as on the
                 low-level path.  ``None`` (the default) sends a bare SYN, which
                 no modern stack does — callers wanting plausible traffic pass
-                :func:`~packeteer.generate.tcp.default_syn_options`.
+                :func:`~packeteer.generate.tcp.default_syn_options`.  When
+                both this and *server_options* advertise timestamps the
+                connection negotiates them and every segment carries one, as
+                :class:`~packeteer.generate.tcp_stream.TCPStreamConfig`
+                describes; *mss* is then reduced by the 12 bytes the option
+                takes when payloads are segmented.
             server_options: TCP options carried on the server SYN-ACK.
 
         """
@@ -292,6 +299,17 @@ class TCPSession:
         impairments = self.impairments or ImpairmentConfig()
         loss_probability = impairments.packet_loss_probability
 
+        # Timestamps, as generate_tcp_stream negotiates them: a clock for each
+        # side that advertises them, used only when both do.  Drawn only when
+        # needed, so a session without them reproduces from its seed as before.
+        for endpoint, opts in ((client, self.client_options),
+                               (server, self.server_options)):
+            if opts is not None and opts.timestamps is not None:
+                start = opts.timestamps[0] or loss_rng.randint(0, _WRAP - 1)
+                endpoint.ts_clock = _TimestampClock(start=start, origin_usec=base_usec)
+        negotiated = client.ts_clock is not None and server.ts_clock is not None
+        segment_size = self.mss - TCP_TIMESTAMPS_OVERHEAD if negotiated else self.mss
+
         def emit(
             src: _TCPEndpoint,
             dst: _TCPEndpoint,
@@ -305,6 +323,18 @@ class TCPSession:
             nonlocal index
             seq_before = src.seq
             ack_before = src.ack
+            sent_usec = base_usec + index * gap_usec
+
+            timestamps: tuple[int, int] | None = None
+            if flags & TCP_SYN:
+                if options is not None and options.timestamps is not None:
+                    if src.ts_clock is not None and (negotiated or not flags & TCP_ACK):
+                        timestamps = (src.tsval_at(sent_usec), src.ts_recent)
+                    options = replace(options, timestamps=timestamps)
+            elif negotiated:
+                timestamps = (src.tsval_at(sent_usec), src.ts_recent)
+                options = TCPOptions(timestamps=timestamps)
+
             raw = _build_packet(src, dst, flags, payload,
                                 self.include_ethernet, self.ip_ttl, options,
                                 self.encap)
@@ -324,22 +354,26 @@ class TCPSession:
                 # are answered with duplicate ACKs.
                 if flags & TCP_SYN or seq_before == dst.ack:
                     dst.ack = src.seq
-                ts_sec, ts_usec = divmod(base_usec + index * gap_usec, 1_000_000)
+                    # TS.Recent follows in-order arrivals only (RFC 7323 §4.3).
+                    if timestamps is not None:
+                        dst.ts_recent = timestamps[0]
+                ts_sec, ts_usec = divmod(sent_usec, 1_000_000)
                 packets.append(TCPStreamPacket(
                     raw=raw, ts_sec=ts_sec, ts_usec=ts_usec,
                     direction=direction, flags=flags,
                     seq=seq_before,
                     ack=ack_before if (flags & TCP_ACK) else 0,
                     payload_len=len(payload), label=label,
+                    timestamps=timestamps,
                 ))
             elif payload:
+                ts_sec, ts_usec = divmod(sent_usec, 1_000_000)
                 lost_segments.append(TCPStreamPacket(
-                    raw=raw,
-                    ts_sec=(base_usec + index * gap_usec) // 1_000_000,
-                    ts_usec=(base_usec + index * gap_usec) % 1_000_000,
+                    raw=raw, ts_sec=ts_sec, ts_usec=ts_usec,
                     direction=direction, flags=flags, seq=seq_before,
                     ack=ack_before if (flags & TCP_ACK) else 0,
                     payload_len=len(payload), label=label,
+                    timestamps=timestamps,
                 ))
             index += 1
             return delivered
@@ -360,8 +394,8 @@ class TCPSession:
                 sender, receiver, send_dir, ack_dir = server, client, "s2c", "c2s"
 
             segments = ([b""] if not payload
-                        else [payload[i:i + self.mss]
-                              for i in range(0, len(payload), self.mss)])
+                        else [payload[i:i + segment_size]
+                              for i in range(0, len(payload), segment_size)])
 
             for seg_num, chunk in enumerate(segments):
                 is_last = seg_num == len(segments) - 1

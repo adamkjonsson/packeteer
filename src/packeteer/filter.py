@@ -124,9 +124,10 @@ class PacketFilter:
         dst: Destination IP address or CIDR list, optionally negated.
         host: Source-or-destination IP address or CIDR list, optionally
             negated.
-        app: Application-layer name, optionally negated.
-            Recognised values: ``"dns"``, ``"dhcp"``, ``"http"``.
-            Examples: ``"http"``, ``"!dns"``.
+        app: Application-layer name, optionally negated — the name of any
+            registered protocol, which is the packet-spec section it
+            produces: ``"dns"``, ``"dhcp"``, ``"http"``, or one loaded from a
+            compiled module.  Examples: ``"http"``, ``"!dns"``, ``"sensor"``.
 
     Example::
 

@@ -64,7 +64,7 @@ as unknown keys:
 
 | Construct | Why not |
 |---|---|
-| `pointer` | Decoding one is straightforward; *encoding* one needs a compression model, and packeteer's own DNS encoder declines to compress |
+| `pointer` | Decoding one is straightforward; *encoding* one needs a compression model of the protocol's own, which is what makes DNS a hand-written protocol here rather than a spec |
 | `select` | A question asked across a repeated field — what HTTP needs to decide its own framing |
 | `computed` | A value derived at decode time; `derive` is the encode-direction answer and covers the cases that matter here |
 | `{size: {terminated: …}}`, `{string: {delimiter: …}}` | Delimiter framing, in either spelling |
@@ -136,11 +136,25 @@ as misspellings.
 
 Doubles as the packet-spec section key, so a protocol named `sensor` makes
 `packeteer parse` emit a `"sensor"` object beside `"network"` and
-`"transport"`, and `packeteer build` read it back.
+`"transport"`, and `packeteer build` read it back.  It is also the attribute
+the decoded message is reached by — `pkt.sensor` on a parsed packet,
+`.sensor(msg)` on the builder — so it has three constraints, and
+`packeteer protocol check` refuses a spec that breaks any of them:
 
-It may not be one of the structural keys in {doc}`../packet-spec/format` —
-`ethernet`, `network`, `transport`, `payload` and the rest.  Registering one
-that collides is refused, naming the collision.
+- **A plain Python identifier**: letters, digits and underscores, not
+  starting with a digit, not a keyword.  `acme-sensor` is not one;
+  `acme_sensor` is.
+- **Not starting with an underscore**, which marks a private attribute.
+- **Not reserved**: none of the structural keys in {doc}`../packet-spec/format`
+  — `ethernet`, `network`, `transport`, `payload` and the rest — and none of
+  the public names on `ParsedPacket` or `PacketBuilder`, such as `tcp`,
+  `build` or `timestamp`, which a protocol so named would shadow.
+
+The namespace is flat, because the same string is a section key and an
+attribute and neither can hold a dot.  A library of protocols keeps them
+apart with a prefix in each spec's own `name:` — `acme_sensor`, `acme_rpc` —
+and a second registration of the same name is refused naming the collision,
+so a clash is loud rather than a silent shadow.
 
 (over)=
 (ports)=

@@ -77,9 +77,13 @@ class TestDefaultSynOptions(unittest.TestCase):
         self.assertTrue(opts.sack_permitted)
         self.assertIsNotNone(opts.window_scale)
 
-    def test_timestamps_are_not_advertised(self) -> None:
-        """Only the handshake carries options, so advertising them would lie."""
-        self.assertIsNone(default_syn_options().timestamps)
+    def test_timestamps_are_advertised(self) -> None:
+        """Since #90 every segment can carry one, so the SYN advertises them.
+
+        `(0, 0)`: TSecr must be zero on a SYN, and a zero TSval tells the
+        generator to pick the clock's start itself.
+        """
+        self.assertEqual(default_syn_options().timestamps, (0, 0))
 
     def test_each_call_returns_a_fresh_object(self) -> None:
         first = default_syn_options()

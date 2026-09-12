@@ -40,7 +40,6 @@ import argparse
 import configparser
 import json
 import os
-import struct
 import sys
 from collections.abc import Callable
 from importlib.metadata import PackageNotFoundError as _PkgNotFoundError
@@ -1696,16 +1695,6 @@ def _validate_stream_args(args: argparse.Namespace) -> str:
     return protocol
 
 
-#: What a generated encoder raises when a section is the wrong shape.  These
-#: sections are user JSON going through code compiled from a spec, so the
-#: failure is bad input rather than a bug, and a traceback is the wrong answer
-#: to it — `AttributeError` above all, which is what a field of the wrong type
-#: produces (`'int' object has no attribute 'encode'`).
-_ENCODE_ERRORS = (
-    ValueError, KeyError, TypeError, AttributeError, IndexError,
-    OverflowError, struct.error,
-)
-
 
 def _protocol_payload_fn(
     args: argparse.Namespace, protocol: str,
@@ -1755,25 +1744,17 @@ def _protocol_payload_fn(
     except (OSError, json.JSONDecodeError) as exc:
         print(f"Error reading '{path}': {exc}", file=sys.stderr)
         sys.exit(1)
-    if not isinstance(sections, list) or not sections:
+    if not isinstance(sections, (list, dict)) or not sections:
         print(f"Error: '{path}' must be a non-empty JSON array of "
-              f"{name} sections", file=sys.stderr)
+              f"{name} sections, or the output of 'packeteer parse'",
+              file=sys.stderr)
         sys.exit(1)
 
     try:
-        encoded = [proto.encode(proto.from_spec(section), protocol)
-                   for section in sections]
-    except _ENCODE_ERRORS as exc:
-        print(f"Error encoding a {name} message from '{path}' "
-              f"({type(exc).__name__}): {exc}", file=sys.stderr)
+        return app.protocol_payload_fn(proto, sections, protocol)
+    except ValueError as exc:
+        print(f"Error: '{path}': {exc}", file=sys.stderr)
         sys.exit(1)
-
-    def payload_fn(index: int, _direction: str) -> bytes:
-        # Cycled rather than exhausted: --packets says how long the stream is,
-        # and a shorter message list should not silently shorten it.
-        return encoded[index % len(encoded)]
-
-    return payload_fn
 
 
 def _build_stream_config(
@@ -2659,10 +2640,11 @@ def main() -> None:
     stream_parser.add_argument(
         "--no-tcp-options", action="store_true", default=None,
         help=(
-            "Send a bare SYN with no TCP options. By default the handshake "
-            "advertises what a modern client does (MSS, SACK permitted, window "
-            "scale), since a SYN carrying no options is the most conspicuous "
-            "mark of generated traffic"
+            "Send a bare handshake with no TCP options, so no segment carries "
+            "a timestamp either. By default the handshake advertises what a "
+            "modern client does (MSS, SACK permitted, window scale, "
+            "timestamps), since a SYN carrying no options is the most "
+            "conspicuous mark of generated traffic"
         ),
     )
     stream_parser.add_argument(

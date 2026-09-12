@@ -16,19 +16,19 @@ compiled extensions — Python 3.10+ and the standard library only.
 
 - **CLI** (`packeteer`) — build packets from a packet spec, parse captures to a packet spec, sanitise specs by replacing sensitive fields with synthetic data, generate synthetic streams with `packeteer stream`, or generate adversarial variants with `packeteer fuzz`
 - **Python API** - giving you the flexibility to combine, script, or extend the building blocks however your project needs
-- **Stream generation** — complete TCP / UDP / SCTP flows written to pcap, pcapng, or packet spec; all streams can be wrapped in any encapsulation layer (VLAN, QinQ, MPLS, PPPoE, GRE, EtherIP, IP-in-IP), combined as a stack, and fragmented through a simulated low-MTU middlebox
-- **Your own protocols** — describe one in YAML and compile it with `packeteer protocol compile`; the result is parsed, built, serialised and redacted exactly like a built-in, with no packeteer-specific loader in the generated module.  The dialect is a superset of [kober](https://github.com/adamkjonsson/zipline-kober)'s, so a spec written for either project loads in both
+- **Stream generation** — complete TCP / UDP / SCTP flows written to pcap, pcapng, or packet spec, with the TCP options a real connection negotiates and a timestamp on every segment; all streams can be wrapped in any encapsulation layer (VLAN, QinQ, MPLS, PPPoE, GRE, EtherIP, IP-in-IP), combined as a stack, and fragmented through a simulated low-MTU middlebox
+- **Your own protocols** — describe one in YAML and compile it with `packeteer protocol compile`; the result is parsed, built, serialised and redacted exactly like a built-in, reached by its own name — `pkt.sensor`, `.sensor(msg)` — with no packeteer-specific loader in the generated module.  The dialect is a superset of [kober](https://github.com/adamkjonsson/zipline-kober)'s, so a spec written for either project loads in both
 - **Capture filtering** — `packeteer parse` accepts filter flags (`--proto`, `--port`, `--src`, `--dst`, `--host`, `--app`, …) to keep only the traffic you care about; values can be negated with `!` and addresses accept CIDR notation for both IPv4 and IPv6
 - **PII scanning** — `packeteer sanitise` scans UTF-8 payloads for email addresses and personal names by default; findings are consolidated across packets and reported as structured `PersonalDataWarning` instances (`--no-scan-pii` to disable)
 - **Fuzzing** — `packeteer fuzz` produces adversarial packet variants for decoder robustness testing: boundary values, reserved-bit settings, pathological TCP flag combinations, truncated/extended payloads, bit flips, wrong checksums, and wrong length fields; full Python API via `packeteer.fuzz`
 
 ## Supported protocols
 
-- **Ethernet II**, 802.1Q VLAN (single/QinQ), MPLS label stacks, PPPoE
+- **Ethernet II**, 802.1Q VLAN (single/QinQ), MPLS label stacks, PPPoE; Linux cooked (SLL/SLL2) and BSD loopback captures
 - **IPv4** (RFC 791) and **IPv6** (RFC 8200) with automatic checksums; IPv6 Hop-by-Hop Options extension header (RFC 8200 §4.3) including Router Alert and Jumbo Payload
 - **TCP**, **UDP**, **SCTP** (RFC 9260), **ICMPv4**, **ICMPv6** with correct checksums
 - **Tunnels**: IP-in-IP (RFC 2003/4213), EtherIP (RFC 3378), GRE (RFC 2784/2890) with Key, Sequence, Checksum, and TEB
-- **DNS** (RFC 1035) and **mDNS** (RFC 6762) — parse, build, and sanitise A, AAAA, NS, CNAME, MX, SOA, PTR, and TXT records over UDP or TCP; mDNS QU and cache-flush bits; port 5353 dispatch
+- **DNS** (RFC 1035) and **mDNS** (RFC 6762) — parse, build, and sanitise A, AAAA, NS, CNAME, MX, SOA, PTR, and TXT records over UDP or TCP, with names compressed as a resolver compresses them; mDNS QU and cache-flush bits; port 5353 dispatch
 - **DHCP** (RFC 2131 / RFC 2132) — parse, build, and sanitise DHCP messages including all common option types; dispatch on ports 67/68
 - **HTTP/1.x** (RFC 7230) — parse, build, and sanitise HTTP requests and responses over TCP; automatic port 80/8080 dispatch; sensitive header redaction
 - **UTF-8 payload encoding** — packet specs use readable strings for text-protocol payloads; `packeteer parse` auto-detects printable ASCII and encodes accordingly
@@ -111,6 +111,19 @@ units:
 length nobody set is computed on the way out, and a capture whose length
 disagrees with its data still rebuilds byte for byte.  `sensitive` is what
 `packeteer sanitise` redacts.
+
+Once the module is imported, the protocol is reached by the name the spec
+gave it, on both sides, exactly as `pkt.dns` and `.dns()` reach the built-in:
+
+```python
+import sensor                                   # registers it
+from packeteer.generate import PacketBuilder
+from packeteer.parse import parse_packet
+
+frame = (PacketBuilder().ethernet().ip(src="10.0.0.1", dst="10.0.0.2")
+         .udp(dst_port=9000).sensor(sensor.Reading(samples=[...])).build())
+parse_packet(frame).sensor                      # Reading(...) — None on any other packet
+```
 
 ### Python API
 

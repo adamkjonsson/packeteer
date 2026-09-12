@@ -63,11 +63,11 @@ protocols:
 
 | Layer | Protocols |
 |-------|-----------|
-| Data link | Ethernet, VLAN (802.1Q), QinQ (stacked VLANs), PPPoE, ARP, Linux cooked (SLL/SLL2) |
+| Data link | Ethernet, VLAN (802.1Q), QinQ (stacked VLANs), PPPoE, ARP, Linux cooked (SLL/SLL2), BSD loopback (`DLT_NULL` / `DLT_LOOP`) |
 | Tunnelling / encapsulation | MPLS, GRE, EtherIP, IP-in-IP, pseudowire, VXLAN, GENEVE, GTP-U, IPsec AH/ESP |
 | Network | IPv4, IPv6 |
 | Transport | TCP, UDP, SCTP, ICMP, ICMPv6 |
-| Application | HTTP, DNS, DHCP |
+| Application | HTTP, DNS, DHCP — and any protocol compiled from a [spec](../protocols/index), reached by its own name |
 
 Stream generation (`packeteer stream`) supports TCP, UDP, and SCTP as the
 primary transport.  Any supported encapsulation layer can be stacked on top of
@@ -130,8 +130,9 @@ write_pcap(packets, path="syn-sweep.pcap")
 `packeteer stream` generates a complete, realistic network stream — a full TCP
 connection, UDP datagram flow, or SCTP association — without any live traffic
 or capture setup.  It handles all the protocol mechanics automatically:
-three-way handshakes, correct sequence and acknowledgement numbers, CRC-32c
-checksums, inter-packet timestamps, and graceful teardowns.
+three-way handshakes with the options a modern stack negotiates and a TCP
+timestamp on every segment, correct sequence and acknowledgement numbers,
+CRC-32c checksums, inter-packet timestamps, and graceful teardowns.
 
 A few flags control the shape of the traffic:
 

@@ -64,15 +64,19 @@ across 459 packets; everything below has **no** real traffic at all.
 - **IPv4 fragments and IPv6 extension headers.**  Tested only against packets
   packeteer fragmented itself.
 - **SCTP.**
-- **A compressed DNS message**, and this one cannot be closed by collecting
-  a better capture.  `parse` → `build` now reproduces a compressed message
-  byte for byte (#130) by keeping the bytes in `dns.raw` — but `sanitise`
-  must drop `raw` the moment it redacts a name, or the redacted name would
-  still be in it.  Every one of the 238 messages is redacted, so nothing
-  keeps its compression.  Fidelity and redaction genuinely conflict here, in
-  a way they did not for #126's truncation or #129's padding.  Committing a
-  compressed capture would need packeteer to *emit* compression, which is a
-  separate feature with no round-trip benefit.
+- **A compressed DNS message.**  `parse` → `build` reproduces a compressed
+  message byte for byte (#130) by keeping the bytes in `dns.raw` — but
+  `sanitise` must drop `raw` the moment it redacts a name, or the redacted
+  name would still be in it.  Every one of the 238 messages is redacted, and
+  when this file was committed packeteer wrote names in full, so nothing in
+  it keeps its compression.  Since 0.14.0 packeteer *emits* compression
+  (#131), so the gap is now closable: re-running the original capture
+  through `sanitise` would produce a redacted file whose every response is
+  compressed — canonically, not as the sender did, which is the trade the
+  `raw` mechanism exists for.  That needs the unsanitised original, which is
+  not in the repository.  Until it is refreshed, note that 119 of the 238
+  messages here now parse *with* `raw`, because the compressing encoder no
+  longer reproduces their uncompressed bytes.
 - **IPv6 extension headers**, including a fragmented IPv6 datagram.  The IPv4
   side is covered by `udp_frag_nano.pcap`; the IPv6 side is not.
 - **An ICMPv4 Redirect.** Its gateway address lives in the header bytes a spec

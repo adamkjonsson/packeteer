@@ -111,6 +111,46 @@ from .to_config import apply_tunneled, to_json_string, to_packet_spec, update_co
 from .udp import packet_parser as _udp_parser
 from .vxlan import packet_parser as _vxlan_parser
 
+#: Every link type :func:`parse_packet` can decode.  The definition, not a
+#: summary of one: :func:`_parse_link_layer` tests membership before it does
+#: anything else, so a link type reaches the unsupported branch by not being
+#: here rather than by falling off the end of the ``if`` ladder.  Adding a link
+#: type means adding it here, and a test holds the two in step both ways.
+SUPPORTED_LINK_TYPES: frozenset[int] = frozenset({
+    LINKTYPE_ETHERNET, LINKTYPE_RAW, LINKTYPE_LINUX_SLL, LINKTYPE_LINUX_SLL2,
+    LINKTYPE_NULL, LINKTYPE_LOOP,
+})
+
+
+def supports_link_type(link_type: int) -> bool:
+    """Return whether :func:`parse_packet` can decode frames of *link_type*.
+
+    A capture whose link type is not supported yields nothing above the link
+    layer — every packet comes back as an opaque payload, with
+    :class:`UnsupportedLinkTypeWarning` raised once — so this is the question
+    to ask **before** reading the first record.  It is a static property of
+    the number, and the answer is the same one the parser gives.
+
+    Args:
+        link_type: A pcap link-layer type, as in
+            :attr:`packeteer.pcap.PcapFileHeader.link_type`.
+
+    Returns:
+        ``True`` when *link_type* is in :data:`SUPPORTED_LINK_TYPES`.
+
+    Example::
+
+        from packeteer.parse import supports_link_type
+        from packeteer.pcap import open_pcap
+
+        with open_pcap(path="capture.pcap") as reader:
+            if not supports_link_type(reader.header.link_type):
+                raise SystemExit(f"link type {reader.header.link_type}: "
+                                 "packeteer cannot decode this capture")
+
+    """
+    return link_type in SUPPORTED_LINK_TYPES
+
 
 class UnsupportedLinkTypeWarning(UserWarning):
     """Emitted when a capture's link type is not one the parser knows.
@@ -123,7 +163,11 @@ class UnsupportedLinkTypeWarning(UserWarning):
     address is still in it.
 
     The numeric link type is on the :attr:`link_type` attribute, so a caller
-    can act on it without reading the message.
+    can act on it without reading the message.  To know in advance — before a
+    file is read, or per packet without a warnings filter — ask
+    :func:`supports_link_type` instead; under the default filter this warning
+    fires once per file, so it answers "did this file have one" rather than
+    the per-packet question.
 
     Attributes:
         link_type: The unrecognised link type, as recorded in the capture.
@@ -302,14 +346,16 @@ class ParsedPacket:
             on port 80 or 8080, otherwise ``None``.  On parse failure the
             raw bytes remain in :attr:`payload` and this field is ``None``.
         app: The decoded application-layer message, whichever protocol
-            produced it — including the three above, which are also set.  A
-            protocol registered with :func:`packeteer.protocols.register`
-            lands here and nowhere else.  ``None`` when no registered protocol
-            claimed the transport ports, when the one that did rejected the
-            bytes, or when ``decode_app`` was ``False``.
+            produced it — including the three above, which are also set.
+            ``None`` when no registered protocol claimed the transport ports,
+            when the one that did rejected the bytes, or when ``decode_app``
+            was ``False``.  This is the accessor for *generic* code that
+            dispatches on whatever it is handed; code that knows which
+            protocol it wants reads the attribute named after it instead.
         app_protocol: The :attr:`~packeteer.protocols.AppProtocol.name` of the
             protocol that decoded :attr:`app` — also the packet-spec section
             it is written to — or ``None`` alongside an ``None`` :attr:`app`.
+
         datagram_truncated: ``True`` when the IP header declares more payload
             than the packet holds, as after a capture taken with a snaplen.
             This is the *datagram* sense of truncation, not the capture's: it
@@ -341,6 +387,25 @@ class ParsedPacket:
             silently lands inside the padding.  For a tunnelled packet the
             offset on a nested :attr:`tunneled` packet is relative to the
             **outer** frame as well, so one addition works at any depth.
+        offsets: Where each parsed header starts within the frame passed to
+            :func:`parse_packet`, keyed by the name of the attribute the
+            header is on — ``offsets["ip"]`` is the index of the IP header's
+            first byte, ``offsets["transport"]`` the TCP/UDP header's, and
+            so on for every layer attribute above that is set.  ``"mpls"``
+            is the first label of the stack.  ``"app"`` is where the decoded
+            application message's bytes start, which is what closes the gap
+            :attr:`payload_offset` leaves: once a protocol has decoded the
+            payload, :attr:`payload` is empty and that offset is ``None``.
+            A key is present exactly when the layer is, so
+            ``"ip" in pkt.offsets`` and ``pkt.ip is not None`` agree.  The
+            same conventions as :attr:`payload_offset` hold: relative to the
+            **outer** frame at any tunnel depth, and additive with
+            :attr:`~packeteer.pcap.PcapRecord.data_offset` for a position in
+            the capture file.  Not written to the packet spec — it is
+            provenance about a frame, not a description of one.  Use it to
+            verify a checksum against the captured bytes, to cite a header
+            rather than a payload, or to find an inner header of a tunnelled
+            packet, which sits an arbitrary distance in.
         ts_sec: Capture timestamp — whole seconds (from pcap record).
         ts_frac: Capture timestamp — sub-second fraction, in units of
             :attr:`tick_hz`.
@@ -353,6 +418,21 @@ class ParsedPacket:
             :func:`iter_packets` and empty otherwise.  One record for an
             ordinary packet; for a reassembled datagram, every fragment that
             contributed, in arrival order.
+
+    **Every registered protocol is an attribute, named after it.**  The
+    three above are declared fields because they are typed; any other
+    protocol is reached the same way, resolved on demand::
+
+        pkt.sensor        # Reading(…) when pkt.app_protocol == "sensor", else None
+
+    That is, a registered name evaluates to :attr:`app` when this packet is
+    that protocol and to ``None`` when it is not — the shape ``pkt.dns`` has
+    always had — and a name **no** protocol is registered under is an
+    ``AttributeError``, so a typo still fails loudly.  ``dir(pkt)`` lists the
+    registered names, which is what the REPL completes on; a static type
+    checker cannot see them.  Register with
+    :func:`packeteer.protocols.register` or load a compiled module and the
+    attribute exists from then on, for every packet.
 
     """
 
@@ -381,6 +461,7 @@ class ParsedPacket:
     app_protocol: str | None = None
     payload:   bytes = field(default=b"")
     payload_offset: int | None = None
+    offsets:   dict[str, int] = field(default_factory=dict)
     datagram_truncated: bool = False
     ts_sec:    int = 0
     ts_frac:   int = 0
@@ -397,6 +478,24 @@ class ParsedPacket:
         *tick_hz* where exactness matters.
         """
         return self.ts_sec + self.ts_frac / self.tick_hz
+
+    def __getattr__(self, name: str) -> object:
+        # Only reached for a name that is not a field or method — the declared
+        # fields, dns/dhcp/http among them, never arrive here.  Dunders are
+        # refused before the registry is consulted: copy, pickle and
+        # dataclasses probe for __deepcopy__, __getstate__ and the like
+        # through getattr, and a protocol name cannot start with an
+        # underscore anyway.
+        if name.startswith("_") or protocols.for_section(name) is None:
+            raise AttributeError(
+                f"{type(self).__name__!r} object has no attribute {name!r}; "
+                f"no protocol is registered as {name!r}"
+            )
+        return self.app if self.app_protocol == name else None
+
+    def __dir__(self) -> list[str]:
+        return sorted(set(super().__dir__())
+                      | {proto.name for proto in protocols.registered()})
 
 
 def _set_payload(pkt: ParsedPacket, payload: bytes, offset: int) -> None:
@@ -437,6 +536,8 @@ def _shift_offsets(pkt: ParsedPacket, delta: int) -> None:
     while pkt is not None:
         if pkt.payload_offset is not None:
             pkt.payload_offset += delta
+        for layer in pkt.offsets:
+            pkt.offsets[layer] += delta
         if pkt.ethernet is not None:
             pkt.ethernet.pad = True
         pkt = pkt.tunneled
@@ -475,17 +576,32 @@ def _parse_link_layer(
             return None
         return remaining, ethertype
 
+    if link_type not in SUPPORTED_LINK_TYPES:
+        warnings.warn(
+            UnsupportedLinkTypeWarning(
+                f"link type {link_type} is not supported; the whole frame is "
+                f"stored in the payload field, so no addresses, ports or "
+                f"protocol were decoded from it",
+                link_type,
+            ),
+            stacklevel=3,
+        )
+        _set_payload(pkt, data, 0)
+        return None
     if link_type == LINKTYPE_ETHERNET:
         eth_size, ethertype, eth_hdr = _ethernet_parser(data)
         pkt.ethernet = eth_hdr
+        pkt.offsets["ethernet"] = 0
         return _after_l2(eth_size, ethertype)
     if link_type == LINKTYPE_LINUX_SLL:
         s_size, ethertype, s_hdr = _sll_parser(data)
         pkt.sll = s_hdr
+        pkt.offsets["sll"] = 0
         return _after_l2(s_size, ethertype)
     if link_type == LINKTYPE_LINUX_SLL2:
         s_size, ethertype, s_hdr = _sll2_parser(data)
         pkt.sll = s_hdr
+        pkt.offsets["sll"] = 0
         return _after_l2(s_size, ethertype)
     if link_type in (LINKTYPE_NULL, LINKTYPE_LOOP):
         # DLT_LOOP is always network order; DLT_NULL is the capturing host's,
@@ -494,20 +610,10 @@ def _parse_link_layer(
             data, big_endian=True if link_type == LINKTYPE_LOOP else None,
         )
         pkt.loopback = l_hdr
+        pkt.offsets["loopback"] = 0
         return _after_l2(l_size, ethertype)
-    if link_type == LINKTYPE_RAW:
-        return data, None   # raw IP — skip MPLS loop below
-    warnings.warn(
-        UnsupportedLinkTypeWarning(
-            f"link type {link_type} is not supported; the whole frame is "
-            f"stored in the payload field, so no addresses, ports or protocol "
-            f"were decoded from it",
-            link_type,
-        ),
-        stacklevel=3,
-    )
-    _set_payload(pkt, data, 0)
-    return None
+    # LINKTYPE_RAW: raw IP, nothing to strip — skip the MPLS loop below.
+    return data, None
 
 
 def _parse_pppoe_and_mpls(
@@ -541,6 +647,7 @@ def _parse_pppoe_and_mpls(
             _set_payload(pkt, remaining, offset)
             return None
         pkt.mpls.append(m_hdr)
+        pkt.offsets.setdefault("mpls", offset)
         remaining = remaining[m_size:]
         offset += m_size
 
@@ -550,6 +657,7 @@ def _parse_pppoe_and_mpls(
             _set_payload(pkt, remaining, offset)
             return None
         pkt.pppoe = pppoe_hdr
+        pkt.offsets["pppoe"] = offset
         remaining = remaining[p_size:]
         offset += p_size
         if ethertype is None:  # discovery frame — no IP follows
@@ -562,6 +670,7 @@ def _parse_pppoe_and_mpls(
             _set_payload(pkt, remaining, offset)
             return None
         pkt.pseudowire = pw_hdr
+        pkt.offsets["pseudowire"] = offset
         remaining = remaining[pw_size:]
         offset += pw_size
         inner_lt = LINKTYPE_ETHERNET if inner_et == GRE_PROTO_TEB else LINKTYPE_RAW
@@ -574,6 +683,7 @@ def _parse_pppoe_and_mpls(
         a_size, _, a_hdr = _arp_parser(remaining)
         if a_size > 0 and a_hdr is not None:
             pkt.arp = a_hdr
+            pkt.offsets["arp"] = offset
             # An ARP message is a fixed 28 bytes; anything after it is the
             # sender's padding, which only these bytes can reproduce.
             _record_trailer(pkt, remaining[a_size:])
@@ -590,20 +700,23 @@ def _parse_pppoe_and_mpls(
 _IPV6_FIXED_HEADER_LEN: int = 40
 
 
-# ParsedPacket.dns / .dhcp / .http predate the registry and remain part of the
-# public API, so a built-in lands on its own attribute as well as on .app.
-# Nothing else does; drop this at 1.0.
-_LEGACY_APP_ATTRS: frozenset[str] = frozenset({"dns", "dhcp", "http"})
+# The three protocols with a *declared*, typed field on ParsedPacket.  A
+# declared field shadows __getattr__, so these have to be set explicitly;
+# every other protocol is reached through ParsedPacket.__getattr__ by the
+# same name and with the same None-when-absent shape.  No behaviour differs —
+# only that mypy can see these three (#139).
+_TYPED_APP_ATTRS: frozenset[str] = frozenset({"dns", "dhcp", "http"})
 
 
-def _try_parse_app(pkt: ParsedPacket, payload: bytes) -> bytes:
+def _try_parse_app(pkt: ParsedPacket, payload: bytes, base: int = 0) -> bytes:
     """Attempt to decode *payload* as whichever protocol claims the port.
 
     Looks the transport ports up in :mod:`packeteer.protocols`, destination
     first.  On success sets :attr:`ParsedPacket.app` and
-    :attr:`ParsedPacket.app_protocol` — and, for a built-in, the attribute
-    named after it — then returns ``b""`` because the payload has been
-    consumed.
+    :attr:`ParsedPacket.app_protocol` — and, for one of the three with a
+    declared field, that field — then returns ``b""`` because the payload
+    has been consumed.  Every other protocol's named attribute resolves
+    through ``__getattr__`` from those two.
 
     A port claim is a weak signal, so a decoder that rejects the bytes is not
     an error: the payload is returned unchanged and stays an opaque payload.
@@ -612,6 +725,8 @@ def _try_parse_app(pkt: ParsedPacket, payload: bytes) -> bytes:
     Args:
         pkt: Packet to fill in.  Its transport header supplies the ports.
         payload: Bytes after the transport header.
+        base: Offset of *payload* within the frame, recorded as
+            ``offsets["app"]`` on success.
 
     Returns:
         ``b""`` when a protocol decoded *payload*, otherwise *payload*.
@@ -631,7 +746,8 @@ def _try_parse_app(pkt: ParsedPacket, payload: bytes) -> bytes:
         return payload
     pkt.app = message
     pkt.app_protocol = proto.name
-    if proto.name in _LEGACY_APP_ATTRS:
+    pkt.offsets["app"] = base
+    if proto.name in _TYPED_APP_ATTRS:
         setattr(pkt, proto.name, message)
     return b""
 
@@ -657,6 +773,7 @@ def _try_parse_vxlan(
     if v_size == 0 or v_hdr is None:
         return False
     pkt.vxlan = v_hdr
+    pkt.offsets["vxlan"] = base
     inner = parse_packet(
         payload[v_size:], link_type=LINKTYPE_ETHERNET, decode_app=decode_app,
     )
@@ -687,6 +804,7 @@ def _try_parse_geneve(
     if g_size == 0 or g_hdr is None:
         return False
     pkt.geneve = g_hdr
+    pkt.offsets["geneve"] = base
     inner_lt = LINKTYPE_ETHERNET if proto_type == GENEVE_PROTO_TEB else LINKTYPE_RAW
     inner = parse_packet(payload[g_size:], link_type=inner_lt, decode_app=decode_app)
     _shift_offsets(inner, base + g_size)
@@ -717,6 +835,7 @@ def _try_parse_gtpu(
     if g_size == 0 or g_hdr is None:
         return None
     pkt.gtpu = g_hdr
+    pkt.offsets["gtpu"] = base
     rest = payload[g_size:]
     if message_type == GTPU_MSG_G_PDU and rest:
         inner = parse_packet(rest, link_type=LINKTYPE_RAW, decode_app=decode_app)
@@ -983,6 +1102,7 @@ def _parse_ip_protocol(
         t_size, _, t_hdr = transport_parser(remaining)
         if t_size > 0:
             pkt.transport = t_hdr
+            pkt.offsets["transport"] = base
             _clear_derivable_transport_fields(
                 pkt, t_hdr, remaining[t_size:], truncated,
             )
@@ -996,7 +1116,7 @@ def _parse_ip_protocol(
             if gtpu_result is not None:
                 return gtpu_result
             if decode_app:
-                remaining = _try_parse_app(pkt, remaining)
+                remaining = _try_parse_app(pkt, remaining, base)
     elif ip_proto in (4, 41):
         pkt.ipip = True
         inner = parse_packet(remaining, link_type=LINKTYPE_RAW, decode_app=decode_app)
@@ -1007,6 +1127,7 @@ def _parse_ip_protocol(
         g_size, proto_type, g_hdr = _gre_parser(remaining)
         if g_size > 0 and g_hdr is not None:
             pkt.gre = g_hdr
+            pkt.offsets["gre"] = base
             inner_lt = LINKTYPE_ETHERNET if proto_type == GRE_PROTO_TEB else LINKTYPE_RAW
             inner = parse_packet(
                 remaining[g_size:], link_type=inner_lt, decode_app=decode_app,
@@ -1018,6 +1139,7 @@ def _parse_ip_protocol(
         ei_size, _, ei_hdr = _etherip_parser(remaining)
         if ei_size > 0 and ei_hdr is not None:
             pkt.etherip = ei_hdr
+            pkt.offsets["etherip"] = base
             inner = parse_packet(
                 remaining[ei_size:], link_type=LINKTYPE_ETHERNET, decode_app=decode_app,
             )
@@ -1028,6 +1150,7 @@ def _parse_ip_protocol(
         ah_size, next_header, ah_hdr = _ah_parser(remaining)
         if ah_size > 0 and ah_hdr is not None:
             pkt.ah = ah_hdr
+            pkt.offsets["ah"] = base
             # AH is transparent: continue parsing the protected content.
             return _parse_ip_protocol(
                 pkt, remaining[ah_size:], next_header, decode_app, base + ah_size,
@@ -1037,6 +1160,7 @@ def _parse_ip_protocol(
         e_size, _, e_hdr = _esp_parser(remaining)
         if e_size > 0 and e_hdr is not None:
             pkt.esp = e_hdr
+            pkt.offsets["esp"] = base
             # ESP payload is encrypted/opaque without the key.
             return (remaining[e_size:], base + e_size)
     elif ip_proto is not None:
@@ -1171,6 +1295,7 @@ def parse_packet(
         _set_payload(pkt, remaining, offset)
         return pkt
     pkt.ip = ip_hdr
+    pkt.offsets["ip"] = offset
     remaining = remaining[ip_size:]
     offset += ip_size
 

@@ -50,8 +50,9 @@ multiple times to produce advanced encapsulations:
 | `.sctp(src_port=0, dst_port=0, verification_tag=0, chunks=None, checksum=None)` | SCTP common header and chunk list (RFC 9260).  Data lives in the chunks, not in a separate `.payload()`. |
 | `.loopback(family=None, big_endian=False)` | BSD loopback framing — `DLT_NULL` (link type 0) or `DLT_LOOP` (108).  Call instead of `.ethernet()`; the address family is derived from the IP version unless given. |
 | `.fragment_header(fragment_offset=0, more_fragments=False, identification=0)` | IPv6 Fragment extension header (RFC 8200 §4.5).  Call after `.ip()` for an IPv6 address. |
-| `.dns(message)` / `.dhcp(message)` / `.http(message)` | Attach a message of one of the three built-in application protocols. |
-| `.app(message)` | Attach a message of **any** registered protocol, the three above included.  The protocol is found from the message's type, so nothing is named twice.  See {doc}`protocols`. |
+| `.dns(message)` / `.dhcp(message)` / `.http(message)` | Attach a message of one of the three built-in application protocols.  `.dns()` compresses names as a resolver would (RFC 1035 §4.1.4); `compress=False` writes them in full, and `tcp=True` adds the DNS-over-TCP length prefix. |
+| `.<name>(message)` | Attach a message of the protocol registered as `<name>` — `.sensor(msg)` for a compiled `sensor` spec — exactly as the three above attach theirs.  Checks the message belongs to that protocol.  See {doc}`protocols`. |
+| `.app(message)` | Attach a message of **any** registered protocol, the three above included.  The protocol is found from the message's type, so nothing is named at all — for code that dispatches on whatever it is handed. |
 | `.payload(size=0, data=None)` | Set the payload.  `data` (bytes) takes precedence over `size` (random bytes). |
 
 ## Assembly methods

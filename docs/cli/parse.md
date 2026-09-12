@@ -23,7 +23,7 @@ by hand or programmatically before rebuilding.
 | `capture` | *(required)* Path to a `.pcap` or `.pcapng` file |
 | `--output FILE` / `-o FILE` | Write packet spec to FILE instead of stdout |
 | `--link-type TYPE` | Override the link-layer type in the file header (see below) |
-| `--no-decode-app` | Keep DNS/DHCP/HTTP payloads as raw bytes (see below) |
+| `--no-decode-app` | Keep application payloads as raw bytes instead of decoding them (see below) |
 | `--defragment` | Reassemble fragmented IP datagrams (see below) |
 | `--load-protocol FILE` | Import a protocol module first, so its traffic is decoded (see below).  Repeatable |
 
@@ -78,11 +78,11 @@ are not all present are dropped.  For analysis in Python rather than a spec,
 
 ### Keeping application payloads raw
 
-By default a payload on a well-known DNS, DHCP, or HTTP port is decoded into a
-`dns`, `dhcp`, or `http` section and the `payload` section is dropped.  The
-decoded form is not byte-exact — rebuilding it normalises header casing,
-header order, and whitespace — so when the exact bytes matter, pass
-`--no-decode-app`:
+By default a payload on a port a registered protocol claims — DNS, DHCP, HTTP,
+or one loaded with `--load-protocol` — is decoded into a section named after
+the protocol and the `payload` section is dropped.  The decoded form is not
+always byte-exact — rebuilding HTTP normalises header casing, header order,
+and whitespace — so when the exact bytes matter, pass `--no-decode-app`:
 
 ```bash
 packeteer parse capture.pcap --no-decode-app
@@ -105,9 +105,16 @@ packeteer parse capture.pcap --link-type raw
 ```
 
 `TYPE` accepts the names `ethernet`, `raw`, `linux_sll` (Linux cooked v1),
-`linux_sll2` (cooked v2), or any integer (e.g. `1`,
-`101`).  The override also replaces `metadata.link_type` in the output, so the
-resulting spec rebuilds with the corrected type.
+`linux_sll2` (cooked v2), `null` / `loop` (BSD loopback), or any integer
+(e.g. `1`, `101`).  The override also replaces `metadata.link_type` in the
+output, so the resulting spec rebuilds with the corrected type.
+
+A link type can also be *right* and still not one packeteer decodes — a Wi-Fi
+or Bluetooth capture, say.  Every packet then comes back as a bare `payload`
+section, with one `UnsupportedLinkTypeWarning` on stderr for the file;
+`packeteer file-info` says so up front, and
+{func}`packeteer.parse.supports_link_type` answers the question from Python
+before a capture is read.
 
 ## Filtering
 
@@ -123,7 +130,7 @@ every flag supplied to be kept.
 | `--src` | `ADDR` | Source IP address or CIDR prefix |
 | `--dst` | `ADDR` | Destination IP address or CIDR prefix |
 | `--host` | `ADDR` | Source-**or**-destination IP or CIDR prefix |
-| `--app` | `APP` | Application layer present: `dns`, `dhcp`, or `http` |
+| `--app` | `APP` | Application layer present, by registered name: `dns`, `dhcp`, `http`, or a protocol loaded with `--load-protocol` (`--app sensor`) |
 
 Prefix any value with `!` to negate it — keeping packets that do **not**
 match:

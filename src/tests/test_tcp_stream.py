@@ -810,6 +810,26 @@ class TestPayloadCorruption(unittest.TestCase):
             self.assertNotEqual(corrupt.raw, retrans.raw)
 
     def test_corrupt_differs_by_exactly_one_byte(self):
+        """Without timestamps the retransmission is the original, byte for byte."""
+        stream = _stream(
+            num_data_packets=1,
+            payload_sizes=[50],
+            payload_corruption_probability=1.0,
+            gap_jitter=0.0,
+            client_options=TCPOptions(mss=1460),
+            server_options=TCPOptions(mss=1460),
+        )
+        corrupt = next(p for p in stream.packets if p.label == "CORRUPT[0]")
+        retrans = next(p for p in stream.packets if p.label == "RETRANS[0]")
+        diffs = sum(a != b for a, b in zip(corrupt.raw, retrans.raw, strict=False))
+        self.assertEqual(diffs, 1)
+
+    def test_with_timestamps_the_retransmission_is_freshly_stamped(self):
+        """#90: one flipped payload byte, and a fresh TSval on the retransmission.
+
+        The retransmission carries the clock at *its* send time, not a copy
+        of the original's — which is how an analyser tells it from a duplicate.
+        """
         stream = _stream(
             num_data_packets=1,
             payload_sizes=[50],
@@ -818,8 +838,9 @@ class TestPayloadCorruption(unittest.TestCase):
         )
         corrupt = next(p for p in stream.packets if p.label == "CORRUPT[0]")
         retrans = next(p for p in stream.packets if p.label == "RETRANS[0]")
-        diffs = sum(a != b for a, b in zip(corrupt.raw, retrans.raw, strict=False))
-        self.assertEqual(diffs, 1)
+        self.assertEqual(corrupt.raw[-50:-1], retrans.raw[-50:-1])
+        self.assertNotEqual(corrupt.raw[-1], retrans.raw[-1])
+        self.assertGreater(retrans.timestamps[0], corrupt.timestamps[0])
 
     def test_retransmit_timestamp_after_corrupt(self):
         rto = 0.1

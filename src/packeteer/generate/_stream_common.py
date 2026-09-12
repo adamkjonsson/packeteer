@@ -25,6 +25,11 @@ from .tcp import TCP_ACK, TCP_FIN, TCP_SYN, TCPOptions
 
 _WRAP = 2 ** 32
 
+#: Bytes a Timestamps option adds to every segment: NOP, NOP, then the
+#: 10-byte option (RFC 7323 A.2).  A sender's usable segment is smaller by
+#: this much than the MSS its peer advertised.
+TCP_TIMESTAMPS_OVERHEAD: int = 12
+
 _DEFAULT_PAYLOAD = Path(__file__).with_name("default_payload.txt").read_bytes()
 
 
@@ -53,8 +58,96 @@ def _pkt_usec(pkt: object) -> int:
 # ── TCP packet assembly ──────────────────────────────────────────────────────
 
 @dataclass
+class _TimestampClock:
+    """One direction's TSval clock (RFC 7323 §3): a 1 ms tick from a start.
+
+    TSval is the sender's notion of time, not the capture's, but a capture is
+    the only timeline a generator has — so the value is the packet's own
+    timestamp, in milliseconds since the clock's origin, offset by a start
+    chosen the way an initial sequence number is.
+
+    Attributes:
+        start: TSval at the origin.
+        origin_usec: Timestamp the clock reads *start* at.
+
+    """
+
+    start: int
+    origin_usec: int
+
+    def at(self, usec: int) -> int:
+        """Return the TSval for a segment timestamped *usec*."""
+        return (self.start + (usec - self.origin_usec) // 1000) % _WRAP
+
+
+def _clocks_from(packets: list) -> dict[str, _TimestampClock] | None:
+    """Recover both directions' clocks from a connection's handshake.
+
+    A connection that negotiated timestamps has a TSval on its SYN and its
+    SYN-ACK, and each is that side's clock reading at that moment — which is
+    everything a later pass needs to stamp a packet it builds or rebuilds,
+    without the generator having to hand its clocks across.  ``None`` when
+    the connection did not negotiate them, in which case a pass copies
+    segments verbatim as it always did.
+
+    Args:
+        packets: One connection's packets, any order.
+
+    Returns:
+        ``{"c2s": clock, "s2c": clock}``, or ``None``.
+
+    """
+    syn = synack = None
+    for pkt in packets:
+        if pkt.flags & TCP_SYN:
+            if pkt.flags & TCP_ACK:
+                synack = synack or pkt
+            else:
+                syn = syn or pkt
+    if syn is None or synack is None:
+        return None
+    if syn.timestamps is None or synack.timestamps is None:
+        return None
+    return {
+        "c2s": _TimestampClock(syn.timestamps[0], _pkt_usec(syn)),
+        "s2c": _TimestampClock(synack.timestamps[0], _pkt_usec(synack)),
+    }
+
+
+def _tsecr_at(packets: list, direction: str, usec: int) -> int:
+    """Return the TSval a *direction* segment sent at *usec* should echo.
+
+    The most recent TSval that arrived from the other side by then (RFC 7323
+    §4.3's ``TS.Recent``).  Lost segments are not in *packets*, so a value a
+    receiver never saw is never echoed.
+
+    Args:
+        packets: The connection's packets.
+        direction: ``"c2s"`` or ``"s2c"`` — the segment being built.
+        usec: Its timestamp.
+
+    Returns:
+        The TSval to put in TSecr, or ``0`` when nothing has arrived yet.
+
+    """
+    latest = None
+    for pkt in packets:
+        if pkt.direction == direction or pkt.timestamps is None:
+            continue
+        if _pkt_usec(pkt) <= usec and (latest is None or _pkt_usec(pkt) > _pkt_usec(latest)):
+            latest = pkt
+    return latest.timestamps[0] if latest is not None else 0
+
+
+@dataclass
 class _TCPEndpoint:
-    """Mutable per-side connection state (internal only)."""
+    """Mutable per-side connection state (internal only).
+
+    ``ts_clock`` is this side's TSval clock, set when its SYN advertised
+    timestamps; ``ts_recent`` is the latest TSval that arrived from the peer
+    in order — what this side echoes — and ``ts_last`` the last TSval it
+    sent, so the clock never appears to run backwards under capture jitter.
+    """
 
     ip: str
     port: int
@@ -62,6 +155,20 @@ class _TCPEndpoint:
     seq: int    # next sequence number to send
     ack: int    # next sequence number expected from the peer
     window: int = 65535
+    ts_clock: _TimestampClock | None = None
+    ts_recent: int = 0
+    ts_last: int | None = None
+
+    def tsval_at(self, usec: int) -> int:
+        """Return, and remember, the TSval for a segment sent at *usec*."""
+        assert self.ts_clock is not None
+        value = self.ts_clock.at(usec)
+        # Capture jitter can timestamp a later segment earlier than the one
+        # before it; a host's clock does not go backwards, so nor does this.
+        if self.ts_last is not None and (value - self.ts_last) % _WRAP > _WRAP // 2:
+            value = self.ts_last
+        self.ts_last = value
+        return value
 
 
 def _advance_seq(ep: _TCPEndpoint, flags: int, payload_len: int) -> None:
@@ -76,6 +183,25 @@ def _advance_seq(ep: _TCPEndpoint, flags: int, payload_len: int) -> None:
     if flags & TCP_FIN:
         consumed += 1
     ep.seq = (ep.seq + consumed) % _WRAP
+
+
+def _tcp_payload(raw: bytes, include_ethernet: bool) -> bytes:
+    """Return the TCP payload carried by *raw*, at any encapsulation depth.
+
+    Read back through the parser rather than sliced off the end: a frame
+    below the 60-byte Ethernet minimum is padded after the payload, and
+    ``raw[-payload_len:]`` would hand back the padding.
+    """
+    from packeteer.parse import parse_packet
+    from packeteer.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW
+
+    pkt = parse_packet(
+        raw, link_type=LINKTYPE_ETHERNET if include_ethernet else LINKTYPE_RAW,
+        decode_app=False,
+    )
+    while pkt.tunneled is not None:
+        pkt = pkt.tunneled
+    return pkt.payload
 
 
 def _build_packet(

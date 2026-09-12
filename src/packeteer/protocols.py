@@ -23,7 +23,10 @@ is treated identically — there is no privileged built-in path.
 
 The *name* doubles as the packet-spec section key, so ``"sensor"`` above makes
 ``packeteer parse`` emit a ``"sensor"`` object beside ``"network"`` and
-``"transport"``, and ``packeteer build`` read it back.
+``"transport"``, and ``packeteer build`` read it back — and as the attribute
+the message is reached by: ``pkt.sensor`` on a parsed packet,
+``PacketBuilder().sensor(msg)`` on the builder.  :func:`check_name` says what
+that requires of it.
 
 **This module imports only the standard library, and must keep doing so.**
 Both :mod:`packeteer.generate` and :mod:`packeteer.parse` depend on it, and
@@ -34,9 +37,10 @@ cycle between all four.  It therefore holds *callables*, never modules.
 from __future__ import annotations
 
 import importlib.util
+import keyword
 import os
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -50,17 +54,32 @@ __all__ = [
     "for_section",
     "for_message",
     "load_module",
+    "check_name",
+    "check_section",
 ]
 
-# Top-level packet-spec keys that describe a packet's structure rather than an
-# application protocol.  A protocol may not take one of these as its name,
-# because its section would be read as that layer instead.  This is the list of
-# ``##`` headings in docs/packet-spec/format.md, less the three application
-# sections themselves — ``dns``, ``dhcp`` and ``http`` are registered names.
+# Names a protocol may not take.  A protocol's name is both its packet-spec
+# section key and, since #139, an attribute on ParsedPacket and a method on
+# PacketBuilder — so it may not be a key that describes a packet's structure
+# (its section would be read as that layer), and it may not be a public name
+# on either class (``pkt.sensor`` would shadow real API in silence).
+#
+# The first group is the ``##`` headings in docs/packet-spec/format.md, less
+# the three application sections — ``dns``, ``dhcp`` and ``http`` are
+# registered names.  The second is every public attribute of ParsedPacket and
+# every public method of PacketBuilder.  This module imports only the standard
+# library, so the list is literal; ``test_named_accessors.py`` enumerates both
+# classes and fails the moment a public name is added without reserving it.
 _RESERVED_NAMES: frozenset[str] = frozenset({
+    # packet-spec structural keys
     "ah", "arp", "esp", "etherip", "ethernet", "geneve", "gre", "gtpu", "ipip",
     "metadata", "mpls", "network", "packet_metadata", "payload", "pppoe",
     "pseudowire", "sll", "sll2", "transport", "vxlan",
+    # ParsedPacket attributes and PacketBuilder methods not already above
+    "app", "app_protocol", "build", "datagram_truncated", "fragment",
+    "fragment_header", "hop_by_hop_options", "icmp", "icmpv6", "ip", "loopback",
+    "offsets", "payload_offset", "sctp", "source_records", "tcp", "tick_hz",
+    "timestamp", "ts_frac", "ts_sec", "tunneled", "udp", "vlan",
 })
 
 _TRANSPORTS: frozenset[str] = frozenset({"tcp", "udp"})
@@ -78,9 +97,13 @@ class AppProtocol:
     """One application-layer protocol packeteer can parse, build and serialise.
 
     Attributes:
-        name: Short identifier, also the packet-spec section key — ``"dns"``
-            produces a ``"dns"`` object in a spec.  May not be one of the
-            structural keys listed in ``docs/packet-spec/format.md``.
+        name: Short identifier.  It is the packet-spec section key —
+            ``"dns"`` produces a ``"dns"`` object in a spec — and the
+            attribute the decoded message is reached by (``pkt.dns``,
+            ``PacketBuilder().dns(msg)``), so it must be a plain Python
+            identifier, not start with an underscore, and not be one of the
+            structural keys in ``docs/packet-spec/format.md`` or a public
+            name on either class.  :func:`register` refuses it otherwise.
         over: Which transport carries it — ``"udp"``, ``"tcp"``, or
             ``"either"`` for a protocol that runs over both, as DNS does.
         ports: Transport ports that identify it.  A port claim is a weak
@@ -98,7 +121,12 @@ class AppProtocol:
             without a protocol-specific keyword argument.
         to_spec: ``message -> spec section``, the object written under
             :attr:`name` in a packet spec.
-        from_spec: ``spec section -> message``, the inverse.
+        from_spec: ``spec section -> message``, the inverse.  A key it does
+            not read is an absent field, so a partial section builds a
+            message with defaults — but a **non-empty section none of whose
+            keys it reads must raise** rather than build a default message.
+            :func:`check_section` is that guard, one call at the top; see
+            it for why.
         sanitise: ``(section, replacer, options) -> None``, redacting the
             section in place.  ``None`` means **nothing is redacted**: a
             protocol registered without one flows through
@@ -155,6 +183,47 @@ def _reindex() -> None:
             _by_message[message] = proto
 
 
+def check_name(name: str) -> None:
+    """Refuse a name a protocol may not have.
+
+    The rule :func:`register` applies, on its own so it can be asked earlier
+    — ``packeteer protocol check`` uses it to refuse a spec whose ``name:``
+    would fail at import, and a tool generating protocols can ask before it
+    writes anything.  A name is a packet-spec section key and an attribute
+    name at once (``pkt.sensor``, ``PacketBuilder().sensor(msg)``), so it has
+    to be a plain identifier and must not shadow anything either class has.
+
+    Args:
+        name: The candidate :attr:`AppProtocol.name`.
+
+    Raises:
+        ProtocolError: If *name* is not a Python identifier, is a keyword,
+            starts with an underscore, or is reserved — a packet-spec
+            structural key, or a public name on
+            :class:`~packeteer.parse.core.ParsedPacket` or
+            :class:`~packeteer.generate.builder.PacketBuilder`.  The message
+            says which.
+
+    """
+    if not name.isidentifier() or keyword.iskeyword(name):
+        raise ProtocolError(
+            f"protocol name {name!r} is not a Python identifier; it becomes "
+            f"an attribute (pkt.{name}) and a builder method, so it must be "
+            f"one — letters, digits and underscores, not starting with a digit"
+        )
+    if name.startswith("_"):
+        raise ProtocolError(
+            f"protocol name {name!r} starts with an underscore, which marks a "
+            f"private attribute; a protocol is public API"
+        )
+    if name in _RESERVED_NAMES:
+        raise ProtocolError(
+            f"protocol name {name!r} is reserved: it is a packet-spec key or "
+            f"an attribute of ParsedPacket / PacketBuilder, and a protocol by "
+            f"that name would be read as that layer or shadow that attribute"
+        )
+
+
 def _check(proto: AppProtocol) -> None:
     """Raise :class:`ProtocolError` if *proto* cannot join the registry."""
     if proto.over not in _OVER_VALUES:
@@ -162,12 +231,7 @@ def _check(proto: AppProtocol) -> None:
             f"protocol {proto.name!r}: over={proto.over!r} is not one of "
             f"{', '.join(sorted(_OVER_VALUES))}"
         )
-    if proto.name in _RESERVED_NAMES:
-        raise ProtocolError(
-            f"protocol name {proto.name!r} is a reserved packet-spec key; "
-            "a section by that name describes a packet layer, not an "
-            "application protocol"
-        )
+    check_name(proto.name)
     if proto.name in _registry:
         raise ProtocolError(
             f"protocol {proto.name!r} is already registered; "
@@ -199,10 +263,14 @@ def register(proto: AppProtocol) -> None:
         proto: The protocol to register.
 
     Raises:
-        ProtocolError: If :attr:`~AppProtocol.over` is not a recognised value,
-            or the name is a reserved packet-spec key, or the name, one of the
-            ports, or one of the message types is already claimed.  The
-            message names what collided.
+        ProtocolError: If :attr:`~AppProtocol.over` is not a recognised value;
+            if the name is not a plain Python identifier, starts with an
+            underscore, or is reserved (a packet-spec structural key, or a
+            public name on :class:`~packeteer.parse.core.ParsedPacket` or
+            :class:`~packeteer.generate.builder.PacketBuilder`, which the
+            name would shadow); or if the name, one of the ports, or one of
+            the message types is already claimed.  The message names what
+            went wrong.
 
     """
     _check(proto)
@@ -312,6 +380,68 @@ def load_module(path: str | os.PathLike) -> tuple[AppProtocol, ...]:
     added = tuple(p for p in registered() if p.name not in before)
     _loaded[resolved] = tuple(proto.name for proto in added)
     return added
+
+
+def check_section(
+    name: str, section: Mapping[str, Any], known: Iterable[str],
+) -> None:
+    """Refuse a spec section that is not a section of protocol *name*.
+
+    The guard every ``from_spec`` should open with.  A key ``from_spec`` does
+    not read is an absent field, which is the right reading of a *partial*
+    section — a spec is edited by hand, and a message with one key set is a
+    message with defaults everywhere else.  It is the wrong reading of a
+    section in which **nothing** is recognised, because by then the
+    difference between "this message has no questions" and "this is not a
+    section" has been lost, and what comes out is a default message that is
+    indistinguishable from a deliberate one (#137: a generated stream carried
+    forty empty DNS headers, and a decoder run over it reported forty
+    messages decoded).
+
+    An empty section is allowed through: ``{}`` is an explicit request for a
+    default message.
+
+    Args:
+        name: The protocol's :attr:`~AppProtocol.name`, for the message.
+        section: The object handed to ``from_spec``.
+        known: Every key ``from_spec`` reads.
+
+    Raises:
+        ValueError: If *section* is non-empty and shares no key with
+            *known*.  When *section* carries *name* itself as a key, the
+            message says so — that is the shape ``packeteer parse`` writes,
+            and the object under that key is what was meant.
+
+    Example::
+
+        _SECTION_KEYS = frozenset({"id", "flags", "questions", "answers"})
+
+        def from_spec(section: dict[str, Any]) -> DNSMessage:
+            protocols.check_section("dns", section, _SECTION_KEYS)
+            ...
+
+    """
+    if not section:
+        return
+    expected = frozenset(known)
+    if section.keys() & expected:
+        return
+    seen = sorted(section)
+    shown = ", ".join(repr(k) for k in seen[:6])
+    if len(seen) > 6:
+        shown += f", … ({len(seen)} keys)"
+    if isinstance(section.get(name), Mapping):
+        hint = (
+            f"; this looks like a whole packet spec, which is what "
+            f"'packeteer parse' writes — the object under {name!r} is the "
+            f"section"
+        )
+    else:
+        hint = ""
+    raise ValueError(
+        f"{name}: not a {name} section — none of its keys ({shown}) is one "
+        f"{name} reads ({', '.join(sorted(expected))}){hint}"
+    )
 
 
 def registered() -> tuple[AppProtocol, ...]:

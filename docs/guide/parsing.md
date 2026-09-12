@@ -258,6 +258,42 @@ inner = pkt.tunneled
 frame[inner.payload_offset:][:len(inner.payload)] == inner.payload    # True
 ```
 
+## Where each header was in the frame
+
+`pkt.offsets` is the same fact for every header, keyed by the name of the
+attribute the header is on:
+
+```python
+pkt = parse_packet(frame)
+pkt.offsets                # {"ethernet": 0, "ip": 14, "transport": 34, "app": 42}
+frame[pkt.offsets["ip"]] >> 4                   # 4 — the IP version nibble
+frame[pkt.offsets["transport"]:][:20]           # the TCP header, as captured
+```
+
+A key is present exactly when the layer is — `"ip" in pkt.offsets` and
+`pkt.ip is not None` agree — and `"mpls"` is the first label of a stack.
+The conventions are `payload_offset`'s: relative to the outermost frame at
+any tunnel depth, so an inner header of a GRE or VXLAN packet, which sits an
+arbitrary distance in, is found by lookup rather than arithmetic; and
+additive with {attr}`~packeteer.pcap.PcapRecord.data_offset` for a position
+in the capture file.
+
+**`"app"` is where a decoded application message's bytes start**, and it is
+the entry `payload_offset` cannot provide: once DNS, HTTP or your own
+protocol has decoded the payload, `pkt.payload` is empty and
+`payload_offset` is `None`.  A tool citing "the DNS message at file offset
+X" reads `pkt.offsets["app"]`:
+
+```python
+if pkt.dns is not None:
+    start = record.data_offset + pkt.offsets["app"]
+```
+
+The other uses are verifying a checksum against the bytes as captured
+without re-parsing, and citing a header rather than a payload.  The mapping
+is not written to the packet spec: it is provenance about a frame, not a
+description of one.
+
 ## Reading a pcap file packet-by-packet
 
 When you need the capture timestamp alongside each parsed packet, read the
@@ -311,10 +347,24 @@ leaves the raw bytes in `pkt.payload` unchanged.
 
 ### Any protocol, not just the three
 
-`pkt.dns`, `pkt.dhcp` and `pkt.http` are conveniences for the protocols
-packeteer ships with.  **Every** decoded application message — those three and
-any protocol you register — is on
-{attr}`~packeteer.parse.core.ParsedPacket.app`, with
+**Every registered protocol is an attribute on the packet, named after it.**
+`pkt.dns`, `pkt.dhcp` and `pkt.http` are the three packeteer ships with; a
+protocol you register — by hand, or compiled from a spec — is reached the
+same way, and has the same shape: the decoded message when this packet is
+that protocol, `None` when it is not.
+
+```python
+pkt.dns                             # DNSMessage(...) on a DNS packet, else None
+pkt.sensor                          # Reading(...) on a sensor packet, else None
+```
+
+A name no protocol is registered under is an `AttributeError`, so a typo
+still fails loudly.  `dir(pkt)` lists the registered names, which is what the
+REPL completes on; a static type checker cannot see them, and the three
+built-ins are declared fields so that it can see those.
+
+For code that does not know which protocol it is looking at, the same object
+is on {attr}`~packeteer.parse.core.ParsedPacket.app`, with
 {attr}`~packeteer.parse.core.ParsedPacket.app_protocol` naming the protocol
 that decoded it:
 

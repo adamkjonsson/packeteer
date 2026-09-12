@@ -27,6 +27,174 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ---
 
+## [0.14.0] - 2026-09-12
+
+**The downstream release.**  0.12.0 made a user's protocol first-class and
+0.13.0 made the spec dialect shared with kober; this is the first release
+shaped by what happened when those were used.  Three of its six changes were
+found downstream against 0.12.0 — a consumer that could not ask whether a
+link type is supported, a decoder test fed a generated stream that carried
+nothing, and a registry whose generic `app` accessor turned out worse than
+the three-name convenience it was meant to replace.
+
+**Generated captures differ from 0.13.0's.**  Every DNS response now carries
+compression pointers and every TCP connection negotiates timestamps and
+carries one on each segment, so a test pinned to a seeded 0.13.0 capture will
+see new bytes.  Both are the same kind of change: a decoder tested only
+against packeteer's output had never been shown either, and now is.
+
+**One breaking change**: a protocol's name is now an attribute name, so it
+must be a plain identifier and not one of a longer reserved list.  See
+**Changed**.
+
+Beside those: a protocol is reached by its own name on both front doors
+(`pkt.sensor`, `.sensor(msg)`); a section that is not a section is refused
+instead of built into an empty message, and `parse` output replays through
+`--protocol-messages` as it is; `supports_link_type` answers before a
+capture is read; and `ParsedPacket.offsets` says where every header sits.
+
+### Added
+
+- **A registered protocol is reached by its own name, on both front doors.**
+  `pkt.sensor` on a `ParsedPacket` is the decoded message when the packet is
+  that protocol and `None` when it is not — the shape `pkt.dns` has always
+  had — and `PacketBuilder().sensor(msg)` attaches one, checking that the
+  message actually belongs to `sensor` (a `TypeError` naming the protocol it
+  *does* belong to otherwise).  Both resolve on demand for every protocol in
+  the registry, so a compiled spec gets them the moment it is loaded; a name
+  no protocol is registered under is an `AttributeError`, and `dir()` on
+  either object lists what is registered.  `pkt.app`, `pkt.app_protocol` and
+  `.app()` are unchanged, for generic code that dispatches on whatever it is
+  handed.  `dns`, `dhcp` and `http` stay declared, typed fields; the note
+  marking them for removal at 1.0 is gone — they were the model, not the
+  exception.  (#139)
+- `packeteer.protocols.check_name(name)` — the rule `register()` now applies
+  to a name, on its own, so it can be asked before anything is written.
+  `packeteer protocol check` uses it to refuse a spec whose `name:` would
+  fail at import.  (#139)
+- `packeteer.protocols.check_section(name, section, known)` — the guard a
+  `from_spec` opens with: it refuses a non-empty section none of whose keys
+  the protocol reads, lets `{}` through as an explicit default message, and
+  names the shape `packeteer parse` writes when that is what it was handed.
+  `AppProtocol.from_spec`'s contract now requires the refusal, and
+  `packeteer.conformance.check_protocol` checks for it.  (#137)
+- `packeteer.app.protocol_payload_fn(proto, messages, transport)` — the API
+  behind `packeteer stream --payload <protocol> --protocol-messages`: turns a
+  list of sections, or a `packeteer parse` document, into the cycling
+  `payload_fn` the stream generators take.  (#137)
+- `TCPStreamPacket.timestamps` — the `(TSval, TSecr)` a generated segment
+  carries, or `None`; what lets a hook or a later pass echo the right value
+  without re-parsing.  (#90)
+- `packeteer.generate._stream_common.TCP_TIMESTAMPS_OVERHEAD` (12), the
+  bytes the option takes on every segment.  (#90)
+- `compress=` on `packeteer.generate.dns._build_dns_message`,
+  `_build_dns_message_tcp` and `PacketBuilder.dns()` — `False` writes every
+  name in full, which is what 0.13.0 did.  The registry path (`.app()`,
+  `build`, `stream`) always compresses.  (#131)
+- `ParsedPacket.offsets: dict[str, int]` — where each parsed header starts
+  within the frame, keyed by the attribute the header is on (`"ethernet"`,
+  `"ip"`, `"transport"`, `"gre"`, … ; `"mpls"` is the first label), plus
+  `"app"` for the start of a decoded application message.  That last entry
+  closes the gap `payload_offset` leaves: once a protocol has decoded the
+  payload, `payload` is empty and `payload_offset` is `None`, so nothing
+  could say where a DNS message sat in the file.  Same conventions as
+  `payload_offset` — relative to the outermost frame at any tunnel depth,
+  additive with `PcapRecord.data_offset` — and not written to the packet
+  spec.  (#74)
+- `packeteer.parse.supports_link_type(link_type)` and
+  `packeteer.parse.SUPPORTED_LINK_TYPES` — whether `parse_packet` can decode
+  a pcap link type, so a consumer can ask before reading a capture instead of
+  inferring it from which header objects came back `None` (which misfiles a
+  raw-IP packet with a bad IP header as a link-layer problem).  The set is
+  the parser's own definition: the link-layer ladder tests membership first.
+  `PcapInfo` gains `link_type_supported`, and `packeteer file-info` says on
+  the `Link-type` line, and in its closing note, when the link type is one
+  packeteer cannot decode — rather than suggesting the file may be malformed.
+  The two BSD loopback types now have names on that report.  (#138)
+
+### Changed
+
+- **Generated TCP connections negotiate timestamps and carry them on every
+  segment** (RFC 7323).  `default_syn_options()` now advertises the option,
+  and when both the SYN and the SYN-ACK carry it — the default on
+  `generate_tcp_stream`, and on `TCPSession` and `--payload http` wherever
+  the handshake options are passed — every later segment carries a
+  Timestamps option: TSval from a per-side 1 ms clock started at a seeded
+  random value (or at the advertised TSval when non-zero), TSecr echoing
+  the latest value that arrived *in order* from the peer, so after a loss
+  the duplicate ACKs echo the last in-sequence segment.  A retransmission,
+  spurious or recovering a loss, is **rebuilt** with the clock at its resend
+  time rather than copied — how an analyser tells it from a duplicate — and
+  the acknowledgement that answers it echoes the new value; a corrupted
+  segment keeps the original's stamp.  Data is segmented at the MSS less
+  the option's 12 bytes, so a full segment is 1448 bytes on a 1500-byte MTU
+  instead of overrunning it.  Every generated TCP capture therefore
+  **differs in bytes from 0.13.0's**: twelve bytes more per segment, and
+  different seeded output.  With only one side advertising, no segment
+  carries the option, as the RFC requires; `--no-tcp-options`, or handshake
+  options without `timestamps`, gives 0.13.0's layout.  (#90)
+- **Generated DNS now compresses names** (RFC 1035 §4.1.4), as every real
+  resolver does: a name whose suffix has already been written becomes a
+  pointer to the earlier occurrence — the longest suffix, pointing backwards
+  — in questions, record names, and the RDATA of CNAME, NS, PTR, MX and SOA
+  (and not TXT or unknown types, per RFC 3597).  Every DNS message
+  `packeteer build`, `packeteer stream --payload dns`, `.dns()` and `.app()`
+  produce therefore **differs in bytes from 0.13.0's** wherever a name
+  repeats, which is every response; a test pinned to those bytes will see
+  it.  A decoder tested against packeteer's DNS is now shown pointers.  The
+  parser's `dns.raw` rule is unchanged and gets better for it: `raw` is
+  kept when the decoded fields would not re-encode to the captured bytes,
+  and a message packeteer compressed itself — or one whose sender chose the
+  same targets — now re-encodes from its fields and carries none.  In the
+  other direction, a captured message written *without* compression now
+  gains `raw`, since the default rebuild differs.  Matching is
+  case-sensitive so the round trip stays lossless.  `dns.raw` still wins
+  whenever it is set.  (#131)
+- **Breaking:** a protocol's name must now be a plain Python identifier, not
+  a keyword, not starting with an underscore, and not one of a longer list
+  of reserved names — because it is an attribute name from here on.  The
+  reserved list grows from the packet-spec structural keys to every public
+  name on `ParsedPacket` and `PacketBuilder` (`app`, `build`, `fragment`,
+  `ip`, `tcp`, `udp`, `timestamp`, `payload_offset`, …), which a protocol so
+  named would silently shadow.  A name such as `my-sensor` or `build`
+  registered in 0.13.0 and is refused by `register()` and by
+  `packeteer protocol check` now; rename it — a prefix in the spec's own
+  `name:` (`acme_sensor`) is the convention for keeping a library of
+  protocols apart.  (#139)
+
+### Fixed
+
+- `--protocol-messages` built an **empty message** from a section wrapped
+  under the protocol's name — `{"dns": {…}}`, which is the shape
+  `packeteer parse` writes — because every `from_spec` read an unrecognised
+  key as an absent field.  A generated stream then carried bare 12-byte DNS
+  headers that converted cleanly and decoded as forty messages, so the
+  failure looked like success.  Two changes: the file may now be a `parse`
+  document, an array of its packets, or an array of sections, and the
+  protocol's section is taken from each element (a packet carrying none,
+  such as an ACK, is not a message and is passed over); and an element that
+  is not a section at all is refused, naming its index and the keys a
+  section has.  This holds for the three built-ins and for every compiled
+  protocol, and `packeteer build` gets the same refusal.  (#137)
+
+### Documentation
+
+- A pre-release pass over every page against what the branch now does.
+  Stale, and fixed: the `--app` filter and `--no-decode-app` were documented
+  as taking `dns`, `dhcp` or `http` only, when the filter has matched any
+  registered protocol's section since 0.12.0; the overview's protocol table
+  and `--link-type`'s accepted names omitted the BSD loopback types from the
+  same release; the packet-spec reference's `metadata.link_type` row listed
+  two of the six link types; and the hand-written-protocol guide's own test
+  still reached its protocol through `.app()`.  The transcripts in the
+  `protocol` CLI page and the protocols guide were regenerated (the compiled
+  module now carries the `from_spec` guard, so the excerpt shows it).  The
+  README gained the one-line demonstration that a compiled protocol is a peer
+  of the built-ins — `pkt.sensor`, `.sensor(msg)` — and says DNS is built
+  compressed and TCP streams carry timestamps.
+
+---
+
 ## [0.13.0] - 2026-09-10
 
 **The dialect release.**  packeteer and
@@ -3031,7 +3199,8 @@ the exhaustive API reference.
      tagged with names that predate this convention, so only the entries below
      carry compare links. -->
 
-[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/adamkjonsson/packeteer/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/adamkjonsson/packeteer/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/adamkjonsson/packeteer/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/adamkjonsson/packeteer/compare/v0.10.0...v0.11.0

@@ -101,14 +101,17 @@ def default_syn_options(mss: int = DEFAULT_MSS) -> TCPOptions:
     """Return the TCP options a plausible modern client puts on a SYN.
 
     Every current stack advertises at least a Maximum Segment Size, and
-    generally SACK-permitted and a window scale beside it.  A SYN carrying no
-    options at all — a bare 20-byte header — is the most conspicuous mark of
-    generated traffic in a TCP capture, which is what this exists to avoid.
+    generally SACK-permitted, a window scale and timestamps beside it.  A SYN
+    carrying no options at all — a bare 20-byte header — is the most
+    conspicuous mark of generated traffic in a TCP capture, which is what
+    this exists to avoid.
 
-    Timestamps are deliberately absent.  A connection that negotiates them
-    carries one on *every* segment, and the generators put options on the
-    handshake only; advertising them and then never sending one would trade
-    one implausibility for another.
+    Timestamps are advertised as ``(0, 0)``, which is the switch: a stream
+    generator seeing them on both the SYN and the SYN-ACK negotiates them
+    and carries one on every later segment (RFC 7323 §3.2), choosing the
+    clock's start itself as it chooses an initial sequence number.  A
+    non-zero TSval here is honoured as that start.  Drop the attribute to
+    advertise everything else and not timestamps.
 
     Args:
         mss: Maximum Segment Size to advertise.  Pass the value the traffic is
@@ -121,6 +124,7 @@ def default_syn_options(mss: int = DEFAULT_MSS) -> TCPOptions:
     """
     return TCPOptions(
         mss=mss, sack_permitted=True, window_scale=DEFAULT_WINDOW_SCALE,
+        timestamps=(0, 0),
     )
 
 

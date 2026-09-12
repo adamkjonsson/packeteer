@@ -13,7 +13,7 @@ from packeteer.generate.http import (
     HTTPResponse,
     _build_http_message,
 )
-from packeteer.protocols import AppProtocol
+from packeteer.protocols import AppProtocol, check_section
 
 
 def encode(msg: object, transport: str = "tcp") -> bytes:
@@ -69,6 +69,14 @@ def to_spec(msg: object) -> dict[str, Any]:
     return config["http"]
 
 
+#: Every key ``from_spec`` reads.  A non-empty section with none of them is
+#: not a section — see :func:`packeteer.protocols.check_section`.
+_SECTION_KEYS: frozenset[str] = frozenset({
+    "type", "method", "path", "version", "status_code", "reason", "headers",
+    "body",
+})
+
+
 def from_spec(section: dict[str, Any]) -> HTTPRequest | HTTPResponse:
     """Build an HTTP message from a spec section.
 
@@ -81,7 +89,13 @@ def from_spec(section: dict[str, Any]) -> HTTPRequest | HTTPResponse:
     Returns:
         The message it describes.
 
+    Raises:
+        ValueError: If *section* is non-empty and none of its keys is one an
+            HTTP section has — most often a whole packet spec passed where
+            its ``"http"`` object was meant.
+
     """
+    check_section("http", section, _SECTION_KEYS)
     headers = section.get("headers", {})
     body = bytes.fromhex(section.get("body", ""))
     if section.get("type") == "response":

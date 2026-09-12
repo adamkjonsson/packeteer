@@ -174,6 +174,7 @@ from __future__ import annotations
 import os
 import socket
 import struct
+from collections.abc import Callable
 
 from packeteer import protocols
 
@@ -522,6 +523,27 @@ class PacketBuilder:
     ``0`` when the object is stored and filled in correctly at :meth:`build` /
     :meth:`fragment` time.
 
+    **Every registered application protocol is a payload method, named after
+    it.**  :meth:`dns`, :meth:`dhcp` and :meth:`http` are declared; any other
+    protocol — one registered with :func:`packeteer.protocols.register`, or
+    compiled from a spec — is reached the same way, resolved on demand::
+
+        pkt = (PacketBuilder()
+            .ethernet()
+            .ip(src="10.0.0.1", dst="10.0.0.2")
+            .udp(dst_port=9000)
+            .sensor(Reading(value=258))     # the protocol registered as "sensor"
+            .build()
+        )
+
+    Such a method takes the message and encodes it through the protocol that
+    owns the name, inferring the transport from the layer stack as
+    :meth:`app` does.  Unlike :meth:`app` it can check that the message
+    actually belongs to the protocol named, and raises ``TypeError`` when it
+    does not.  A name no protocol is registered under is an
+    ``AttributeError``.  ``dir(PacketBuilder())`` lists the registered
+    names; a static type checker cannot see them.
+
     Example::
 
         from packeteer.generate import PacketBuilder
@@ -541,6 +563,47 @@ class PacketBuilder:
         self._payload_size: int = 0
         self._payload_data: bytes | None = None
         self._cached_payload: bytes | None = None
+
+    def __getattr__(self, name: str) -> Callable[[object], "PacketBuilder"]:
+        # Only reached for a name that is not a real method.  Dunders are
+        # refused before the registry is consulted (copy and pickle probe for
+        # them through getattr), and a protocol name cannot start with an
+        # underscore anyway.
+        if name.startswith("_"):
+            raise AttributeError(name)
+        # Same cycle as .app(): packeteer.app imports this package, and
+        # importing it is what registers the built-ins.
+        from packeteer.app import register_builtins
+
+        register_builtins()
+        proto = protocols.for_section(name)
+        if proto is None:
+            raise AttributeError(
+                f"{type(self).__name__!r} object has no attribute {name!r}; "
+                f"no protocol is registered as {name!r}"
+            )
+
+        def layer(msg: object) -> PacketBuilder:
+            owner = protocols.for_message(msg)
+            if owner is not proto:
+                belongs = (f"; it is a message of {owner.name!r}" if owner
+                           else "; no registered protocol owns it")
+                raise TypeError(
+                    f".{name}() takes a message of {name!r}, not "
+                    f"{type(msg).__name__!r}{belongs}"
+                )
+            return self.payload(data=proto.encode(msg, self._transport_name(proto)))
+
+        layer.__name__ = name
+        layer.__doc__ = f"Set the payload to a serialised {name!r} message."
+        return layer
+
+    def __dir__(self) -> list[str]:
+        from packeteer.app import register_builtins
+
+        register_builtins()
+        return sorted(set(super().__dir__())
+                      | {proto.name for proto in protocols.registered()})
 
     # ── layer configuration methods ──────────────────────────────────────────
 
@@ -1418,7 +1481,9 @@ class PacketBuilder:
         ))
         return self
 
-    def dns(self, msg: DNSMessage, *, tcp: bool = False) -> "PacketBuilder":
+    def dns(
+        self, msg: DNSMessage, *, tcp: bool = False, compress: bool = True,
+    ) -> "PacketBuilder":
         """Set the payload to a serialised DNS message.
 
         A convenience wrapper around :meth:`payload` for DNS traffic.  Pass
@@ -1429,9 +1494,14 @@ class PacketBuilder:
             msg: The :class:`~packeteer.generate.dns.DNSMessage` to encode.
             tcp: When ``True``, prefix the encoded message with a 2-byte
                 big-endian length field as required by DNS-over-TCP.
+            compress: Whether to compress repeated names with pointers
+                (RFC 1035 §4.1.4), as real resolvers do.  ``False`` writes
+                every name in full.  Ignored when ``msg.raw`` is set, which
+                always wins.
 
         """
-        data = _build_dns_message_tcp(msg) if tcp else _build_dns_message(msg)
+        data = (_build_dns_message_tcp(msg, compress=compress) if tcp
+                else _build_dns_message(msg, compress=compress))
         return self.payload(data=data)
 
     def dhcp(self, msg: DHCPMessage) -> "PacketBuilder":
@@ -1467,10 +1537,12 @@ class PacketBuilder:
     def app(self, msg: object) -> "PacketBuilder":
         """Set the payload to a serialised message of any registered protocol.
 
-        The generic form of :meth:`dns`, :meth:`dhcp` and :meth:`http`: it
-        looks *msg*'s type up in :mod:`packeteer.protocols` and encodes it with
-        whichever protocol owns it, so a protocol registered with
-        :func:`packeteer.protocols.register` is built exactly like a built-in.
+        The generic form of :meth:`dns`, :meth:`dhcp`, :meth:`http` and of
+        the method every other registered protocol gets under its own name:
+        it looks *msg*'s type up in :mod:`packeteer.protocols` and encodes it
+        with whichever protocol owns it.  Use this from code that dispatches
+        on whatever message it is handed; code that knows the protocol calls
+        the method named after it, which also checks the message is its.
 
         The transport comes from the layer stack — the last :meth:`tcp` or
         :meth:`udp` call before this one — which is what lets DNS decide about
@@ -1526,8 +1598,9 @@ class PacketBuilder:
         if proto.over != "either":
             return proto.over
         raise ValueError(
-            f"{proto.name!r} runs over either transport, so .app() needs a "
-            ".tcp() or .udp() layer before it to know which to encode for"
+            f"{proto.name!r} runs over either transport, so encoding it needs "
+            f"a .tcp() or .udp() layer before .{proto.name}() / .app() to "
+            f"know which to encode for"
         )
 
     def payload(self, *, size: int = 0, data: bytes | None = None) -> "PacketBuilder":

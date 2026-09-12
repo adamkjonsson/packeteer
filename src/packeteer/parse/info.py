@@ -32,11 +32,13 @@ from packeteer.pcap import (
     LINKTYPE_ETHERNET,
     LINKTYPE_LINUX_SLL,
     LINKTYPE_LINUX_SLL2,
+    LINKTYPE_LOOP,
+    LINKTYPE_NULL,
     LINKTYPE_RAW,
     read_pcap,
 )
 
-from .core import ParsedPacket, parse_packet
+from .core import ParsedPacket, parse_packet, supports_link_type
 
 # Auto link-type detection tuning.  An alternative link type is only adopted
 # when it parses meaningfully better than the declared one *and* the declared
@@ -70,8 +72,10 @@ _TUNNEL_ATTRS: tuple[str, ...] = (
 )
 
 _LINKTYPE_NAMES: dict[int, str] = {
+    LINKTYPE_NULL: "null",
     LINKTYPE_ETHERNET: "ethernet",
     LINKTYPE_RAW: "raw",
+    LINKTYPE_LOOP: "loop",
     LINKTYPE_LINUX_SLL: "linux_sll",
     LINKTYPE_LINUX_SLL2: "linux_sll2",
 }
@@ -90,6 +94,12 @@ class PcapInfo:
             took effect.
         link_type_overridden: ``True`` when *link_type* differs from
             *declared_link_type*.
+        link_type_supported: Whether :func:`~packeteer.parse.core.parse_packet`
+            can decode *link_type* — :func:`~packeteer.parse.core.supports_link_type`
+            of it.  ``False`` means every packet was an opaque payload and
+            *layer_counts* is empty for that reason, not because the file is
+            malformed; a consumer deciding whether to read the capture at all
+            can stop here.
         nanoseconds: ``True`` when timestamps are in nanoseconds.
         tick_hz: Timestamp resolution in ticks per second — ``1_000_000``
             (microseconds), ``1_000_000_000`` (nanoseconds), or any other
@@ -126,6 +136,7 @@ class PcapInfo:
     capture_duration_s: float | None = None
     packet_limit: int | None = None
     tick_hz: int = 0
+    link_type_supported: bool = True
 
     def __post_init__(self) -> None:
         """Derive *tick_hz* from *nanoseconds* when it was not supplied."""
@@ -146,6 +157,7 @@ class PcapInfo:
             "declared_link_type": self.declared_link_type,
             "link_type": self.link_type,
             "link_type_overridden": self.link_type_overridden,
+            "link_type_supported": self.link_type_supported,
             "nanoseconds": self.nanoseconds,
             "tick_hz": self.tick_hz,
             "packet_count": self.packet_count,
@@ -251,6 +263,9 @@ def _choose_link_type(
     records: list[tuple[bytes, int, int]], declared: int,
 ) -> int:
     """Pick the link type that parses *records* cleanest, biased toward *declared*."""
+    # A subset of SUPPORTED_LINK_TYPES on purpose, not the set itself: the two
+    # loopback types are left out because a 4-byte family word is easy to
+    # score against by accident, and a wrong guess here overrides the header.
     candidates = {
         declared, LINKTYPE_ETHERNET, LINKTYPE_RAW,
         LINKTYPE_LINUX_SLL, LINKTYPE_LINUX_SLL2,
@@ -360,6 +375,7 @@ def pcap_info(
         declared_link_type=declared,
         link_type=used_link_type,
         link_type_overridden=used_link_type != declared,
+        link_type_supported=supports_link_type(used_link_type),
         nanoseconds=pcap.header.nanoseconds,
         tick_hz=pcap.header.tick_hz,
         packet_count=len(records),
@@ -389,13 +405,12 @@ def format_pcap_info(info: PcapInfo) -> str:
     lines: list[str] = []
     lines.append(f"File:      {info.path if info.path is not None else '<stream>'}")
     lines.append(f"Type:      {info.file_type}")
+    link_line = f"Link-type: {_link_type_label(info.link_type)}"
     if info.link_type_overridden:
-        lines.append(
-            f"Link-type: {_link_type_label(info.link_type)}"
-            f"  [auto-corrected from {_link_type_label(info.declared_link_type)}]"
-        )
-    else:
-        lines.append(f"Link-type: {_link_type_label(info.link_type)}")
+        link_line += f"  [auto-corrected from {_link_type_label(info.declared_link_type)}]"
+    if not info.link_type_supported:
+        link_line += "  [not supported: nothing above the link layer is decoded]"
+    lines.append(link_line)
     limited = info.packet_limit is not None and info.packet_count >= info.packet_limit
     pkt_suffix = f"  (limited to first {info.packet_limit})" if limited else ""
     lines.append(f"Packets:   {info.packet_count}{pkt_suffix}")
@@ -425,7 +440,14 @@ def format_pcap_info(info: PcapInfo) -> str:
     # IP layer, so an ARP capture is not such a case.
     ip_packets = info.layer_counts.get("ipv4", 0) + info.layer_counts.get("ipv6", 0)
     arp_packets = info.layer_counts.get("arp", 0)
-    if info.packet_count and ip_packets == 0 and arp_packets == 0:
+    if not info.link_type_supported:
+        # The cause is known, so name it rather than the symptom below.
+        lines.append(
+            f"Note: link type {info.link_type} is not one packeteer can decode, "
+            f"so no packet was decoded past the link layer.  If the header is "
+            f"wrong, --link-type overrides it."
+        )
+    elif info.packet_count and ip_packets == 0 and arp_packets == 0:
         lines.append(
             "Note: no packets contained an IP layer — the capture may be "
             "malformed or the link-type wrong (try --link-type)."

@@ -22,7 +22,7 @@ common layer stacks.
 | TCP Window Scale option | +3 (+1 pad) | Kind (1) + Len (1) + Shift (1) |
 | TCP SACK Permitted option | +2 | Kind (1) + Len (1) |
 | TCP SACK block | +8 per block | Left edge (4) + Right edge (4) |
-| TCP Timestamps option | +10 | Kind (1) + Len (1) + TSval (4) + TSecr (4) |
+| TCP Timestamps option | +10 (+2 NOP) | Kind (1) + Len (1) + TSval (4) + TSecr (4), preceded by two NOPs for alignment (RFC 7323 A.2) — 12 bytes on every segment of a connection that negotiated them, which is why a generated full-size segment carries 1448 bytes of payload against a 1460 MSS |
 | UDP | 8 | Src port (2) + Dst port (2) + Length (2) + Checksum (2) |
 | SCTP common header | 12 | Src port (2) + Dst port (2) + Verification Tag (4) + CRC-32c checksum (4) |
 | SCTP chunk header | 4 per chunk | Type (1) + Flags (1) + Length (2); each chunk padded to 4-byte boundary |
