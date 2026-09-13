@@ -25,6 +25,38 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
+---
+
+## [0.15.0] - 2026-09-13
+
+**The real-traffic release.**  0.14.0 was shaped by what happened when
+packeteer was *used*; this one by what happened when it was pointed at traffic
+it did not write.  The real-capture corpus existed because every capture CI
+could see was one packeteer generated itself — and until now every capture in
+it came from one macOS laptop, and none of them carried any of packeteer's
+nine encapsulations.
+
+Twelve captures were collected on Linux and committed: VXLAN, Geneve, GRE,
+IP-in-IP, 802.1Q VLAN, a real SCTP association, a kernel-fragmented IPv6
+datagram, both Linux cooked link types, a raw-IP capture, and a lossy TCP
+session carrying the Timestamps option with its genuine capture-point
+duplicates.
+
+**Collecting them found four bugs, and none is in the capture path.**  A
+preserved outer UDP checksum dropped when rebuilding a tunnel; an inner ARP
+frame silently discarded; IPv6 hop-by-hop options recorded and never rebuilt;
+and MLD addresses left unredacted.  Two more had been found in the same way
+before collection began (#151, #152).  Not one capture failed at the thing it
+was collected for — every failure was in traffic Linux emits unbidden, which
+is the case for real captures over fixtures, made by the captures.
+
+**Generated captures are unchanged unless you ask.**  The one new generator
+feature, `duplicate_probability`, defaults to `0.0`, draws no randomness at
+that rate, and leaves a seeded capture byte-identical to 0.14.0's.
+
+**If you have sanitised a capture of tunnelled traffic with an earlier
+version, regenerate it** — see the first entry under **Fixed**.
+
 ### Added
 
 - **`duplicate_probability`, a capture-point duplication impairment.**  On
@@ -3319,7 +3351,8 @@ the exhaustive API reference.
      tagged with names that predate this convention, so only the entries below
      carry compare links. -->
 
-[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/adamkjonsson/packeteer/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/adamkjonsson/packeteer/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/adamkjonsson/packeteer/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/adamkjonsson/packeteer/compare/v0.11.0...v0.12.0
