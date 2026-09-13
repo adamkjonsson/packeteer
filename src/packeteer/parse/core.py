@@ -230,6 +230,44 @@ class UnsupportedIPProtocolWarning(UserWarning):
         self.protocol = protocol
 
 
+class UnserialisedInnerLayerWarning(UserWarning):
+    """Emitted when a tunnelled inner layer is decoded but not written to a spec.
+
+    A packet spec is what ``parse`` → ``build`` round-trips through, so a layer
+    the parser understood and the serialiser dropped is data loss that nothing
+    else reports: the resulting spec describes a shorter packet than the one
+    that was captured, and looks complete.
+
+    The layer names are on :attr:`layers` so callers can filter without parsing
+    the message.
+
+    Attributes:
+        layers: Names of the decoded-but-unwritten inner layers.
+
+    Example:
+
+        .. code-block:: python
+
+            import warnings
+            from packeteer.parse import parse_pcap_file, UnserialisedInnerLayerWarning
+
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                spec = parse_pcap_file(path="vxlan.pcap")
+
+            for w in caught:
+                if issubclass(w.category, UnserialisedInnerLayerWarning):
+                    print(f"inner layers lost: {w.message.layers}")
+
+    """
+
+    layers: tuple[str, ...]
+
+    def __init__(self, message: str, layers: tuple[str, ...]) -> None:
+        super().__init__(message)
+        self.layers = layers
+
+
 class TimestampResolutionWarning(UserWarning):
     """Emitted when a capture's timestamp resolution cannot be expressed exactly.
 
