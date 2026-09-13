@@ -25,6 +25,20 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
+### Added
+
+- **Two real captures of a TCP session that loses segments while carrying the
+  Timestamps option.**  `tcp_lossy_ts.pcap` holds 14 retransmissions, each
+  carrying a later TSval than the original it repeats, and 14 runs of
+  duplicate ACKs whose echo never moves while the sender goes on sending newer
+  ones — RFC 7323 §4.3's `TS.Recent` rule, in traffic packeteer did not write.
+  `tcp_dup_ts.pcap` holds 10 **genuine duplicates**: the same transmission
+  seen twice by the capture point, with an identical sequence number *and* an
+  identical TSval, which is the one shape packeteer's generator cannot produce
+  because a resend is always rebuilt with a fresh clock.  Until now every
+  capture that repeated a segment predated the option, so nothing confirmed
+  that a real stack behaves the way 0.14.0 generates.  (#149)
+
 ### Fixed
 
 - **A raw-IP packet spec gained an Ethernet header when rebuilt.**  A packet

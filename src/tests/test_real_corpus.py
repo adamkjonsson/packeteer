@@ -325,6 +325,204 @@ class TestRealTrafficCoversWhatSyntheticCannot(unittest.TestCase):
                  if type(p.transport).__name__ == "ICMPv6Header"}
         self.assertTrue({135, 136} & types)
 
+    def test_a_capture_was_taken_at_nanosecond_resolution(self) -> None:
+        """#127: the corpus had the nanosecond *format* and not the resolution.
+
+        `udp_frag_nano.pcap` was converted with `editcap -F nsecpcap` from a
+        microsecond capture, so every sub-microsecond digit in it is zero — it
+        exercises the format and says nothing about a capture clock.  macOS
+        BPF has no nanosecond mode, so closing this needed a Linux capture.
+        """
+        with open_pcap(path=str(_CORPUS / "tcp_lossy_ts.pcap")) as capture:
+            fractions = [record.ts_frac % 1000 for record in capture]
+        self.assertTrue(fractions)
+        self.assertTrue(
+            all(fractions),
+            "every record should carry a non-zero sub-microsecond part",
+        )
+
+
+class TestALossyTimestampedSession(unittest.TestCase):
+    """What `tcp_lossy_ts.pcap` and `tcp_dup_ts.pcap` are for (#149).
+
+    #90 made every generated resend carry a fresh clock, which is what lets an
+    analyser tell a retransmission from a duplicate.  Nothing said a real stack
+    does the same: the corpus's one complete session, `tcp_v4.pcapng`, loses
+    nothing, and every capture that repeats a segment predates the option.
+    These two files are that evidence, and each test below is one of the three
+    properties #149 named.
+    """
+
+    def _fields(self, name: str) -> list:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            with iter_packets(path=str(_CORPUS / name), decode_app=False,
+                              defragment=False) as capture:
+                return list(capture)
+
+    @staticmethod
+    def _tsval(pkt: object) -> int | None:
+        options = getattr(getattr(pkt, "transport", None), "options", None)
+        timestamps = getattr(options, "timestamps", None)
+        return None if timestamps is None else timestamps[0]
+
+    def _data_segments(self, name: str) -> list:
+        """Return the bulk sender's data segments, in capture order."""
+        packets = self._fields(name)
+        return [p for p in packets
+                if getattr(p, "payload", None) and self._tsval(p) is not None
+                and p.transport.src_port == self._bulk_sender(packets)]
+
+    @staticmethod
+    def _bulk_sender(packets: list) -> int:
+        """Return the port that sent the most bytes.
+
+        Not simply the first data segment's port: the client opens with a
+        five-byte request, so "whoever sent data first" is the receiver of
+        everything these tests are about.
+        """
+        sent: dict[int, int] = {}
+        for pkt in packets:
+            if getattr(pkt, "payload", None):
+                port = pkt.transport.src_port
+                sent[port] = sent.get(port, 0) + len(pkt.payload)
+        return max(sent, key=lambda port: sent[port])
+
+    def test_both_ends_negotiated_timestamps(self) -> None:
+        """Without that, none of the rest of this file means anything."""
+        syns = [p for p in self._fields("tcp_lossy_ts.pcap")
+                if getattr(p.transport, "flags", 0) & 0x02]
+        self.assertGreaterEqual(len(syns), 2, "a SYN and a SYN-ACK")
+        for syn in syns:
+            self.assertIsNotNone(self._tsval(syn),
+                                 "both ends should offer the option")
+
+    def test_a_resend_carries_a_later_tsval_than_its_original(self) -> None:
+        """#149's first assertion, and #90's rule in traffic packeteer did not write."""
+        by_seq: dict[int, list[int]] = {}
+        for pkt in self._data_segments("tcp_lossy_ts.pcap"):
+            by_seq.setdefault(pkt.transport.seq, []).append(self._tsval(pkt))
+
+        resent = {seq: vals for seq, vals in by_seq.items() if len(vals) > 1}
+        self.assertTrue(resent, "the capture should hold retransmissions")
+        for seq, vals in resent.items():
+            with self.subTest(seq=seq):
+                self.assertGreater(
+                    vals[-1], vals[0],
+                    "a resend is rebuilt with the clock at resend time",
+                )
+
+    def test_the_ack_answering_a_resend_echoes_the_resend(self) -> None:
+        """#149's third assertion: which copy the receiver kept.
+
+        This is the evidence a reassembler reads to decide that — the ACK
+        covering a retransmitted segment echoes the TSval the *retransmission*
+        carried, not the original's.
+        """
+        packets = self._fields("tcp_lossy_ts.pcap")
+        sender = self._bulk_sender(packets)
+
+        by_seq: dict[int, list[int]] = {}
+        for index, pkt in enumerate(packets):
+            if (getattr(pkt, "payload", None) and self._tsval(pkt) is not None
+                    and pkt.transport.src_port == sender):
+                by_seq.setdefault(pkt.transport.seq, []).append(index)
+        resends = [indices[-1] for indices in by_seq.values() if len(indices) > 1]
+        self.assertTrue(resends, "the capture should hold retransmissions")
+
+        checked = 0
+        for index in resends:
+            resend = packets[index]
+            covers = resend.transport.seq + len(resend.payload)
+            for later in packets[index + 1:]:
+                options = getattr(later.transport, "options", None)
+                echo = getattr(options, "timestamps", None)
+                if (later.transport.src_port == sender or echo is None
+                        or later.transport.ack < covers):
+                    continue
+                with self.subTest(seq=resend.transport.seq):
+                    self.assertEqual(echo[1], self._tsval(resend))
+                checked += 1
+                break
+        self.assertTrue(checked, "no retransmission was acknowledged")
+
+    def test_duplicate_acks_never_echo_the_out_of_order_segment(self) -> None:
+        """#149's second assertion, stated as what the capture can prove.
+
+        RFC 7323 4.3 updates `TS.Recent` only for a segment that arrives in
+        order, so a duplicate ACK provoked by an out-of-order arrival echoes
+        the last **in-order** segment instead.
+
+        Naming that segment from a capture is not always possible — the
+        option's clock has millisecond granularity, so segments sent inside one
+        tick share a TSval and the two candidates become indistinguishable.
+        What is decidable, and stronger, is the behaviour over a *run* of
+        duplicate ACKs: the echo does not move, while the sender goes on
+        putting newer TSvals on the wire.  A receiver updating `TS.Recent` from
+        the out-of-order arrivals would echo those instead.
+        """
+        packets = self._fields("tcp_lossy_ts.pcap")
+        sender = self._bulk_sender(packets)
+
+        runs: list[list[tuple[int, int, int | None]]] = []
+        current: list[tuple[int, int, int | None]] = []
+        newest_sent: int | None = None
+        for pkt in packets:
+            options = getattr(pkt.transport, "options", None)
+            stamps = getattr(options, "timestamps", None)
+            if stamps is None:
+                continue
+            if pkt.transport.src_port == sender:
+                newest_sent = stamps[0]
+                continue
+            entry = (pkt.transport.ack, stamps[1], newest_sent)
+            if current and entry[0] == current[-1][0]:
+                current.append(entry)
+            else:
+                if len(current) > 1:
+                    runs.append(current)
+                current = [entry]
+        if len(current) > 1:
+            runs.append(current)
+
+        self.assertTrue(runs, "the capture should hold runs of duplicate ACKs")
+        stale = 0
+        for run in runs:
+            with self.subTest(ack=run[0][0], length=len(run)):
+                self.assertEqual(
+                    len({echo for _, echo, _ in run}), 1,
+                    "TS.Recent should not move while a hole is unfilled",
+                )
+            if run[-1][2] is not None and run[-1][2] > run[0][1]:
+                stale += 1
+
+        self.assertTrue(
+            stale,
+            "no run had a newer TSval available, so none of them proves "
+            "TS.Recent was left alone rather than merely unchanged",
+        )
+
+    def test_a_duplicate_carries_the_same_tsval(self) -> None:
+        """The shape the generator cannot make, which is why it is here.
+
+        A resend and a duplicate are indistinguishable by bytes alone; the
+        TSval is the whole of the difference.  These copies were made by the
+        capture path, not by the sender, so theirs is identical.
+        """
+        seen: dict[tuple[int, int], list[int]] = {}
+        for pkt in self._data_segments("tcp_dup_ts.pcap"):
+            key = (pkt.transport.seq, len(pkt.payload))
+            seen.setdefault(key, []).append(self._tsval(pkt))
+
+        duplicates = {key: vals for key, vals in seen.items() if len(vals) > 1}
+        self.assertTrue(duplicates, "the capture should hold duplicates")
+        for key, vals in duplicates.items():
+            with self.subTest(seq=key[0]):
+                self.assertEqual(
+                    len(set(vals)), 1,
+                    "a capture-point duplicate is the same transmission twice",
+                )
+
 
 class TestNothingIdentifyingSurvived(unittest.TestCase):
     """These are real captures in a public repository.

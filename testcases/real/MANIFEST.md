@@ -28,6 +28,30 @@ Before adding one:
 4. Add a row below saying what it is *for*.  A capture nothing asserts
    anything about is a file, not a test.
 
+## Inducing what you cannot wait for
+
+Loss, duplication and reordering can be induced rather than waited for, which
+is how the `tcp_lossy_ts` / `tcp_dup_ts` pair was collected: three throwaway
+network namespaces — client, router, server — with `tc netem` on the router.
+Three details decide whether the result is worth committing, and each one
+produces a plausible-looking file when got wrong:
+
+1. **Put the impairment downstream of the capture point.** An egress `netem`
+   drops a packet at enqueue, which is *before* AF_PACKET's transmit tap, so a
+   capture on the dropping device never holds the segment that went missing.
+   Comparing a resend against its original needs both, so the loss belongs on
+   a *router* between the sender and the receiver, not on either end.
+2. **Turn off segmentation offload** (`ip link set dev X gso_max_segs 1`).
+   Otherwise the stack hands one large skb to the device and lets it segment,
+   and the capture shows "segments" of several thousand bytes that no wire
+   ever carried.
+3. **Give the path a realistic delay** (`netem delay 20ms`). The TCP timestamp
+   clock has millisecond granularity and a veth pair's round trip is
+   microseconds, so without it an entire transfer lands inside one tick: every
+   TSval in the file identical, and a fast retransmit carrying the *same*
+   TSval as its original.  A capture like that cannot answer the question
+   #149 asks.
+
 ## What each one is for
 
 | File | Packets | Covers |
@@ -43,24 +67,19 @@ Before adding one:
 | `tcp_v4_snaplen.pcapng` | 11 | The same session captured with `tcpdump -s 96`: two packets hold less than their headers declare.  The only real coverage of #92, #94 and #126 — and the file whose sanitised copy #126 was filed about |
 | `udp_frag_nano.pcap` | 3 | A whole 4 008-byte UDP datagram in three fragments, split by the OS rather than by packeteer — the only real traffic `packeteer.parse.defragment` has.  The first fragment's `transport.length` and `checksum` describe the whole datagram, not the 1 472 bytes beside them, which is #68's rule in real bytes.  Also the only **nanosecond-resolution** file |
 | `tcp_v6_loopback.pcapng` | 10 | TCP over IPv6 over `DLT_NULL` (link type 0), which #124 added support for.  Also carries offloaded checksums, so it exercises the preserved-`transport.checksum` path from #68 against real bytes |
+| `tcp_lossy_ts.pcap` | 234 | A **lossy** TCP session where both ends negotiated the Timestamps option — #149's subject.  Captured **at the sender**, which is the point: the loss is applied by a router downstream, so the file holds each original segment *and* the resend of it.  A capture taken on the dropping device would hold neither, because an egress `netem` drops at enqueue, before AF_PACKET's transmit tap.  14 resends, every one carrying a later TSval than its original; 10 retransmissions, every one answered by an ACK echoing *its* TSval; 39 duplicate ACKs, of which 28 visibly echo the last **in-order** segment rather than the out-of-order one that triggered them (RFC 7323 §4.3), and **none** contradict it.  The other 11 cannot say: 10 where the in-order and out-of-order segments share a TSval because they were sent inside the same 1 ms tick, and 1 with no usable SACK block.  That ceiling is the option's granularity, not this capture's — no capture can do better |
+| `tcp_dup_ts.pcap` | 154 | **Genuine duplicates**: 10 segments that appear twice with an identical sequence number *and* an identical TSval.  The shape packeteer's generator cannot make, since a resend is always rebuilt with a fresh clock (#90) — so the only thing separating a duplicate from a retransmission is the TSval, and this is the file that proves a real one looks that way.  Captured on the **router**, where the duplication happens: both copies are tapped on the way out, whereas at the receiver GRO may coalesce them.  tshark labels them "TCP Retransmission", which is exactly the misreading the TSval exists to correct |
 
 ## Known gaps
 
 Tracked as [#127](https://github.com/adamkjonsson/packeteer/issues/127), with
 the tiers and the rules for closing them.  The corpus reaches twelve decoders
-across 459 packets; everything below has **no** real traffic at all.
+across 847 packets; everything below has **no** real traffic at all.
 
 - **VLAN, MPLS, and any tunnel.** packeteer supports nine such modules — GRE,
   VXLAN, Geneve, GTP-U, EtherIP, IPsec, MPLS, PPPoE, IP-in-IP — and has real
   traffic for none of them.
-- **A *captured* nanosecond timestamp.** `udp_frag_nano.pcap` is in the
-  nanosecond format, but it was converted with `editcap -F nsecpcap` from a
-  microsecond capture, so every sub-microsecond digit is `0`.  macOS BPF has
-  no nanosecond mode — `tcpdump --nano` fails on every interface, and both
-  `en1` and `lo0` report only the `host` timestamp type — so a real one has to
-  come from the Linux capture below.
-- **Linux cooked capture** (link types 113 and 276).  Every capture came from
-  one macOS laptop, which is a gap in the *collecting*, not in the traffic.
+- **Linux cooked capture** (link types 113 and 276).
 - **IPv4 fragments and IPv6 extension headers.**  Tested only against packets
   packeteer fragmented itself.
 - **SCTP.**
