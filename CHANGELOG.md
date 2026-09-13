@@ -25,6 +25,28 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
+### Fixed
+
+- **`sanitise` left the inner addresses and MACs of a VXLAN, Geneve or GTP-U
+  tunnel untouched.**  `parse` nests a whole inner packet under
+  `vxlan`, `geneve` and `gtpu` — exactly as it does under `ipip`, `gre` and
+  `etherip` — but the sanitiser's tunnel recursion listed only the latter
+  three, so for the former the inner Ethernet MACs, IP addresses and ports
+  passed straight through.  Every outer field was redacted correctly and no
+  warning was raised, because all three keys were already recorded as
+  structural: the output was a file that looked sanitised and was not.
+  **A capture of tunnelled traffic sanitised by an earlier version should be
+  regenerated**; GRE, IP-in-IP, EtherIP, pseudowire and AH were unaffected, as
+  were MPLS and PPPoE, which do not nest.
+
+  The two lists that had to agree are now one: `_NESTING_TUNNEL_KEYS` is the
+  single record of which encapsulations nest a packet, and the structural set
+  is built from it, so an encapsulation can no longer be added to one and
+  forgotten in the other.  The real-capture corpus's leak sweep now follows
+  `tunneled` to any depth as well — reading only `ParsedPacket.ip` guarded the
+  outer header, which on a tunnelled packet is the one least likely to carry
+  anything sensitive.  (#151)
+
 ---
 
 ## [0.14.0] - 2026-09-12

@@ -30,6 +30,28 @@ _STRUCTURAL_KEYS = frozenset({
 })
 
 
+def _every_address(pkt: object, depth: int = 0) -> list[tuple[int, str]]:
+    """Every IP address in *pkt*, following tunnels to whatever depth.
+
+    `pkt.ip` on a tunnelled packet is the **outer** header, so a scan that
+    reads only that guards the one header least likely to be the problem: the
+    outer addresses of a tunnel are the capture point's own, while the inner
+    ones are the traffic being carried.  #151 was exactly this — `sanitise`
+    left VXLAN, Geneve and GTP-U inner addresses untouched, and this sweep
+    could not see it.
+
+    Returns (depth, address) pairs so a failure says which layer leaked.
+    """
+    found: list[tuple[int, str]] = []
+    ip = getattr(pkt, "ip", None)
+    if ip is not None:
+        found.extend((depth, value) for value in (ip.src, ip.dst))
+    inner = getattr(pkt, "tunneled", None)
+    if inner is not None:
+        found.extend(_every_address(inner, depth + 1))
+    return found
+
+
 def _captures() -> list[Path]:
     """Every file in the corpus except the manifest, whatever it is called.
 
@@ -321,16 +343,39 @@ class TestNothingIdentifyingSurvived(unittest.TestCase):
                 with iter_packets(path=str(path), decode_app=False,
                                   defragment=False) as capture:
                     for index, pkt in enumerate(capture, start=1):
-                        if pkt.ip is None:
-                            continue
-                        for value in (pkt.ip.src, pkt.ip.dst):
+                        for depth, value in _every_address(pkt):
                             address = ipaddress.ip_address(value)
                             with self.subTest(capture=path.name, packet=index,
-                                              address=value):
+                                              address=value, depth=depth):
                                 self.assertFalse(
                                     address.is_global,
                                     "a routable address survived sanitisation",
                                 )
+
+    def test_the_scan_reaches_inside_a_tunnel(self) -> None:
+        """#151: reading `pkt.ip` alone guards the wrong header.
+
+        On a tunnelled packet `pkt.ip` is the *outer* header, so the sweep
+        above passed a file whose inner addresses were untouched — which is
+        precisely how a VXLAN capture could have been committed with real
+        addresses in it and every check green.
+        """
+        from packeteer.generate import PacketBuilder
+        from packeteer.parse import parse_packet
+
+        raw = (PacketBuilder()
+               .ethernet().ip(src="192.0.2.1", dst="192.0.2.2")
+               .udp(dst_port=4789).vxlan(vni=7)
+               .ethernet().ip(src="8.8.8.8", dst="1.1.1.1")
+               .tcp(dst_port=80).build())
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            pkt = parse_packet(raw)
+
+        found = {value for _, value in _every_address(pkt)}
+        self.assertIn("192.0.2.1", found, "the outer header is still scanned")
+        self.assertIn("8.8.8.8", found,
+                      "the scan must follow the tunnel, or it guards nothing")
 
 
 if __name__ == "__main__":

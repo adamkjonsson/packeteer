@@ -945,13 +945,30 @@ def _scan_section_text(value: object, packet_num: int) -> None:
             _scan_section_text(item, packet_num)
 
 
+#: Keys under which ``parse`` nests a whole inner packet, so that redacting the
+#: outer one reaches none of it.  Every one of these is recursed into by
+#: :func:`_sanitise_packet`; adding an encapsulation to the parser without
+#: adding it here is what left VXLAN, Geneve and GTP-U inner addresses in
+#: "sanitised" files (#151).
+#:
+#: ESP is deliberately absent: its payload is opaque ciphertext and carries no
+#: addresses.  AH is present because it protects cleartext content in transport
+#: mode and an inner IP packet in tunnel mode.  MPLS and PPPoE are absent
+#: because they do not nest — their inner IP lands in the top-level ``network``
+#: section and is redacted there.
+_NESTING_TUNNEL_KEYS: frozenset[str] = frozenset({
+    "ipip", "gre", "etherip", "pseudowire", "ah", "vxlan", "geneve", "gtpu",
+})
+
 #: Keys that mean at least part of a packet was understood.  A packet with a
 #: payload and none of these is a frame the parser could not decode — an
 #: unsupported link type — so nothing in it has been redacted.
-_STRUCTURAL_KEYS: frozenset[str] = frozenset({
+#:
+#: A superset of :data:`_NESTING_TUNNEL_KEYS` by construction, so a nesting
+#: encapsulation cannot be added to one list and forgotten in the other.
+_STRUCTURAL_KEYS: frozenset[str] = _NESTING_TUNNEL_KEYS | frozenset({
     "ethernet", "sll", "sll2", "loopback", "arp", "network", "transport",
-    "mpls", "pppoe", "ipip", "gre", "etherip", "pseudowire", "ah", "esp",
-    "vxlan", "geneve", "gtpu",
+    "mpls", "pppoe", "esp",
 })
 
 
@@ -1030,10 +1047,10 @@ def _sanitise_packet(
     _sanitise_app_layers(pkt, r, opts, packet_num)
 
     # ── Tunnel recursion ──────────────────────────────────────────────────────
-    # AH protects cleartext content (transport mode) or an inner IP packet
-    # (tunnel mode), so its nested addresses/ports are sanitised too.  ESP's
-    # payload is opaque ciphertext and carries no addresses.
-    for tunnel_key in ("ipip", "gre", "etherip", "pseudowire", "ah"):
+    # Which keys nest, and why ESP and MPLS are not among them, is recorded on
+    # _NESTING_TUNNEL_KEYS.  Iterating the constant rather than a literal is
+    # what stops the two lists drifting apart again (#151).
+    for tunnel_key in sorted(_NESTING_TUNNEL_KEYS):
         if tunnel_key not in pkt:
             continue
         _sanitise_packet(pkt[tunnel_key], r, opts, packet_num)
