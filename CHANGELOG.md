@@ -27,6 +27,15 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ### Added
 
+- **Real captures of eight encapsulations and link types the corpus had never
+  seen.**  VXLAN, Geneve, GRE, IP-in-IP, 802.1Q VLAN, a real SCTP association,
+  a kernel-fragmented IPv6 datagram, both Linux cooked link types (113 and
+  276), and a raw-IP capture (`DLT_RAW`).  Until now packeteer supported nine
+  encapsulation modules and had real traffic for none of them; the tunnel
+  captures are taken on the **underlay**, so each file holds the whole stack
+  rather than the inner packet alone.  Collecting them is what found #153,
+  #154, #155 and #156.  (#127)
+
 - **Two real captures of a TCP session that loses segments while carrying the
   Timestamps option.**  `tcp_lossy_ts.pcap` holds 14 retransmissions, each
   carrying a later TSval than the original it repeats, and 14 runs of
@@ -40,6 +49,36 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   that a real stack behaves the way 0.14.0 generates.  (#149)
 
 ### Fixed
+
+- **A preserved outer UDP checksum was dropped when rebuilding a VXLAN, Geneve
+  or GTP-U packet.**  Those three branches built the outer UDP header without
+  passing the recorded `transport.checksum`, while every other transport path
+  passes it, so a tunnelled packet whose sender computed one — or offloaded it
+  — came back with a recomputed value.  This is #68's rule, and a tunnel is
+  where it bites hardest: the outer checksum covers the encapsulated frame.
+  (#153)
+
+- **A tunnelled inner ARP frame was silently dropped.**  None of the five
+  inner-frame serialisers wrote out an inner ARP, so a VXLAN frame carrying one
+  parsed to an Ethernet header and nothing else, and could not be rebuilt at
+  all.  VXLAN is an Ethernet overlay, where ARP is how hosts find each other.
+  A new `UnserialisedInnerLayerWarning` now fires when a tunnelled inner layer
+  is decoded but not written to the spec, so the next such omission is loud
+  rather than silent.  (#154)
+
+- **IPv6 hop-by-hop options were recorded by `parse` and ignored by `build`.**
+  `network.hop_by_hop_options` was written, documented and buildable, and
+  never read back, so an IPv6 packet carrying the extension header rebuilt 8
+  bytes shorter with its Next Header pointing straight at the transport.  On a
+  real network that is every MLD report.  (#155)
+
+- **`sanitise` left the addresses in an MLD message untouched.**  It said so —
+  the unknown-ICMPv6-type warning fired — but what stayed is worth more than
+  the warning suggests: a host reports the solicited-node group it listens on,
+  which embeds the low 24 bits of its own interface identifier, so a sanitised
+  file kept part of an address replaced everywhere else.  MLDv1 Query, Report
+  and Done and MLDv2 Report are now redacted through the same replacer as
+  everything else.  (#156)
 
 - **A raw-IP packet spec gained an Ethernet header when rebuilt.**  A packet
   spec with no `ethernet`, `sll`, `sll2` or `loopback` section describes a

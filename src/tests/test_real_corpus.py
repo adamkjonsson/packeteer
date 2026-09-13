@@ -342,6 +342,106 @@ class TestRealTrafficCoversWhatSyntheticCannot(unittest.TestCase):
         )
 
 
+class TestTheCorpusReachesTheEncapsulations(unittest.TestCase):
+    """#127's largest gap, asserted per capture.
+
+    Nine encapsulation modules had no real traffic at all, and collecting it
+    found #153, #154 and #155 within the hour.  Each test names the decoder its
+    capture exercises, so a file that stops covering what it was collected for
+    fails rather than quietly becoming decoration.
+    """
+
+    def _packets(self, name: str) -> list:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            with iter_packets(path=str(_CORPUS / name), decode_app=False,
+                              defragment=False) as capture:
+                return list(capture)
+
+    def test_each_tunnel_capture_decodes_its_encapsulation(self) -> None:
+        for name, attribute in (("vxlan.pcap", "vxlan"),
+                                ("geneve.pcap", "geneve"),
+                                ("gre.pcap", "gre"),
+                                ("ipip.pcap", "ipip")):
+            with self.subTest(capture=name):
+                decoded = [p for p in self._packets(name)
+                           if getattr(p, attribute, None)]
+                self.assertTrue(decoded, f"{name} should decode as {attribute}")
+
+    def test_a_tunnel_capture_carries_an_inner_frame(self) -> None:
+        """The reason to capture on the underlay: the whole stack is in the file."""
+        for name in ("vxlan.pcap", "geneve.pcap", "gre.pcap", "ipip.pcap"):
+            with self.subTest(capture=name):
+                inner = [p.tunneled for p in self._packets(name)
+                         if getattr(p, "tunneled", None) is not None]
+                self.assertTrue(inner, f"{name} should carry inner packets")
+                self.assertTrue(any(p.ip is not None for p in inner),
+                                "at least one inner frame should reach IP")
+
+    def test_an_overlay_carries_inner_arp(self) -> None:
+        """#154's case in real bytes: ARP is how hosts on an overlay find each other."""
+        for name in ("vxlan.pcap", "geneve.pcap"):
+            with self.subTest(capture=name):
+                arps = [p for p in self._packets(name)
+                        if getattr(getattr(p, "tunneled", None), "arp", None)]
+                self.assertTrue(arps, f"{name} should carry an inner ARP")
+
+    def test_a_capture_is_vlan_tagged(self) -> None:
+        tagged = [p for p in self._packets("vlan.pcap")
+                  if getattr(p.ethernet, "vlan_tag", None) is not None]
+        self.assertTrue(tagged, "vlan.pcap should carry 802.1Q tags")
+        self.assertEqual({p.ethernet.vlan_tag.vid for p in tagged}, {100})
+
+    def test_a_capture_carries_a_hop_by_hop_header(self) -> None:
+        """#155's case: an extension header, not a field, and it must rebuild."""
+        found = False
+        for name in ("vlan.pcap", "ipv6_frag.pcap"):
+            spec = json.loads(self._spec_text(name))
+            found = found or any(
+                "hop_by_hop_options" in p.get("network", {})
+                for p in spec["packets"])
+        self.assertTrue(found, "no capture carries hop-by-hop options")
+
+    def _spec_text(self, name: str) -> str:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return parse_pcap_file(path=str(_CORPUS / name))
+
+    def test_an_ipv6_datagram_is_fragmented_by_the_kernel(self) -> None:
+        """The IPv6 half of #68; `udp_frag_nano.pcap` is the IPv4 half."""
+        spec = json.loads(self._spec_text("ipv6_frag.pcap"))
+        fragments = [p for p in spec["packets"]
+                     if "fragment" in p.get("network", {})]
+        self.assertGreater(len(fragments), 1,
+                           "one fragment proves no fragmentation")
+        identifications = {p["network"]["fragment"]["identification"]
+                           for p in fragments}
+        self.assertEqual(len(identifications), 1,
+                         "every fragment of a datagram shares its id")
+
+    def test_a_capture_holds_a_real_sctp_association(self) -> None:
+        packets = self._packets("sctp.pcap")
+        chunk_bearing = [p for p in packets
+                         if type(p.transport).__name__ == "SCTPHeader"]
+        self.assertTrue(chunk_bearing, "sctp.pcap should decode as SCTP")
+
+    def test_both_linux_cooked_link_types_are_present(self) -> None:
+        """Two encodings of the same idea; the corpus had neither."""
+        for name, expected in (("sll_any.pcap", 113), ("sll2_any.pcap", 276)):
+            with (self.subTest(capture=name),
+                  open_pcap(path=str(_CORPUS / name)) as capture):
+                self.assertEqual(capture.header.link_type, expected)
+
+    def test_a_capture_is_raw_ip(self) -> None:
+        """#152's case: a link type with no link-layer header at all."""
+        with open_pcap(path=str(_CORPUS / "ipip_raw.pcap")) as capture:
+            self.assertEqual(capture.header.link_type, 101)
+        spec = json.loads(self._spec_text("ipip_raw.pcap"))
+        for packet in spec["packets"]:
+            self.assertNotIn("ethernet", packet)
+            self.assertIn("network", packet)
+
+
 class TestALossyTimestampedSession(unittest.TestCase):
     """What `tcp_lossy_ts.pcap` and `tcp_dup_ts.pcap` are for (#149).
 
