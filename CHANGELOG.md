@@ -27,6 +27,27 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ### Added
 
+- **`duplicate_probability`, a capture-point duplication impairment.**  On
+  `ImpairmentConfig` and `TCPStreamConfig`: each packet is emitted twice with
+  probability *p*, as a SPAN port or a two-interface capture would see it.  The
+  copy is byte-for-byte the original — same sequence numbers, same checksum,
+  and crucially the **same TSval** — with only its capture timestamp differing.
+
+  That is the shape packeteer could not generate.  0.14.0 (#90) made every
+  resend carry the sender's clock at resend time, so a repeat with a *later*
+  TSval is a retransmission; a repeat with the *same* one is a duplicate, and
+  that difference is how an analyser tells them apart.  Until now only the
+  first could be produced.
+
+  Unlike every other impairment it applies to acknowledgements as well as data
+  — a mirror doubles everything — and it runs **last**, so a retransmission can
+  itself be duplicated (`DUP[RETRANS[3]]`) and a corrupted copy is doubled as
+  corrupted.  The copy lands one microsecond after its original, measured from
+  the ten real duplicates in `testcases/real/tcp_dup_ts.pcap` rather than
+  chosen.  A rate of `0.0` draws no randomness and leaves a seeded capture
+  byte-identical to one generated before the field existed.  API only for now;
+  there is no `--stream` flag.  (#150)
+
 - **Real captures of eight encapsulations and link types the corpus had never
   seen.**  VXLAN, Geneve, GRE, IP-in-IP, 802.1Q VLAN, a real SCTP association,
   a kernel-fragmented IPv6 datagram, both Linux cooked link types (113 and
