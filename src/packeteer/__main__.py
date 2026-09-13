@@ -715,11 +715,21 @@ def _apply_spec_to_builder(
         )
         sys.exit(1)
 
-    # ── Link layer: Ethernet, a Linux cooked (SLL/SLL2) pseudo header, or BSD
-    # loopback framing.  They are alternatives — a packet has exactly one.
+    # ── Link layer: Ethernet, a Linux cooked (SLL/SLL2) pseudo header, BSD
+    # loopback framing, or none at all.  They are alternatives — a packet has
+    # exactly one, and "none" is one of them: a raw-IP capture (DLT_RAW, link
+    # type 101) has no link-layer header, and neither does the inner frame of
+    # an IP-in-IP or GRE tunnel.
+    #
+    # Absence of the `ethernet` key is what says so, which is what
+    # `docs/packet-spec/format.md` has always documented — "omit the key
+    # entirely to produce a raw IP packet with no layer-2 framing".  Until #152
+    # this fell through to an `else` that added Ethernet anyway, so a raw-IP
+    # capture came back 14 bytes longer and padded to the 60-byte minimum.
     loopback_spec = spec.get("loopback")
     sll_spec = spec.get("sll")
     sll2_spec = spec.get("sll2")
+    eth_spec = spec.get("ethernet")
     if loopback_spec is not None:
         b = b.loopback(family=loopback_spec.get("family"),
                        big_endian=loopback_spec.get("big_endian", False))
@@ -730,7 +740,7 @@ def _apply_spec_to_builder(
         b = b.sll2(**{k: sll2_spec[k]
                       for k in ("packet_type", "arphrd_type", "address", "if_index")
                       if k in sll2_spec})
-    elif eth.get("enabled", True):
+    elif eth_spec is not None and eth_spec.get("enabled", True):
         b = b.ethernet(
             src_mac=eth.get("src_mac", "00:00:00:00:00:01"),
             dst_mac=eth.get("dst_mac", "00:00:00:00:00:02"),

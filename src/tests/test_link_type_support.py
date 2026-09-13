@@ -175,5 +175,74 @@ class TestTheAnswerIsOnTheReport(unittest.TestCase):
         self.assertIn("loop (108)", format_pcap_info(info))
 
 
+class TestEverySupportedLinkTypeRoundTrips(unittest.TestCase):
+    """parse -> build reproduces a frame under every link type in the set.
+
+    This is the test whose absence was #152.  `SUPPORTED_LINK_TYPES` had
+    coverage for *parsing* — that a frame decodes, raises no warning and
+    reaches the IP layer — and nothing rebuilt one.  `TestRoundTrip` in
+    `test_real_corpus.py` is the sweep that would have, but it can only see
+    the corpus, and every capture in it was Ethernet, `DLT_NULL` or Linux
+    cooked.  Raw IP was supported, parsed cleanly, and came back 31 bytes
+    longer wearing an Ethernet header it never had.
+
+    Driving it off the set rather than off a list of link types is the point:
+    a link type added to `SUPPORTED_LINK_TYPES` without a round trip fails
+    here rather than waiting for a real capture to turn up.
+    """
+
+    def test_every_member_rebuilds_identically(self) -> None:
+        import json
+
+        import packeteer.__main__ as cli
+        from packeteer.parse import parse_pcap_file
+
+        for link_type in sorted(SUPPORTED_LINK_TYPES):
+            with self.subTest(link_type=link_type):
+                frame = _frame_for(link_type)
+                buf = io.BytesIO()
+                write_pcap([(frame, 1, 0)], file_object=buf, link_type=link_type)
+                buf.seek(0)
+
+                with warnings.catch_warnings(record=True) as caught:
+                    warnings.simplefilter("always")
+                    spec = json.loads(parse_pcap_file(file_object=buf))
+                self.assertEqual([str(w.message) for w in caught], [])
+
+                packet = spec["packets"][0]
+                rebuilt, _ = cli._apply_spec_to_builder(PacketBuilder(), packet, 1)
+                self.assertEqual(
+                    rebuilt.build().hex(), frame.hex(),
+                    f"link type {link_type} did not rebuild identically",
+                )
+
+    def test_a_raw_ip_frame_gains_no_link_layer(self) -> None:
+        """#152 in one assertion, named for the shape rather than the size.
+
+        The spec for a raw-IP packet carries no link-layer section at all, and
+        `docs/packet-spec/format.md` has always said that omitting `ethernet`
+        produces a packet with no layer-2 framing.  The builder used to add it
+        anyway, and then pad the result to the Ethernet minimum.
+        """
+        import json
+
+        import packeteer.__main__ as cli
+        from packeteer.parse import parse_pcap_file
+
+        frame = _frame_for(LINKTYPE_RAW)
+        buf = io.BytesIO()
+        write_pcap([(frame, 1, 0)], file_object=buf, link_type=LINKTYPE_RAW)
+        buf.seek(0)
+        packet = json.loads(parse_pcap_file(file_object=buf))["packets"][0]
+
+        self.assertNotIn("ethernet", packet)
+        self.assertNotIn("sll", packet)
+        self.assertNotIn("sll2", packet)
+        self.assertNotIn("loopback", packet)
+
+        rebuilt, _ = cli._apply_spec_to_builder(PacketBuilder(), packet, 1)
+        self.assertEqual(len(rebuilt.build()), len(frame))
+
+
 if __name__ == "__main__":
     unittest.main()

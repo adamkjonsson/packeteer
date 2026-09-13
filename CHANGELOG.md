@@ -27,6 +27,17 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ### Fixed
 
+- **A raw-IP packet spec gained an Ethernet header when rebuilt.**  A packet
+  spec with no `ethernet`, `sll`, `sll2` or `loopback` section describes a
+  packet with no layer-2 framing — which `docs/packet-spec/format.md` has
+  always documented as the meaning of omitting the key — but the builder fell
+  through to Ethernet anyway and then padded the result to the 802.3 minimum.
+  A raw-IP capture (`DLT_RAW`, link type 101) parsed cleanly, raised no
+  warning, and came back 31 bytes longer, so `parse` → `build` did not
+  reproduce it.  Specs that name a link layer, or set `ethernet.enabled` to
+  `false` explicitly, are unaffected; the implementation now matches what the
+  spec format documents.  (#152)
+
 - **`sanitise` left the inner addresses and MACs of a VXLAN, Geneve or GTP-U
   tunnel untouched.**  `parse` nests a whole inner packet under
   `vxlan`, `geneve` and `gtpu` — exactly as it does under `ipip`, `gre` and
