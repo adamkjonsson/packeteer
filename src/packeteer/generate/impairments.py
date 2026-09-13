@@ -85,6 +85,23 @@ class ImpairmentConfig:
             window.
         stray_payload_range: ``(min, max)`` payload size for injected stray
             packets.
+        duplicate_probability: Probability (0.0–1.0) that each packet is seen
+            **twice by the capture point** — a SPAN port mirroring both
+            directions of a trunk, a capture on two interfaces the packet
+            crossed, a veth pair.  The sender did nothing: the copy is the same
+            transmission, so its bytes, sequence numbers, checksum and TSval
+            are identical to the original's and only its capture timestamp
+            differs.
+
+            That is the opposite of *retransmission_probability*, which is the
+            sender acting: since 0.14.0 every resend is rebuilt with the clock
+            at its resend time, so a repeat with a *later* TSval is a real
+            retransmission and one with the *same* TSval is a duplicate.  This
+            is how an analyser tells them apart, and without this field
+            packeteer could generate only one side of the distinction.
+
+            Applies to every packet, data segments and acknowledgements alike,
+            because a mirror doubles everything it sees.
         retransmit_lost: Whether a lost segment is retransmitted after
             *retransmission_timeout* and delivered, so the connection recovers
             the way a real one does.  Defaults to ``False``, which leaves a
@@ -106,6 +123,7 @@ class ImpairmentConfig:
     stray_packet_count: int = 0
     stray_timing_window: int | None = None
     stray_payload_range: tuple[int, int] = (40, 1460)
+    duplicate_probability: float = 0.0
     retransmit_lost: bool = False
 
     @property
@@ -116,6 +134,7 @@ class ImpairmentConfig:
             or self.payload_corruption_probability
             or self.server_rst_probability
             or self.stray_packet_count
+            or self.duplicate_probability
         )
 
 
@@ -621,6 +640,46 @@ def _apply_retransmission(
     return packets + retransmits
 
 
+#: How long after the original a mirrored copy lands.  Measured from
+#: `testcases/real/tcp_dup_ts.pcap`, where ten real capture-point duplicates
+#: sit 0–2 microseconds behind their originals with a median of 1.  A fixed
+#: offset rather than a jittered one: the spread is two microseconds wide, so
+#: jitter would model nothing, and `_alloc_usec` moves the copy along anyway
+#: when that microsecond is already taken.
+_DUPLICATE_OFFSET_USEC = 1
+
+
+def _apply_duplication(
+    packets: list["TCPStreamPacket"],
+    rng: Random,
+    config: ImpairmentConfig,
+) -> list["TCPStreamPacket"]:
+    """Emit a share of the packets twice, as a capture point that saw them twice.
+
+    The copy is ``raw`` **verbatim** — same TSval, same TSecr, same checksum,
+    same everything but the capture timestamp.  This is the one pass that must
+    not go through :func:`_restamped`, and the reason that function exists: the
+    others model the *sender* acting again, and a sender that has negotiated
+    timestamps writes a new clock into every resend.  Here the sender did
+    nothing at all.
+
+    Every packet is a candidate, not just the data segments the other passes
+    work over, because a mirror doubles acknowledgements too.
+    """
+    used_ts = {_pkt_usec(p) for p in packets}
+    copies: list["TCPStreamPacket"] = []
+    for pkt in packets:
+        if rng.random() >= config.duplicate_probability:
+            continue
+        usec = _alloc_usec(_pkt_usec(pkt) + _DUPLICATE_OFFSET_USEC, used_ts)
+        sec, frac = divmod(usec, 1_000_000)
+        copies.append(replace(
+            pkt, ts_sec=sec, ts_usec=frac,
+            label=_derive_label("DUP", pkt.label),
+        ))
+    return packets + copies
+
+
 def _apply_corruption(
     packets: list["TCPStreamPacket"],
     data_idx: list[int],
@@ -801,5 +860,12 @@ def apply_impairments(
 
     if config.stray_packet_count:
         packets = _apply_stray(packets, data_idx, rng, config, flow, make)
+
+    # Last, and deliberately: duplication is what the *capture point* saw, so
+    # it happens after everything the sender and the wire did.  A
+    # retransmission can therefore itself be duplicated, and a corrupted copy
+    # is doubled as corrupted — which is what a mirror would show.
+    if config.duplicate_probability:
+        packets = _apply_duplication(packets, rng, config)
 
     return packets

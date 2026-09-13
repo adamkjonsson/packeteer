@@ -87,7 +87,18 @@ and the inner IP header by `_apply_encap()`.
 ### Anomaly injection
 
 Anomalies are injected into the already-assembled packet list *after* the main
-loop, keeping the main loop clean:
+loop, keeping the main loop clean.  They run in the order listed, and
+`duplicate_probability` is last on purpose: it models the **capture point**
+rather than the sender, so it sees whatever the earlier passes produced — a
+retransmission can itself be duplicated, and a corrupted copy is doubled as
+corrupted.
+
+The same distinction decides what the copy carries.  Every other pass models
+the sender acting again, and since 0.14.0 a sender that negotiated timestamps
+writes a fresh TSval into each resend (`_restamped`).  A duplicate is *one*
+transmission seen twice, so it must not go through that path: its TSval is
+identical, and that is precisely how an analyser tells a duplicate from a
+retransmission.
 
 | `TCPStreamConfig` field | Effect |
 |---|---|
@@ -96,6 +107,7 @@ loop, keeping the main loop clean:
 | `server_rst_probability` | Picks a random split point *k*; replaces the tail of the data exchange with a RST from the server and any extra unACKed data from the client, then drops the four-way teardown. |
 | `payload_corruption_probability` | XOR-flips the last byte of the payload, invalidating the TCP checksum.  The ACK for that packet is delayed to follow a retransmission. |
 | `stray_packet_count` | Injects forged client→server packets with stolen seq/ack values and random `'x'`-filled payloads.  Timestamps are scattered across the data-transfer window (or within `stray_timing_window` of their reference packet). |
+| `duplicate_probability` | Emits the packet a second time, `raw` verbatim — same seq, same checksum, same **TSval** — one microsecond later.  What a capture point sees twice, not what the sender sent twice. |
 
 ### Timestamps and uniqueness — `_alloc_usec`
 

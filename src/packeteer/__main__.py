@@ -259,11 +259,44 @@ def _is_later_fragment(net: dict) -> bool:
     return net.get("fragment", {}).get("fragment_offset", 0) > 0
 
 
+def _hbh_options_from_spec(options: list[dict]) -> list:
+    """Rebuild Hop-by-Hop option objects from what ``_serialise_hbh_opt`` wrote.
+
+    The inverse of `packeteer.parse.to_config._serialise_hbh_opt`, and it has
+    to stay one: an option shape written there and not read here is a header
+    that silently shrinks on rebuild, which is #155.
+    """
+    from packeteer.generate.ipv6 import (
+        JumboPayloadOption,
+        RawOption,
+        RouterAlertOption,
+    )
+
+    built = []
+    for opt in options:
+        kind = opt.get("type")
+        if kind == "router_alert":
+            built.append(RouterAlertOption(value=opt.get("value", 0)))
+        elif kind == "jumbo_payload":
+            built.append(JumboPayloadOption(jumbo_length=opt.get("jumbo_length", 0)))
+        else:
+            built.append(RawOption(
+                option_type=opt.get("option_type", 0),
+                data=bytes.fromhex(opt.get("data", "")),
+            ))
+    return built
+
+
 def _build_ip_layer(b: "PacketBuilder", net: dict) -> "PacketBuilder":
     """Append an IP layer from a ``network`` spec dict to *b*.
 
     An IPv6 ``fragment`` object appends the Fragment extension header after
-    the base header, so a fragmented capture rebuilds as it was captured.
+    the base header, so a fragmented capture rebuilds as it was captured, and
+    ``hop_by_hop_options`` appends the Hop-by-Hop header before it — RFC 8200
+    requires that one to come first, immediately after the base header.
+
+    Both are extension headers `parse` records and a rebuild has to replay, or
+    the packet comes back shorter than it was captured (#155).
     """
     b = b.ip(
         src=net["src"], dst=net["dst"],
@@ -277,6 +310,9 @@ def _build_ip_layer(b: "PacketBuilder", net: dict) -> "PacketBuilder":
         declared_length=net.get("declared_length"),
         protocol=_fragment_protocol(net) if _is_later_fragment(net) else 0,
     )
+    hbh = net.get("hop_by_hop_options")
+    if hbh:
+        b = b.hop_by_hop_options(_hbh_options_from_spec(hbh))
     frag = net.get("fragment")
     if frag:
         b = b.fragment_header(
@@ -563,6 +599,10 @@ def _apply_tunnel_protocol(
         b = b.udp(
             src_port=transport.get("src_port", VXLAN_PORT),
             dst_port=transport.get("dst_port", VXLAN_PORT),
+            # Preserved, not recomputed (#68): the outer checksum covers
+            # the encapsulated frame, and a sender that offloaded it wrote
+            # a value no rebuild can derive.  Dropping it here is #153.
+            checksum=transport.get("checksum"),
         )
         b = b.vxlan(
             vni=vxlan_spec.get("vni", 0),
@@ -578,6 +618,10 @@ def _apply_tunnel_protocol(
         b = b.udp(
             src_port=transport.get("src_port", GENEVE_PORT),
             dst_port=transport.get("dst_port", GENEVE_PORT),
+            # Preserved, not recomputed (#68): the outer checksum covers
+            # the encapsulated frame, and a sender that offloaded it wrote
+            # a value no rebuild can derive.  Dropping it here is #153.
+            checksum=transport.get("checksum"),
         )
         b = b.geneve(
             vni=geneve_spec.get("vni", 0),
@@ -599,6 +643,10 @@ def _apply_tunnel_protocol(
         b = b.udp(
             src_port=transport.get("src_port", GTPU_PORT),
             dst_port=transport.get("dst_port", GTPU_PORT),
+            # Preserved, not recomputed (#68): the outer checksum covers
+            # the encapsulated frame, and a sender that offloaded it wrote
+            # a value no rebuild can derive.  Dropping it here is #153.
+            checksum=transport.get("checksum"),
         )
         b = b.gtpu(
             teid=gtpu_spec.get("teid", 0),
@@ -715,11 +763,21 @@ def _apply_spec_to_builder(
         )
         sys.exit(1)
 
-    # ── Link layer: Ethernet, a Linux cooked (SLL/SLL2) pseudo header, or BSD
-    # loopback framing.  They are alternatives — a packet has exactly one.
+    # ── Link layer: Ethernet, a Linux cooked (SLL/SLL2) pseudo header, BSD
+    # loopback framing, or none at all.  They are alternatives — a packet has
+    # exactly one, and "none" is one of them: a raw-IP capture (DLT_RAW, link
+    # type 101) has no link-layer header, and neither does the inner frame of
+    # an IP-in-IP or GRE tunnel.
+    #
+    # Absence of the `ethernet` key is what says so, which is what
+    # `docs/packet-spec/format.md` has always documented — "omit the key
+    # entirely to produce a raw IP packet with no layer-2 framing".  Until #152
+    # this fell through to an `else` that added Ethernet anyway, so a raw-IP
+    # capture came back 14 bytes longer and padded to the 60-byte minimum.
     loopback_spec = spec.get("loopback")
     sll_spec = spec.get("sll")
     sll2_spec = spec.get("sll2")
+    eth_spec = spec.get("ethernet")
     if loopback_spec is not None:
         b = b.loopback(family=loopback_spec.get("family"),
                        big_endian=loopback_spec.get("big_endian", False))
@@ -730,7 +788,7 @@ def _apply_spec_to_builder(
         b = b.sll2(**{k: sll2_spec[k]
                       for k in ("packet_type", "arphrd_type", "address", "if_index")
                       if k in sll2_spec})
-    elif eth.get("enabled", True):
+    elif eth_spec is not None and eth_spec.get("enabled", True):
         b = b.ethernet(
             src_mac=eth.get("src_mac", "00:00:00:00:00:01"),
             dst_mac=eth.get("dst_mac", "00:00:00:00:00:02"),

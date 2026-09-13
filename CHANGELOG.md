@@ -27,6 +27,158 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ---
 
+## [0.15.0] - 2026-09-13
+
+**The real-traffic release.**  0.14.0 was shaped by what happened when
+packeteer was *used*; this one by what happened when it was pointed at traffic
+it did not write.  The real-capture corpus existed because every capture CI
+could see was one packeteer generated itself — and until now every capture in
+it came from one macOS laptop, and none of them carried any of packeteer's
+nine encapsulations.
+
+Twelve captures were collected on Linux and committed: VXLAN, Geneve, GRE,
+IP-in-IP, 802.1Q VLAN, a real SCTP association, a kernel-fragmented IPv6
+datagram, both Linux cooked link types, a raw-IP capture, and a lossy TCP
+session carrying the Timestamps option with its genuine capture-point
+duplicates.
+
+**Collecting them found four bugs, and none is in the capture path.**  A
+preserved outer UDP checksum dropped when rebuilding a tunnel; an inner ARP
+frame silently discarded; IPv6 hop-by-hop options recorded and never rebuilt;
+and MLD addresses left unredacted.  Two more had been found in the same way
+before collection began (#151, #152).  Not one capture failed at the thing it
+was collected for — every failure was in traffic Linux emits unbidden, which
+is the case for real captures over fixtures, made by the captures.
+
+**Generated captures are unchanged unless you ask.**  The one new generator
+feature, `duplicate_probability`, defaults to `0.0`, draws no randomness at
+that rate, and leaves a seeded capture byte-identical to 0.14.0's.
+
+**If you have sanitised a capture of tunnelled traffic with an earlier
+version, regenerate it** — see the first entry under **Fixed**.
+
+### Added
+
+- **`duplicate_probability`, a capture-point duplication impairment.**  On
+  `ImpairmentConfig` and `TCPStreamConfig`: each packet is emitted twice with
+  probability *p*, as a SPAN port or a two-interface capture would see it.  The
+  copy is byte-for-byte the original — same sequence numbers, same checksum,
+  and crucially the **same TSval** — with only its capture timestamp differing.
+
+  That is the shape packeteer could not generate.  0.14.0 (#90) made every
+  resend carry the sender's clock at resend time, so a repeat with a *later*
+  TSval is a retransmission; a repeat with the *same* one is a duplicate, and
+  that difference is how an analyser tells them apart.  Until now only the
+  first could be produced.
+
+  Unlike every other impairment it applies to acknowledgements as well as data
+  — a mirror doubles everything — and it runs **last**, so a retransmission can
+  itself be duplicated (`DUP[RETRANS[3]]`) and a corrupted copy is doubled as
+  corrupted.  The copy lands one microsecond after its original, measured from
+  the ten real duplicates in `testcases/real/tcp_dup_ts.pcap` rather than
+  chosen.  A rate of `0.0` draws no randomness and leaves a seeded capture
+  byte-identical to one generated before the field existed.  API only for now;
+  there is no `--stream` flag.  (#150)
+
+- **Real captures of eight encapsulations and link types the corpus had never
+  seen.**  VXLAN, Geneve, GRE, IP-in-IP, 802.1Q VLAN, a real SCTP association,
+  a kernel-fragmented IPv6 datagram, both Linux cooked link types (113 and
+  276), and a raw-IP capture (`DLT_RAW`).  Until now packeteer supported nine
+  encapsulation modules and had real traffic for none of them; the tunnel
+  captures are taken on the **underlay**, so each file holds the whole stack
+  rather than the inner packet alone.  Collecting them is what found #153,
+  #154, #155 and #156.  (#127)
+
+- **Two real captures of a TCP session that loses segments while carrying the
+  Timestamps option.**  `tcp_lossy_ts.pcap` holds 14 retransmissions, each
+  carrying a later TSval than the original it repeats, and 14 runs of
+  duplicate ACKs whose echo never moves while the sender goes on sending newer
+  ones — RFC 7323 §4.3's `TS.Recent` rule, in traffic packeteer did not write.
+  `tcp_dup_ts.pcap` holds 10 **genuine duplicates**: the same transmission
+  seen twice by the capture point, with an identical sequence number *and* an
+  identical TSval, which is the one shape packeteer's generator cannot produce
+  because a resend is always rebuilt with a fresh clock.  Until now every
+  capture that repeated a segment predated the option, so nothing confirmed
+  that a real stack behaves the way 0.14.0 generates.  (#149)
+
+### Fixed
+
+- **A preserved outer UDP checksum was dropped when rebuilding a VXLAN, Geneve
+  or GTP-U packet.**  Those three branches built the outer UDP header without
+  passing the recorded `transport.checksum`, while every other transport path
+  passes it, so a tunnelled packet whose sender computed one — or offloaded it
+  — came back with a recomputed value.  This is #68's rule, and a tunnel is
+  where it bites hardest: the outer checksum covers the encapsulated frame.
+  (#153)
+
+- **A tunnelled inner ARP frame was silently dropped.**  None of the five
+  inner-frame serialisers wrote out an inner ARP, so a VXLAN frame carrying one
+  parsed to an Ethernet header and nothing else, and could not be rebuilt at
+  all.  VXLAN is an Ethernet overlay, where ARP is how hosts find each other.
+  A new `UnserialisedInnerLayerWarning` now fires when a tunnelled inner layer
+  is decoded but not written to the spec, so the next such omission is loud
+  rather than silent.  (#154)
+
+- **IPv6 hop-by-hop options were recorded by `parse` and ignored by `build`.**
+  `network.hop_by_hop_options` was written, documented and buildable, and
+  never read back, so an IPv6 packet carrying the extension header rebuilt 8
+  bytes shorter with its Next Header pointing straight at the transport.  On a
+  real network that is every MLD report.  (#155)
+
+- **`sanitise` left the addresses in an MLD message untouched.**  It said so —
+  the unknown-ICMPv6-type warning fired — but what stayed is worth more than
+  the warning suggests: a host reports the solicited-node group it listens on,
+  which embeds the low 24 bits of its own interface identifier, so a sanitised
+  file kept part of an address replaced everywhere else.  MLDv1 Query, Report
+  and Done and MLDv2 Report are now redacted through the same replacer as
+  everything else.  (#156)
+
+- **A raw-IP packet spec gained an Ethernet header when rebuilt.**  A packet
+  spec with no `ethernet`, `sll`, `sll2` or `loopback` section describes a
+  packet with no layer-2 framing — which `docs/packet-spec/format.md` has
+  always documented as the meaning of omitting the key — but the builder fell
+  through to Ethernet anyway and then padded the result to the 802.3 minimum.
+  A raw-IP capture (`DLT_RAW`, link type 101) parsed cleanly, raised no
+  warning, and came back 31 bytes longer, so `parse` → `build` did not
+  reproduce it.  Specs that name a link layer, or set `ethernet.enabled` to
+  `false` explicitly, are unaffected; the implementation now matches what the
+  spec format documents.  (#152)
+
+- **`sanitise` left the inner addresses and MACs of a VXLAN, Geneve or GTP-U
+  tunnel untouched.**  `parse` nests a whole inner packet under
+  `vxlan`, `geneve` and `gtpu` — exactly as it does under `ipip`, `gre` and
+  `etherip` — but the sanitiser's tunnel recursion listed only the latter
+  three, so for the former the inner Ethernet MACs, IP addresses and ports
+  passed straight through.  Every outer field was redacted correctly and no
+  warning was raised, because all three keys were already recorded as
+  structural: the output was a file that looked sanitised and was not.
+  **A capture of tunnelled traffic sanitised by an earlier version should be
+  regenerated**; GRE, IP-in-IP, EtherIP, pseudowire and AH were unaffected, as
+  were MPLS and PPPoE, which do not nest.
+
+  The two lists that had to agree are now one: `_NESTING_TUNNEL_KEYS` is the
+  single record of which encapsulations nest a packet, and the structural set
+  is built from it, so an encapsulation can no longer be added to one and
+  forgotten in the other.  The real-capture corpus's leak sweep now follows
+  `tunneled` to any depth as well — reading only `ParsedPacket.ip` guarded the
+  outer header, which on a tunnelled packet is the one least likely to carry
+  anything sensitive.  (#151)
+
+### Documentation
+
+- The tunnel-recursion key list in `docs/internals/sanitiser.md` and
+  `docs/guide/sanitising.md` named three and four keys respectively, out of
+  eight — so both pages told a reader that VXLAN, Geneve and GTP-U were
+  redacted when they were not.  The internals page now points at
+  `_NESTING_TUNNEL_KEYS` rather than repeating it, and records why ESP, MPLS
+  and PPPoE are excluded.
+- `docs/packet-spec/format.md` gains `versionchanged` notes on `ethernet` and
+  `hop_by_hop_options`: both documented behaviour the builder did not
+  implement until this release.
+- Generated-output transcripts refreshed from 0.14.0 to 0.15.0.
+
+---
+
 ## [0.14.0] - 2026-09-12
 
 **The downstream release.**  0.12.0 made a user's protocol first-class and
@@ -3199,7 +3351,8 @@ the exhaustive API reference.
      tagged with names that predate this convention, so only the entries below
      carry compare links. -->
 
-[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/adamkjonsson/packeteer/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/adamkjonsson/packeteer/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/adamkjonsson/packeteer/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/adamkjonsson/packeteer/compare/v0.11.0...v0.12.0

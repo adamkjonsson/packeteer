@@ -213,6 +213,13 @@ class TCPStreamConfig:
             within *N* positions of the stolen reference packet in the
             timestamp-sorted stream.  ``None`` uses the full data-transfer
             window.
+        duplicate_probability: Probability (0.0–1.0) that each packet is seen
+            **twice by the capture point** — a SPAN port, a two-interface
+            capture, a veth pair.  The copy is the same transmission, so its
+            TSval is identical to the original's; a repeat with a *later*
+            TSval is a retransmission, and that difference is how an analyser
+            tells them apart.  Applies to acknowledgements as well as data,
+            because a mirror doubles everything.  Defaults to ``0.0``.
         packet_hooks: Optional list of callables applied to each packet after
             it is built.  Signature::
 
@@ -245,6 +252,7 @@ class TCPStreamConfig:
     rst_propagation_delay: float = 0.0
     stray_packet_count: int = 0
     stray_timing_window: int | None = None
+    duplicate_probability: float = 0.0
     retransmit_lost: bool = False
     packet_hooks: list[Callable[[TCPStreamPacket, int], TCPStreamPacket | None]] | None = None
     payload_fn: Callable[[int, str], bytes] | None = None
@@ -469,6 +477,7 @@ def generate_tcp_stream(
     rst_propagation_delay = config.rst_propagation_delay
     stray_packet_count = config.stray_packet_count
     stray_timing_window = config.stray_timing_window
+    duplicate_probability = config.duplicate_probability
     retransmit_lost = config.retransmit_lost
     packet_hooks = config.packet_hooks
     payload_fn = config.payload_fn
@@ -649,9 +658,11 @@ def generate_tcp_stream(
         )
 
     # ── Wire impairments ─────────────────────────────────────────────────────
-    # RST, retransmission, corruption and stray injection, in that order.  The
-    # passes live in impairments.py so the payload generators can apply the
-    # same ones; packet loss is already applied above, inside emit().
+    # RST, retransmission, corruption, stray injection and duplication, in
+    # that order.  The passes live in impairments.py so the payload generators
+    # can apply the same ones; packet loss is already applied above, inside
+    # emit().  Duplication is last because it is what the capture point saw,
+    # not something the sender did.
     packets = apply_impairments(
         packets,
         rng=rng,
@@ -664,6 +675,7 @@ def generate_tcp_stream(
             stray_packet_count=stray_packet_count,
             stray_timing_window=stray_timing_window,
             stray_payload_range=(min_payload, max_payload),
+            duplicate_probability=duplicate_probability,
         ),
         flow=FlowEndpoints(
             client_ip=client_ip, client_port=client_port, client_mac=client_mac,

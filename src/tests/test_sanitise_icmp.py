@@ -351,3 +351,75 @@ class TestDHCPIdentityOptions(unittest.TestCase):
                               "data": "01" + self._MAC.replace(":", "")}],
                             macs=False)
         self.assertIn(self._MAC.replace(":", ""), clean["options"][0]["data"])
+
+
+class TestMulticastListenerDiscovery(unittest.TestCase):
+    """Redacting the addresses MLD carries (#156).
+
+    Before this, `sanitise` had no MLD handling and said so — the
+    `_warn_unknown_icmp` fallback fired for type 143 — but the addresses
+    stayed.  That matters more than "one more message type" suggests: a host
+    reports the **solicited-node** group it listens on, which is `ff02::1:ff`
+    followed by the low 24 bits of its own interface identifier.  On a
+    link-local address formed by EUI-64 those are the NIC-specific half of the
+    MAC, so leaving them leaves part of the address every other section had
+    replaced — #122's argument, one message type further on.
+
+    MLD turns up in captures nobody collected for it: Linux emits these
+    unprompted on any IPv6-enabled interface, which is how four unrelated
+    encapsulation captures each carried them.
+    """
+
+    #: EUI-64 of 56:a0:9a:2b:e4:aa, and the group it would listen on.
+    _ADDR = "fe80::54a0:9aff:fe2b:e4aa"
+    _SOLICITED = "ff02::1:ff2b:e4aa"
+
+    def _report(self, *addresses: str) -> bytes:
+        """Return an MLDv2 Report body as `sanitise` sees it: records, no header.
+
+        packeteer's ICMPv6 header consumes the reserved bytes and the record
+        count as `identifier` and `sequence`, so the payload starts at the
+        first record.
+        """
+        body = b""
+        for address in addresses:
+            body += bytes([4, 0]) + (0).to_bytes(2, "big") + _packed(address)
+        return body
+
+    def _clean_payload(self, payload: bytes, icmp_type: int) -> bytes:
+        return _payload(_clean(_spec(payload, icmp_type=icmp_type)))
+
+    def test_a_report_record_address_is_replaced(self) -> None:
+        out = self._clean_payload(self._report(self._SOLICITED), 143)
+        self.assertNotIn(_packed(self._SOLICITED), out)
+
+    def test_several_records_are_all_replaced(self) -> None:
+        """The walk has to reach past the first record, not just find one."""
+        second = "ff02::1:ff9d:9e65"
+        out = self._clean_payload(self._report(self._SOLICITED, second), 143)
+        self.assertNotIn(_packed(self._SOLICITED), out)
+        self.assertNotIn(_packed(second), out)
+
+    def test_a_report_no_longer_warns(self) -> None:
+        """The observable sign it is handled: the fallback stops firing."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            _clean(_spec(self._report(self._SOLICITED), icmp_type=143))
+        self.assertEqual([str(w.message) for w in caught], [])
+
+    def test_mldv1_multicast_address_is_replaced(self) -> None:
+        for icmp_type in (130, 131, 132):
+            with self.subTest(icmp_type=icmp_type):
+                out = self._clean_payload(_packed(self._SOLICITED), icmp_type)
+                self.assertNotIn(_packed(self._SOLICITED), out)
+
+    def test_a_truncated_record_is_not_read_past_its_end(self) -> None:
+        """A capture cut mid-record must not crash or over-read."""
+        truncated = self._report(self._SOLICITED)[:-4]
+        out = self._clean_payload(truncated, 143)
+        self.assertEqual(len(out), len(truncated))
+
+    def test_ips_false_leaves_them(self) -> None:
+        out = _payload(_clean(_spec(self._report(self._SOLICITED),
+                                    icmp_type=143), ips=False))
+        self.assertIn(_packed(self._SOLICITED), out)

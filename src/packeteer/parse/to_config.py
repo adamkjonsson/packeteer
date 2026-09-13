@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import json
 import socket
+import warnings
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -454,10 +455,59 @@ def _apply_inner_tail(inner: dict[str, Any], tunneled: ParsedPacket) -> None:
     Shared by :func:`_apply_etherip` and :func:`_apply_ipip` for the
     terminal (non-recursive) case.
     """
+    if tunneled.arp is not None:
+        # An Ethernet overlay carries ARP constantly — it is how hosts on it
+        # find each other — and until #154 none of the inner-frame serialisers
+        # wrote it out, so the frame came back with its payload missing.
+        _apply_arp(inner, tunneled.arp)
     if tunneled.transport is not None:
         _apply_transport(inner, tunneled.transport)
         if tunneled.payload:
             _apply_payload(inner, tunneled.payload)
+    _warn_unserialised_inner(inner, tunneled)
+
+
+#: Attributes of a tunnelled :class:`ParsedPacket` that a serialiser is
+#: expected to write into the inner spec, and the key each one lands under.
+#: `_warn_unserialised_inner` compares the two, so a decoder added without a
+#: matching serialiser is reported rather than silently dropped (#154).
+_INNER_EXPECTED: tuple[tuple[str, str], ...] = (
+    ("ethernet", "ethernet"),
+    ("arp", "arp"),
+    ("ip", "network"),
+    ("transport", "transport"),
+    ("pppoe", "pppoe"),
+)
+
+
+def _warn_unserialised_inner(inner: dict[str, Any], tunneled: ParsedPacket) -> None:
+    """Warn when the parser decoded an inner layer the serialiser did not write.
+
+    A tunnelled frame whose inner payload vanished is indistinguishable, in a
+    spec, from one that never had it — the same argument `_warn_undecoded`
+    makes for an outer frame in `sanitise`, and what #123 filed for the
+    link-layer case.  #154 was this shape: five serialisers, none of which
+    handled an inner ARP, and no warning from any of them.
+    """
+    missing = [
+        attribute for attribute, key in _INNER_EXPECTED
+        if getattr(tunneled, attribute, None) is not None and key not in inner
+    ]
+    if not missing:
+        return
+    # Imported here rather than at module scope: `core` imports this module,
+    # so a top-level import back into it would cycle.
+    from .core import UnserialisedInnerLayerWarning
+
+    warnings.warn(
+        UnserialisedInnerLayerWarning(
+            "A tunnelled frame decoded layers that were not written to the "
+            f"packet spec ({', '.join(missing)}), so the inner packet cannot "
+            "be rebuilt from it.",
+            layers=tuple(missing),
+        ),
+        stacklevel=3,
+    )
 
 
 def _apply_etherip(config: dict[str, Any], hdr: EtherIPHeader, tunneled: ParsedPacket) -> None:

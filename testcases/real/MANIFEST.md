@@ -28,6 +28,30 @@ Before adding one:
 4. Add a row below saying what it is *for*.  A capture nothing asserts
    anything about is a file, not a test.
 
+## Inducing what you cannot wait for
+
+Loss, duplication and reordering can be induced rather than waited for, which
+is how the `tcp_lossy_ts` / `tcp_dup_ts` pair was collected: three throwaway
+network namespaces — client, router, server — with `tc netem` on the router.
+Three details decide whether the result is worth committing, and each one
+produces a plausible-looking file when got wrong:
+
+1. **Put the impairment downstream of the capture point.** An egress `netem`
+   drops a packet at enqueue, which is *before* AF_PACKET's transmit tap, so a
+   capture on the dropping device never holds the segment that went missing.
+   Comparing a resend against its original needs both, so the loss belongs on
+   a *router* between the sender and the receiver, not on either end.
+2. **Turn off segmentation offload** (`ip link set dev X gso_max_segs 1`).
+   Otherwise the stack hands one large skb to the device and lets it segment,
+   and the capture shows "segments" of several thousand bytes that no wire
+   ever carried.
+3. **Give the path a realistic delay** (`netem delay 20ms`). The TCP timestamp
+   clock has millisecond granularity and a veth pair's round trip is
+   microseconds, so without it an entire transfer lands inside one tick: every
+   TSval in the file identical, and a fast retransmit carrying the *same*
+   TSval as its original.  A capture like that cannot answer the question
+   #149 asks.
+
 ## What each one is for
 
 | File | Packets | Covers |
@@ -35,35 +59,74 @@ Before adding one:
 | `arp.pcapng` | 86 | ARP request/reply on a real LAN.  34 of the frames are **58 bytes** — 42 of ARP and 16 of the sender's padding — which is the link-layer trailer case, and what `ethernet.pad` could not express (#129) |
 | `dhcp.pcapng` | 1 | A DHCP Request with real options — hostname, client identifier, parameter request list.  Found #125 |
 | `dns.pcapng` | 238 | 238 real DNS messages carrying CNAME, SOA, OPT (EDNS0) and HTTPS records, none of which packeteer's own generated captures emit.  It does **not** cover compression pointers, despite being collected for them — see the gap below |
-| `http_body.pcap` | 11 | A real HTTP exchange with a **chunked** response body, kept as raw chunks and finished by a `0\r\n\r\n` in its own TCP segment — #84's subject, in bytes.  Also the corpus's only **classic `.pcap`** file, which is what `tcpdump -w` writes and what sanitising to pcapng had been hiding |
+| `http_body.pcap` | 11 | A real HTTP exchange with a **chunked** response body, kept as raw chunks and finished by a `0\r\n\r\n` in its own TCP segment — #84's subject, in bytes.  The first **classic `.pcap`** file here, which is what `tcpdump -w` writes and what sanitising to pcapng had been hiding; every capture added since is one too |
 | `icmp_time_exceeded.pcapng` | 2 | An ICMP error quoting the packet that provoked it, from a real router |
 | `icmpv6_nd.pcapng` | 93 | Neighbour Discovery with link-layer options, and an ICMPv6 error.  Found #122 |
 | `ipv6_udp.pcapng` | 7 | IPv6 over Ethernet — the `0x86DD` path |
 | `tcp_v4.pcapng` | 11 | A complete TCP session with **two stacks' option layouts** — the client's in the SYN, the server's in the SYN-ACK.  This is #87's case |
 | `tcp_v4_snaplen.pcapng` | 11 | The same session captured with `tcpdump -s 96`: two packets hold less than their headers declare.  The only real coverage of #92, #94 and #126 — and the file whose sanitised copy #126 was filed about |
-| `udp_frag_nano.pcap` | 3 | A whole 4 008-byte UDP datagram in three fragments, split by the OS rather than by packeteer — the only real traffic `packeteer.parse.defragment` has.  The first fragment's `transport.length` and `checksum` describe the whole datagram, not the 1 472 bytes beside them, which is #68's rule in real bytes.  Also the only **nanosecond-resolution** file |
+| `udp_frag_nano.pcap` | 3 | A whole 4 008-byte UDP datagram in three fragments, split by the OS rather than by packeteer — the only real traffic `packeteer.parse.defragment` has.  The first fragment's `transport.length` and `checksum` describe the whole datagram, not the 1 472 bytes beside them, which is #68's rule in real bytes.  In the nanosecond *format*, but converted with `editcap` rather than captured, so every sub-microsecond digit is `0` — contrast `tcp_lossy_ts.pcap`, where all 234 are non-zero |
 | `tcp_v6_loopback.pcapng` | 10 | TCP over IPv6 over `DLT_NULL` (link type 0), which #124 added support for.  Also carries offloaded checksums, so it exercises the preserved-`transport.checksum` path from #68 against real bytes |
+| `tcp_lossy_ts.pcap` | 234 | A **lossy** TCP session where both ends negotiated the Timestamps option — #149's subject.  Captured **at the sender**, which is the point: the loss is applied by a router downstream, so the file holds each original segment *and* the resend of it.  A capture taken on the dropping device would hold neither, because an egress `netem` drops at enqueue, before AF_PACKET's transmit tap.  14 resends, every one carrying a later TSval than its original; 10 retransmissions, every one answered by an ACK echoing *its* TSval; 39 duplicate ACKs, of which 28 visibly echo the last **in-order** segment rather than the out-of-order one that triggered them (RFC 7323 §4.3), and **none** contradict it.  The other 11 cannot say: 10 where the in-order and out-of-order segments share a TSval because they were sent inside the same 1 ms tick, and 1 with no usable SACK block.  That ceiling is the option's granularity, not this capture's — no capture can do better |
+| `tcp_dup_ts.pcap` | 154 | **Genuine duplicates**: 10 segments that appear twice with an identical sequence number *and* an identical TSval.  The shape packeteer's generator cannot make, since a resend is always rebuilt with a fresh clock (#90) — so the only thing separating a duplicate from a retransmission is the TSval, and this is the file that proves a real one looks that way.  Captured on the **router**, where the duplication happens: both copies are tapped on the way out, whereas at the receiver GRO may coalesce them.  tshark labels them "TCP Retransmission", which is exactly the misreading the TSval exists to correct |
+
+### The encapsulations
+
+All collected the same way: two namespaces joined by a veth pair, the
+encapsulation built on top, and the capture taken on the **underlay** device
+so the file holds the whole stack rather than the inner packet alone.  Between
+them they found #153, #154 and #155 — none of which is in the capture path.
+
+| File | Packets | Covers |
+|------|---------|--------|
+| `vxlan.pcap` | 24 | VXLAN over UDP/4789 carrying an inner Ethernet frame — TCP, ICMPv6 and **ARP**, the last of which no inner-frame serialiser wrote out (#154).  Its outer UDP checksum is one #153 dropped |
+| `geneve.pcap` | 24 | Geneve over UDP/6081, the same shape and the same two bugs.  Two encapsulations that differ only in their header is what shows a fix is not special-cased to one |
+| `gre.pcap` | 12 | IP-in-GRE.  The one tunnel of the five that round-tripped from the first attempt, which is what made the other two files' failures worth chasing rather than dismissing |
+| `ipip.pcap` | 12 | IP-in-IP captured on the **underlay**, so the file holds outer IP, the tunnel, and the inner packet.  Contrast `ipip_raw.pcap`, the same tunnel captured from inside |
+| `vlan.pcap` | 28 | An 802.1Q-tagged session.  Also the file that found #155: 10 of its 28 packets are MLD reports carrying a Hop-by-Hop Router Alert, and every one of them rebuilt 8 bytes short |
+| `sctp.pcap` | 13 | A real SCTP association — INIT, INIT-ACK, COOKIE-ECHO, COOKIE-ACK, DATA, SACK, SHUTDOWN — with CRC-32c checksums a sender computed.  See the note below on its State Cookie |
+| `ipv6_frag.pcap` | 11 | A 3 000-byte UDP datagram over a 1 280-byte link, so the kernel inserts an IPv6 **Fragment extension header**.  `udp_frag_nano.pcap` is the IPv4 half of #68's case; this is the IPv6 half, which is an extension header rather than a field |
+| `sll_any.pcap` | 36 | Linux cooked capture **v1** (link type 113), from `tcpdump -i any -y LINUX_SLL` |
+| `sll2_any.pcap` | 40 | Linux cooked capture **v2** (link type 276), which is what `tcpdump -i any` gives by default on libpcap 1.10 |
+| `ipip_raw.pcap` | 12 | A capture taken **on** an `ipip` device, which libpcap reports as `DLT_RAW` (link type 101) because a tunnel device has no link-layer header it can name.  The corpus's only raw-IP file, and the capture that found #152 — before it, every packet here gained an Ethernet header and padding on rebuild |
+
+### One thing `sanitise` cannot reach
+
+`sctp.pcap`'s INIT-ACK carries a 232-byte **State Cookie**, and the sending
+stack's own copy of the association state inside it includes the peer's IP
+address.  The cookie is opaque by design — its layout is the sender's private
+business and it is integrity-protected — so there is nothing for a sanitiser
+to rewrite without destroying it, and `sanitise` leaves it alone.
+
+The address that survives here is `10.5.0.1`, a namespace address that never
+existed outside the machine that made this file.  **A capture of real SCTP
+from a real network cannot be sanitised this way**, and that is worth knowing
+before anyone collects one: the cookie has to be zeroed with
+`--payload`, or the capture kept out of a public repository.
 
 ## Known gaps
 
 Tracked as [#127](https://github.com/adamkjonsson/packeteer/issues/127), with
-the tiers and the rules for closing them.  The corpus reaches twelve decoders
-across 459 packets; everything below has **no** real traffic at all.
+the tiers and the rules for closing them.  The corpus reaches 1 073 packets;
+everything below has **no** real traffic at all.
 
-- **VLAN, MPLS, and any tunnel.** packeteer supports nine such modules — GRE,
-  VXLAN, Geneve, GTP-U, EtherIP, IPsec, MPLS, PPPoE, IP-in-IP — and has real
-  traffic for none of them.
-- **A *captured* nanosecond timestamp.** `udp_frag_nano.pcap` is in the
-  nanosecond format, but it was converted with `editcap -F nsecpcap` from a
-  microsecond capture, so every sub-microsecond digit is `0`.  macOS BPF has
-  no nanosecond mode — `tcpdump --nano` fails on every interface, and both
-  `en1` and `lo0` report only the `host` timestamp type — so a real one has to
-  come from the Linux capture below.
-- **Linux cooked capture** (link types 113 and 276).  Every capture came from
-  one macOS laptop, which is a gap in the *collecting*, not in the traffic.
-- **IPv4 fragments and IPv6 extension headers.**  Tested only against packets
-  packeteer fragmented itself.
-- **SCTP.**
+Each entry says why it is still open, because "hard to collect" and "nobody
+has got to it" are different problems and only the second is a to-do.
+
+- **MPLS.**  The only one of packeteer's nine encapsulation modules with no
+  real traffic, and not for want of trying: `mpls_router` and `mpls_iptunnel`
+  are not built for the kernel the rest of these captures came from (WSL2), so
+  a label cannot be pushed there at all.  Needs a machine with a kernel that
+  has them.
+- **GTP-U.**  Linux has no GTP-U tunnel driver in the mainline `ip link` set,
+  so producing this means either a userspace implementation or forging the
+  packets — and a forged capture is the thing this corpus exists not to be.
+- **An FCS.**  Out of reach on *any* virtual interface: the hardware strips
+  the frame check sequence before the frame reaches libpcap, and a veth pair
+  never had one.  `arp.pcapng` carries a sender's padding, which is the
+  trailer case, not this one.
+- **IPsec (AH/ESP).**  `xfrm` is available; nobody has set up an association.
+  This is the one on the list that is simply undone.
 - **A compressed DNS message.**  `parse` → `build` reproduces a compressed
   message byte for byte (#130) by keeping the bytes in `dns.raw` — but
   `sanitise` must drop `raw` the moment it redacts a name, or the redacted
@@ -77,10 +140,7 @@ across 459 packets; everything below has **no** real traffic at all.
   not in the repository.  Until it is refreshed, note that 119 of the 238
   messages here now parse *with* `raw`, because the compressing encoder no
   longer reproduces their uncompressed bytes.
-- **IPv6 extension headers**, including a fragmented IPv6 datagram.  The IPv4
-  side is covered by `udp_frag_nano.pcap`; the IPv6 side is not.
 - **An ICMPv4 Redirect.** Its gateway address lives in the header bytes a spec
   records as `identifier`/`sequence`, and `_sanitise_icmpv4_gateway` is the
   only code that treats them as an address.  Producing one needs two gateways
   on a subnet, so it is tested only against synthesised packets.
-- **An FCS.**  `arp.pcapng` carries a sender's padding, which is the trailer case; no capture here keeps a frame check sequence, since the hardware strips it before the frame reaches libpcap.

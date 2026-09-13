@@ -30,6 +30,28 @@ _STRUCTURAL_KEYS = frozenset({
 })
 
 
+def _every_address(pkt: object, depth: int = 0) -> list[tuple[int, str]]:
+    """Every IP address in *pkt*, following tunnels to whatever depth.
+
+    `pkt.ip` on a tunnelled packet is the **outer** header, so a scan that
+    reads only that guards the one header least likely to be the problem: the
+    outer addresses of a tunnel are the capture point's own, while the inner
+    ones are the traffic being carried.  #151 was exactly this — `sanitise`
+    left VXLAN, Geneve and GTP-U inner addresses untouched, and this sweep
+    could not see it.
+
+    Returns (depth, address) pairs so a failure says which layer leaked.
+    """
+    found: list[tuple[int, str]] = []
+    ip = getattr(pkt, "ip", None)
+    if ip is not None:
+        found.extend((depth, value) for value in (ip.src, ip.dst))
+    inner = getattr(pkt, "tunneled", None)
+    if inner is not None:
+        found.extend(_every_address(inner, depth + 1))
+    return found
+
+
 def _captures() -> list[Path]:
     """Every file in the corpus except the manifest, whatever it is called.
 
@@ -303,6 +325,304 @@ class TestRealTrafficCoversWhatSyntheticCannot(unittest.TestCase):
                  if type(p.transport).__name__ == "ICMPv6Header"}
         self.assertTrue({135, 136} & types)
 
+    def test_a_capture_was_taken_at_nanosecond_resolution(self) -> None:
+        """#127: the corpus had the nanosecond *format* and not the resolution.
+
+        `udp_frag_nano.pcap` was converted with `editcap -F nsecpcap` from a
+        microsecond capture, so every sub-microsecond digit in it is zero — it
+        exercises the format and says nothing about a capture clock.  macOS
+        BPF has no nanosecond mode, so closing this needed a Linux capture.
+        """
+        with open_pcap(path=str(_CORPUS / "tcp_lossy_ts.pcap")) as capture:
+            fractions = [record.ts_frac % 1000 for record in capture]
+        self.assertTrue(fractions)
+        self.assertTrue(
+            all(fractions),
+            "every record should carry a non-zero sub-microsecond part",
+        )
+
+
+class TestTheCorpusReachesTheEncapsulations(unittest.TestCase):
+    """#127's largest gap, asserted per capture.
+
+    Nine encapsulation modules had no real traffic at all, and collecting it
+    found #153, #154 and #155 within the hour.  Each test names the decoder its
+    capture exercises, so a file that stops covering what it was collected for
+    fails rather than quietly becoming decoration.
+    """
+
+    def _packets(self, name: str) -> list:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            with iter_packets(path=str(_CORPUS / name), decode_app=False,
+                              defragment=False) as capture:
+                return list(capture)
+
+    def test_each_tunnel_capture_decodes_its_encapsulation(self) -> None:
+        for name, attribute in (("vxlan.pcap", "vxlan"),
+                                ("geneve.pcap", "geneve"),
+                                ("gre.pcap", "gre"),
+                                ("ipip.pcap", "ipip")):
+            with self.subTest(capture=name):
+                decoded = [p for p in self._packets(name)
+                           if getattr(p, attribute, None)]
+                self.assertTrue(decoded, f"{name} should decode as {attribute}")
+
+    def test_a_tunnel_capture_carries_an_inner_frame(self) -> None:
+        """The reason to capture on the underlay: the whole stack is in the file."""
+        for name in ("vxlan.pcap", "geneve.pcap", "gre.pcap", "ipip.pcap"):
+            with self.subTest(capture=name):
+                inner = [p.tunneled for p in self._packets(name)
+                         if getattr(p, "tunneled", None) is not None]
+                self.assertTrue(inner, f"{name} should carry inner packets")
+                self.assertTrue(any(p.ip is not None for p in inner),
+                                "at least one inner frame should reach IP")
+
+    def test_an_overlay_carries_inner_arp(self) -> None:
+        """#154's case in real bytes: ARP is how hosts on an overlay find each other."""
+        for name in ("vxlan.pcap", "geneve.pcap"):
+            with self.subTest(capture=name):
+                arps = [p for p in self._packets(name)
+                        if getattr(getattr(p, "tunneled", None), "arp", None)]
+                self.assertTrue(arps, f"{name} should carry an inner ARP")
+
+    def test_a_capture_is_vlan_tagged(self) -> None:
+        tagged = [p for p in self._packets("vlan.pcap")
+                  if getattr(p.ethernet, "vlan_tag", None) is not None]
+        self.assertTrue(tagged, "vlan.pcap should carry 802.1Q tags")
+        self.assertEqual({p.ethernet.vlan_tag.vid for p in tagged}, {100})
+
+    def test_a_capture_carries_a_hop_by_hop_header(self) -> None:
+        """#155's case: an extension header, not a field, and it must rebuild."""
+        found = False
+        for name in ("vlan.pcap", "ipv6_frag.pcap"):
+            spec = json.loads(self._spec_text(name))
+            found = found or any(
+                "hop_by_hop_options" in p.get("network", {})
+                for p in spec["packets"])
+        self.assertTrue(found, "no capture carries hop-by-hop options")
+
+    def _spec_text(self, name: str) -> str:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return parse_pcap_file(path=str(_CORPUS / name))
+
+    def test_an_ipv6_datagram_is_fragmented_by_the_kernel(self) -> None:
+        """The IPv6 half of #68; `udp_frag_nano.pcap` is the IPv4 half."""
+        spec = json.loads(self._spec_text("ipv6_frag.pcap"))
+        fragments = [p for p in spec["packets"]
+                     if "fragment" in p.get("network", {})]
+        self.assertGreater(len(fragments), 1,
+                           "one fragment proves no fragmentation")
+        identifications = {p["network"]["fragment"]["identification"]
+                           for p in fragments}
+        self.assertEqual(len(identifications), 1,
+                         "every fragment of a datagram shares its id")
+
+    def test_a_capture_holds_a_real_sctp_association(self) -> None:
+        packets = self._packets("sctp.pcap")
+        chunk_bearing = [p for p in packets
+                         if type(p.transport).__name__ == "SCTPHeader"]
+        self.assertTrue(chunk_bearing, "sctp.pcap should decode as SCTP")
+
+    def test_both_linux_cooked_link_types_are_present(self) -> None:
+        """Two encodings of the same idea; the corpus had neither."""
+        for name, expected in (("sll_any.pcap", 113), ("sll2_any.pcap", 276)):
+            with (self.subTest(capture=name),
+                  open_pcap(path=str(_CORPUS / name)) as capture):
+                self.assertEqual(capture.header.link_type, expected)
+
+    def test_a_capture_is_raw_ip(self) -> None:
+        """#152's case: a link type with no link-layer header at all."""
+        with open_pcap(path=str(_CORPUS / "ipip_raw.pcap")) as capture:
+            self.assertEqual(capture.header.link_type, 101)
+        spec = json.loads(self._spec_text("ipip_raw.pcap"))
+        for packet in spec["packets"]:
+            self.assertNotIn("ethernet", packet)
+            self.assertIn("network", packet)
+
+
+class TestALossyTimestampedSession(unittest.TestCase):
+    """What `tcp_lossy_ts.pcap` and `tcp_dup_ts.pcap` are for (#149).
+
+    #90 made every generated resend carry a fresh clock, which is what lets an
+    analyser tell a retransmission from a duplicate.  Nothing said a real stack
+    does the same: the corpus's one complete session, `tcp_v4.pcapng`, loses
+    nothing, and every capture that repeats a segment predates the option.
+    These two files are that evidence, and each test below is one of the three
+    properties #149 named.
+    """
+
+    def _fields(self, name: str) -> list:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            with iter_packets(path=str(_CORPUS / name), decode_app=False,
+                              defragment=False) as capture:
+                return list(capture)
+
+    @staticmethod
+    def _tsval(pkt: object) -> int | None:
+        options = getattr(getattr(pkt, "transport", None), "options", None)
+        timestamps = getattr(options, "timestamps", None)
+        return None if timestamps is None else timestamps[0]
+
+    def _data_segments(self, name: str) -> list:
+        """Return the bulk sender's data segments, in capture order."""
+        packets = self._fields(name)
+        return [p for p in packets
+                if getattr(p, "payload", None) and self._tsval(p) is not None
+                and p.transport.src_port == self._bulk_sender(packets)]
+
+    @staticmethod
+    def _bulk_sender(packets: list) -> int:
+        """Return the port that sent the most bytes.
+
+        Not simply the first data segment's port: the client opens with a
+        five-byte request, so "whoever sent data first" is the receiver of
+        everything these tests are about.
+        """
+        sent: dict[int, int] = {}
+        for pkt in packets:
+            if getattr(pkt, "payload", None):
+                port = pkt.transport.src_port
+                sent[port] = sent.get(port, 0) + len(pkt.payload)
+        return max(sent, key=lambda port: sent[port])
+
+    def test_both_ends_negotiated_timestamps(self) -> None:
+        """Without that, none of the rest of this file means anything."""
+        syns = [p for p in self._fields("tcp_lossy_ts.pcap")
+                if getattr(p.transport, "flags", 0) & 0x02]
+        self.assertGreaterEqual(len(syns), 2, "a SYN and a SYN-ACK")
+        for syn in syns:
+            self.assertIsNotNone(self._tsval(syn),
+                                 "both ends should offer the option")
+
+    def test_a_resend_carries_a_later_tsval_than_its_original(self) -> None:
+        """#149's first assertion, and #90's rule in traffic packeteer did not write."""
+        by_seq: dict[int, list[int]] = {}
+        for pkt in self._data_segments("tcp_lossy_ts.pcap"):
+            by_seq.setdefault(pkt.transport.seq, []).append(self._tsval(pkt))
+
+        resent = {seq: vals for seq, vals in by_seq.items() if len(vals) > 1}
+        self.assertTrue(resent, "the capture should hold retransmissions")
+        for seq, vals in resent.items():
+            with self.subTest(seq=seq):
+                self.assertGreater(
+                    vals[-1], vals[0],
+                    "a resend is rebuilt with the clock at resend time",
+                )
+
+    def test_the_ack_answering_a_resend_echoes_the_resend(self) -> None:
+        """#149's third assertion: which copy the receiver kept.
+
+        This is the evidence a reassembler reads to decide that — the ACK
+        covering a retransmitted segment echoes the TSval the *retransmission*
+        carried, not the original's.
+        """
+        packets = self._fields("tcp_lossy_ts.pcap")
+        sender = self._bulk_sender(packets)
+
+        by_seq: dict[int, list[int]] = {}
+        for index, pkt in enumerate(packets):
+            if (getattr(pkt, "payload", None) and self._tsval(pkt) is not None
+                    and pkt.transport.src_port == sender):
+                by_seq.setdefault(pkt.transport.seq, []).append(index)
+        resends = [indices[-1] for indices in by_seq.values() if len(indices) > 1]
+        self.assertTrue(resends, "the capture should hold retransmissions")
+
+        checked = 0
+        for index in resends:
+            resend = packets[index]
+            covers = resend.transport.seq + len(resend.payload)
+            for later in packets[index + 1:]:
+                options = getattr(later.transport, "options", None)
+                echo = getattr(options, "timestamps", None)
+                if (later.transport.src_port == sender or echo is None
+                        or later.transport.ack < covers):
+                    continue
+                with self.subTest(seq=resend.transport.seq):
+                    self.assertEqual(echo[1], self._tsval(resend))
+                checked += 1
+                break
+        self.assertTrue(checked, "no retransmission was acknowledged")
+
+    def test_duplicate_acks_never_echo_the_out_of_order_segment(self) -> None:
+        """#149's second assertion, stated as what the capture can prove.
+
+        RFC 7323 4.3 updates `TS.Recent` only for a segment that arrives in
+        order, so a duplicate ACK provoked by an out-of-order arrival echoes
+        the last **in-order** segment instead.
+
+        Naming that segment from a capture is not always possible — the
+        option's clock has millisecond granularity, so segments sent inside one
+        tick share a TSval and the two candidates become indistinguishable.
+        What is decidable, and stronger, is the behaviour over a *run* of
+        duplicate ACKs: the echo does not move, while the sender goes on
+        putting newer TSvals on the wire.  A receiver updating `TS.Recent` from
+        the out-of-order arrivals would echo those instead.
+        """
+        packets = self._fields("tcp_lossy_ts.pcap")
+        sender = self._bulk_sender(packets)
+
+        runs: list[list[tuple[int, int, int | None]]] = []
+        current: list[tuple[int, int, int | None]] = []
+        newest_sent: int | None = None
+        for pkt in packets:
+            options = getattr(pkt.transport, "options", None)
+            stamps = getattr(options, "timestamps", None)
+            if stamps is None:
+                continue
+            if pkt.transport.src_port == sender:
+                newest_sent = stamps[0]
+                continue
+            entry = (pkt.transport.ack, stamps[1], newest_sent)
+            if current and entry[0] == current[-1][0]:
+                current.append(entry)
+            else:
+                if len(current) > 1:
+                    runs.append(current)
+                current = [entry]
+        if len(current) > 1:
+            runs.append(current)
+
+        self.assertTrue(runs, "the capture should hold runs of duplicate ACKs")
+        stale = 0
+        for run in runs:
+            with self.subTest(ack=run[0][0], length=len(run)):
+                self.assertEqual(
+                    len({echo for _, echo, _ in run}), 1,
+                    "TS.Recent should not move while a hole is unfilled",
+                )
+            if run[-1][2] is not None and run[-1][2] > run[0][1]:
+                stale += 1
+
+        self.assertTrue(
+            stale,
+            "no run had a newer TSval available, so none of them proves "
+            "TS.Recent was left alone rather than merely unchanged",
+        )
+
+    def test_a_duplicate_carries_the_same_tsval(self) -> None:
+        """The shape the generator cannot make, which is why it is here.
+
+        A resend and a duplicate are indistinguishable by bytes alone; the
+        TSval is the whole of the difference.  These copies were made by the
+        capture path, not by the sender, so theirs is identical.
+        """
+        seen: dict[tuple[int, int], list[int]] = {}
+        for pkt in self._data_segments("tcp_dup_ts.pcap"):
+            key = (pkt.transport.seq, len(pkt.payload))
+            seen.setdefault(key, []).append(self._tsval(pkt))
+
+        duplicates = {key: vals for key, vals in seen.items() if len(vals) > 1}
+        self.assertTrue(duplicates, "the capture should hold duplicates")
+        for key, vals in duplicates.items():
+            with self.subTest(seq=key[0]):
+                self.assertEqual(
+                    len(set(vals)), 1,
+                    "a capture-point duplicate is the same transmission twice",
+                )
+
 
 class TestNothingIdentifyingSurvived(unittest.TestCase):
     """These are real captures in a public repository.
@@ -321,16 +641,39 @@ class TestNothingIdentifyingSurvived(unittest.TestCase):
                 with iter_packets(path=str(path), decode_app=False,
                                   defragment=False) as capture:
                     for index, pkt in enumerate(capture, start=1):
-                        if pkt.ip is None:
-                            continue
-                        for value in (pkt.ip.src, pkt.ip.dst):
+                        for depth, value in _every_address(pkt):
                             address = ipaddress.ip_address(value)
                             with self.subTest(capture=path.name, packet=index,
-                                              address=value):
+                                              address=value, depth=depth):
                                 self.assertFalse(
                                     address.is_global,
                                     "a routable address survived sanitisation",
                                 )
+
+    def test_the_scan_reaches_inside_a_tunnel(self) -> None:
+        """#151: reading `pkt.ip` alone guards the wrong header.
+
+        On a tunnelled packet `pkt.ip` is the *outer* header, so the sweep
+        above passed a file whose inner addresses were untouched — which is
+        precisely how a VXLAN capture could have been committed with real
+        addresses in it and every check green.
+        """
+        from packeteer.generate import PacketBuilder
+        from packeteer.parse import parse_packet
+
+        raw = (PacketBuilder()
+               .ethernet().ip(src="192.0.2.1", dst="192.0.2.2")
+               .udp(dst_port=4789).vxlan(vni=7)
+               .ethernet().ip(src="8.8.8.8", dst="1.1.1.1")
+               .tcp(dst_port=80).build())
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            pkt = parse_packet(raw)
+
+        found = {value for _, value in _every_address(pkt)}
+        self.assertIn("192.0.2.1", found, "the outer header is still scanned")
+        self.assertIn("8.8.8.8", found,
+                      "the scan must follow the tunnel, or it guards nothing")
 
 
 if __name__ == "__main__":

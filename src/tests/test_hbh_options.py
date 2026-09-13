@@ -373,5 +373,75 @@ class TestHopByHopConfigSerialisation(unittest.TestCase):
         self.assertEqual(opts[1]["type"], "jumbo_payload")
 
 
+class TestHopByHopSurvivesARoundTrip(unittest.TestCase):
+    """#155: the section was written, documented, buildable, and never read back.
+
+    Everything above tests one direction or the other — building the header,
+    and parsing it into a spec.  Neither can see that `_apply_spec_to_builder`
+    never called `PacketBuilder.hop_by_hop_options`, so a parsed packet
+    rebuilt 8 bytes shorter with its Next Header pointing at the transport.
+
+    On a real network this is not a corner: every MLD report carries a Router
+    Alert, so Linux emits them on any IPv6-enabled interface.  It was found by
+    a capture collected for VLAN and one collected for IPv6 fragmentation —
+    in both, the only packets that failed to rebuild were the incidental MLD.
+    """
+
+    def _round_trip(self, raw: bytes) -> bytes:
+        import json
+        import tempfile
+        import warnings
+
+        import packeteer.__main__ as cli
+        from packeteer.parse import parse_pcap_file
+        from packeteer.pcap import write_pcap
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = f"{directory}/t.pcap"
+            write_pcap([(raw, 0, 0)], path=path)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                spec = json.loads(parse_pcap_file(path=path))
+        builder, _ = cli._apply_spec_to_builder(
+            PacketBuilder(), spec["packets"][0], 1)
+        return builder.build()
+
+    def _packet(self, *options: object) -> bytes:
+        return (PacketBuilder()
+                .ethernet()
+                .ip(src="fe80::1", dst="ff02::16")
+                .hop_by_hop_options(list(options))
+                .icmpv6(type=143, code=0)
+                .payload(data=b"\x00" * 8)
+                .build())
+
+    def test_a_router_alert_rebuilds_identically(self) -> None:
+        raw = self._packet(RouterAlertOption(value=0))
+        self.assertEqual(self._round_trip(raw).hex(), raw.hex())
+
+    def test_the_next_header_still_points_at_the_extension(self) -> None:
+        """The visible symptom, asserted directly rather than via a length."""
+        raw = self._packet(RouterAlertOption(value=0))
+        rebuilt = self._round_trip(raw)
+        # IPv6 Next Header: ethernet 14 + 6 into the base header.
+        self.assertEqual(rebuilt[20], HBH_NEXT_HEADER)
+        self.assertEqual(rebuilt[20], raw[20])
+
+    def test_every_option_kind_rebuilds(self) -> None:
+        """`_hbh_options_from_spec` has to invert `_serialise_hbh_opt` exactly.
+
+        An option shape written by one and not read by the other is a header
+        that silently changes size, so all three kinds are named here.
+        """
+        for label, option in (
+            ("router_alert", RouterAlertOption(value=1)),
+            ("jumbo_payload", JumboPayloadOption(jumbo_length=80_000)),
+            ("raw", RawOption(option_type=0x1E, data=b"\xaa\xbb")),
+        ):
+            with self.subTest(option=label):
+                raw = self._packet(option)
+                self.assertEqual(self._round_trip(raw).hex(), raw.hex())
+
+
 if __name__ == "__main__":
     unittest.main()

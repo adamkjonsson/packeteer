@@ -78,6 +78,18 @@ cover/
 !testcases/real/tcp_v4_snaplen.pcapng
 !testcases/real/tcp_v6_loopback.pcapng
 !testcases/real/udp_frag_nano.pcap
+!testcases/real/tcp_lossy_ts.pcap
+!testcases/real/tcp_dup_ts.pcap
+!testcases/real/sll_any.pcap
+!testcases/real/sll2_any.pcap
+!testcases/real/ipip_raw.pcap
+!testcases/real/vxlan.pcap
+!testcases/real/geneve.pcap
+!testcases/real/gre.pcap
+!testcases/real/ipip.pcap
+!testcases/real/vlan.pcap
+!testcases/real/sctp.pcap
+!testcases/real/ipv6_frag.pcap
 *.json
 *.ini
 

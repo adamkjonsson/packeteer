@@ -648,6 +648,14 @@ _ICMPV6_ROUTER_SOLICITATION = 133
 _ICMPV6_ROUTER_ADVERTISEMENT = 134
 _ICMPV6_REDIRECT = 137
 _ICMPV6_ECHO = frozenset({128, 129})
+
+#: Multicast Listener Discovery.  130/131/132 are MLDv1 (RFC 2710) and share a
+#: fixed layout; 143 is an MLDv2 Report (RFC 3810) carrying variable-length
+#: records.  A type 130 long enough to be an MLDv2 Query carries a source list
+#: after the address.
+_ICMPV6_MLD_QUERY = 130
+_ICMPV6_MLDV1 = frozenset({130, 131, 132})
+_ICMPV6_MLDV2_REPORT = 143
 #: Types whose payload is the packet that provoked them.
 _ICMPV6_QUOTING = frozenset({1, 2, 3, 4})
 _ICMPV4_ECHO = frozenset({0, 8})
@@ -767,6 +775,79 @@ def _sanitise_quoted_ports(buf: bytearray, start: int, protocol: int,
         buf[offset:offset + 2] = r.port(port).to_bytes(2, "big")
 
 
+def _sanitise_mldv1(buf: bytearray, icmp_type: int, r: _Replacer,
+                    opts: SanitiseOptions) -> None:
+    """Rewrite the addresses in an MLDv1 Query, Report or Done (RFC 2710).
+
+    The message is two bytes of Maximum Response Delay, two reserved, then the
+    Multicast Address.  *buf* begins after those four, because packeteer's
+    ICMPv6 header consumes them as its ``identifier`` and ``sequence`` fields —
+    the same reason Neighbour Solicitation finds its target at ``buf[0]``.
+
+    A type 130 longer than the address is an MLDv2 Query (RFC 3810), which
+    appends S/QRV, QQIC and a source count before a source list.
+    """
+    if not opts.ips or len(buf) < _IPV6_ADDR_LEN:
+        return
+    _replace_ipv6(buf, 0, r)
+
+    sources_at = _IPV6_ADDR_LEN + 4
+    if icmp_type != _ICMPV6_MLD_QUERY or len(buf) < sources_at:
+        return
+    count = int.from_bytes(buf[sources_at - 2:sources_at], "big")
+    _replace_address_list(buf, sources_at, count, r)
+
+
+def _sanitise_mldv2_report(buf: bytearray, r: _Replacer,
+                           opts: SanitiseOptions) -> None:
+    """Rewrite every address in an MLDv2 Report's records (RFC 3810 §5.2).
+
+    The message is two reserved bytes, a record count, then that many
+    variable-length records: a type byte, an auxiliary-data length in 32-bit
+    words, a source count, the Multicast Address, the sources, and the
+    auxiliary data.
+
+    *buf* begins at the first record — the reserved bytes and the count are
+    consumed by packeteer's ICMPv6 header as ``identifier`` and ``sequence``.
+    So the records are walked until the buffer runs out rather than counted,
+    which also keeps a truncated capture from being read past its end.
+
+    The multicast address is the point.  A host reports the solicited-node
+    group it listens on, which embeds the low 24 bits of its own interface
+    identifier — so leaving it is leaving part of the address every other
+    section had replaced (#156).
+    """
+    if not opts.ips:
+        return
+    offset = 0
+    while True:
+        if offset + 4 + _IPV6_ADDR_LEN > len(buf):
+            return
+        aux_words = buf[offset + 1]
+        sources = int.from_bytes(buf[offset + 2:offset + 4], "big")
+        _replace_ipv6(buf, offset + 4, r)
+        sources_at = offset + 4 + _IPV6_ADDR_LEN
+        if not _replace_address_list(buf, sources_at, sources, r):
+            return
+        offset = sources_at + sources * _IPV6_ADDR_LEN + aux_words * 4
+
+
+def _replace_address_list(buf: bytearray, offset: int, count: int,
+                          r: _Replacer) -> bool:
+    """Replace *count* consecutive IPv6 addresses at *offset*.
+
+    Returns False when the buffer is shorter than the count claims, which a
+    caller treats as the end of what it can safely rewrite: a truncated
+    capture must not be read past its end, and must not be left half-redacted
+    without saying so.
+    """
+    if offset + count * _IPV6_ADDR_LEN > len(buf):
+        return False
+    for index in range(count):
+        _replace_ipv6(buf, offset + index * _IPV6_ADDR_LEN, r)
+    return True
+
+
 def _sanitise_icmpv6_payload(buf: bytearray, icmp_type: int, r: _Replacer,
                              opts: SanitiseOptions, packet_num: int) -> None:
     """Rewrite whatever addresses an ICMPv6 message of *icmp_type* carries."""
@@ -785,6 +866,10 @@ def _sanitise_icmpv6_payload(buf: bytearray, icmp_type: int, r: _Replacer,
     elif icmp_type == _ICMPV6_ROUTER_ADVERTISEMENT:
         # Reachable time and retransmit timer come first, then the options.
         _sanitise_nd_options(buf, 8, r, opts)
+    elif icmp_type in _ICMPV6_MLDV1:
+        _sanitise_mldv1(buf, icmp_type, r, opts)
+    elif icmp_type == _ICMPV6_MLDV2_REPORT:
+        _sanitise_mldv2_report(buf, r, opts)
     elif icmp_type in _ICMPV6_QUOTING:
         _sanitise_quoted_packet(buf, 0, r, opts)
     elif icmp_type not in _ICMPV6_ECHO:
@@ -945,13 +1030,30 @@ def _scan_section_text(value: object, packet_num: int) -> None:
             _scan_section_text(item, packet_num)
 
 
+#: Keys under which ``parse`` nests a whole inner packet, so that redacting the
+#: outer one reaches none of it.  Every one of these is recursed into by
+#: :func:`_sanitise_packet`; adding an encapsulation to the parser without
+#: adding it here is what left VXLAN, Geneve and GTP-U inner addresses in
+#: "sanitised" files (#151).
+#:
+#: ESP is deliberately absent: its payload is opaque ciphertext and carries no
+#: addresses.  AH is present because it protects cleartext content in transport
+#: mode and an inner IP packet in tunnel mode.  MPLS and PPPoE are absent
+#: because they do not nest — their inner IP lands in the top-level ``network``
+#: section and is redacted there.
+_NESTING_TUNNEL_KEYS: frozenset[str] = frozenset({
+    "ipip", "gre", "etherip", "pseudowire", "ah", "vxlan", "geneve", "gtpu",
+})
+
 #: Keys that mean at least part of a packet was understood.  A packet with a
 #: payload and none of these is a frame the parser could not decode — an
 #: unsupported link type — so nothing in it has been redacted.
-_STRUCTURAL_KEYS: frozenset[str] = frozenset({
+#:
+#: A superset of :data:`_NESTING_TUNNEL_KEYS` by construction, so a nesting
+#: encapsulation cannot be added to one list and forgotten in the other.
+_STRUCTURAL_KEYS: frozenset[str] = _NESTING_TUNNEL_KEYS | frozenset({
     "ethernet", "sll", "sll2", "loopback", "arp", "network", "transport",
-    "mpls", "pppoe", "ipip", "gre", "etherip", "pseudowire", "ah", "esp",
-    "vxlan", "geneve", "gtpu",
+    "mpls", "pppoe", "esp",
 })
 
 
@@ -1030,10 +1132,10 @@ def _sanitise_packet(
     _sanitise_app_layers(pkt, r, opts, packet_num)
 
     # ── Tunnel recursion ──────────────────────────────────────────────────────
-    # AH protects cleartext content (transport mode) or an inner IP packet
-    # (tunnel mode), so its nested addresses/ports are sanitised too.  ESP's
-    # payload is opaque ciphertext and carries no addresses.
-    for tunnel_key in ("ipip", "gre", "etherip", "pseudowire", "ah"):
+    # Which keys nest, and why ESP and MPLS are not among them, is recorded on
+    # _NESTING_TUNNEL_KEYS.  Iterating the constant rather than a literal is
+    # what stops the two lists drifting apart again (#151).
+    for tunnel_key in sorted(_NESTING_TUNNEL_KEYS):
         if tunnel_key not in pkt:
             continue
         _sanitise_packet(pkt[tunnel_key], r, opts, packet_num)
