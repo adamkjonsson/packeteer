@@ -49,6 +49,14 @@ for a default message and is allowed.
 An optional Ethernet II header.  Omit the key entirely to produce a raw IP
 packet with no layer-2 framing.
 
+```{versionchanged} 0.15.0
+Omitting the key now does what this has always said.  Before 0.15.0 a spec
+with no link-layer section was built with an Ethernet header anyway, and
+padded to the 802.3 minimum, so a raw-IP capture (`DLT_RAW`) did not survive
+`parse` → `build`.  To ask for Ethernet explicitly, give at least
+`"ethernet": {}`.
+```
+
 | Field | Default | Description |
 |-------|---------|-------------|
 | `src_mac` | `"00:00:00:00:00:01"` | Source MAC address (colon- or hyphen-separated hex) |
@@ -639,6 +647,12 @@ the datagram's own transport protocol.  To reassemble such a capture, see
 
 An optional array of IPv6 Hop-by-Hop Options.  Each element is an object with
 a `"type"` discriminator:
+
+```{versionchanged} 0.15.0
+The section is now applied when building.  Before 0.15.0 `parse` wrote it and
+`build` ignored it, so an IPv6 packet carrying the extension header rebuilt
+eight bytes shorter with its Next Header pointing at the transport.
+```
 
 **Router Alert (RFC 2711):**
 

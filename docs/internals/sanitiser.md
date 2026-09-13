@@ -65,12 +65,24 @@ IPv6 and MAC pools are effectively unlimited for practical input sizes.
    count is derived from the string, and the `"encoding"` key is removed from
    the result).
 7. Optionally zero `"packet_metadata"` timestamps.
-8. For each tunnel key (`"ipip"`, `"gre"`, `"etherip"`): call
-   `_sanitise_ethernet` on the inner `"ethernet"` section (if present), then
-   recurse into `_sanitise_packet(inner, r, opts, packet_num)`.
+8. For each key in `_NESTING_TUNNEL_KEYS` — `"ipip"`, `"gre"`, `"etherip"`,
+   `"pseudowire"`, `"ah"`, `"vxlan"`, `"geneve"`, `"gtpu"` — recurse into
+   `_sanitise_packet(inner, r, opts, packet_num)`, which redacts the inner
+   frame's Ethernet, network and transport sections as it would an outer one.
 
 The tunnel recursion handles arbitrarily nested tunnels without any special
 limit.
+
+`_NESTING_TUNNEL_KEYS` is the single record of which encapsulations nest a
+whole inner packet, and `_STRUCTURAL_KEYS` is built from it as a superset.
+That is deliberate: the two were separate lists until #151, and VXLAN, Geneve
+and GTP-U had been added to the second and forgotten in the first — so their
+inner addresses and MACs were never redacted, while `_warn_undecoded` stayed
+quiet because the packet *had* been decoded.
+
+ESP is absent because its payload is opaque ciphertext carrying no addresses.
+MPLS and PPPoE are absent because they do not nest: their inner IP lands in
+the top-level `"network"` section and is redacted there.
 
 ## PII scanning
 

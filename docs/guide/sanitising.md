@@ -167,10 +167,19 @@ redaction** — it tells you a field wants `sensitive: true`.
 
 ## Tunnel handling
 
-Nested tunnel specs (`gre`, `ipip`, `etherip`, `pseudowire`) are walked
-recursively.  The same mapping tables are shared at all nesting levels, so an
-IP address that appears as both an outer tunnel endpoint and an inner address
-will always receive the same synthetic replacement.
+Nested tunnel specs — `gre`, `ipip`, `etherip`, `pseudowire`, `ah`, `vxlan`,
+`geneve` and `gtpu` — are walked recursively.  The same mapping tables are
+shared at all nesting levels, so an IP address that appears as both an outer
+tunnel endpoint and an inner address will always receive the same synthetic
+replacement.
+
+```{versionchanged} 0.15.0
+`vxlan`, `geneve` and `gtpu` were **not** walked before 0.15.0, so the inner
+addresses, MACs and ports of a VXLAN, Geneve or GTP-U capture passed through
+untouched while every outer field was redacted and no warning was raised.  A
+capture of tunnelled traffic sanitised by an earlier version should be
+regenerated.
+```
 
 ```{warning}
 **Wireshark / tshark: MPLS pseudowire control word not shown after sanitisation**

@@ -132,6 +132,19 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   outer header, which on a tunnelled packet is the one least likely to carry
   anything sensitive.  (#151)
 
+### Documentation
+
+- The tunnel-recursion key list in `docs/internals/sanitiser.md` and
+  `docs/guide/sanitising.md` named three and four keys respectively, out of
+  eight — so both pages told a reader that VXLAN, Geneve and GTP-U were
+  redacted when they were not.  The internals page now points at
+  `_NESTING_TUNNEL_KEYS` rather than repeating it, and records why ESP, MPLS
+  and PPPoE are excluded.
+- `docs/packet-spec/format.md` gains `versionchanged` notes on `ethernet` and
+  `hop_by_hop_options`: both documented behaviour the builder did not
+  implement until this release.
+- Generated-output transcripts refreshed from 0.14.0 to 0.15.0.
+
 ---
 
 ## [0.14.0] - 2026-09-12
