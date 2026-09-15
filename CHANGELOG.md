@@ -25,6 +25,25 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
+### Added
+
+- **Two real captures of a lossy TCP session taken at the receiver, so the
+  file holds the gap.**  `tcp_lossy_ts.pcap` was captured at the sender, which
+  means that from a reassembler's seat nothing in it was ever missing.
+  `tcp_gap_ts.pcap` is its receiver-side twin: the dropped segment is absent,
+  its successors arrive first, and the resend that fills the hole carries a
+  TSval **newer** than everything already committed past it — 9 holes, 12
+  fills, every one answered by the receiver's ACK echoing the fill's TSval.
+  `tcp_reorder_ts.pcap` is the other branch of that split: 8 originals the
+  network **delayed** rather than dropped, each arriving after segments from
+  later ticks with an **older** TSval, followed by the sender's spurious
+  retransmission of the same bytes, which the receiver D-SACKs.  Together they
+  are the two answers a late byte can have.  The script that collected them
+  is in `testcases/real/collect/`, and the manifest records the two things it
+  found out: tcpdump loses the tail of a transfer unless it is allowed to
+  drain, and `netem reorder` can never produce an older TSval because a veth
+  sender's whole window shares one tick.  (#158)
+
 ---
 
 ## [0.15.0] - 2026-09-13
