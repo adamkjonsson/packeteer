@@ -89,9 +89,16 @@ class TestTheCorpusIsThere(unittest.TestCase):
                 self.assertIn(f"!testcases/real/{path.name}", ignore)
 
     def test_the_corpus_stays_small(self) -> None:
-        """It is committed, so it has to stay something people want to clone."""
+        """It is committed, so it has to stay something people want to clone.
+
+        Raised from 512 KiB to 1 MiB when the receiver-side TCP captures
+        (#158, #160, #161) took it past the first figure: each is a whole
+        64 KiB transfer, which is what it takes for a stack to show a fast
+        retransmit, and a slice of one would not hold the handshake that
+        tells a reader the ISN.
+        """
         total = sum(p.stat().st_size for p in _captures())
-        self.assertLess(total, 512 * 1024, "trim captures with editcap")
+        self.assertLess(total, 1024 * 1024, "trim captures with editcap")
 
 
 class TestEveryCaptureParses(unittest.TestCase):
@@ -480,6 +487,72 @@ class _TimestampedSession(unittest.TestCase):
                 sent[port] = sent.get(port, 0) + len(pkt.payload)
         return max(sent, key=lambda port: sent[port])
 
+    @staticmethod
+    def _after(a: int, b: int) -> bool:
+        """Return whether sequence number *a* is after *b* (RFC 1982)."""
+        return 0 < ((a - b) & 0xFFFFFFFF) < (1 << 31)
+
+    def _replay(
+        self, name: str, honour_checksums: bool = False,
+    ) -> tuple[list, list[dict], list[dict]]:
+        """Replay *name* as its receiver saw it.
+
+        Returns the packets, the holes and the fills.  A hole opens when a
+        data segment arrives past `rcv_nxt` and closes when a segment arrives
+        at the sequence number it started at; a fill is any in-order arrival
+        that had segments held beyond it, recorded with those segments.  Every
+        comparison is modulo 2**32, since `tcp_wrap_ts.pcap` crosses it.
+
+        With *honour_checksums*, a segment whose transport checksum was wrong
+        on the wire — which is what a recorded `transport.checksum` means
+        after parsing, see `_clear_derivable_transport_fields` — is dropped
+        the way the receiver dropped it.  Only meaningful for a capture taken
+        with checksum offload off; on the others every checksum is wrong.
+        """
+        packets = self._fields(name)
+        sender = self._bulk_sender(packets)
+        data = [(index, pkt) for index, pkt in enumerate(packets)
+                if getattr(pkt, "payload", None) and self._tsval(pkt) is not None
+                and pkt.transport.src_port == sender]
+        self.assertTrue(data, "the capture should hold data segments")
+
+        rcv_nxt = data[0][1].transport.seq
+        held: dict[int, tuple[int, object]] = {}
+        holes: list[dict] = []
+        fills: list[dict] = []
+        for index, pkt in data:
+            if honour_checksums and pkt.transport.checksum is not None:
+                continue
+            seq = pkt.transport.seq
+            if seq == rcv_nxt:
+                beyond = [entry for s, entry in held.items() if self._after(s, seq)]
+                if beyond:
+                    fills.append({"index": index, "segment": pkt, "beyond": beyond})
+                if holes and holes[-1]["start"] == seq:
+                    holes[-1]["filled"] = index
+                rcv_nxt = (rcv_nxt + len(pkt.payload)) & 0xFFFFFFFF
+                while rcv_nxt in held:
+                    rcv_nxt = (rcv_nxt + len(held.pop(rcv_nxt)[1].payload)) & 0xFFFFFFFF
+            elif self._after(seq, rcv_nxt):
+                if not held:
+                    holes.append({"start": rcv_nxt, "opened": index})
+                held.setdefault(seq, (index, pkt))
+        self.assertFalse(held, "the transfer should have completed")
+        return packets, holes, fills
+
+    def _covering_ack(self, packets: list, index: int, sender: int) -> object | None:
+        """Return the first receiver ACK after *index* that covers that segment."""
+        segment = packets[index]
+        end = (segment.transport.seq + len(segment.payload)) & 0xFFFFFFFF
+        for later in packets[index + 1:]:
+            options = getattr(later.transport, "options", None)
+            if (later.transport.src_port == sender
+                    or getattr(options, "timestamps", None) is None):
+                continue
+            if later.transport.ack == end or self._after(later.transport.ack, end):
+                return later
+        return None
+
 
 class TestALossyTimestampedSession(_TimestampedSession):
     """What `tcp_lossy_ts.pcap` and `tcp_dup_ts.pcap` are for (#149).
@@ -642,43 +715,6 @@ class TestAGapSeenByTheReceiver(_TimestampedSession):
     network merely delayed (`tcp_reorder_ts`, **older**).
     """
 
-    def _replay(self, name: str) -> tuple[list, list[dict], list[dict]]:
-        """Replay *name* as its receiver saw it.
-
-        Returns the packets, the holes and the fills.  A hole opens when a
-        data segment arrives past `rcv_nxt` and closes when a segment arrives
-        at the sequence number it started at; a fill is any in-order arrival
-        that had segments held beyond it, recorded with those segments.
-        """
-        packets = self._fields(name)
-        sender = self._bulk_sender(packets)
-        data = [(index, pkt) for index, pkt in enumerate(packets)
-                if getattr(pkt, "payload", None) and self._tsval(pkt) is not None
-                and pkt.transport.src_port == sender]
-        self.assertTrue(data, "the capture should hold data segments")
-
-        rcv_nxt = data[0][1].transport.seq
-        held: dict[int, tuple[int, object]] = {}
-        holes: list[dict] = []
-        fills: list[dict] = []
-        for index, pkt in data:
-            seq = pkt.transport.seq
-            if seq == rcv_nxt:
-                beyond = [entry for s, entry in held.items() if s > seq]
-                if beyond:
-                    fills.append({"index": index, "segment": pkt, "beyond": beyond})
-                if holes and holes[-1]["start"] == seq:
-                    holes[-1]["filled"] = index
-                rcv_nxt += len(pkt.payload)
-                while rcv_nxt in held:
-                    rcv_nxt += len(held.pop(rcv_nxt)[1].payload)
-            elif seq > rcv_nxt:
-                if not held:
-                    holes.append({"start": rcv_nxt, "opened": index})
-                held.setdefault(seq, (index, pkt))
-        self.assertFalse(held, "the transfer should have completed")
-        return packets, holes, fills
-
     def test_both_ends_negotiated_timestamps(self) -> None:
         for name in ("tcp_gap_ts.pcap", "tcp_reorder_ts.pcap"):
             syns = [p for p in self._fields(name)
@@ -764,18 +800,11 @@ class TestAGapSeenByTheReceiver(_TimestampedSession):
             sender = self._bulk_sender(packets)
             for fill in fills:
                 segment = fill["segment"]
-                covers = segment.transport.seq + len(segment.payload)
-                for later in packets[fill["index"] + 1:]:
-                    options = getattr(later.transport, "options", None)
-                    echo = getattr(options, "timestamps", None)
-                    if (later.transport.src_port == sender or echo is None
-                            or later.transport.ack < covers):
-                        continue
-                    with self.subTest(capture=name, seq=segment.transport.seq):
-                        self.assertEqual(echo[1], self._tsval(segment))
-                    break
-                else:
-                    self.fail(f"{name}: a fill was never acknowledged")
+                ack = self._covering_ack(packets, fill["index"], sender)
+                with self.subTest(capture=name, seq=segment.transport.seq):
+                    self.assertIsNotNone(ack, "a fill was never acknowledged")
+                    self.assertEqual(ack.transport.options.timestamps[1],
+                                     self._tsval(segment))
 
     def test_the_receiver_duplicate_acks_while_the_hole_is_open(self) -> None:
         """The dup-ACK run is the receiver's, since the capture is on its device."""
@@ -792,6 +821,194 @@ class TestAGapSeenByTheReceiver(_TimestampedSession):
                         and p.transport.ack == hole["start"]
                     ]
                     self.assertTrue(dup_acks, "the receiver should have asked")
+
+
+class TestACorruptedSegmentAndItsResend(_TimestampedSession):
+    """What `tcp_corrupt_ts.pcap` is for (#160).
+
+    Every other resend in the corpus is byte-identical to its original, as a
+    resend is unless one copy was damaged in flight.  Here the loss is
+    corruption: `netem corrupt` on the router, captured on the receiver with
+    checksum offload off, so the damaged copy is in the file with a checksum
+    that fails, the receiver drops it, and the clean resend follows.  Two
+    copies of one range that genuinely differ, and a checksum failure that
+    means what it says.
+    """
+
+    def _corruptions(self) -> tuple[list, int, list[tuple[int, int]]]:
+        """Return the packets, the sender, and (damaged, resend) index pairs."""
+        packets = self._fields("tcp_corrupt_ts.pcap")
+        sender = self._bulk_sender(packets)
+        pairs = []
+        for index, pkt in enumerate(packets):
+            if (pkt.transport.src_port != sender or pkt.transport.checksum is None
+                    or not getattr(pkt, "payload", None)):
+                continue
+            resend = next(
+                (later for later, p in enumerate(packets[index + 1:], index + 1)
+                 if getattr(p, "payload", None) and p.transport.seq == pkt.transport.seq
+                 and p.transport.checksum is None),
+                None,
+            )
+            self.assertIsNotNone(resend, f"frame {index + 1} was never resent clean")
+            pairs.append((index, resend))
+        self.assertTrue(pairs, "the capture should hold corrupted segments")
+        return packets, sender, pairs
+
+    def test_only_the_damaged_copies_fail_their_checksum(self) -> None:
+        """The failure has to mean something, so the rest must verify.
+
+        A recorded `transport.checksum` after parsing is one that was wrong
+        on the wire.  On every other TCP capture here that is all of them,
+        for the offload reason the manifest gives; on this one it is exactly
+        the damaged copies, and every one of them is later resent.
+        """
+        packets, sender, pairs = self._corruptions()
+        wrong = [i for i, p in enumerate(packets) if p.transport.checksum is not None]
+        self.assertEqual(sorted(wrong), sorted(damaged for damaged, _ in pairs))
+        self.assertLess(len(wrong), len(packets) // 2, "offload noise")
+
+    def test_the_damaged_copy_and_its_resend_differ_in_payload(self) -> None:
+        """#160's first two assertions: the one shape where two copies disagree.
+
+        netem flips one bit, so the copies differ in exactly one byte by one
+        bit — and the resend, being rebuilt, carries a later TSval.
+        """
+        packets, _, pairs = self._corruptions()
+        for damaged, resend in pairs:
+            a, b = packets[damaged], packets[resend]
+            with self.subTest(seq=a.transport.seq):
+                self.assertEqual(len(a.payload), len(b.payload))
+                diff = [i for i, (x, y) in enumerate(zip(a.payload, b.payload, strict=True))
+                        if x != y]
+                self.assertEqual(len(diff), 1, "one byte differs")
+                self.assertEqual(
+                    bin(a.payload[diff[0]] ^ b.payload[diff[0]]).count("1"), 1,
+                    "by one bit",
+                )
+                self.assertGreater(self._tsval(b), self._tsval(a))
+
+    def test_the_ack_covering_the_clean_resend_echoes_it(self) -> None:
+        """#160's third assertion: which copy the receiver kept.
+
+        The evidence a reassembler preferring the acknowledged copy reads,
+        and evidence that is independent of the checksum.  Only a resend
+        that arrived in order advanced the left edge, so only those are
+        asked; one that arrived behind another hole is covered by the ACK
+        answering whatever filled that hole.
+        """
+        packets, sender, pairs = self._corruptions()
+        _, _, fills = self._replay("tcp_corrupt_ts.pcap", honour_checksums=True)
+        in_order = {fill["index"] for fill in fills}
+        checked = 0
+        for _, resend in pairs:
+            if resend not in in_order:
+                continue
+            ack = self._covering_ack(packets, resend, sender)
+            with self.subTest(seq=packets[resend].transport.seq):
+                self.assertIsNotNone(ack)
+                self.assertEqual(ack.transport.options.timestamps[1],
+                                 self._tsval(packets[resend]))
+            checked += 1
+        self.assertTrue(checked, "no clean resend arrived in order")
+
+    def test_the_damaged_copy_opened_no_hole(self) -> None:
+        """From the receiver's seat a corrupted segment never arrived at all.
+
+        Replayed honouring checksums, the damaged copies vanish and each
+        leaves a hole that its resend fills with a newer TSval — the same
+        shape as `tcp_gap_ts.pcap`, reached by a different kind of loss.
+        """
+        _, holes, fills = self._replay("tcp_corrupt_ts.pcap", honour_checksums=True)
+        self.assertTrue(holes)
+        for fill in fills:
+            held = [self._tsval(pkt) for _, pkt in fill["beyond"]]
+            with self.subTest(seq=fill["segment"].transport.seq):
+                self.assertTrue(any(self._tsval(fill["segment"]) > h for h in held))
+                self.assertFalse(any(self._tsval(fill["segment"]) < h for h in held))
+
+
+class TestASessionThatWrapsThroughTwoToThe32(_TimestampedSession):
+    """What `tcp_wrap_ts.pcap` is for (#161).
+
+    A reassembler compares sequence numbers with serial arithmetic, which is
+    undefined for two numbers 2**31 apart, and RFC 7323's answer is that a
+    segment's TSval is a monotonic clock its sequence number is not.  No
+    other capture, real or generated, wraps.  This one was collected with the
+    last 2 KiB before the wrap on a slow path, so it also holds the case
+    where sequence number and TSval disagree about order and the TSval is
+    right.
+    """
+
+    _NAME = "tcp_wrap_ts.pcap"
+
+    def _isn(self, packets: list) -> int:
+        synack = next(p for p in packets if p.transport.flags & 0x12 == 0x12)
+        return synack.transport.seq
+
+    def test_the_sequence_numbers_wrap(self) -> None:
+        """#161's first assertion.
+
+        The server's ISN sits inside the transfer below 2**32, so the data
+        carries numbers just below it and then small ones — and every
+        post-wrap segment carries a TSval no older than any pre-wrap
+        original's, which is what places them for a reader of the option.
+        Resends of pre-wrap bytes are sent after the wrap and are excluded:
+        their clock is the disagreement the third assertion is about.
+        """
+        packets, _, _ = self._replay(self._NAME)
+        sender = self._bulk_sender(packets)
+        isn = self._isn(packets)
+        data = [p for p in packets if getattr(p, "payload", None)
+                and p.transport.src_port == sender]
+        sent = sum(len(p.payload) for p in {p.transport.seq: p for p in data}.values())
+        self.assertLess((1 << 32) - isn, sent, "the ISN is inside the transfer")
+
+        pre = [p for p in data if p.transport.seq >= (1 << 31)]
+        post = [p for p in data if p.transport.seq < (1 << 31)]
+        self.assertTrue(pre and post, "segments on both sides of the wrap")
+        originals: dict[int, object] = {}
+        for p in pre:
+            originals.setdefault(p.transport.seq, p)
+        newest_pre = max(self._tsval(p) for p in originals.values())
+        for p in post:
+            with self.subTest(seq=p.transport.seq):
+                self.assertGreaterEqual(self._tsval(p), newest_pre)
+
+    def test_the_receivers_acks_wrap_with_them(self) -> None:
+        """#161's second assertion, from the receiver's own stack."""
+        packets = self._fields(self._NAME)
+        sender = self._bulk_sender(packets)
+        acks = [p for p in packets if p.transport.src_port != sender
+                and not p.transport.flags & 0x02]
+        numbers = [p.transport.ack for p in acks]
+        self.assertTrue(any(n >= (1 << 31) for n in numbers))
+        self.assertTrue(any(n < (1 << 31) for n in numbers))
+        echoes = [p.transport.options.timestamps[1] for p in acks
+                  if getattr(p.transport.options, "timestamps", None)]
+        self.assertGreater(len(echoes), 1)
+        for earlier, later in zip(echoes, echoes[1:], strict=False):
+            self.assertLessEqual(earlier, later, "TSecr keeps advancing")
+
+    def test_an_original_from_before_the_wrap_arrives_after_segments_from_after_it(self) -> None:
+        """#161's third assertion: the one case where only the TSval is right.
+
+        Numerically the delayed original is *larger* than every segment held
+        beyond it; serially it is before them; its TSval is older than all of
+        theirs.  A reader that trusts the sequence number half-space here
+        drops new bytes as old.
+        """
+        _, _, fills = self._replay(self._NAME)
+        crossing = [f for f in fills if f["segment"].transport.seq >= (1 << 31)
+                    and any(pkt.transport.seq < (1 << 31) for _, pkt in f["beyond"])]
+        self.assertTrue(crossing, "an original from below 2**32 should arrive late")
+        for fill in crossing:
+            tsval = self._tsval(fill["segment"])
+            with self.subTest(seq=fill["segment"].transport.seq):
+                for _, held in fill["beyond"]:
+                    self.assertGreater(fill["segment"].transport.seq, held.transport.seq)
+                    self.assertTrue(self._after(held.transport.seq, fill["segment"].transport.seq))
+                    self.assertLess(tsval, self._tsval(held))
 
 
 class TestNothingIdentifyingSurvived(unittest.TestCase):

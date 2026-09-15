@@ -44,6 +44,32 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   drain, and `netem reorder` can never produce an older TSval because a veth
   sender's whole window shares one tick.  (#158)
 
+- **A real capture of a segment corrupted in flight and resent.**
+  `tcp_corrupt_ts.pcap` was collected with `netem corrupt` on the router and
+  checksum offload off at both ends, so 5 segments reach the receiver with
+  one payload bit flipped and a TCP checksum that fails — the only checksum
+  failures in the file, and the only ones in the corpus that mean what they
+  say — while the clean resend of each follows with a later TSval and is
+  answered by an ACK echoing it.  Every other resend the corpus holds is
+  byte-identical to its original; this is the file in which two copies of a
+  range genuinely differ.  `sanitise` recomputes the good checksums for the
+  new addresses and carries the bad ones verbatim, so the sanitised copy
+  keeps the property.  (#160)
+
+- **A real TCP session whose sequence numbers pass through 2³².**
+  `tcp_wrap_ts.pcap`'s ISN sits 36 226 bytes below the wrap, so the
+  receiver's ACK numbers wrap with the data and its TSecr keeps advancing;
+  four originals from just below 2³² were delayed past every post-wrap
+  segment, which is the one case where sequence number and TSval disagree
+  about order and the TSval is right.  Collected by steering the connection
+  to the ISN clock rather than by luck: Linux's ISN for a fixed 4-tuple is a
+  hash plus `realtime_ns >> 6`, and the script probes it, waits, and
+  connects on time.  (#161)
+
+- **The corpus size cap in `test_the_corpus_stays_small` is now 1 MiB**, up
+  from 512 KiB: each receiver-side capture is a whole 64 KiB transfer, which
+  is what it takes for a stack to show a fast retransmit.
+
 ---
 
 ## [0.15.0] - 2026-09-13

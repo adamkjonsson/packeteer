@@ -82,6 +82,8 @@ cover/
 !testcases/real/tcp_dup_ts.pcap
 !testcases/real/tcp_gap_ts.pcap
 !testcases/real/tcp_reorder_ts.pcap
+!testcases/real/tcp_corrupt_ts.pcap
+!testcases/real/tcp_wrap_ts.pcap
 !testcases/real/sll_any.pcap
 !testcases/real/sll2_any.pcap
 !testcases/real/ipip_raw.pcap
