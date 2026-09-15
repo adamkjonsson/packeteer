@@ -52,6 +52,30 @@ produces a plausible-looking file when got wrong:
    TSval as its original.  A capture like that cannot answer the question
    #149 asks.
 
+The receiver-side pair, `tcp_gap_ts` / `tcp_reorder_ts`, was collected by
+[`collect/capture_tcp_gap.sh`](collect/capture_tcp_gap.sh), which follows the
+three rules above, checks each file for the shape it exists for before
+reporting success, and added two more details to the list:
+
+4. **Let tcpdump drain before stopping it.** libpcap's TPACKET_V3 holds
+   packets in a block for up to a second, so a capture stopped the moment the
+   transfer ends is missing its tail — and the file looks complete.  tcpdump's
+   own summary is the only place that says so (`198 packets received by
+   filter`, `165 captured`), which is why the script keeps the log beside each
+   original and compares the two numbers.  `--immediate-mode` and a pause
+   before the signal fix it.
+5. **`netem reorder` cannot make an original arrive with an *older* TSval.**
+   A veth sender puts a whole congestion window on the wire inside one 1 ms
+   tick, and netem's reorder only lets a packet jump ahead of what is queued
+   in front of it — its own burst-mates, which share its TSval.  An original
+   that lands after segments from a *later* tick has to be held back for
+   longer than an RTT.  `tcp_reorder_ts` does that with a two-band `prio`
+   qdisc on the router's client-facing leg, 20 ms and 70 ms, and a `u32` match
+   on the TCP sequence number that sends about one segment in sixteen down
+   the slow band.  The sender's fast retransmit of those bytes carries the
+   same sequence number, so it takes the slow band too and arrives after the
+   original — as a repeat, which the receiver D-SACKs.
+
 ## What each one is for
 
 | File | Packets | Covers |
@@ -69,6 +93,8 @@ produces a plausible-looking file when got wrong:
 | `tcp_v6_loopback.pcapng` | 10 | TCP over IPv6 over `DLT_NULL` (link type 0), which #124 added support for.  Also carries offloaded checksums, so it exercises the preserved-`transport.checksum` path from #68 against real bytes |
 | `tcp_lossy_ts.pcap` | 234 | A **lossy** TCP session where both ends negotiated the Timestamps option — #149's subject.  Captured **at the sender**, which is the point: the loss is applied by a router downstream, so the file holds each original segment *and* the resend of it.  A capture taken on the dropping device would hold neither, because an egress `netem` drops at enqueue, before AF_PACKET's transmit tap.  14 resends, every one carrying a later TSval than its original; 10 retransmissions, every one answered by an ACK echoing *its* TSval; 39 duplicate ACKs, of which 28 visibly echo the last **in-order** segment rather than the out-of-order one that triggered them (RFC 7323 §4.3), and **none** contradict it.  The other 11 cannot say: 10 where the in-order and out-of-order segments share a TSval because they were sent inside the same 1 ms tick, and 1 with no usable SACK block.  That ceiling is the option's granularity, not this capture's — no capture can do better |
 | `tcp_dup_ts.pcap` | 154 | **Genuine duplicates**: 10 segments that appear twice with an identical sequence number *and* an identical TSval.  The shape packeteer's generator cannot make, since a resend is always rebuilt with a fresh clock (#90) — so the only thing separating a duplicate from a retransmission is the TSval, and this is the file that proves a real one looks that way.  Captured on the **router**, where the duplication happens: both copies are tapped on the way out, whereas at the receiver GRO may coalesce them.  tshark labels them "TCP Retransmission", which is exactly the misreading the TSval exists to correct |
+| `tcp_gap_ts.pcap` | 215 | The receiver-side twin of `tcp_lossy_ts.pcap` — #158's subject.  Same three namespaces, same 10% loss on the router's client-facing leg, but captured **on the receiver's device**, downstream of the drop, so the file holds what a reassembler sees rather than what a sender sent: the dropped segment is **absent**, its successors arrive first and are held behind the hole, and the resend arrives after them.  9 holes, filled by 12 resends, every one carrying a TSval **newer** than everything the receiver had already committed past it — 9 strictly, 3 tied only with data the sender put out in the resend's own tick.  Every fill is answered by an ACK echoing *its* TSval; 28 duplicate ACKs from the receiver's own stack while holes were open.  `tcp_lossy_ts.pcap` cannot produce any of this: from a sender's seat nothing was ever missing, so every resend there is a pure overlap |
+| `tcp_reorder_ts.pcap` | 267 | The other branch of #158's split: an original **delayed rather than dropped**.  About one segment in sixteen took a path 50 ms slower than the rest (see the note above on why `netem reorder` cannot do this), so 8 originals arrive after 7–27 segments the sender put on the wire in *later* ticks, each carrying a TSval **older** than all of them — 2 strictly, the rest tied with a burst-mate only.  The sender fast-retransmitted every one, and the copies arrive later as 10 plain repeats with newer TSvals, which the receiver **D-SACKs** — so the file also holds a spurious retransmission that only the TSval identifies as such.  Between them, this file and `tcp_gap_ts.pcap` are the two answers a late byte can have: real loss recovered after the gap was committed, or a reordering the capture point saw |
 
 ### The encapsulations
 
@@ -107,7 +133,7 @@ before anyone collects one: the cookie has to be zeroed with
 ## Known gaps
 
 Tracked as [#127](https://github.com/adamkjonsson/packeteer/issues/127), with
-the tiers and the rules for closing them.  The corpus reaches 1 073 packets;
+the tiers and the rules for closing them.  The corpus reaches 1 555 packets;
 everything below has **no** real traffic at all.
 
 Each entry says why it is still open, because "hard to collect" and "nobody
