@@ -52,10 +52,11 @@ produces a plausible-looking file when got wrong:
    TSval as its original.  A capture like that cannot answer the question
    #149 asks.
 
-The receiver-side pair, `tcp_gap_ts` / `tcp_reorder_ts`, was collected by
+The receiver-side set — `tcp_gap_ts`, `tcp_reorder_ts`, `tcp_corrupt_ts`
+and `tcp_wrap_ts` — was collected by
 [`collect/capture_tcp_gap.sh`](collect/capture_tcp_gap.sh), which follows the
 three rules above, checks each file for the shape it exists for before
-reporting success, and added two more details to the list:
+reporting success, and added four more details to the list:
 
 4. **Let tcpdump drain before stopping it.** libpcap's TPACKET_V3 holds
    packets in a block for up to a second, so a capture stopped the moment the
@@ -75,6 +76,25 @@ reporting success, and added two more details to the list:
    the slow band.  The sender's fast retransmit of those bytes carries the
    same sequence number, so it takes the slow band too and arrives after the
    original — as a repeat, which the receiver D-SACKs.
+6. **`netem corrupt` only damages headers unless scatter-gather is off.**  It
+   flips a bit in the skb's *linear* part, and Linux TCP keeps payload in
+   page frags, so the first attempt at `tcp_corrupt_ts` put four of four
+   flips in headers.  `ethtool -K vs sg off` on the sender makes the stack
+   linearise every skb at transmit, and the router forwards it that way.
+   The same run turns TX checksum offload off on both ends, so that every
+   clean packet carries a real checksum and the damaged copy is the only one
+   that fails — the one file here where a checksum failure means what it
+   says.
+7. **A sequence-number wrap is a matter of timing, not luck.**  Linux's ISN
+   is `siphash(4-tuple) + (realtime_ns >> 6)`, so for a fixed 4-tuple it
+   climbs at 15.625 M/s and sweeps 2³² every ~275 s.  The client probes
+   once from a fixed source port, reads the server's ISN through
+   `TCP_REPAIR` (`TCP_RECV_QUEUE` is 1, not 2 — the other queue is the
+   client's own ISN, which shares the clock but not the hash, and cost two
+   attempts), closes with an RST so nothing sits in `TIME_WAIT`, waits, and
+   connects again at the instant the clock reaches 2³² − 32 KiB.  A sleep on
+   a VM overshoots by milliseconds and the clock moves 15 625 units per
+   millisecond, so the last 50 ms are spun, not slept.
 
 ## What each one is for
 
@@ -95,6 +115,8 @@ reporting success, and added two more details to the list:
 | `tcp_dup_ts.pcap` | 154 | **Genuine duplicates**: 10 segments that appear twice with an identical sequence number *and* an identical TSval.  The shape packeteer's generator cannot make, since a resend is always rebuilt with a fresh clock (#90) — so the only thing separating a duplicate from a retransmission is the TSval, and this is the file that proves a real one looks that way.  Captured on the **router**, where the duplication happens: both copies are tapped on the way out, whereas at the receiver GRO may coalesce them.  tshark labels them "TCP Retransmission", which is exactly the misreading the TSval exists to correct |
 | `tcp_gap_ts.pcap` | 215 | The receiver-side twin of `tcp_lossy_ts.pcap` — #158's subject.  Same three namespaces, same 10% loss on the router's client-facing leg, but captured **on the receiver's device**, downstream of the drop, so the file holds what a reassembler sees rather than what a sender sent: the dropped segment is **absent**, its successors arrive first and are held behind the hole, and the resend arrives after them.  9 holes, filled by 12 resends, every one carrying a TSval **newer** than everything the receiver had already committed past it — 9 strictly, 3 tied only with data the sender put out in the resend's own tick.  Every fill is answered by an ACK echoing *its* TSval; 28 duplicate ACKs from the receiver's own stack while holes were open.  `tcp_lossy_ts.pcap` cannot produce any of this: from a sender's seat nothing was ever missing, so every resend there is a pure overlap |
 | `tcp_reorder_ts.pcap` | 267 | The other branch of #158's split: an original **delayed rather than dropped**.  About one segment in sixteen took a path 50 ms slower than the rest (see the note above on why `netem reorder` cannot do this), so 8 originals arrive after 7–27 segments the sender put on the wire in *later* ticks, each carrying a TSval **older** than all of them — 2 strictly, the rest tied with a burst-mate only.  The sender fast-retransmitted every one, and the copies arrive later as 10 plain repeats with newer TSvals, which the receiver **D-SACKs** — so the file also holds a spurious retransmission that only the TSval identifies as such.  Between them, this file and `tcp_gap_ts.pcap` are the two answers a late byte can have: real loss recovered after the gap was committed, or a reordering the capture point saw |
+| `tcp_corrupt_ts.pcap` | 196 | A lossy session where the loss is **corruption** rather than a drop — #160's subject.  `netem corrupt 3%` on the router's client-facing leg, captured on the receiver, with TX checksum offload and scatter-gather off on the sender (see the note above).  5 segments reach the receiver with **one payload bit flipped** and a TCP checksum that fails; the receiver drops each, and the clean resend follows with a later TSval and is answered by an ACK echoing *its* TSval, 5 of 5.  The only file here in which two copies of a range **differ in their bytes**, which is the case a policy that prefers the acknowledged copy exists for — and the only one where a checksum failure is a fact about the wire: the other 191 checksums verify, and `sanitise` keeps it that way, recomputing the good ones for the new addresses and carrying the five bad ones verbatim |
+| `tcp_wrap_ts.pcap` | 198 | A session whose sequence numbers **pass through 2³²** — #161's subject.  The server's ISN is 4 294 931 070, 36 226 bytes before the wrap, so 74 data segments carry numbers just below it and 56 carry small ones, and the receiver's ACK numbers wrap with them.  Collected with the slow band on the last 2 KiB before the wrap, so the **four originals from just below 2³² arrive after all 56 post-wrap segments**, each with an older TSval than every one of them — the one case where sequence number and TSval disagree about order and the TSval is right.  The receiver's ACK then jumps from 4 294 967 227 to 29 312 in one step, echoing the fill, and its TSecr never decreases across the wrap; the dup ACKs before it carry a SACK block that lies wholly *after* 2³² against an ACK number before it.  The sender's fast retransmits of those four arrive after the receiver has closed, and it answers each with a **RST** — the only RSTs in the corpus's TCP sessions.  `sanitise` rewrites addresses, not sequence numbers, so all of this survives it |
 
 ### The encapsulations
 
@@ -133,7 +155,7 @@ before anyone collects one: the cookie has to be zeroed with
 ## Known gaps
 
 Tracked as [#127](https://github.com/adamkjonsson/packeteer/issues/127), with
-the tiers and the rules for closing them.  The corpus reaches 1 555 packets;
+the tiers and the rules for closing them.  The corpus reaches 1 949 packets;
 everything below has **no** real traffic at all.
 
 Each entry says why it is still open, because "hard to collect" and "nobody
