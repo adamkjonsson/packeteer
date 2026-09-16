@@ -25,47 +25,15 @@
 #                                 before it arrive after segments from after
 #                                 it  (#161)
 #
-# Why "reorder" is not `netem reorder`: a veth sender puts a whole congestion
-# window on the wire inside one 1 ms TSval tick, and netem's reorder only
-# lets a packet jump ahead of the packets queued in front of it -- its own
-# burst-mates, which share its TSval.  An original that arrives with an
-# OLDER TSval than its successors has to be held back past the *next* burst,
-# i.e. by more than an RTT.  So the reorder and wrap runs use a two-band prio
-# qdisc: band 0 is the normal DELAY, band 1 is DELAY + REORDER_DELAY, and a
-# u32 filter on the TCP sequence number picks what goes down the slow band.
-# The sender's fast retransmit of those bytes carries the same sequence
-# number, so it takes the slow band too and arrives after the original as a
-# plain repeat -- which is the point: the original fills.
+# The reasoning behind each mode's odd choices -- why "reorder" is a prio
+# qdisc rather than `netem reorder`, why "corrupt" turns checksum offload and
+# scatter-gather off, how "wrap" steers the ISN without luck -- is in
+# MANIFEST.md under "Inducing what you cannot wait for", details 4 to 7,
+# together with the three rules every mode follows.  The comments beside the
+# code below say what is done; the manifest says why, once.
 #
-# Why "wrap" needs no luck: Linux's ISN is siphash(4-tuple) + (realtime_ns
-# >> 6), so for a FIXED 4-tuple it climbs at 15.625 M/s and sweeps the whole
-# space every ~275 s.  The client probes once from a fixed source port, reads
-# the server's ISN, closes with an RST (no TIME_WAIT, so the tuple is free),
-# and connects again at the instant the clock reaches 2^32 - SIZE/2.
-#
-# Why "corrupt" turns TX checksum offload off: on a veth every packet's
-# checksum is wrong for a reason that means nothing (offload).  This file
-# exists for ONE checksum failure that means what it says, so the rest have
-# to verify -- and then `sanitise` recomputes the good ones for the new
-# addresses and carries the bad one verbatim, which is what a consumer
-# needs.  It turns scatter-gather off too, or netem only ever damages a
-# header: it flips a bit in the skb's linear part, and the payload is not
-# there.
-#
-# The three rules from MANIFEST.md are followed: impairment downstream of the
-# capture point (true by construction here), GSO off on the sender, and a
-# 20 ms delay so the TSval clock ticks.  Each capture is checked with tshark
-# before the script reports success, and the check fails loudly if the file
-# does not contain the shape it exists for.
-#
-# Two things this script learned, both of which produce a plausible-looking
-# file when got wrong:
-#
-#   - tcpdump's TPACKET_V3 holds packets in a block for up to a second, so
-#     stopping it right after the transfer loses the tail (165 of 198 packets
-#     written, and tcpdump's own log is the only place that says so).  Hence
-#     --immediate-mode, a two-second settle, and the log check below.
-#   - `netem reorder` cannot produce an older TSval: see above.
+# Each capture is checked with tshark before the script reports success, and
+# the check fails loudly if the file does not contain the shape it exists for.
 #
 # Usage:   sudo testcases/real/collect/capture_tcp_gap.sh [OUT_DIR]
 #

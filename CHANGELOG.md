@@ -70,6 +70,12 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   from 512 KiB: each receiver-side capture is a whole 64 KiB transfer, which
   is what it takes for a stack to show a fast retransmit.
 
+- `packeteer.generate.dns.DNSRData`, the union of the nine `DNSRData*`
+  classes, is now a named alias beside them.  It was defined privately in the
+  CLI module and imported, under `TYPE_CHECKING`, from a module that did not
+  have it — which no test could see and the documentation build could not
+  resolve.
+
 ### Fixed
 
 - **The generated receiver acknowledged a corrupted segment before its
@@ -95,6 +101,19 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   so a segment straddling 2³² never extended what the receiver had, and the
   `ACK-RECOVER` after a retransmission stopped just below the wrap.  Serial
   arithmetic now, on the loss path and in the new receiver model.
+
+### Documentation
+
+- `docs/internals/stream-generators.md`, `docs/cli/stream.md` and
+  `docs/guide/generating.md` described a corrupted segment's acknowledgement
+  as "delayed to follow the retransmission" — the behaviour #163 found wrong.
+  All three now say what the receiver does in between.
+- `testcases/real/MANIFEST.md`'s method section, written one capture pair at
+  a time, is reworked as one list of seven details; the collection script's
+  header points at it rather than restating it.
+- Generated-output transcripts refreshed from 0.15.0 to 0.16.0 — the third
+  sweep in a row to find them stale, so a test now holds every transcript
+  in `docs/` to the version in `pyproject.toml`.
 
 ---
 

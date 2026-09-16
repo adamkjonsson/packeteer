@@ -42,7 +42,7 @@ from packeteer.generate.dns import (
 from packeteer.protocols import AppProtocol, check_section
 
 if TYPE_CHECKING:
-    from packeteer.generate.dns import _DNSRData
+    from packeteer.generate.dns import DNSRData
 
 DNS_PORT: int = 53
 
@@ -101,7 +101,7 @@ def to_spec(msg: object) -> dict[str, Any]:
     return config["dns"]
 
 
-def _rdata_from_spec(rtype: int, rdata: dict[str, Any]) -> _DNSRData:
+def _rdata_from_spec(rtype: int, rdata: dict[str, Any]) -> DNSRData:
     """Build the RDATA object a resource record of *rtype* carries."""
     if rtype == DNS_TYPE_A:
         return DNSRDataA(address=rdata.get("address", "0.0.0.0"))
