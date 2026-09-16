@@ -247,6 +247,13 @@ class DNSRDataRaw:
     data: bytes = b""
 
 
+#: Any decoded RDATA: one of the ``DNSRData*`` classes above.
+DNSRData = (
+    DNSRDataA | DNSRDataAAAA | DNSRDataCNAME | DNSRDataNS | DNSRDataPTR
+    | DNSRDataMX | DNSRDataSOA | DNSRDataTXT | DNSRDataRaw
+)
+
+
 # ── Question and Resource Record ──────────────────────────────────────────────
 
 @dataclass
@@ -290,10 +297,7 @@ class DNSResourceRecord:
     rtype: int
     rclass: int
     ttl: int
-    rdata: (
-        DNSRDataA | DNSRDataAAAA | DNSRDataCNAME | DNSRDataNS | DNSRDataPTR
-        | DNSRDataMX | DNSRDataSOA | DNSRDataTXT | DNSRDataRaw
-    )
+    rdata: DNSRData
     cache_flush: bool = False
 
 
@@ -405,10 +409,7 @@ def _encode_name(name: str) -> bytes:
 
 
 def _encode_rdata(
-    rdata: (
-        DNSRDataA | DNSRDataAAAA | DNSRDataCNAME | DNSRDataNS | DNSRDataPTR
-        | DNSRDataMX | DNSRDataSOA | DNSRDataTXT | DNSRDataRaw
-    ),
+    rdata: DNSRData,
     w: _NameWriter,
 ) -> None:
     """Write RDATA into *w*.

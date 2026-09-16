@@ -56,17 +56,6 @@ from packeteer.fuzz import (
     fuzz_bytes,
 )
 from packeteer.generate import PacketBuilder
-from packeteer.generate.dns import (
-    DNSRDataA,
-    DNSRDataAAAA,
-    DNSRDataCNAME,
-    DNSRDataMX,
-    DNSRDataNS,
-    DNSRDataPTR,
-    DNSRDataRaw,
-    DNSRDataSOA,
-    DNSRDataTXT,
-)
 from packeteer.generate.geneve import GENEVE_PORT, GeneveOption
 from packeteer.generate.gtpu import GTPU_MSG_G_PDU, GTPU_PORT, GTPUExtensionHeader
 from packeteer.generate.impairments import ImpairmentConfig
@@ -134,11 +123,6 @@ from packeteer.pcap import (
     write_pcapng,
 )
 from packeteer.sanitise import SanitiseOptions, sanitise
-
-_DNSRData = (
-    DNSRDataA | DNSRDataAAAA | DNSRDataCNAME | DNSRDataNS | DNSRDataPTR
-    | DNSRDataMX | DNSRDataSOA | DNSRDataTXT | DNSRDataRaw
-)
 
 
 def _parse_sctp_chunk(spec: dict, packet_num: int) -> SCTPChunk:

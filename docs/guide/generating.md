@@ -216,8 +216,12 @@ a 1500-byte MTU rather than overrunning it.  And a retransmission — spurious,
 or recovering a loss — is **rebuilt** with the clock at the moment it was
 resent, not copied from the original; that is what RTT measurement across a
 retransmission relies on, and it is how an analyser tells a retransmission
-from a duplicate.  A corrupted segment keeps the original's stamp, since it
-*is* the original with a byte flipped in flight.  Every
+from a duplicate.  Its acknowledgement number is likewise the sender's
+current one, so a direction's ack numbers never go backwards.  A corrupted segment keeps the original's stamp, since it
+*is* the original with a byte flipped in flight; the receiver drops it on
+its checksum and acknowledges accordingly — duplicate ACKs at the hole until
+the retransmission, then an `ACK-RECOVER` that jumps past what it held and
+echoes the retransmission.  Every
 {class}`~packeteer.generate.tcp_stream.TCPStreamPacket` records what it
 carries in `timestamps`.
 

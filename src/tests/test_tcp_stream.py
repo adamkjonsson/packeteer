@@ -810,11 +810,17 @@ class TestPayloadCorruption(unittest.TestCase):
             self.assertNotEqual(corrupt.raw, retrans.raw)
 
     def test_corrupt_differs_by_exactly_one_byte(self):
-        """Without timestamps the retransmission is the original, byte for byte."""
+        """Without timestamps the retransmission is the original, byte for byte.
+
+        Resent before the server's FIN, so the copy's acknowledgement is still
+        the original's (#164 makes it current); the flipped byte is the whole
+        of the difference.
+        """
         stream = _stream(
             num_data_packets=1,
             payload_sizes=[50],
             payload_corruption_probability=1.0,
+            retransmission_timeout=0.0001,
             gap_jitter=0.0,
             client_options=TCPOptions(mss=1460),
             server_options=TCPOptions(mss=1460),
@@ -868,7 +874,7 @@ class TestPayloadCorruption(unittest.TestCase):
         )
         for i in range(3):
             retrans = next(p for p in stream.packets if p.label == f"RETRANS[{i}]")
-            ack = next(p for p in stream.packets if p.label == f"ACK[{i}]")
+            ack = next(p for p in stream.packets if p.label == f"ACK-RECOVER[{i}]")
             retrans_usec = retrans.ts_sec * 1_000_000 + retrans.ts_usec
             ack_usec = ack.ts_sec * 1_000_000 + ack.ts_usec
             self.assertGreater(ack_usec, retrans_usec)

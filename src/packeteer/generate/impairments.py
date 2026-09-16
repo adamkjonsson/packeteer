@@ -204,7 +204,17 @@ def _restamped(
     pkt: "TCPStreamPacket", usec: int, label: str, *,
     flow: FlowEndpoints, clocks: Clocks, among: list["TCPStreamPacket"],
 ) -> "TCPStreamPacket":
-    """Return *pkt* re-sent at *usec*: same bytes, or fresh timestamps.
+    """Return *pkt* re-sent at *usec*: the same segment, as of that moment.
+
+    A real stack fills in two things afresh on every segment it builds,
+    retransmission or not: the Timestamps option, and the acknowledgement
+    number from its current ``RCV.NXT``.  The copy therefore carries the
+    clock at the moment it was resent and the TSecr it would echo then, and
+    acknowledges what its sender had received from the peer by then — which,
+    when the peer's FIN arrived in between, is one more than the original
+    acknowledged (#164).  Everything else is the original's bytes.  Without
+    timestamps, and with nothing from the peer in between, the copy is
+    verbatim.
 
     Args:
         pkt: The segment being retransmitted.
@@ -212,22 +222,47 @@ def _restamped(
         label: The copy's label.
         flow: The connection's endpoints, to rebuild the frame.
         clocks: Both directions' TSval clocks, or ``None`` when the
-            connection carries no timestamps and a verbatim copy is right.
-        among: The packets the copy joins, for finding what it should echo.
+            connection carries no timestamps.
+        among: The packets the copy joins, for finding what it should echo
+            and acknowledge.
 
     """
     sec, frac = divmod(usec, 1_000_000)
-    if clocks is None or pkt.timestamps is None:
+    ack = _rcv_nxt_at(among, pkt.direction, usec)
+    if ack is None or not pkt.flags & TCP_ACK:
+        ack = pkt.ack
+    timestamps = pkt.timestamps
+    if clocks is not None and timestamps is not None:
+        timestamps = (clocks[pkt.direction].at(usec), _tsecr_at(among, pkt.direction, usec))
+    if ack == pkt.ack and timestamps == pkt.timestamps:
         return replace(pkt, ts_sec=sec, ts_usec=frac, label=label)
-    timestamps = (clocks[pkt.direction].at(usec), _tsecr_at(among, pkt.direction, usec))
-    src, dst = _endpoints_for(pkt.direction, pkt, flow)
+    src, dst = _endpoints_for(pkt.direction, replace(pkt, ack=ack), flow)
+    options = None if timestamps is None else TCPOptions(timestamps=timestamps)
     raw = _build_packet(
         src, dst, pkt.flags, _tcp_payload(pkt.raw, flow.include_ethernet),
-        flow.include_ethernet, flow.ip_ttl, TCPOptions(timestamps=timestamps),
-        flow.encap,
+        flow.include_ethernet, flow.ip_ttl, options, flow.encap,
     )
     return replace(pkt, raw=raw, ts_sec=sec, ts_usec=frac, label=label,
-                   timestamps=timestamps)
+                   ack=ack, timestamps=timestamps)
+
+
+def _rcv_nxt_at(packets: list["TCPStreamPacket"], direction: str, usec: int) -> int | None:
+    """Return what a *direction* segment sent at *usec* should acknowledge.
+
+    The sender's ``RCV.NXT`` at that moment: the end of the unbroken run of
+    the peer's sequence space that had arrived by then, from the peer's SYN —
+    the same walk :func:`_contiguous_ack` makes for a recovering
+    acknowledgement.  Lost segments are not in *packets*, so a hole in the
+    peer's stream holds the number back, as it holds a receiver back.
+
+    Returns ``None`` when the peer's SYN is not in *packets*, since nothing
+    can then say where its numbering starts.
+    """
+    peer = "s2c" if direction == "c2s" else "c2s"
+    syn = next((p for p in packets if p.direction == peer and p.flags & TCP_SYN), None)
+    if syn is None:
+        return None
+    return _contiguous_ack(packets, peer, usec, syn.seq)
 
 
 def _options_for(
@@ -280,6 +315,16 @@ def _is_bare_ack(pkt: "TCPStreamPacket") -> bool:
 def _acked_seq(pkt: "TCPStreamPacket") -> int:
     """Return the acknowledgement number a receiver sends back for *pkt*."""
     return (pkt.seq + pkt.payload_len) % _WRAP
+
+
+def _after(a: int, b: int) -> bool:
+    """Return whether sequence number *a* is after *b* (RFC 1982, modulo 2**32)."""
+    return 0 < ((a - b) % _WRAP) < _WRAP // 2
+
+
+def _seq_len(pkt: "TCPStreamPacket") -> int:
+    """Return how much sequence space *pkt* consumes: its payload, plus SYN and FIN."""
+    return pkt.payload_len + bool(pkt.flags & TCP_SYN) + bool(pkt.flags & TCP_FIN)
 
 
 def _ack_positions(packets: list["TCPStreamPacket"]) -> dict[int, int]:
@@ -407,14 +452,16 @@ def _contiguous_ack(
 ) -> int:
     """Return the acknowledgement number for what arrived by *upto_usec*.
 
-    Walks the byte ranges that actually arrived and returns the end of the
+    Walks the sequence-space ranges that actually arrived — payload, and the
+    one number each of SYN and FIN consumes — and returns the end of the
     unbroken run beginning at *start*.  A segment that arrived after a gap
     counts only once the gap ahead of it is filled — which is what makes a
-    recovering receiver jump forward over everything it had been holding.
+    recovering receiver jump forward over everything it had been holding, a
+    FIN it was holding included.
     """
     ranges = sorted(
-        ((p.seq, (p.seq + p.payload_len) % _WRAP) for p in packets
-         if p.direction == direction and p.payload_len
+        ((p.seq, (p.seq + _seq_len(p)) % _WRAP) for p in packets
+         if p.direction == direction and _seq_len(p)
          and _pkt_usec(p) <= upto_usec),
     )
     edge = start
@@ -422,7 +469,9 @@ def _contiguous_ack(
     while advanced:
         advanced = False
         for begin, end in ranges:
-            if begin <= edge < end:
+            # begin <= edge < end, in serial arithmetic: a range that
+            # straddles 2**32 has end < begin as integers.
+            if not _after(begin, edge) and _after(end, edge):
                 edge = end
                 advanced = True
     return edge
@@ -680,6 +729,105 @@ def _apply_duplication(
     return packets + copies
 
 
+# ── A receiver over a finished timeline ─────────────────────────────────────
+#
+# The generator's own receiver lives inside emit(): the acknowledgement number
+# advances only for a segment that arrives in order, and TS.Recent follows it
+# (RFC 7323 §4.3).  That is why a lost segment is answered with duplicate ACKs.
+# A pass that decides *after* emission that a segment never reached the far
+# end -- corruption, whose copy fails its checksum on arrival -- has no such
+# receiver to consult, and the acknowledgements already in the timeline say the
+# bytes were kept (#163).  This is the same receiver, run over the finished
+# list: given which segments arrived, it rewrites every acknowledgement to what
+# a receiver that saw exactly those would have sent.
+
+def _reacked(
+    pkt: "TCPStreamPacket", ack: int, echo: int | None, flow: FlowEndpoints,
+) -> "TCPStreamPacket":
+    """Return *pkt* rebuilt to acknowledge *ack* and echo *echo*."""
+    timestamps = pkt.timestamps
+    if timestamps is not None and echo is not None:
+        timestamps = (timestamps[0], echo)
+    src, dst = _endpoints_for(pkt.direction, replace(pkt, ack=ack), flow)
+    options = None if timestamps is None else TCPOptions(timestamps=timestamps)
+    raw = _build_packet(
+        src, dst, pkt.flags, _tcp_payload(pkt.raw, flow.include_ethernet),
+        flow.include_ethernet, flow.ip_ttl, options, flow.encap,
+    )
+    return replace(pkt, raw=raw, ack=ack, timestamps=timestamps)
+
+
+def _reacknowledge(
+    packets: list["TCPStreamPacket"], *, not_arrived: set[int], flow: FlowEndpoints,
+) -> list["TCPStreamPacket"]:
+    """Rewrite the acknowledgements in *packets* as a receiver would have sent them.
+
+    Walks the packets in time order, keeping for each direction what its
+    receiver expects next and the TSval it last saw arrive in order, exactly as
+    ``emit()`` does while generating.  Every segment carrying an ACK is then
+    made to say what that receiver knew when it was sent: the hole's start,
+    repeated, while a segment is missing; a jump over everything held once the
+    segment that fills it lands, echoing the filler's TSval.  A segment whose
+    index is in *not_arrived* was on the wire but never reached the far end.
+
+    Only the acknowledgements *of a direction that lost something* are
+    rewritten — the packets travelling the other way, whatever else they
+    carry.  The lossy direction's own segments are the sender's, and a
+    retransmission there stays what #90 made it: the original, byte for byte,
+    or the same with a fresh clock.  Within that, only packets whose
+    acknowledgement or echo actually differ are rebuilt, so a timeline the
+    emit-time receiver already got right is returned unchanged.
+
+    Args:
+        packets: One connection's packets, in any order.
+        not_arrived: Indices into *packets* of segments the receiver dropped.
+        flow: The connection's endpoints, to rebuild a frame.
+
+    Returns:
+        The list in the same order, with the affected packets replaced.
+
+    """
+    out = list(packets)
+    lossy = {packets[i].direction for i in not_arrived}
+    rcv_nxt: dict[str, int | None] = {"c2s": None, "s2c": None}
+    ts_recent: dict[str, int | None] = {"c2s": None, "s2c": None}
+    held: dict[str, dict[int, int]] = {"c2s": {}, "s2c": {}}
+
+    for i in sorted(range(len(packets)), key=lambda k: _pkt_usec(packets[k])):
+        pkt = packets[i]
+        sent, other = pkt.direction, ("s2c" if pkt.direction == "c2s" else "c2s")
+
+        # What this packet acknowledges is what its sender had received from
+        # the other direction before sending it.
+        if pkt.flags & TCP_ACK and other in lossy and rcv_nxt[other] is not None:
+            want_ack, want_echo = rcv_nxt[other], ts_recent[other]
+            echo_differs = (pkt.timestamps is not None and want_echo is not None
+                            and pkt.timestamps[1] != want_echo)
+            if pkt.ack != want_ack or echo_differs:
+                out[i] = _reacked(pkt, want_ack, want_echo, flow)
+
+        # Then its own bytes reach the far end -- or do not.
+        if i in not_arrived:
+            continue
+        if pkt.flags & TCP_SYN:
+            rcv_nxt[sent] = (pkt.seq + 1) % _WRAP
+            if pkt.timestamps is not None:
+                ts_recent[sent] = pkt.timestamps[0]
+            continue
+        expected = rcv_nxt[sent]
+        if expected is None:
+            continue
+        if pkt.seq == expected:
+            rcv_nxt[sent] = (pkt.seq + _seq_len(pkt)) % _WRAP
+            if pkt.timestamps is not None:
+                ts_recent[sent] = pkt.timestamps[0]
+            while rcv_nxt[sent] in held[sent]:
+                rcv_nxt[sent] = (rcv_nxt[sent] + held[sent].pop(rcv_nxt[sent])) % _WRAP
+        elif _after(pkt.seq, expected) and _seq_len(pkt):
+            held[sent].setdefault(pkt.seq, _seq_len(pkt))
+    return out
+
+
 def _apply_corruption(
     packets: list["TCPStreamPacket"],
     data_idx: list[int],
@@ -692,21 +840,28 @@ def _apply_corruption(
 ) -> list["TCPStreamPacket"]:
     """Corrupt a share of the data segments, then retransmit them cleanly.
 
-    The acknowledgement of a corrupted segment is pushed out behind the
-    retransmission, since a receiver cannot acknowledge what failed its
-    checksum.  The corrupted copy keeps its option region — it *is* the
-    original transmission, with a byte flipped in flight — while the clean
-    retransmission, and the acknowledgement that now answers it, carry the
-    clock at their new times.
+    A corrupted segment is lost to the receiver: it fails its checksum on
+    arrival and is dropped, so from the far end's seat the bytes never came.
+    The corrupted copy keeps its option region — it *is* the original
+    transmission, with a byte flipped in flight — while the clean
+    retransmission carries the clock at its new time.  The acknowledgement
+    that answered the original is moved behind the retransmission and
+    relabelled ``ACK-RECOVER``, as the loss path names its equivalent; then
+    every acknowledgement is re-derived by :func:`_reacknowledge`, so that
+    while the hole is open the receiver repeats its start and echoes the last
+    in-order TSval, and once the retransmission lands it jumps over everything
+    it was holding and echoes the retransmission (#163).
     """
     rto_usec = int(config.retransmission_timeout * 1_000_000)
     acks = _ack_positions(packets)
     used_ts = {_pkt_usec(p) for p in packets}
     additions: list["TCPStreamPacket"] = []
+    corrupted: set[int] = set()
     for i in data_idx:
         if rng.random() >= config.payload_corruption_probability:
             continue
         pkt = packets[i]
+        corrupted.add(i)
 
         raw_corrupt = bytearray(pkt.raw)
         raw_corrupt[-1] ^= 0xFF
@@ -725,10 +880,12 @@ def _apply_corruption(
         if i in acks:
             ack_usec = _alloc_usec(rt_usec + gap_usec, used_ts)
             packets[acks[i]] = _restamped(
-                packets[acks[i]], ack_usec, packets[acks[i]].label,
+                packets[acks[i]], ack_usec, _derive_label("ACK-RECOVER", pkt.label),
                 flow=flow, clocks=clocks, among=packets + additions,
             )
-    return packets + additions
+    if not corrupted:
+        return packets
+    return _reacknowledge(packets + additions, not_arrived=corrupted, flow=flow)
 
 
 def _apply_stray(
