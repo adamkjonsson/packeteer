@@ -238,7 +238,7 @@ class TestRetransmissionsAreFreshlyStamped(unittest.TestCase):
         packets = _by_time(stream)
         for retrans in (p for p in packets if p.label.startswith("RETRANS")):
             index = retrans.label[len("RETRANS") + 1:-1]
-            ack = next(p for p in packets if p.label == f"ACK[{index}]")
+            ack = next(p for p in packets if p.label == f"ACK-RECOVER[{index}]")
             with self.subTest(index=index):
                 self.assertGreater((ack.ts_sec, ack.ts_usec), (retrans.ts_sec, retrans.ts_usec))
                 self.assertEqual(ack.timestamps[1], retrans.timestamps[0])

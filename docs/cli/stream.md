@@ -242,7 +242,11 @@ repeats it — and a retransmission, whether spurious or recovering a loss,
 carries the clock at the moment it was *re*sent rather than a copy of the
 original's, which is how an analyser tells the two apart.  A corrupted
 segment keeps its original stamp: it is the original transmission with a
-byte flipped in flight.  The option takes 12 bytes of every segment, so data
+byte flipped in flight — and since it fails its checksum on arrival, the
+receiver never acknowledges it: the ACKs between it and its retransmission
+repeat the hole's start and echo the last in-order TSval, and the one after
+the retransmission (`ACK-RECOVER`) jumps past everything held meanwhile and
+echoes the retransmission's.  The option takes 12 bytes of every segment, so data
 is segmented at the MSS less twelve, as a real sender does; a full-size
 segment is 1448 bytes of payload on a 1500-byte MTU.
 

@@ -868,7 +868,7 @@ class TestPayloadCorruption(unittest.TestCase):
         )
         for i in range(3):
             retrans = next(p for p in stream.packets if p.label == f"RETRANS[{i}]")
-            ack = next(p for p in stream.packets if p.label == f"ACK[{i}]")
+            ack = next(p for p in stream.packets if p.label == f"ACK-RECOVER[{i}]")
             retrans_usec = retrans.ts_sec * 1_000_000 + retrans.ts_usec
             ack_usec = ack.ts_sec * 1_000_000 + ack.ts_usec
             self.assertGreater(ack_usec, retrans_usec)

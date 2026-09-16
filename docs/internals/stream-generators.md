@@ -105,7 +105,7 @@ retransmission.
 | `packet_loss_probability` | Each packet is independently dropped from the output list.  Seq/ack numbers are not affected. |
 | `retransmission_probability` | A copy of each data packet (same seq, flags, payload) is appended at `original_ts + retransmission_timeout`. |
 | `server_rst_probability` | Picks a random split point *k*; replaces the tail of the data exchange with a RST from the server and any extra unACKed data from the client, then drops the four-way teardown. |
-| `payload_corruption_probability` | XOR-flips the last byte of the payload, invalidating the TCP checksum.  The ACK for that packet is delayed to follow a retransmission. |
+| `payload_corruption_probability` | XOR-flips the last byte of the payload, invalidating the TCP checksum, and appends a clean retransmission an RTO later.  The receiver treats the corrupted segment as **lost**: until the retransmission lands, every acknowledgement it sends repeats the segment's start and echoes the last in-order TSval; the ACK that answered the original moves behind the retransmission as `ACK-RECOVER`, jumping over everything held meanwhile and echoing the retransmission (#163).  Done by `_reacknowledge`, a receiver run over the finished timeline — the same rules `emit()` applies to a lost segment as it goes. |
 | `stray_packet_count` | Injects forged client→server packets with stolen seq/ack values and random `'x'`-filled payloads.  Timestamps are scattered across the data-transfer window (or within `stray_timing_window` of their reference packet). |
 | `duplicate_probability` | Emits the packet a second time, `raw` verbatim — same seq, same checksum, same **TSval** — one microsecond later.  What a capture point sees twice, not what the sender sent twice. |
 

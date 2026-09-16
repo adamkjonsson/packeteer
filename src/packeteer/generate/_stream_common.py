@@ -117,9 +117,14 @@ def _clocks_from(packets: list) -> dict[str, _TimestampClock] | None:
 def _tsecr_at(packets: list, direction: str, usec: int) -> int:
     """Return the TSval a *direction* segment sent at *usec* should echo.
 
-    The most recent TSval that arrived from the other side by then (RFC 7323
-    §4.3's ``TS.Recent``).  Lost segments are not in *packets*, so a value a
-    receiver never saw is never echoed.
+    The most recent TSval that arrived from the other side by then, in order
+    or not.  That is RFC 7323 §4.3's ``TS.Recent`` only when the latest
+    arrival was in order, which holds where this is used — a retransmission
+    echoing the receiver's ACKs, and the ACK answering a retransmission that
+    has just filled the hole.  It is not a receiver model: the
+    acknowledgements ``impairments._reacknowledge`` rewrites take their echo
+    from one.  Lost segments are not in *packets*, so a value a receiver
+    never saw is never echoed.
 
     Args:
         packets: The connection's packets.
