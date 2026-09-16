@@ -205,12 +205,10 @@ class TestAcknowledgementsNeverGoBackwards(unittest.TestCase):
     Asserted over every impairment the passes apply, alone and together, on
     both generators, and across a sequence-number wrap.
 
-    Retransmitted copies, and duplicates of them, are left out.  A
-    retransmission is the original's bytes (#90) — its acknowledgement field
-    included — and by the time it is resent that field can be stale: the
-    peer's FIN may have been acknowledged in between.  That is the *sender's*
-    approximation, not the receiver's, and it is outside #163; the plan
-    records it.
+    Retransmitted copies included: #164 found that a resend carried the
+    original's acknowledgement number, stale by the time it went out, and the
+    sweep that found it is this test with the carve-out removed.  Strays are
+    forged by a third party and say nothing about either receiver.
     """
 
     _COMBOS = (
@@ -229,7 +227,7 @@ class TestAcknowledgementsNeverGoBackwards(unittest.TestCase):
         for direction in ("c2s", "s2c"):
             acks = [p.ack for p in packets
                     if p.direction == direction and p.flags & TCP_ACK
-                    and not p.label.startswith("STRAY") and "RETRANS" not in p.label]
+                    and not p.label.startswith("STRAY")]
             for earlier, later in zip(acks, acks[1:], strict=False):
                 with self.subTest(stream=name, direction=direction):
                     self.assertFalse(_after(earlier, later),

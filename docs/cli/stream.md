@@ -240,7 +240,8 @@ value that arrived in order from the peer — so after a loss the duplicate
 ACKs echo the last in-sequence segment, as their acknowledgement number
 repeats it — and a retransmission, whether spurious or recovering a loss,
 carries the clock at the moment it was *re*sent rather than a copy of the
-original's, which is how an analyser tells the two apart.  A corrupted
+original's, which is how an analyser tells the two apart, and acknowledges
+what its sender had received by then rather than what the original did.  A corrupted
 segment keeps its original stamp: it is the original transmission with a
 byte flipped in flight — and since it fails its checksum on arrival, the
 receiver never acknowledges it: the ACKs between it and its retransmission

@@ -257,11 +257,39 @@ class TestRetransmissionsAreFreshlyStamped(unittest.TestCase):
                                  parse_packet(original.raw).payload)
 
     def test_without_timestamps_a_copy_is_verbatim(self) -> None:
-        """The pre-#90 behaviour, kept for connections that did not negotiate."""
-        stream = _stream(retransmission_probability=1.0,
+        """The pre-#90 behaviour, kept for connections that did not negotiate.
+
+        Verbatim while nothing arrived from the peer in between: with a short
+        timeout the copies go out before the server has sent anything that
+        consumes sequence space, and are the original's bytes.
+        """
+        stream = _stream(retransmission_probability=1.0, retransmission_timeout=0.0001,
                          client_options=_NO_TS, server_options=_NO_TS)
         for original, copy in self._original_and_copies(stream, "RETRANS"):
             self.assertEqual(copy.raw, original.raw)
+
+    def test_a_copy_acknowledges_what_its_sender_has_received_since(self) -> None:
+        """#164: the acknowledgement field is the sender's current one.
+
+        With the default timeout every copy goes out after the server's FIN
+        has been acknowledged, so it acknowledges one byte more than the
+        original did — and, without timestamps, differs from the original in
+        exactly that field and the checksum it changes.
+        """
+        stream = _stream(retransmission_probability=1.0,
+                         client_options=_NO_TS, server_options=_NO_TS)
+        packets = _by_time(stream)
+        fin = next(p for p in packets if p.direction == "s2c" and p.label == "FIN-ACK")
+        for original, copy in self._original_and_copies(stream, "RETRANS"):
+            with self.subTest(label=copy.label):
+                self.assertEqual(copy.ack, fin.seq + 1)
+                self.assertEqual(original.ack, fin.seq)
+                differing = {i for i, (a, b) in enumerate(zip(original.raw, copy.raw,
+                                                               strict=True)) if a != b}
+                tcp = 14 + 20                      # Ethernet, IPv4 without options
+                self.assertTrue(differing <= set(range(tcp + 8, tcp + 12))
+                                | set(range(tcp + 16, tcp + 18)),
+                                f"bytes other than ack and checksum differ: {differing}")
 
 
 class TestSegmentSize(unittest.TestCase):

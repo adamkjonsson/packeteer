@@ -204,7 +204,17 @@ def _restamped(
     pkt: "TCPStreamPacket", usec: int, label: str, *,
     flow: FlowEndpoints, clocks: Clocks, among: list["TCPStreamPacket"],
 ) -> "TCPStreamPacket":
-    """Return *pkt* re-sent at *usec*: same bytes, or fresh timestamps.
+    """Return *pkt* re-sent at *usec*: the same segment, as of that moment.
+
+    A real stack fills in two things afresh on every segment it builds,
+    retransmission or not: the Timestamps option, and the acknowledgement
+    number from its current ``RCV.NXT``.  The copy therefore carries the
+    clock at the moment it was resent and the TSecr it would echo then, and
+    acknowledges what its sender had received from the peer by then — which,
+    when the peer's FIN arrived in between, is one more than the original
+    acknowledged (#164).  Everything else is the original's bytes.  Without
+    timestamps, and with nothing from the peer in between, the copy is
+    verbatim.
 
     Args:
         pkt: The segment being retransmitted.
@@ -212,22 +222,47 @@ def _restamped(
         label: The copy's label.
         flow: The connection's endpoints, to rebuild the frame.
         clocks: Both directions' TSval clocks, or ``None`` when the
-            connection carries no timestamps and a verbatim copy is right.
-        among: The packets the copy joins, for finding what it should echo.
+            connection carries no timestamps.
+        among: The packets the copy joins, for finding what it should echo
+            and acknowledge.
 
     """
     sec, frac = divmod(usec, 1_000_000)
-    if clocks is None or pkt.timestamps is None:
+    ack = _rcv_nxt_at(among, pkt.direction, usec)
+    if ack is None or not pkt.flags & TCP_ACK:
+        ack = pkt.ack
+    timestamps = pkt.timestamps
+    if clocks is not None and timestamps is not None:
+        timestamps = (clocks[pkt.direction].at(usec), _tsecr_at(among, pkt.direction, usec))
+    if ack == pkt.ack and timestamps == pkt.timestamps:
         return replace(pkt, ts_sec=sec, ts_usec=frac, label=label)
-    timestamps = (clocks[pkt.direction].at(usec), _tsecr_at(among, pkt.direction, usec))
-    src, dst = _endpoints_for(pkt.direction, pkt, flow)
+    src, dst = _endpoints_for(pkt.direction, replace(pkt, ack=ack), flow)
+    options = None if timestamps is None else TCPOptions(timestamps=timestamps)
     raw = _build_packet(
         src, dst, pkt.flags, _tcp_payload(pkt.raw, flow.include_ethernet),
-        flow.include_ethernet, flow.ip_ttl, TCPOptions(timestamps=timestamps),
-        flow.encap,
+        flow.include_ethernet, flow.ip_ttl, options, flow.encap,
     )
     return replace(pkt, raw=raw, ts_sec=sec, ts_usec=frac, label=label,
-                   timestamps=timestamps)
+                   ack=ack, timestamps=timestamps)
+
+
+def _rcv_nxt_at(packets: list["TCPStreamPacket"], direction: str, usec: int) -> int | None:
+    """Return what a *direction* segment sent at *usec* should acknowledge.
+
+    The sender's ``RCV.NXT`` at that moment: the end of the unbroken run of
+    the peer's sequence space that had arrived by then, from the peer's SYN —
+    the same walk :func:`_contiguous_ack` makes for a recovering
+    acknowledgement.  Lost segments are not in *packets*, so a hole in the
+    peer's stream holds the number back, as it holds a receiver back.
+
+    Returns ``None`` when the peer's SYN is not in *packets*, since nothing
+    can then say where its numbering starts.
+    """
+    peer = "s2c" if direction == "c2s" else "c2s"
+    syn = next((p for p in packets if p.direction == peer and p.flags & TCP_SYN), None)
+    if syn is None:
+        return None
+    return _contiguous_ack(packets, peer, usec, syn.seq)
 
 
 def _options_for(
@@ -417,14 +452,16 @@ def _contiguous_ack(
 ) -> int:
     """Return the acknowledgement number for what arrived by *upto_usec*.
 
-    Walks the byte ranges that actually arrived and returns the end of the
+    Walks the sequence-space ranges that actually arrived — payload, and the
+    one number each of SYN and FIN consumes — and returns the end of the
     unbroken run beginning at *start*.  A segment that arrived after a gap
     counts only once the gap ahead of it is filled — which is what makes a
-    recovering receiver jump forward over everything it had been holding.
+    recovering receiver jump forward over everything it had been holding, a
+    FIN it was holding included.
     """
     ranges = sorted(
-        ((p.seq, (p.seq + p.payload_len) % _WRAP) for p in packets
-         if p.direction == direction and p.payload_len
+        ((p.seq, (p.seq + _seq_len(p)) % _WRAP) for p in packets
+         if p.direction == direction and _seq_len(p)
          and _pkt_usec(p) <= upto_usec),
     )
     edge = start
