@@ -25,6 +25,10 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
+---
+
+## [0.16.0] - 2026-09-16
+
 ### Added
 
 - **Two real captures of a lossy TCP session taken at the receiver, so the
@@ -3456,7 +3460,8 @@ the exhaustive API reference.
      tagged with names that predate this convention, so only the entries below
      carry compare links. -->
 
-[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/adamkjonsson/packeteer/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/adamkjonsson/packeteer/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/adamkjonsson/packeteer/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/adamkjonsson/packeteer/compare/v0.12.0...v0.13.0
