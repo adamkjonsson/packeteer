@@ -150,6 +150,77 @@ units:
 """)
         self.assertEqual(_constructs(spec), {"emit"})
 
+    def test_document_params_and_transforms(self) -> None:
+        """The document keys kober 0.5.0 added, each declined once by name (#168).
+
+        A document's ``params`` are values supplied when a decode is set up,
+        not the unit parameters the same word means one level down, and the
+        note says which.
+        """
+        spec = self._load("""
+name: t
+version: "1"
+entry: m
+params:
+  key: {type: bytes, secret: true}
+transforms:
+  aes-gcm: {params: {key: bytes}}
+units:
+  m:
+    fields:
+      - {name: a, bits: 8}
+""")
+        self.assertEqual(_constructs(spec), {"params", "transforms"})
+        notes = {item.construct: item.note for item in spec.unsupported}
+        self.assertIn("document parameters", notes["params"])
+        messages = [d.message for d in check(spec).diagnostics]
+        self.assertEqual(len(messages), 2, messages)
+
+    def test_unit_params_are_still_unit_parameters(self) -> None:
+        spec = self._load("""
+name: t
+version: "1"
+entry: m
+units:
+  m:
+    params: [n]
+    fields:
+      - {name: a, bits: 8}
+""")
+        self.assertEqual(_constructs(spec), {"unit.params"})
+        self.assertIn("unit parameters", spec.unsupported[0].note)
+
+    def test_a_document_emit_is_a_typo(self) -> None:
+        """In kober `emit` is on a unit and a field, never on a document (#168).
+
+        Declining it said kober would take it, and kober refuses it too.
+        """
+        with self.assertRaises(SpecError) as ctx:
+            self._load("""
+name: t
+version: "1"
+entry: m
+emit: field
+units:
+  m:
+    fields:
+      - {name: a, bits: 8}
+""")
+        self.assertIn("no key 'emit'", str(ctx.exception))
+
+    def test_a_unit_emit_is_still_declined(self) -> None:
+        spec = self._load("""
+name: t
+version: "1"
+entry: m
+units:
+  m:
+    emit: field
+    fields:
+      - {name: a, bits: 8}
+""")
+        self.assertEqual(_constructs(spec), {"unit.emit"})
+
     def test_a_real_typo_is_still_an_error(self) -> None:
         """Declining known keys must not loosen anything."""
         with self.assertRaises(SpecError) as ctx:

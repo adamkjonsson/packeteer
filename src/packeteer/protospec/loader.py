@@ -70,13 +70,23 @@ _UNSUPPORTED_REPEATS: dict[str, str] = {
     "until":  "repeat until a condition holds after each element",
     "to_end": "repeat to the end of the enclosing run",
 }
-_UNSUPPORTED_KEYS: dict[str, str] = {
-    "params": "unit parameters",
-    "emit":   "kober's output granularity, which packeteer has no use for",
+#: kober's document-level keys this version lacks, as of kober 0.5.0.  One
+#: table per level, because the same word means different things at each:
+#: a document's ``params`` are values supplied when a decode is set up, a
+#: unit's are arguments passed where it is referenced.  A key spread into a
+#: level it does not belong to is accepted there as a construct kober never
+#: had (#168).
+_UNSUPPORTED_DOC_KEYS: dict[str, str] = {
+    "params":     "document parameters — values supplied when a decode is "
+                  "set up, such as a key",
+    "transforms": "declarations of the transforms a spec uses that are not "
+                  "core, and their parameters",
 }
-#: kober's unit-level guards.  A condition spanning more than one field, which
-#: `const` cannot express — recognised and declined rather than read as a typo.
+#: kober's unit-level keys this version lacks.  ``confirm`` and ``reject`` are
+#: a condition spanning more than one field, which `const` cannot express.
 _UNSUPPORTED_UNIT_KEYS: dict[str, str] = {
+    "params":  "unit parameters",
+    "emit":    "kober's output granularity, which packeteer has no use for",
     "confirm": "abandon the unit unless a condition holds, once its fields "
                "are decoded",
     "reject":  "abandon the unit if a condition holds, once its fields are "
@@ -88,10 +98,10 @@ _UNSUPPORTED_UNIT_KEYS: dict[str, str] = {
 # an unknown key is refused rather than ignored.  This is kober's rule.
 _SPEC_KEYS: frozenset[str] = frozenset({
     "name", "version", "entry", "units", "enums", "over", "ports", "input",
-    "doc", "endian", *_UNSUPPORTED_KEYS,
+    "doc", "endian", *_UNSUPPORTED_DOC_KEYS,
 })
 _UNIT_KEYS: frozenset[str] = frozenset({
-    "fields", "doc", "endian", *_UNSUPPORTED_KEYS, *_UNSUPPORTED_UNIT_KEYS,
+    "fields", "doc", "endian", *_UNSUPPORTED_UNIT_KEYS,
 })
 _SWITCH_KEYS: frozenset[str] = frozenset({"dispatch", "cases", "default"})
 
@@ -392,9 +402,9 @@ def from_mapping(data: Any, *, source: str | None = None) -> Spec:
     # spelling was used.
     ctx = _Ctx(unsupported=[]).inherit(data, root)
 
-    for key, note in _UNSUPPORTED_KEYS.items():
+    for key, note in _UNSUPPORTED_DOC_KEYS.items():
         if key in data:
-            ctx.record(key, root.child(key), note)
+            ctx.record(key, _at(root.child(key), data[key]), note)
 
     units_data = _as_mapping(_require(data, "units", root), root.child("units"), "units")
     units: dict[str, Unit] = {}
@@ -454,7 +464,7 @@ def _unit(name: str, data: Any, loc: Location, ctx: _Ctx) -> Unit:
     """Build one unit and its fields."""
     mapping = _as_mapping(data, loc, f"unit {name!r}")
     _reject_unknown(mapping, _UNIT_KEYS, f"unit {name!r}", loc)
-    for key, note in {**_UNSUPPORTED_KEYS, **_UNSUPPORTED_UNIT_KEYS}.items():
+    for key, note in _UNSUPPORTED_UNIT_KEYS.items():
         if key in mapping:
             ctx.record(f"unit.{key}", loc.child(key), note)
     # A unit's byte order overrides the document's for the fields below it.
@@ -510,7 +520,8 @@ def _field(data: Any, loc: Location, ctx: _Ctx) -> Field:
     name = None if raw_name is None else _as_str(raw_name, loc, "a field name")
 
     if "emit" in mapping:
-        ctx.record("emit", loc.child("emit"), _UNSUPPORTED_KEYS["emit"])
+        # A field's granularity means what a unit's does.
+        ctx.record("emit", loc.child("emit"), _UNSUPPORTED_UNIT_KEYS["emit"])
 
     lifted_type = _lifted(mapping, _TYPE_KINDS, "type", "type", loc)
     if lifted_type is None:
@@ -720,7 +731,7 @@ def _unit_ref(body: Any, loc: Location, ctx: _Ctx) -> UnitRef:
         return UnitRef(unit=body)
     mapping = _as_mapping(body, loc, "a unit reference")
     if mapping.get("args"):
-        ctx.record("unit.args", loc.child("args"), _UNSUPPORTED_KEYS["params"])
+        ctx.record("unit.args", loc.child("args"), _UNSUPPORTED_UNIT_KEYS["params"])
     return UnitRef(unit=_as_str(_require(mapping, "name", loc),
                                 loc.child("name"), "a unit name"))
 

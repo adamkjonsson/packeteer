@@ -70,6 +70,7 @@ as unknown keys:
 | `{size: {terminated: …}}`, `{string: {delimiter: …}}` | Delimiter framing, in either spelling |
 | `repeat: {until: …}`, `repeat: {to_end: true}` | Repeat by condition, or to the end of the run |
 | unit `params:` / `{unit: {args: …}}` | Unit parameters — see [kober's dialect](#protocols-kober) |
+| document `params:`, `transforms:` | Document parameters and transform declarations, which kober 0.5.0 added for its byte transforms — see [kober's dialect](#protocols-kober) |
 | unit `confirm:` / `reject:` | A guard spanning several fields, evaluated once the unit is decoded.  [`const`](#const) covers the single-field case, and [`condition`](#condition) guards one field rather than abandoning a unit |
 | recursion | A recursive unit has no statically known size, which both the encoder and the framing checks need |
 
@@ -107,8 +108,10 @@ typos:
 | Key | Where | Why it has no meaning here |
 |---|---|---|
 | `confirm`, `reject` | unit | Guards evaluated once a unit is decoded.  A condition spanning more than one field, which [`const`](#const) cannot express — **not supported yet** |
-| `emit` | document, unit, field | kober's output granularity.  packeteer writes a packet spec, which has no such axis |
+| `emit` | unit, field | kober's output granularity.  packeteer writes a packet spec, which has no such axis.  kober has no document-level `emit`, so one there is an unknown key in both dialects |
 | `params`, `{unit: {args: …}}` | unit | Unit parameters — **not supported yet** |
+| `params` | document | Document parameters: values supplied when a decode is set up, such as a key, declared `{name: {type, secret}}`.  Not the unit parameters the same word means one level down — **not supported yet** |
+| `transforms` | document | Declarations of the transforms a spec uses that are not core, and their parameters' types — **not supported yet** |
 
 An unknown key is still an error.  These simply stopped being unknown, which is
 strictly more informative than either accepting them silently or rejecting them

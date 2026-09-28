@@ -34,6 +34,12 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   `Declined` exactly where `Spec.unsupported` has an entry for the field's
   type, and `protocol show` prints the construct's name there (`select`,
   `pointer`) rather than `bytes[rest]`.  (#167)
+- **kober 0.5.0's document keys, `params` and `transforms`, are recognised
+  and declined by name**, each at its own line, so a spec declaring a key or
+  a non-core transform loads and the rest of it is checked.  A document's
+  `params` are values supplied when a decode is set up, not the unit
+  parameters the same word means on a unit, and the message says which.
+  (#168)
 
 ### Fixed
 
@@ -54,6 +60,11 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   `check` does.  It used to compile one: a caller that skipped `check` got a
   module in which a `computed` or `select` field was an opaque `bytes` field
   reading to the end of the message.  (#167)
+- **A top-level `emit` is an unknown key**, as it is in kober.  It was
+  declined as *not supported yet*, which told the author kober would take it.
+  In kober, `emit` belongs on a unit or a field, where packeteer still
+  declines it.  The reference's table said `document, unit, field` and now
+  says `unit, field`.  (#168)
 
 ---
 
