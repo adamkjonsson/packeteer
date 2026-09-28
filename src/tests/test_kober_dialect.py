@@ -221,6 +221,28 @@ units:
 """)
         self.assertEqual(_constructs(spec), {"unit.emit"})
 
+    def test_the_long_enum_form(self) -> None:
+        """The long `{doc, members}` enum, which neither vendored spec writes (#166).
+
+        Invisible until someone documents an enum, which is what the form is
+        for; 0.16.0 read `doc` and `members` as two enum values.
+        """
+        spec = self._load("""
+name: t
+version: "1"
+entry: m
+enums:
+  opcode:
+    doc: RFC 1035 §4.1.1.
+    members: {0: query, 1: iquery}
+units:
+  m:
+    fields:
+      - {name: op, int: {bits: 4, enum: opcode}}
+""")
+        self.assertEqual(dict(spec.enums["opcode"].members), {0: "query", 1: "iquery"})
+        self.assertEqual(check(spec).diagnostics, ())
+
     def test_a_real_typo_is_still_an_error(self) -> None:
         """Declining known keys must not loosen anything."""
         with self.assertRaises(SpecError) as ctx:

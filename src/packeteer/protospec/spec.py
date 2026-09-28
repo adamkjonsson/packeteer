@@ -434,12 +434,15 @@ class EnumDef:
         name: The enum's name, as referenced by :attr:`IntType.enum`.
         members: Label, by value.
         loc: Where it is in the spec.
+        doc: Free-text description, from kober's long form
+            ``{doc: …, members: {…}}``.
 
     """
 
     name: str
     members: Mapping[int, str]
     loc: Location
+    doc: str | None = None
 
 
 @dataclass(frozen=True)

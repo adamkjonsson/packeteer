@@ -663,6 +663,22 @@ Labels for an integer field's values, referenced by
 output.  Values may be written as numbers or as their string spelling, since
 JSON object keys are always strings.
 
+That is the short form: the body *is* the members.  kober's long form puts
+them under `members`, so the enum can carry a `doc`, as a unit carries one
+beside its `fields`:
+
+```yaml
+enums:
+  kind:
+    doc: What a sample measures.
+    members: {0: temperature, 1: humidity, 2: pressure}
+```
+
+`protocol show` prints the doc beneath the enum.  An enum with `members` has
+nothing else beside it but `doc`, so a member written next to `members` is
+refused rather than merged, and a `doc` in the short form is refused with a
+pointer to the long one rather than read as a value.
+
 ---
 
 (expressions)=

@@ -40,6 +40,8 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   `params` are values supplied when a decode is set up, not the unit
   parameters the same word means on a unit, and the message says which.
   (#168)
+- **`EnumDef.doc`**, from kober's long enum form (below), printed by
+  `protocol show` beneath the enum as a unit's doc is.  (#166)
 
 ### Fixed
 
@@ -65,6 +67,12 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   In kober, `emit` belongs on a unit or a field, where packeteer still
   declines it.  The reference's table said `document, unit, field` and now
   says `unit, field`.  (#168)
+- **kober's long enum form loads.**  `{doc: …, members: {0: …}}` was read as
+  the members themselves, so `doc` and `members` were taken for values and
+  refused with *a value of enum 'opcode' must be an integer, not 'doc'* — a
+  kober spelling reported as a typo.  The short form is unchanged.  A member
+  written beside `members` is refused as a mix of the two forms, and a `doc`
+  in the short form is refused with a pointer to the long one.  (#166)
 
 ---
 

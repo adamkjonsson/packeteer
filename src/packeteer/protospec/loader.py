@@ -446,17 +446,48 @@ def from_mapping(data: Any, *, source: str | None = None) -> Spec:
     )
 
 
-def _enum_def(name: str, members: Any, loc: Location) -> EnumDef:
-    """Build one enum definition."""
-    mapping = _as_mapping(members, loc, f"enum {name!r}")
+#: The long enum form's keys.  kober's: without ``members`` the whole body is
+#: the members, which is the short form.
+_ENUM_KEYS: frozenset[str] = frozenset({"members", "doc"})
+
+
+def _enum_def(name: str, body: Any, loc: Location) -> EnumDef:
+    """Build one enum definition, in either of kober's two forms (#166).
+
+    The short form is the members themselves, ``{0: query, 1: iquery}``.  The
+    long form puts them under ``members`` so the enum can carry a ``doc``,
+    the pattern a unit already has with ``fields``.
+    """
+    mapping = _as_mapping(body, loc, f"enum {name!r}")
+    doc: str | None = None
+    at = loc                             # where a member's fault is reported
+    if "members" in mapping:
+        mixed = [k for k in mapping if str(k) not in _ENUM_KEYS]
+        if mixed:
+            raise SpecError(
+                f"enum {name!r} has 'members' and also {mixed[0]!r} beside "
+                f"it; the long form keeps every member under 'members', and "
+                f"the short form has no 'members' key", loc,
+            )
+        doc = None if mapping.get("doc") is None else _as_str(
+            mapping["doc"], loc.child("doc"), f"the doc of enum {name!r}")
+        at = _at(loc.child("members"), mapping["members"])
+        mapping = _as_mapping(mapping["members"], at,
+                              f"the members of enum {name!r}")
+    elif "doc" in mapping:
+        raise SpecError(
+            f"enum {name!r} has a 'doc', so its members go under 'members': "
+            f"{{doc: …, members: {{0: …}}}}", loc,
+        )
     return EnumDef(
         name=name,
         members={
-            _int_key(value, loc, f"a value of enum {name!r}"):
-                _as_str(label, loc, f"a label of enum {name!r}")
+            _int_key(value, at, f"a value of enum {name!r}"):
+                _as_str(label, at, f"a label of enum {name!r}")
             for value, label in mapping.items()
         },
         loc=loc,
+        doc=doc,
     )
 
 

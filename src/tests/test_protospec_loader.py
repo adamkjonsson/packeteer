@@ -301,6 +301,73 @@ class TestSwitch(unittest.TestCase):
         self.assertEqual(set(switch.arms), {1})
 
 
+class TestEnums(unittest.TestCase):
+    """kober's two enum forms, and the two ways to get them wrong (#166)."""
+
+    def _enum(self, body: str) -> object:
+        spec = _spec(f"""
+            name: t
+            version: "1"
+            entry: m
+            enums:
+              opcode:
+{textwrap.indent(textwrap.dedent(body), " " * 16)}
+            units:
+              m:
+                fields:
+                  - {{name: op, int: {{bits: 4, enum: opcode}}}}
+        """)
+        return spec.enums["opcode"]
+
+    def test_the_short_form_is_the_members(self) -> None:
+        enum = self._enum("{0: query, 1: iquery}")
+        self.assertEqual(dict(enum.members), {0: "query", 1: "iquery"})
+        self.assertIsNone(enum.doc)
+
+    def test_the_long_form_puts_them_under_members_beside_a_doc(self) -> None:
+        enum = self._enum("""
+            doc: RFC 1035 §4.1.1.
+            members: {0: query, 1: iquery}
+        """)
+        self.assertEqual(dict(enum.members), {0: "query", 1: "iquery"})
+        self.assertEqual(enum.doc, "RFC 1035 §4.1.1.")
+
+    def test_the_long_form_without_a_doc(self) -> None:
+        enum = self._enum("members: {0: query}")
+        self.assertEqual(dict(enum.members), {0: "query"})
+        self.assertIsNone(enum.doc)
+
+    def test_json_spells_a_member_as_text_in_either_form(self) -> None:
+        spec = from_mapping({
+            "name": "t", "version": "1", "entry": "m",
+            "enums": {"opcode": {"doc": "d", "members": {"0": "query"}}},
+            "units": {"m": {"fields": [{"name": "op", "bits": 4}]}},
+        })
+        self.assertEqual(dict(spec.enums["opcode"].members), {0: "query"})
+
+    def test_a_mix_of_the_two_forms_is_refused_by_name(self) -> None:
+        with self.assertRaises(SpecError) as ctx:
+            self._enum("""
+                members: {0: query}
+                1: iquery
+            """)
+        self.assertIn("'members' and also 1 beside it", str(ctx.exception))
+
+    def test_a_doc_without_members_says_where_they_go(self) -> None:
+        """What 0.16.0 reported as `a value of enum 'opcode' must be an integer, not 'doc'`."""
+        with self.assertRaises(SpecError) as ctx:
+            self._enum("""
+                doc: RFC 1035 §4.1.1.
+                0: query
+            """)
+        self.assertIn("go under 'members'", str(ctx.exception))
+
+    def test_a_bad_member_is_reported_under_members(self) -> None:
+        with self.assertRaises(SpecError) as ctx:
+            self._enum("members: {zero: query}")
+        self.assertIn("enums.opcode.members", str(ctx.exception))
+
+
 class TestJSONAndYAMLAgree(unittest.TestCase):
 
     def test_the_same_spec_either_way(self) -> None:

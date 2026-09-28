@@ -63,7 +63,10 @@ def render(spec: Spec, *, docs: bool = True) -> str:
     lines = [_header(spec)]
     if spec.enums:
         lines.append("")
-        lines += [_enum_line(name, spec) for name in sorted(spec.enums)]
+        for name in sorted(spec.enums):
+            lines.append(_enum_line(name, spec))
+            if docs and spec.enums[name].doc:
+                lines += _doc_lines(spec.enums[name].doc, "  ")
     lines.append("")
 
     entry = spec.units.get(spec.entry)
