@@ -27,6 +27,7 @@ from packeteer.protospec.spec import (
     Const,
     Count,
     CountOf,
+    Declined,
     Derive,
     Endian,
     EnumDef,
@@ -562,8 +563,9 @@ def _one_type(kind: str, body: Any, loc: Location, ctx: _Ctx) -> FieldType:
     if kind in _UNSUPPORTED_TYPES:
         ctx.record(kind, loc, _UNSUPPORTED_TYPES[kind])
         # Stand in for it so loading can finish and the checker can report
-        # every fault at once rather than only the first.
-        return BytesType(size=Remaining())
+        # every fault at once rather than only the first.  A stand-in with a
+        # type of its own would be believed by whatever reads the field (#167).
+        return Declined(construct=kind, units=_units_named(body))
 
     # `bits: 16` is the integer kind spelled by what the number counts.
     if kind == "bits":
@@ -581,6 +583,29 @@ def _one_type(kind: str, body: Any, loc: Location, ctx: _Ctx) -> FieldType:
     if kind == "switch":
         return _switch(body, loc, ctx)
     raise SpecError(f"unknown field type {kind!r}", loc)
+
+
+def _units_named(body: Any) -> tuple[str, ...]:
+    """Return every unit a declined construct's body names, in order.
+
+    Found by shape rather than by construct — ``{unit: name}`` or
+    ``{unit: {name: name}}`` at any depth — so a construct this version does
+    not read still says which units it reaches.
+    """
+    found: list[str] = []
+    if isinstance(body, dict):
+        for key, value in body.items():
+            if key == "unit" and isinstance(value, str):
+                found.append(value)
+            elif key == "unit" and isinstance(value, dict) \
+                    and isinstance(value.get("name"), str):
+                found.append(value["name"])
+            else:
+                found += _units_named(value)
+    elif isinstance(body, list):
+        for item in body:
+            found += _units_named(item)
+    return tuple(found)
 
 
 def _sized_body(body: Any) -> Any:

@@ -430,6 +430,136 @@ class TestUnsupportedConstructsAreReportedAsSuch(unittest.TestCase):
         self.assertIn("not supported yet", _messages(result))
 
 
+class TestADeclinedFieldSaysOneThing(unittest.TestCase):
+    """A declined construct is reported once, by name, and nothing else (#167).
+
+    The loader used to stand ``bytes`` sized ``remaining`` in for it, and the
+    checker believed the stand-in: an expression reading a ``select`` or a
+    ``computed`` was typed as reading bytes.  Each case here is one path that
+    leaked, minimised, so a regression names the path.
+    """
+
+    _SELECT = ("{name: n, select: {from: xs, where: 'true', value: 'x', "
+               "default: '0'}}")
+    _COMPUTED = '{name: n, computed: "to_int(s, 16)"}'
+
+    def _others(self, fields: str) -> list[str]:
+        """Return every finding that is not the construct's own."""
+        return [str(d) for d in _unit(fields).diagnostics
+                if "not supported yet" not in d.message]
+
+    def test_a_size_read_from_one(self) -> None:
+        """The issue's `a size is bytes, expected int`, and the derive warning."""
+        self.assertEqual(self._others(f"""
+            - {self._SELECT}
+            - {{name: body, bytes: {{size: {{expr: "n"}}}}}}
+        """), [])
+
+    def test_a_condition_that_is_one(self) -> None:
+        self.assertEqual(self._others(f"""
+            - {self._SELECT}
+            - {{name: body, bytes: 2, condition: "n"}}
+        """), [])
+
+    def test_not_applied_to_one(self) -> None:
+        self.assertEqual(self._others(f"""
+            - {self._SELECT}
+            - {{name: body, bytes: 2, condition: "not n"}}
+        """), [])
+
+    def test_an_ordering_over_one(self) -> None:
+        self.assertEqual(self._others(f"""
+            - {self._COMPUTED}
+            - {{name: body, bytes: 2, condition: "n > 0"}}
+        """), [])
+
+    def test_an_equality_with_one(self) -> None:
+        self.assertEqual(self._others(f"""
+            - {self._COMPUTED}
+            - {{name: body, bytes: 2, condition: "n == 'chunked'"}}
+        """), [])
+
+    def test_a_switch_dispatched_on_one(self) -> None:
+        self.assertEqual(self._others(f"""
+            - {self._COMPUTED}
+            - name: body
+              switch: {{dispatch: n, cases: {{1: {{bytes: 2}}}}, default: {{bytes: 1}}}}
+        """), [])
+
+    def test_a_path_through_one(self) -> None:
+        """What lies beyond a declined construct is unknown, not absent."""
+        self.assertEqual(self._others("""
+            - {name: at, bits: 8}
+            - {name: p, pointer: {at: "at", type: {unit: q}}}
+            - {name: body, bytes: {size: {expr: "p.len"}}}
+        """), [])
+
+    def test_a_const_or_a_derive_on_one(self) -> None:
+        self.assertEqual(self._others("""
+            - {name: n, computed: "1", const: 3}
+            - {name: m, computed: "1", derive: {size_of: body}}
+            - {name: k, bits: 8, derive: {size_of: n}}
+            - {name: body, bytes: 2}
+        """), [])
+
+    def test_a_fill_before_one(self) -> None:
+        """A trailer with a declined field in it has no width to refuse."""
+        self.assertEqual(self._others("""
+            - {name: body, bytes: {size: {fill: true}}}
+            - {name: crc, computed: "1"}
+        """), [])
+
+    def test_a_unit_reached_only_through_one(self) -> None:
+        """The stand-in forgot what it named, so `q` looked unreachable."""
+        self.assertEqual([str(d) for d in _check("""
+            name: t
+            version: "1"
+            entry: m
+            units:
+              m:
+                fields:
+                  - {name: at, bits: 8}
+                  - {name: p, pointer: {at: "at", type: {unit: q}}}
+              q:
+                fields:
+                  - {name: v, bits: 8}
+        """).diagnostics if "not supported yet" not in d.message], [])
+
+    def test_a_unit_nothing_reaches_is_still_reported(self) -> None:
+        result = _check("""
+            name: t
+            version: "1"
+            entry: m
+            units:
+              m:
+                fields:
+                  - {name: n, computed: "1"}
+              q:
+                fields:
+                  - {name: v, bits: 8}
+        """)
+        self.assertIn("unit 'q' is never referenced", _messages(result))
+
+    def test_a_real_fault_beside_one_is_still_reported(self) -> None:
+        """Unknown is compatible with anything; the other operand still types."""
+        others = self._others(f"""
+            - {self._SELECT}
+            - {{name: k, bits: 8}}
+            - {{name: body, bytes: 2, condition: "n and k"}}
+        """)
+        self.assertEqual(len(others), 1, others)
+        self.assertIn("an operand of 'and' is int", others[0])
+
+    def test_a_forward_reference_beside_one_is_still_reported(self) -> None:
+        others = self._others(f"""
+            - {self._SELECT}
+            - {{name: body, bytes: 2, condition: "n or later == 1"}}
+            - {{name: later, bits: 8}}
+        """)
+        self.assertEqual(len(others), 1, others)
+        self.assertIn("declared later", others[0])
+
+
 if __name__ == "__main__":
     unittest.main()
 

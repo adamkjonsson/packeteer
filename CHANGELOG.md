@@ -25,6 +25,36 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
+### Added
+
+- **`packeteer.protospec.spec.Declined`**, the type of a field whose
+  construct this version reads but does not implement, and
+  **`ExprType.UNKNOWN`**, the type an expression reading one has.  Neither
+  claims anything about the field.  A consumer walking a loaded spec sees
+  `Declined` exactly where `Spec.unsupported` has an entry for the field's
+  type, and `protocol show` prints the construct's name there (`select`,
+  `pointer`) rather than `bytes[rest]`.  (#167)
+
+### Fixed
+
+- **A declined construct is reported once, by name, and nothing else is
+  reported about it.**  The loader used to stand `bytes` sized `remaining` in
+  for a `select`, `computed` or `pointer`, and the checker believed it: every
+  expression reading such a field was typed as reading bytes.  kober's
+  `http.yaml` reported 17 errors, 6 of them type errors on expressions kober
+  types correctly — `a size is bytes, expected int: content_length`, `the
+  operand of 'not' is bytes` — and 2 warnings telling the author to `derive` a
+  length that is a `select`.  It now reports its 11 constructs and nothing
+  else.  The same stand-in could produce a `const`, `derive` or `fill` error,
+  refuse a dotted path through a `pointer`, or warn that a unit reached only
+  through a `pointer` was never referenced; none of those can happen now.
+  Real faults beside a declined field are still reported: an unknown operand
+  is compatible with anything, and the other operand is still typed.  (#167)
+- **`compile_spec` refuses a spec with a declined construct**, naming it, as
+  `check` does.  It used to compile one: a caller that skipped `check` got a
+  module in which a `computed` or `select` field was an opaque `bytes` field
+  reading to the end of the message.  (#167)
+
 ---
 
 ## [0.16.0] - 2026-09-16

@@ -43,6 +43,7 @@ from packeteer.protospec.expr import (
 from packeteer.protospec.spec import (
     BytesType,
     CountOf,
+    Declined,
     Field,
     FieldType,
     Fill,
@@ -253,7 +254,7 @@ class _Checker:
             if unit is None:
                 continue
             for fld in unit.fields:
-                stack.extend(_unit_refs(fld.type))
+                stack.extend(_unit_refs(fld.type, through_declined=True))
 
         for name, unit in self.spec.units.items():
             if name not in seen:
@@ -349,6 +350,9 @@ class _Checker:
                 fld.loc,
             )
             return
+        if any(_stands_in_for_unsupported(after, self.spec)
+               for after in unit.fields[index + 1:]):
+            return                      # the trailer's width is not knowable
         if trailing_width(unit, index, self.spec) is None:
             self._error(
                 f"the fields after {fld.name!r} do not have a width the spec "
@@ -469,6 +473,8 @@ class _Checker:
         length_field = _field_named(unit, refs[0].path[0])
         if length_field is None:
             return                      # already reported by _check_expr
+        if isinstance(length_field.type, Declined):
+            return                      # no derive can be written on it
         derive = length_field.derive
         if isinstance(derive, SizeOf) and derive.field == fld.name:
             return
@@ -481,7 +487,7 @@ class _Checker:
 
     def _check_const(self, fld: Field) -> None:
         """Check that the field's type can hold its constant."""
-        if fld.const is None:
+        if fld.const is None or isinstance(fld.type, Declined):
             return
         value = fld.const.value
         expected = _const_type_name(fld.type)
@@ -509,7 +515,7 @@ class _Checker:
 
     def _check_derive(self, unit: Unit, fld: Field) -> None:
         """Check that a derivation names something it can actually derive from."""
-        if fld.derive is None:
+        if fld.derive is None or isinstance(fld.type, Declined):
             return
         if not isinstance(fld.type, IntType):
             self._error("'derive' needs an integer field", fld.loc)
@@ -538,7 +544,7 @@ class _Checker:
                 fld.loc,
             )
         if isinstance(fld.derive, SizeOf) and not isinstance(
-                target.type, (BytesType, StringType, UnitRef)):
+                target.type, (BytesType, StringType, UnitRef, Declined)):
             self._error(
                 f"'size_of' names {fld.derive.field!r}, whose encoded length "
                 f"is fixed by its type; size a bytes, string or unit field",
@@ -576,7 +582,7 @@ class _Checker:
         except SpecError as exc:
             self._error(exc.message, exc.location or loc)
             return
-        if actual is not expected:
+        if actual is not expected and actual is not ExprType.UNKNOWN:
             self._error(
                 f"{what} is {actual.value}, expected {expected.value}: "
                 f"{unparse(expr)}",
@@ -663,6 +669,10 @@ class _Checker:
                         loc,
                     )
                 return _type_of_field(found.type, name, loc)
+            if isinstance(found.type, Declined):
+                # Whatever lies beyond a declined construct is unknown, not
+                # absent: its own *not supported yet* already speaks for it.
+                return ExprType.UNKNOWN
             if not isinstance(found.type, UnitRef):
                 raise SpecError(
                     f"{name!r} is not a unit, so {unparse(ref)} cannot descend "
@@ -815,15 +825,18 @@ def run_relative_units(spec: Spec) -> dict[str, str]:
 
 
 def _stands_in_for_unsupported(fld: Field, spec: Spec) -> bool:
-    """Whether *fld*'s type is a stand-in for a construct this version lacks.
+    """Whether *fld* carries a stand-in for a construct this version lacks.
 
-    The loader substitutes something compilable for a construct it cannot
-    handle, and that stand-in is ``bytes`` sized ``remaining``.  Reading it as
-    though the author had written it would report a `remaining` they did not
-    write — the same trap :func:`packeteer.protospec.show._unsupported_at`
-    exists to avoid, reached from the other side.
+    A declined type kind becomes :class:`~packeteer.protospec.spec.Declined`,
+    which says nothing and needs no guard.  A declined *size* — delimiter
+    framing — still stands in as ``remaining``, and a declined repeat as no
+    repeat at all, inside an otherwise real field.  Reading either as though
+    the author had written it would report a `remaining` they did not write,
+    or a width the field does not have — the same trap
+    :func:`packeteer.protospec.show._unsupported_at` exists to avoid, reached
+    from the other side.
 
-    Such a field's shape is *unknown*, not run-relative.  The spec is refused
+    Such a field's shape is *unknown*.  The spec is refused
     either way, by the *not supported yet* error the stand-in stands for, so
     staying quiet here costs nothing and inventing a second, wrong error costs
     the reader a hunt.
@@ -872,15 +885,23 @@ def _is_run_relative_type(field_type: FieldType) -> bool:
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
-def _unit_refs(field_type: FieldType) -> list[str]:
-    """Return every unit named by *field_type*, including a switch's arms."""
+def _unit_refs(field_type: FieldType, *, through_declined: bool = False) -> list[str]:
+    """Return every unit named by *field_type*, including a switch's arms.
+
+    A declined construct's units count only when *through_declined* is set,
+    which reachability wants and nothing else does: recursion and run-relative
+    extent are questions about size, and a declined construct has none.
+    """
     if isinstance(field_type, UnitRef):
         return [field_type.unit]
+    if isinstance(field_type, Declined):
+        return list(field_type.units) if through_declined else []
     if isinstance(field_type, Switch):
-        found = [name for arm in field_type.arms.values() for name in _unit_refs(arm)]
+        arms = list(field_type.arms.values())
         if field_type.default is not None:
-            found += _unit_refs(field_type.default)
-        return found
+            arms.append(field_type.default)
+        return [name for arm in arms
+                for name in _unit_refs(arm, through_declined=through_declined)]
     return []
 
 
@@ -900,6 +921,8 @@ def _type_of_field(field_type: FieldType, name: str, loc: Location) -> ExprType:
         return ExprType.STR
     if isinstance(field_type, BytesType):
         return ExprType.BYTES
+    if isinstance(field_type, Declined):
+        return ExprType.UNKNOWN
     raise SpecError(
         f"{name!r} is a {type(field_type).__name__.lower().replace('type', '')} "
         f"and has no value an expression can use",

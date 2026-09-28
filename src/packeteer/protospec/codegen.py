@@ -121,6 +121,12 @@ def compile_spec(spec: Spec, *, source: str | None = None,
             than in the spec, and is reported as such.
 
     """
+    if spec.unsupported:
+        # The one fault `check` reports that this function would otherwise
+        # meet as a crash: a declined construct has no type to generate.
+        item = spec.unsupported[0]
+        note = f" — {item.note}" if item.note else ""
+        raise SpecError(f"not supported yet: {item.construct}{note}", item.loc)
     if spec.input is InputShape.STREAM:
         raise SpecError(
             "not supported yet: 'input: stream' — a stream protocol's messages "

@@ -70,12 +70,20 @@ MAX_SHIFT: int = 1024
 
 
 class ExprType(Enum):
-    """The type of an expression's value.  There are four, and no coercion."""
+    """The type of an expression's value.  There are four, and no coercion.
+
+    ``UNKNOWN`` is not a fifth.  It is what a reference to a field of a
+    declined construct types as — a ``select`` or a ``computed``, whose real
+    type this version does not work out — and it is accepted wherever a type
+    is expected, so that the construct's own *not supported yet* is the only
+    thing reported about it (#167).
+    """
 
     INT = "int"
     STR = "str"
     BYTES = "bytes"
     BOOL = "bool"
+    UNKNOWN = "unknown"
 
 
 # ── the tree ──────────────────────────────────────────────────────────────────
@@ -538,7 +546,7 @@ def _type_compare(expr: Compare, resolve: Callable[[Ref], ExprType],
     if expr.op in _ORDERING:
         _want(left, ExprType.INT, f"the left operand of {expr.op!r}", loc)
         _want(right, ExprType.INT, f"the right operand of {expr.op!r}", loc)
-    elif left is not right:
+    elif left is not right and ExprType.UNKNOWN not in (left, right):
         raise SpecError(
             f"{expr.op!r} compares {left.value} with {right.value}; both sides "
             "must be the same type, and there is no coercion",
@@ -548,8 +556,8 @@ def _type_compare(expr: Compare, resolve: Callable[[Ref], ExprType],
 
 
 def _want(actual: ExprType, expected: ExprType, what: str, loc: Location) -> None:
-    """Raise unless *actual* is *expected*."""
-    if actual is expected:
+    """Raise unless *actual* is *expected*, or is not known."""
+    if actual is expected or actual is ExprType.UNKNOWN:
         return
     hint = ""
     if expected is ExprType.BOOL and actual is ExprType.INT:

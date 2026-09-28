@@ -103,6 +103,19 @@ class TestKoberHTTP(unittest.TestCase):
             {"size.terminated", "computed", "select", "repeat.until"},
         )
 
+    def test_every_finding_is_not_supported_yet(self) -> None:
+        """What this directory's README says the test is for (#167).
+
+        Stricter than `dns.yaml`'s version of this test, which holds errors
+        only: `dns.yaml` has real integer lengths that nothing derives, and
+        its derive warnings are true.  Here every length is a `select` or a
+        `computed`, and a warning about one was a stand-in's, not the spec's —
+        as were six type errors on expressions that kober types correctly.
+        """
+        findings = [str(d) for d in check(self.spec).diagnostics
+                    if "not supported yet" not in d.message]
+        self.assertEqual(findings, [])
+
 
 class TestKoberOnlyKeys(unittest.TestCase):
     """kober's decode-only keys are declined by name, not read as typos (#144)."""

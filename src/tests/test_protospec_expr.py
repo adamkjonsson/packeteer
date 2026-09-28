@@ -236,6 +236,23 @@ class TestTyping(unittest.TestCase):
             _typed("nope + 1")
         self.assertIn("nope", str(ctx.exception))
 
+    def test_unknown_is_accepted_wherever_a_type_is_expected(self) -> None:
+        """A declined field's type is not worked out, so it is not held against it (#167).
+
+        The operator still decides the result: arithmetic is int, a comparison
+        and ``not`` are bool, whatever the unknown operand turns out to be.
+        """
+        self.assertEqual(_typed("n + 1", n="unknown"), ExprType.INT)
+        self.assertEqual(_typed("not n", n="unknown"), ExprType.BOOL)
+        self.assertEqual(_typed("n > 0", n="unknown"), ExprType.BOOL)
+        self.assertEqual(_typed("n == 'chunked'", n="unknown"), ExprType.BOOL)
+        self.assertEqual(_typed("n", n="unknown"), ExprType.UNKNOWN)
+
+    def test_unknown_does_not_excuse_the_other_operand(self) -> None:
+        with self.assertRaises(SpecError) as ctx:
+            _typed("n and k", n="unknown", k="int")
+        self.assertIn("!= 0", str(ctx.exception))
+
     def test_a_real_kober_expression_types(self) -> None:
         self.assertEqual(
             _typed("not chunked and content_length > 0",

@@ -44,6 +44,7 @@ __all__ = [
     "Const",
     "Count",
     "CountOf",
+    "Declined",
     "Derive",
     "Endian",
     "EnumDef",
@@ -298,7 +299,34 @@ class Switch:
     default: FieldType | None = None
 
 
-FieldType = Union[IntType, BytesType, StringType, UnitRef, Switch]
+@dataclass(frozen=True)
+class Declined:
+    """The type of a field whose construct this version reads but lacks.
+
+    It stands in so that loading finishes and the checker can report every
+    fault at once, and it deliberately says nothing about the field: no size,
+    no width, no value type.  Anything that would reason from it — an
+    expression reading the field, a size it is measured by — has nothing to
+    go on, and says nothing rather than something wrong.  The construct itself
+    is reported by the :class:`Unsupported` entry at the same path, which is
+    the one message such a field produces (#167).
+
+    One thing it does keep is which units the construct names — a
+    ``pointer``'s target, a ``transform``'s ``type`` — so that a unit reached
+    only through one is not reported as unreachable.
+
+    Attributes:
+        construct: The construct's key, e.g. ``"select"`` — what
+            ``protocol show`` prints where a type would be.
+        units: Units named anywhere inside it, in the order written.
+
+    """
+
+    construct: str
+    units: tuple[str, ...] = ()
+
+
+FieldType = Union[IntType, BytesType, StringType, UnitRef, Switch, Declined]
 
 
 # ── packeteer's additions ─────────────────────────────────────────────────────
