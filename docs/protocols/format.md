@@ -67,9 +67,13 @@ as unknown keys:
 | `pointer` | Decoding one is straightforward; *encoding* one needs a compression model of the protocol's own, which is what makes DNS a hand-written protocol here rather than a spec |
 | `select` | A question asked across a repeated field — what HTTP needs to decide its own framing |
 | `computed` | A value derived at decode time; `derive` is the encode-direction answer and covers the cases that matter here |
+| `transform: {from, with, limit, …}` | Bytes after a named transform, such as a gzip body inflated.  Building one means running the transform backwards — compressing, encrypting — which is a separate question from declining it.  The shape is still checked: `from`, `with` and `limit` are required, as kober requires them |
+| `concat: repeated.member` | One member of every element of a repetition, joined, such as a chunked body's data.  Must be written `repeated.member` |
+| a `switch` on a string | Text case keys, checked against the dispatch and then declined — see [`switch`](#switch) |
 | `{size: {terminated: …}}`, `{string: {delimiter: …}}` | Delimiter framing, in either spelling |
 | `repeat: {until: …}`, `repeat: {to_end: true}` | Repeat by condition, or to the end of the run |
 | unit `params:` / `{unit: {args: …}}` | Unit parameters — see [kober's dialect](#protocols-kober) |
+| document `params:`, `transforms:` | Document parameters and transform declarations, which kober 0.5.0 added for its byte transforms — see [kober's dialect](#protocols-kober) |
 | unit `confirm:` / `reject:` | A guard spanning several fields, evaluated once the unit is decoded.  [`const`](#const) covers the single-field case, and [`condition`](#condition) guards one field rather than abandoning a unit |
 | recursion | A recursive unit has no statically known size, which both the encoder and the framing checks need |
 
@@ -107,8 +111,10 @@ typos:
 | Key | Where | Why it has no meaning here |
 |---|---|---|
 | `confirm`, `reject` | unit | Guards evaluated once a unit is decoded.  A condition spanning more than one field, which [`const`](#const) cannot express — **not supported yet** |
-| `emit` | document, unit, field | kober's output granularity.  packeteer writes a packet spec, which has no such axis |
+| `emit` | unit, field | kober's output granularity.  packeteer writes a packet spec, which has no such axis.  kober has no document-level `emit`, so one there is an unknown key in both dialects |
 | `params`, `{unit: {args: …}}` | unit | Unit parameters — **not supported yet** |
+| `params` | document | Document parameters: values supplied when a decode is set up, such as a key, declared `{name: {type, secret}}`.  Not the unit parameters the same word means one level down — **not supported yet** |
+| `transforms` | document | Declarations of the transforms a spec uses that are not core, and their parameters' types — **not supported yet** |
 
 An unknown key is still an error.  These simply stopped being unknown, which is
 strictly more informative than either accepting them silently or rejecting them
@@ -475,7 +481,7 @@ key sets that make lifting unambiguous.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `dispatch` | *(required)* | An integer [expression](#expressions) selecting the case |
+| `dispatch` | *(required)* | An integer [expression](#expressions) selecting the case — or a string one, which is declined (below) |
 | `cases` | *(required)* | The type to use, by value |
 | `default` | — | The type for a value no case matches |
 
@@ -483,6 +489,17 @@ key sets that make lifting unambiguous.
 undecodable** — the decoder raises and the bytes stay an opaque payload.  That
 is often what you want, so `check` warns rather than refusing, to make it a
 choice rather than an oversight.
+
+**A switch on a string is read, checked and declined.**  kober dispatches on
+an `int` or a `str`, with case keys of the matching type — a key is an integer
+where it reads as one (JSON's `"1"` and YAML's `1` are the same case) and text
+otherwise.  `check` holds the keys to the dispatch's type either way, refuses
+a switch that mixes the two, and refuses a text case that cannot match the
+fixed-width string it tests (`"fmt"` against a four-byte tag).  A switch on a
+string is then *not supported yet*.  Every one kober ships dispatches on a
+`select` or a `computed`, which packeteer declines anyway, and a protocol
+with an ASCII tag can say the same thing as an integer switch with an
+[enum](#enums) naming the values.
 
 ```{note}
 **The key was `on` until 0.13.0.**  A spec still written that way is refused
@@ -660,6 +677,22 @@ Labels for an integer field's values, referenced by
 output.  Values may be written as numbers or as their string spelling, since
 JSON object keys are always strings.
 
+That is the short form: the body *is* the members.  kober's long form puts
+them under `members`, so the enum can carry a `doc`, as a unit carries one
+beside its `fields`:
+
+```yaml
+enums:
+  kind:
+    doc: What a sample measures.
+    members: {0: temperature, 1: humidity, 2: pressure}
+```
+
+`protocol show` prints the doc beneath the enum.  An enum with `members` has
+nothing else beside it but `doc`, so a member written next to `members` is
+refused rather than merged, and a `doc` in the short form is refused with a
+pointer to the long one rather than read as a value.
+
 ---
 
 (expressions)=
@@ -710,5 +743,6 @@ rather than truncated.
 A dotted path descends into a nested unit: `header.length` reads the `length`
 field of the `header` field's unit.
 
-kober's three functions — `to_int`, `trim`, `lower` — are **not supported
-yet**, and a call is reported as such rather than as a syntax error.
+kober's five functions — `to_int`, `lower`, `trim`, and since kober 0.5.0
+`startswith` and `endswith` — are **not supported yet**, and a call is
+reported as such rather than as a syntax error.

@@ -37,6 +37,9 @@ refused nor silently dropped.  They are recorded on
 {attr}`Spec.unsupported <packeteer.protospec.spec.Spec.unsupported>` so the
 checker reports *not supported yet* and names them, rather than *unknown key* —
 the difference between "this will work later" and "you typed something wrong".
+A field whose type is one of them has the type
+{class}`~packeteer.protospec.spec.Declined`, which claims nothing about the
+field, so that the construct's own message is the only one reported about it.
 
 ```{eval-rst}
 .. autofunction:: packeteer.protospec.load
@@ -224,6 +227,12 @@ A field names exactly one of these.  See
 
 ```{eval-rst}
 .. autoclass:: packeteer.protospec.spec.Switch
+   :members:
+   :no-index:
+```
+
+```{eval-rst}
+.. autoclass:: packeteer.protospec.spec.Declined
    :members:
    :no-index:
 ```

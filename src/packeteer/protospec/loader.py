@@ -27,6 +27,7 @@ from packeteer.protospec.spec import (
     Const,
     Count,
     CountOf,
+    Declined,
     Derive,
     Endian,
     EnumDef,
@@ -61,21 +62,49 @@ _UNSUPPORTED_TYPES: dict[str, str] = {
     "pointer":  "read a type at an offset and carry on — needs a compression "
                 "model to encode",
     "select":   "a question asked across a repeated field",
+    "transform": "bytes after a named transform, such as decompression — "
+                 "building one needs the inverse transform",
+    "concat":   "one member of every element of a repetition, joined",
 }
+#: kober's `transform` keys, and the three it requires.
+_TRANSFORM_KEYS: frozenset[str] = frozenset({
+    "from", "with", "limit", "args", "type", "content_type",
+})
+_TRANSFORM_REQUIRED: tuple[str, ...] = ("from", "with", "limit")
 _UNSUPPORTED_SIZES: dict[str, str] = {
     "terminated": "a size ending at a delimiter rather than a declared length",
+}
+#: A switch whose cases are text.  kober dispatches on a string because its
+#: expression language has no conditional and refuses a switch on a bool;
+#: every such switch kober ships dispatches on a construct packeteer declines
+#: anyway, and an ASCII tag is already writable as an integer switch with an
+#: enum.  So it is checked and declined, not built (#171).
+_STRING_SWITCH = "switch on a string"
+_UNSUPPORTED_SWITCHES: dict[str, str] = {
+    _STRING_SWITCH: "text case keys; an ASCII tag can be written as an "
+                    "integer switch with an enum",
 }
 _UNSUPPORTED_REPEATS: dict[str, str] = {
     "until":  "repeat until a condition holds after each element",
     "to_end": "repeat to the end of the enclosing run",
 }
-_UNSUPPORTED_KEYS: dict[str, str] = {
-    "params": "unit parameters",
-    "emit":   "kober's output granularity, which packeteer has no use for",
+#: kober's document-level keys this version lacks, as of kober 0.5.0.  One
+#: table per level, because the same word means different things at each:
+#: a document's ``params`` are values supplied when a decode is set up, a
+#: unit's are arguments passed where it is referenced.  A key spread into a
+#: level it does not belong to is accepted there as a construct kober never
+#: had (#168).
+_UNSUPPORTED_DOC_KEYS: dict[str, str] = {
+    "params":     "document parameters — values supplied when a decode is "
+                  "set up, such as a key",
+    "transforms": "declarations of the transforms a spec uses that are not "
+                  "core, and their parameters",
 }
-#: kober's unit-level guards.  A condition spanning more than one field, which
-#: `const` cannot express — recognised and declined rather than read as a typo.
+#: kober's unit-level keys this version lacks.  ``confirm`` and ``reject`` are
+#: a condition spanning more than one field, which `const` cannot express.
 _UNSUPPORTED_UNIT_KEYS: dict[str, str] = {
+    "params":  "unit parameters",
+    "emit":    "kober's output granularity, which packeteer has no use for",
     "confirm": "abandon the unit unless a condition holds, once its fields "
                "are decoded",
     "reject":  "abandon the unit if a condition holds, once its fields are "
@@ -87,10 +116,10 @@ _UNSUPPORTED_UNIT_KEYS: dict[str, str] = {
 # an unknown key is refused rather than ignored.  This is kober's rule.
 _SPEC_KEYS: frozenset[str] = frozenset({
     "name", "version", "entry", "units", "enums", "over", "ports", "input",
-    "doc", "endian", *_UNSUPPORTED_KEYS,
+    "doc", "endian", *_UNSUPPORTED_DOC_KEYS,
 })
 _UNIT_KEYS: frozenset[str] = frozenset({
-    "fields", "doc", "endian", *_UNSUPPORTED_KEYS, *_UNSUPPORTED_UNIT_KEYS,
+    "fields", "doc", "endian", *_UNSUPPORTED_UNIT_KEYS,
 })
 _SWITCH_KEYS: frozenset[str] = frozenset({"dispatch", "cases", "default"})
 
@@ -391,9 +420,9 @@ def from_mapping(data: Any, *, source: str | None = None) -> Spec:
     # spelling was used.
     ctx = _Ctx(unsupported=[]).inherit(data, root)
 
-    for key, note in _UNSUPPORTED_KEYS.items():
+    for key, note in _UNSUPPORTED_DOC_KEYS.items():
         if key in data:
-            ctx.record(key, root.child(key), note)
+            ctx.record(key, _at(root.child(key), data[key]), note)
 
     units_data = _as_mapping(_require(data, "units", root), root.child("units"), "units")
     units: dict[str, Unit] = {}
@@ -435,17 +464,48 @@ def from_mapping(data: Any, *, source: str | None = None) -> Spec:
     )
 
 
-def _enum_def(name: str, members: Any, loc: Location) -> EnumDef:
-    """Build one enum definition."""
-    mapping = _as_mapping(members, loc, f"enum {name!r}")
+#: The long enum form's keys.  kober's: without ``members`` the whole body is
+#: the members, which is the short form.
+_ENUM_KEYS: frozenset[str] = frozenset({"members", "doc"})
+
+
+def _enum_def(name: str, body: Any, loc: Location) -> EnumDef:
+    """Build one enum definition, in either of kober's two forms (#166).
+
+    The short form is the members themselves, ``{0: query, 1: iquery}``.  The
+    long form puts them under ``members`` so the enum can carry a ``doc``,
+    the pattern a unit already has with ``fields``.
+    """
+    mapping = _as_mapping(body, loc, f"enum {name!r}")
+    doc: str | None = None
+    at = loc                             # where a member's fault is reported
+    if "members" in mapping:
+        mixed = [k for k in mapping if str(k) not in _ENUM_KEYS]
+        if mixed:
+            raise SpecError(
+                f"enum {name!r} has 'members' and also {mixed[0]!r} beside "
+                f"it; the long form keeps every member under 'members', and "
+                f"the short form has no 'members' key", loc,
+            )
+        doc = None if mapping.get("doc") is None else _as_str(
+            mapping["doc"], loc.child("doc"), f"the doc of enum {name!r}")
+        at = _at(loc.child("members"), mapping["members"])
+        mapping = _as_mapping(mapping["members"], at,
+                              f"the members of enum {name!r}")
+    elif "doc" in mapping:
+        raise SpecError(
+            f"enum {name!r} has a 'doc', so its members go under 'members': "
+            f"{{doc: …, members: {{0: …}}}}", loc,
+        )
     return EnumDef(
         name=name,
         members={
-            _int_key(value, loc, f"a value of enum {name!r}"):
-                _as_str(label, loc, f"a label of enum {name!r}")
+            _int_key(value, at, f"a value of enum {name!r}"):
+                _as_str(label, at, f"a label of enum {name!r}")
             for value, label in mapping.items()
         },
         loc=loc,
+        doc=doc,
     )
 
 
@@ -453,7 +513,7 @@ def _unit(name: str, data: Any, loc: Location, ctx: _Ctx) -> Unit:
     """Build one unit and its fields."""
     mapping = _as_mapping(data, loc, f"unit {name!r}")
     _reject_unknown(mapping, _UNIT_KEYS, f"unit {name!r}", loc)
-    for key, note in {**_UNSUPPORTED_KEYS, **_UNSUPPORTED_UNIT_KEYS}.items():
+    for key, note in _UNSUPPORTED_UNIT_KEYS.items():
         if key in mapping:
             ctx.record(f"unit.{key}", loc.child(key), note)
     # A unit's byte order overrides the document's for the fields below it.
@@ -509,7 +569,8 @@ def _field(data: Any, loc: Location, ctx: _Ctx) -> Field:
     name = None if raw_name is None else _as_str(raw_name, loc, "a field name")
 
     if "emit" in mapping:
-        ctx.record("emit", loc.child("emit"), _UNSUPPORTED_KEYS["emit"])
+        # A field's granularity means what a unit's does.
+        ctx.record("emit", loc.child("emit"), _UNSUPPORTED_UNIT_KEYS["emit"])
 
     lifted_type = _lifted(mapping, _TYPE_KINDS, "type", "type", loc)
     if lifted_type is None:
@@ -560,10 +621,12 @@ def _field_type(data: Any, loc: Location, ctx: _Ctx) -> FieldType:
 def _one_type(kind: str, body: Any, loc: Location, ctx: _Ctx) -> FieldType:
     """Build the type named by *kind*, whether it was lifted or wrapped."""
     if kind in _UNSUPPORTED_TYPES:
+        _check_declined_shape(kind, body, loc, ctx)
         ctx.record(kind, loc, _UNSUPPORTED_TYPES[kind])
         # Stand in for it so loading can finish and the checker can report
-        # every fault at once rather than only the first.
-        return BytesType(size=Remaining())
+        # every fault at once rather than only the first.  A stand-in with a
+        # type of its own would be believed by whatever reads the field (#167).
+        return Declined(construct=kind, units=_units_named(body))
 
     # `bits: 16` is the integer kind spelled by what the number counts.
     if kind == "bits":
@@ -581,6 +644,74 @@ def _one_type(kind: str, body: Any, loc: Location, ctx: _Ctx) -> FieldType:
     if kind == "switch":
         return _switch(body, loc, ctx)
     raise SpecError(f"unknown field type {kind!r}", loc)
+
+
+def _check_declined_shape(kind: str, body: Any, loc: Location, ctx: _Ctx) -> None:
+    """Refuse a malformed ``transform`` or ``concat``, as kober would (#170).
+
+    Declining a construct must not loosen it: a typo inside one is still a
+    typo, and an author writing for kober should hear about it from either
+    loader.  The rules are kober 0.5.0's.  What the names refer to — an
+    earlier field, a declared transform — is not checked, since nothing here
+    reads them.
+    """
+    if kind == "concat":
+        text = _as_str(body, loc, "a concat")
+        repeated, dot, member = text.partition(".")
+        if not dot or not repeated or not member or "." in member:
+            raise SpecError(
+                f"a concat names a repeated field and the field of each "
+                f"element to join, as 'chunks.data'; got {text!r}", loc,
+            )
+        return
+    if kind != "transform":
+        return
+    mapping = _as_mapping(body, loc, "a transform")
+    _reject_unknown(mapping, _TRANSFORM_KEYS, "a transform", loc)
+    missing = [key for key in _TRANSFORM_REQUIRED if key not in mapping]
+    if missing:
+        listed = ", ".join(repr(key) for key in missing)
+        raise SpecError(f"a transform needs {listed}", loc)
+    _as_str(mapping["from"], loc.child("from"), "a transform's source")
+    _as_str(mapping["with"], loc.child("with"), "a transform's name")
+    limit = _as_int(mapping["limit"], loc.child("limit"), "a transform's limit")
+    if limit < 1:
+        raise SpecError(
+            f"a transform's limit must be positive, not {limit}", loc.child("limit"),
+        )
+    for name in _as_mapping(mapping.get("args", {}), loc.child("args"),
+                            "a transform's args"):
+        _as_str(name, loc.child("args"), "an argument name")
+    if "content_type" in mapping:
+        _as_str(mapping["content_type"], loc.child("content_type"),
+                "a transform's content_type")
+    if "type" in mapping:
+        # Built for its faults only: a nested construct this version lacks is
+        # recorded and reported like any other.
+        _field_type(mapping["type"], loc.child("type"), ctx)
+
+
+def _units_named(body: Any) -> tuple[str, ...]:
+    """Return every unit a declined construct's body names, in order.
+
+    Found by shape rather than by construct — ``{unit: name}`` or
+    ``{unit: {name: name}}`` at any depth — so a construct this version does
+    not read still says which units it reaches.
+    """
+    found: list[str] = []
+    if isinstance(body, dict):
+        for key, value in body.items():
+            if key == "unit" and isinstance(value, str):
+                found.append(value)
+            elif key == "unit" and isinstance(value, dict) \
+                    and isinstance(value.get("name"), str):
+                found.append(value["name"])
+            else:
+                found += _units_named(value)
+    elif isinstance(body, list):
+        for item in body:
+            found += _units_named(item)
+    return tuple(found)
 
 
 def _sized_body(body: Any) -> Any:
@@ -695,7 +826,7 @@ def _unit_ref(body: Any, loc: Location, ctx: _Ctx) -> UnitRef:
         return UnitRef(unit=body)
     mapping = _as_mapping(body, loc, "a unit reference")
     if mapping.get("args"):
-        ctx.record("unit.args", loc.child("args"), _UNSUPPORTED_KEYS["params"])
+        ctx.record("unit.args", loc.child("args"), _UNSUPPORTED_UNIT_KEYS["params"])
     return UnitRef(unit=_as_str(_require(mapping, "name", loc),
                                 loc.child("name"), "a unit name"))
 
@@ -720,6 +851,22 @@ def _int_key(value: Any, loc: Location, what: str) -> int:
             f"{what} must be an integer, not {type(value).__name__}"
             f"{_yaml_hint(value)}", loc,
         )
+
+
+def _case_key(value: Any, loc: Location) -> int | str:
+    """Return a switch case key: an integer where it reads as one, else text.
+
+    kober's rule.  JSON object keys are always strings, so ``{"1": ...}`` and
+    YAML's ``{1: ...}`` must mean the same case, which is why text that parses
+    as an integer is one.  Whether the key's type is *right* is the checker's
+    call, against the type the switch dispatches on.
+    """
+    if isinstance(value, str):
+        try:
+            return int(value, 0)
+        except ValueError:
+            return value
+    return _int_key(value, loc, "a switch case value")
 
 
 def _reject_renamed_on(mapping: dict[str, Any], loc: Location) -> None:
@@ -754,10 +901,21 @@ def _switch(body: Any, loc: Location, ctx: _Ctx) -> Switch:
     cases_data = _as_mapping(_require(mapping, "cases", loc),
                              loc.child("cases"), "switch cases")
     arms = {
-        _int_key(value, loc.child("cases"), "a switch case value"):
+        _case_key(value, loc.child("cases")):
             _field_type(arm, loc.child("cases").child(str(value)), ctx)
         for value, arm in cases_data.items()
     }
+    kinds = {type(key) for key in arms}
+    if len(kinds) > 1:
+        texts = sorted(repr(k) for k in arms if isinstance(k, str))
+        raise SpecError(
+            f"a switch's cases are all integers or all text, not both; "
+            f"{', '.join(texts)} {'is' if len(texts) == 1 else 'are'} text "
+            f"beside integer cases", loc.child("cases"),
+        )
+    if str in kinds:
+        ctx.record(_STRING_SWITCH, loc.child("cases"),
+                   _UNSUPPORTED_SWITCHES[_STRING_SWITCH])
     default = mapping.get("default")
     return Switch(
         dispatch=_as_str(_require(mapping, "dispatch", loc),

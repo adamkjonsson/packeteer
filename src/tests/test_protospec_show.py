@@ -194,6 +194,48 @@ class TestUnsupportedConstructsAreMarked(unittest.TestCase):
         """)
         self.assertIn("(not supported yet: pointer)", out)
 
+    def test_an_enums_doc_is_printed_beneath_it(self) -> None:
+        """As a unit's is, and left out the same way with `docs=False` (#166)."""
+        body = """
+            name: t
+            version: "1"
+            entry: m
+            enums:
+              opcode:
+                doc: RFC 1035 §4.1.1.
+                members: {0: query}
+            units:
+              m:
+                fields:
+                  - {name: op, int: {bits: 4, enum: opcode}}
+        """
+        self.assertIn("enum opcode: 0=query\n  RFC 1035 §4.1.1.", _render(body))
+        self.assertNotIn("RFC 1035", _render(body, docs=False))
+
+    def test_a_declined_type_is_shown_as_the_construct(self) -> None:
+        """Not as the stand-in the loader used to put in its place (#167).
+
+        A switch arm's line carries no marker of its own, so the construct's
+        name is the only thing on it that says what the author wrote.
+        """
+        out = _render("""
+            name: t
+            version: "1"
+            entry: m
+            units:
+              m:
+                fields:
+                  - {name: n, computed: "1"}
+                  - name: body
+                    switch:
+                      dispatch: n
+                      cases: {1: {select: {from: xs, where: "true", value: "x"}}}
+                      default: {bytes: 2}
+        """)
+        self.assertIn("n: computed", out)
+        self.assertIn("case 1: select", out)
+        self.assertNotIn("bytes[rest]", out)
+
     def test_delimiter_framing_says_so(self) -> None:
         out = _render("""
             name: t

@@ -1,8 +1,10 @@
 # Vendored kober specs
 
 `dns.yaml` and `http.yaml`, copied verbatim from
-[kober](https://github.com/adamkjonsson/zipline-kober) **0.2.0**
-(`4b935a2`), and read by `src/tests/test_kober_dialect.py`.
+[kober](https://github.com/adamkjonsson/zipline-kober) **0.5.0**
+(`40680a9`), and read by `src/tests/test_kober_dialect.py`.  Refreshed from
+0.2.0 in packeteer 0.17.0; `dns.yaml` had not changed, and `http.yaml` gained
+the four constructs the test names.
 
 ## Why copies
 

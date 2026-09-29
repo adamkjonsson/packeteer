@@ -300,6 +300,102 @@ class TestSwitch(unittest.TestCase):
         switch = from_mapping(data).units["m"].fields[1].type
         self.assertEqual(set(switch.arms), {1})
 
+    def test_text_case_keys_load_as_text_and_are_declined(self) -> None:
+        """A string switch as kober writes it: kept whole, and recorded (#171)."""
+        body = self._BODY.replace("1: {int", "chunked: {int").replace(
+            "2: {bytes", "length: {bytes")
+        spec = _spec(body)
+        switch = spec.units["m"].fields[1].type
+        self.assertIsInstance(switch, Switch)
+        self.assertEqual(set(switch.arms), {"chunked", "length"})
+        self.assertEqual({u.construct for u in spec.unsupported},
+                         {"switch on a string"})
+
+    def test_text_that_reads_as_an_integer_is_one(self) -> None:
+        """The rule kober has, and what makes JSON's `"1"` and YAML's `1` agree."""
+        body = self._BODY.replace("1: {int", "'0x10': {int")
+        self.assertEqual(set(_spec(body).units["m"].fields[1].type.arms), {16, 2})
+
+    def test_a_mix_of_text_and_integer_cases_is_refused(self) -> None:
+        body = self._BODY.replace("1: {int", "chunked: {int")
+        with self.assertRaises(SpecError) as ctx:
+            _spec(body)
+        self.assertIn("'chunked' is text beside integer cases", str(ctx.exception))
+
+    def test_a_boolean_case_key_is_still_refused(self) -> None:
+        """YAML's `yes:` is a boolean, which is no case of either kind."""
+        body = self._BODY.replace("1: {int", "yes: {int")
+        with self.assertRaises(SpecError) as ctx:
+            _spec(body)
+        self.assertIn("must be an integer", str(ctx.exception))
+
+
+class TestEnums(unittest.TestCase):
+    """kober's two enum forms, and the two ways to get them wrong (#166)."""
+
+    def _enum(self, body: str) -> object:
+        spec = _spec(f"""
+            name: t
+            version: "1"
+            entry: m
+            enums:
+              opcode:
+{textwrap.indent(textwrap.dedent(body), " " * 16)}
+            units:
+              m:
+                fields:
+                  - {{name: op, int: {{bits: 4, enum: opcode}}}}
+        """)
+        return spec.enums["opcode"]
+
+    def test_the_short_form_is_the_members(self) -> None:
+        enum = self._enum("{0: query, 1: iquery}")
+        self.assertEqual(dict(enum.members), {0: "query", 1: "iquery"})
+        self.assertIsNone(enum.doc)
+
+    def test_the_long_form_puts_them_under_members_beside_a_doc(self) -> None:
+        enum = self._enum("""
+            doc: RFC 1035 §4.1.1.
+            members: {0: query, 1: iquery}
+        """)
+        self.assertEqual(dict(enum.members), {0: "query", 1: "iquery"})
+        self.assertEqual(enum.doc, "RFC 1035 §4.1.1.")
+
+    def test_the_long_form_without_a_doc(self) -> None:
+        enum = self._enum("members: {0: query}")
+        self.assertEqual(dict(enum.members), {0: "query"})
+        self.assertIsNone(enum.doc)
+
+    def test_json_spells_a_member_as_text_in_either_form(self) -> None:
+        spec = from_mapping({
+            "name": "t", "version": "1", "entry": "m",
+            "enums": {"opcode": {"doc": "d", "members": {"0": "query"}}},
+            "units": {"m": {"fields": [{"name": "op", "bits": 4}]}},
+        })
+        self.assertEqual(dict(spec.enums["opcode"].members), {0: "query"})
+
+    def test_a_mix_of_the_two_forms_is_refused_by_name(self) -> None:
+        with self.assertRaises(SpecError) as ctx:
+            self._enum("""
+                members: {0: query}
+                1: iquery
+            """)
+        self.assertIn("'members' and also 1 beside it", str(ctx.exception))
+
+    def test_a_doc_without_members_says_where_they_go(self) -> None:
+        """What 0.16.0 reported as `a value of enum 'opcode' must be an integer, not 'doc'`."""
+        with self.assertRaises(SpecError) as ctx:
+            self._enum("""
+                doc: RFC 1035 §4.1.1.
+                0: query
+            """)
+        self.assertIn("go under 'members'", str(ctx.exception))
+
+    def test_a_bad_member_is_reported_under_members(self) -> None:
+        with self.assertRaises(SpecError) as ctx:
+            self._enum("members: {zero: query}")
+        self.assertIn("enums.opcode.members", str(ctx.exception))
+
 
 class TestJSONAndYAMLAgree(unittest.TestCase):
 

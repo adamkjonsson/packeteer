@@ -430,6 +430,251 @@ class TestUnsupportedConstructsAreReportedAsSuch(unittest.TestCase):
         self.assertIn("not supported yet", _messages(result))
 
 
+class TestSwitchCaseKeys(unittest.TestCase):
+    """A switch's keys are held to the type it dispatches on (#171).
+
+    kober dispatches on an int or a str, with keys of the matching type.
+    packeteer checks the keys either way and declines a string dispatch.
+    """
+
+    def _findings(self, fields: str) -> list[str]:
+        return [d.message for d in _unit(fields).diagnostics]
+
+    def _declined(self, findings: list[str]) -> list[str]:
+        return [m for m in findings if "switch on a string" in m]
+
+    def test_the_issues_spec_is_declined_by_name(self) -> None:
+        findings = self._findings("""
+            - {name: word, string: {delimiter: " "}}
+            - name: body
+              switch:
+                dispatch: word
+                cases: {chunked: {bytes: 4}}
+                default: {bytes: 2}
+        """)
+        self.assertEqual(len(findings), 2, findings)
+        self.assertEqual(len(self._declined(findings)), 1, findings)
+        for message in findings:
+            self.assertIn("not supported yet", message)
+
+    def test_a_fixed_width_string_dispatch(self) -> None:
+        """What packeteer could build, and declines: an ASCII tag."""
+        findings = self._findings("""
+            - {name: tag, string: {size: 4, encoding: ascii}}
+            - name: body
+              switch:
+                dispatch: tag
+                cases: {"fmt ": {bytes: 4}, "data": {bytes: 2}}
+                default: {bytes: 1}
+        """)
+        self.assertEqual(findings, [
+            "not supported yet: switch on a string — text case keys; an ASCII "
+            "tag can be written as an integer switch with an enum",
+        ])
+
+    def test_a_text_case_the_wrong_width_can_never_match(self) -> None:
+        findings = self._findings("""
+            - {name: tag, string: {size: 4, encoding: ascii}}
+            - name: body
+              switch:
+                dispatch: tag
+                cases: {"fmt ": {bytes: 4}, "fmt": {bytes: 2}}
+                default: {bytes: 1}
+        """)
+        widths = [m for m in findings if "can never match" in m]
+        self.assertEqual(len(widths), 1, findings)
+        self.assertIn("'fmt' is 3 bytes, but 'tag' is always 4", widths[0])
+
+    def test_a_text_case_under_an_int_dispatch(self) -> None:
+        findings = self._findings("""
+            - {name: kind, bits: 8}
+            - name: body
+              switch: {dispatch: kind, cases: {chunked: {bytes: 4}}, default: {bytes: 1}}
+        """)
+        self.assertTrue([m for m in findings
+                         if "'chunked' does not match the int expression" in m],
+                        findings)
+
+    def test_an_int_case_under_a_string_dispatch(self) -> None:
+        findings = self._findings("""
+            - {name: tag, string: {size: 1}}
+            - name: body
+              switch: {dispatch: tag, cases: {1: {bytes: 4}}, default: {bytes: 1}}
+        """)
+        self.assertTrue([m for m in findings
+                         if "case 1 does not match the str expression" in m],
+                        findings)
+        self.assertEqual(len(self._declined(findings)), 1, findings)
+
+    def test_a_string_dispatch_with_no_cases_is_still_declined(self) -> None:
+        """No key says so; only the dispatch's type can."""
+        findings = self._findings("""
+            - {name: tag, string: {size: 1}}
+            - name: body
+              switch: {dispatch: tag, cases: {}, default: {bytes: 1}}
+        """)
+        self.assertEqual(len(self._declined(findings)), 1, findings)
+
+    def test_a_bool_dispatch_is_refused(self) -> None:
+        """Refused in kober too, whose language has no conditional to need it."""
+        findings = self._findings("""
+            - {name: kind, bits: 8}
+            - name: body
+              switch: {dispatch: "kind == 1", cases: {1: {bytes: 4}}, default: {bytes: 1}}
+        """)
+        self.assertTrue([m for m in findings
+                         if "a switch selector is bool, expected int or str" in m],
+                        findings)
+
+    def test_a_dispatch_on_a_declined_field(self) -> None:
+        """The 0.5.0 `http.yaml`'s shape: the keys have nothing to be held to."""
+        findings = self._findings("""
+            - {name: framing, computed: "'chunked'"}
+            - name: body
+              switch: {dispatch: framing, cases: {chunked: {bytes: 4}}, default: {bytes: 1}}
+        """)
+        self.assertEqual(len(findings), 2, findings)
+        for message in findings:
+            self.assertIn("not supported yet", message)
+
+    def test_an_int_switch_is_unchanged(self) -> None:
+        self.assertEqual(self._findings("""
+            - {name: kind, bits: 8}
+            - name: body
+              switch: {dispatch: kind, cases: {1: {bytes: 4}}, default: {bytes: 1}}
+        """), [])
+
+
+class TestADeclinedFieldSaysOneThing(unittest.TestCase):
+    """A declined construct is reported once, by name, and nothing else (#167).
+
+    The loader used to stand ``bytes`` sized ``remaining`` in for it, and the
+    checker believed the stand-in: an expression reading a ``select`` or a
+    ``computed`` was typed as reading bytes.  Each case here is one path that
+    leaked, minimised, so a regression names the path.
+    """
+
+    _SELECT = ("{name: n, select: {from: xs, where: 'true', value: 'x', "
+               "default: '0'}}")
+    _COMPUTED = '{name: n, computed: "to_int(s, 16)"}'
+
+    def _others(self, fields: str) -> list[str]:
+        """Return every finding that is not the construct's own."""
+        return [str(d) for d in _unit(fields).diagnostics
+                if "not supported yet" not in d.message]
+
+    def test_a_size_read_from_one(self) -> None:
+        """The issue's `a size is bytes, expected int`, and the derive warning."""
+        self.assertEqual(self._others(f"""
+            - {self._SELECT}
+            - {{name: body, bytes: {{size: {{expr: "n"}}}}}}
+        """), [])
+
+    def test_a_condition_that_is_one(self) -> None:
+        self.assertEqual(self._others(f"""
+            - {self._SELECT}
+            - {{name: body, bytes: 2, condition: "n"}}
+        """), [])
+
+    def test_not_applied_to_one(self) -> None:
+        self.assertEqual(self._others(f"""
+            - {self._SELECT}
+            - {{name: body, bytes: 2, condition: "not n"}}
+        """), [])
+
+    def test_an_ordering_over_one(self) -> None:
+        self.assertEqual(self._others(f"""
+            - {self._COMPUTED}
+            - {{name: body, bytes: 2, condition: "n > 0"}}
+        """), [])
+
+    def test_an_equality_with_one(self) -> None:
+        self.assertEqual(self._others(f"""
+            - {self._COMPUTED}
+            - {{name: body, bytes: 2, condition: "n == 'chunked'"}}
+        """), [])
+
+    def test_a_switch_dispatched_on_one(self) -> None:
+        self.assertEqual(self._others(f"""
+            - {self._COMPUTED}
+            - name: body
+              switch: {{dispatch: n, cases: {{1: {{bytes: 2}}}}, default: {{bytes: 1}}}}
+        """), [])
+
+    def test_a_path_through_one(self) -> None:
+        """What lies beyond a declined construct is unknown, not absent."""
+        self.assertEqual(self._others("""
+            - {name: at, bits: 8}
+            - {name: p, pointer: {at: "at", type: {unit: q}}}
+            - {name: body, bytes: {size: {expr: "p.len"}}}
+        """), [])
+
+    def test_a_const_or_a_derive_on_one(self) -> None:
+        self.assertEqual(self._others("""
+            - {name: n, computed: "1", const: 3}
+            - {name: m, computed: "1", derive: {size_of: body}}
+            - {name: k, bits: 8, derive: {size_of: n}}
+            - {name: body, bytes: 2}
+        """), [])
+
+    def test_a_fill_before_one(self) -> None:
+        """A trailer with a declined field in it has no width to refuse."""
+        self.assertEqual(self._others("""
+            - {name: body, bytes: {size: {fill: true}}}
+            - {name: crc, computed: "1"}
+        """), [])
+
+    def test_a_unit_reached_only_through_one(self) -> None:
+        """The stand-in forgot what it named, so `q` looked unreachable."""
+        self.assertEqual([str(d) for d in _check("""
+            name: t
+            version: "1"
+            entry: m
+            units:
+              m:
+                fields:
+                  - {name: at, bits: 8}
+                  - {name: p, pointer: {at: "at", type: {unit: q}}}
+              q:
+                fields:
+                  - {name: v, bits: 8}
+        """).diagnostics if "not supported yet" not in d.message], [])
+
+    def test_a_unit_nothing_reaches_is_still_reported(self) -> None:
+        result = _check("""
+            name: t
+            version: "1"
+            entry: m
+            units:
+              m:
+                fields:
+                  - {name: n, computed: "1"}
+              q:
+                fields:
+                  - {name: v, bits: 8}
+        """)
+        self.assertIn("unit 'q' is never referenced", _messages(result))
+
+    def test_a_real_fault_beside_one_is_still_reported(self) -> None:
+        """Unknown is compatible with anything; the other operand still types."""
+        others = self._others(f"""
+            - {self._SELECT}
+            - {{name: k, bits: 8}}
+            - {{name: body, bytes: 2, condition: "n and k"}}
+        """)
+        self.assertEqual(len(others), 1, others)
+        self.assertIn("an operand of 'and' is int", others[0])
+
+    def test_a_forward_reference_beside_one_is_still_reported(self) -> None:
+        others = self._others(f"""
+            - {self._SELECT}
+            - {{name: body, bytes: 2, condition: "n or later == 1"}}
+            - {{name: later, bits: 8}}
+        """)
+        self.assertEqual(len(others), 1, others)
+        self.assertIn("declared later", others[0])
+
+
 if __name__ == "__main__":
     unittest.main()
 

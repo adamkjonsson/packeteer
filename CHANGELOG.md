@@ -25,6 +25,86 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
+### Added
+
+- **`packeteer.protospec.spec.Declined`**, the type of a field whose
+  construct this version reads but does not implement, and
+  **`ExprType.UNKNOWN`**, the type an expression reading one has.  Neither
+  claims anything about the field.  A consumer walking a loaded spec sees
+  `Declined` exactly where `Spec.unsupported` has an entry for the field's
+  type, and `protocol show` prints the construct's name there (`select`,
+  `pointer`) rather than `bytes[rest]`.  (#167)
+- **kober 0.5.0's document keys, `params` and `transforms`, are recognised
+  and declined by name**, each at its own line, so a spec declaring a key or
+  a non-core transform loads and the rest of it is checked.  A document's
+  `params` are values supplied when a decode is set up, not the unit
+  parameters the same word means on a unit, and the message says which.
+  (#168)
+- **kober 0.5.0's `transform` and `concat` are recognised and declined by
+  name**, on a field and as a switch case, so a spec using them loads and the
+  rest of it is checked.  kober's `http.yaml` uses both since it began
+  inflating `Content-Encoding` bodies, and 0.16.0 refused it at load as
+  unknown keys.  Their shape is still checked, as kober checks it: a
+  `transform` needs `from`, `with` and a positive `limit` and takes no other
+  keys than kober's six, and a `concat` must be `repeated.member`.  Building
+  a transform — compressing on the way out — is not supported.  (#170)
+- **A switch on a string is read, checked and declined by name**, so a kober
+  spec that dispatches on one loads and the rest of it is checked.  0.16.0
+  refused every text case key at load.  A key is an integer where it reads as
+  one and text otherwise, as in kober.  `check` holds the keys to the type the
+  switch dispatches on, refuses a switch mixing the two, refuses a text case
+  that cannot match the fixed-width string it tests, and refuses a dispatch
+  that is neither an int nor a str.  With this, kober 0.5.0's `http.yaml`
+  loads and reports its 19 constructs and nothing else.  (#171)
+- **`EnumDef.doc`**, from kober's long enum form (below), printed by
+  `protocol show` beneath the enum as a unit's doc is.  (#166)
+
+### Changed
+
+- **`Switch.arms` is keyed `int | str`.**  Its keys are text for a switch on
+  a string, which loads now and is declined.  Not breaking for a spec, and a
+  spec that checks cleanly still has integer keys only, but a consumer
+  walking a loaded spec that type-narrows the keys should know.  (#171)
+
+### Fixed
+
+- **A declined construct is reported once, by name, and nothing else is
+  reported about it.**  The loader used to stand `bytes` sized `remaining` in
+  for a `select`, `computed` or `pointer`, and the checker believed it: every
+  expression reading such a field was typed as reading bytes.  kober's
+  `http.yaml` reported 17 errors, 6 of them type errors on expressions kober
+  types correctly — `a size is bytes, expected int: content_length`, `the
+  operand of 'not' is bytes` — and 2 warnings telling the author to `derive` a
+  length that is a `select`.  It now reports its 11 constructs and nothing
+  else.  The same stand-in could produce a `const`, `derive` or `fill` error,
+  refuse a dotted path through a `pointer`, or warn that a unit reached only
+  through a `pointer` was never referenced; none of those can happen now.
+  Real faults beside a declined field are still reported: an unknown operand
+  is compatible with anything, and the other operand is still typed.  (#167)
+- **`compile_spec` refuses a spec with a declined construct**, naming it, as
+  `check` does.  It used to compile one: a caller that skipped `check` got a
+  module in which a `computed` or `select` field was an opaque `bytes` field
+  reading to the end of the message.  (#167)
+- **A top-level `emit` is an unknown key**, as it is in kober.  It was
+  declined as *not supported yet*, which told the author kober would take it.
+  In kober, `emit` belongs on a unit or a field, where packeteer still
+  declines it.  The reference's table said `document, unit, field` and now
+  says `unit, field`.  (#168)
+- **kober's long enum form loads.**  `{doc: …, members: {0: …}}` was read as
+  the members themselves, so `doc` and `members` were taken for values and
+  refused with *a value of enum 'opcode' must be an integer, not 'doc'* — a
+  kober spelling reported as a typo.  The short form is unchanged.  A member
+  written beside `members` is refused as a mix of the two forms, and a `doc`
+  in the short form is refused with a pointer to the long one.  (#166)
+
+### Documentation
+
+- **The format reference follows kober to 0.5.0**: its function table is
+  five (`to_int`, `lower`, `trim`, `startswith`, `endswith`), not three, and
+  the vendored copies of kober's `dns.yaml` and `http.yaml` that
+  `test_kober_dialect.py` holds this loader to are kober 0.5.0's, pinned in
+  `src/tests/kober/README.md`.
+
 ---
 
 ## [0.16.0] - 2026-09-16

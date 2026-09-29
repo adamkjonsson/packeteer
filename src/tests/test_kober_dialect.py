@@ -3,7 +3,7 @@
 `docs/protocols/format.md` calls this dialect a superset of
 [kober](https://github.com/adamkjonsson/zipline-kober)'s.  This is what makes
 that a property of two loaders rather than a sentence in two references: the
-specs under `kober/` are kober 0.2.0's shipped examples, and each assertion
+specs under `kober/` are kober 0.5.0's shipped examples, and each assertion
 here is about the *outcome*, not merely that a file parses.
 
 kober vendors packeteer's specs the same way and asserts the same kind of
@@ -98,10 +98,151 @@ class TestKoberHTTP(unittest.TestCase):
         self.assertFalse([m for m in errors if "needs a size" in m], errors)
 
     def test_it_reports_exactly_the_constructs_packeteer_lacks(self) -> None:
+        """Pinned deliberately: a new one appearing is a dialect change.
+
+        kober 0.5.0 added four to 0.2.0's four, each read before it was
+        accepted here: `unit.confirm` is the start-line guard that refuses a
+        guess after a gap (kober #50); `concat` joins a chunked body's data;
+        `transform` inflates a `Content-Encoding` body; and the two switches
+        choosing between them dispatch on strings, `framing` and `encoding`.
+        """
         self.assertEqual(
             _constructs(self.spec),
-            {"size.terminated", "computed", "select", "repeat.until"},
+            {"size.terminated", "computed", "select", "repeat.until",
+             "unit.confirm", "concat", "transform", "switch on a string"},
         )
+
+    def test_it_loads_since_kober_0_5_0_changed_it(self) -> None:
+        """0.16.0 refused this file at load, on its first string case (#170, #171)."""
+        self.assertIn("content", [f.name for f in self.spec.units["message"].fields])
+        self.assertEqual(len(check(self.spec).errors), 19)
+
+    def test_every_finding_is_not_supported_yet(self) -> None:
+        """What this directory's README says the test is for (#167).
+
+        Stricter than `dns.yaml`'s version of this test, which holds errors
+        only: `dns.yaml` has real integer lengths that nothing derives, and
+        its derive warnings are true.  Here every length is a `select` or a
+        `computed`, and a warning about one was a stand-in's, not the spec's —
+        as were six type errors on expressions that kober types correctly.
+        """
+        findings = [str(d) for d in check(self.spec).diagnostics
+                    if "not supported yet" not in d.message]
+        self.assertEqual(findings, [])
+
+
+class TestTransformAndConcat(unittest.TestCase):
+    """kober 0.5.0's two field types, declined by name and still shape-checked (#170)."""
+
+    _HEAD = """
+name: t
+version: "1"
+entry: m
+units:
+  m:
+    fields:
+      - {name: n, bits: 8}
+      - {name: chunks, unit: chunk, count: n}
+      - {name: body, bytes: {size: {expr: n}}}
+"""
+    _CHUNK = """
+  chunk:
+    fields:
+      - {name: size, bits: 8}
+      - {name: data, bytes: {size: {expr: size}}}
+"""
+
+    def _load(self, fields: str, extra: str = "") -> object:
+        from packeteer.protospec import loads
+        return loads(self._HEAD + fields + self._CHUNK + extra, fmt="yaml")
+
+    def _declines(self, spec: object) -> list[str]:
+        return [d.message for d in check(spec).diagnostics
+                if d.severity == "error"]
+
+    def test_the_issues_spec(self) -> None:
+        """Refused at load as unknown keys in 0.16.0; now one message each."""
+        spec = self._load("""\
+      - {name: joined, concat: chunks.data}
+      - name: content
+        transform: {from: body, with: gzip, limit: 64}
+""")
+        self.assertEqual(_constructs(spec), {"concat", "transform"})
+        errors = self._declines(spec)
+        self.assertEqual(len(errors), 2, errors)
+        for message in errors:
+            self.assertIn("not supported yet", message)
+
+    def test_either_as_a_switch_case(self) -> None:
+        """The 0.5.0 `http.yaml` has both as switch arms."""
+        spec = self._load("""\
+      - name: content
+        switch:
+          dispatch: n
+          cases:
+            1: {concat: chunks.data}
+            2: {transform: {from: body, with: deflate, limit: 64}}
+          default: {bytes: 1}
+""")
+        self.assertEqual(_constructs(spec), {"concat", "transform"})
+        self.assertEqual(len(self._declines(spec)), 2)
+
+    def test_every_transform_key(self) -> None:
+        spec = self._load("""\
+      - name: content
+        transform:
+          from: body
+          with: aes-gcm
+          limit: 64
+          args: {key: "n"}
+          type: {unit: document}
+          content_type: application/json
+""", """
+  document:
+    fields:
+      - {name: v, bits: 8}
+""")
+        self.assertEqual(_constructs(spec), {"transform"})
+
+    def test_a_unit_a_transform_decodes_as_is_reached(self) -> None:
+        """Its `type` names the unit; #167's stand-in remembers that."""
+        spec = self._load("""\
+      - name: content
+        transform: {from: body, with: gzip, limit: 64, type: {unit: document}}
+""", """
+  document:
+    fields:
+      - {name: v, bits: 8}
+""")
+        messages = [d.message for d in check(spec).diagnostics]
+        self.assertFalse([m for m in messages if "never referenced" in m], messages)
+
+    def _refused(self, fields: str) -> str:
+        with self.assertRaises(SpecError) as ctx:
+            self._load(fields)
+        return str(ctx.exception)
+
+    def test_a_transform_missing_a_required_key(self) -> None:
+        """Declining it must not loosen it: kober requires all three."""
+        self.assertIn("needs 'limit'", self._refused("""\
+      - {name: content, transform: {from: body, with: gzip}}
+"""))
+
+    def test_a_transform_with_an_unknown_key(self) -> None:
+        self.assertIn("no key 'lmit'", self._refused("""\
+      - {name: content, transform: {from: body, with: gzip, lmit: 64}}
+"""))
+
+    def test_a_transform_limit_that_is_not_positive(self) -> None:
+        self.assertIn("must be positive", self._refused("""\
+      - {name: content, transform: {from: body, with: gzip, limit: 0}}
+"""))
+
+    def test_a_concat_that_is_not_repeated_dot_member(self) -> None:
+        for path in ("chunks", "chunks.data.more", ".data"):
+            with self.subTest(path=path):
+                self.assertIn("as 'chunks.data'", self._refused(
+                    f"      - {{name: joined, concat: {path}}}\n"))
 
 
 class TestKoberOnlyKeys(unittest.TestCase):
@@ -136,6 +277,99 @@ units:
       - {name: magic, bits: 16, emit: none}
 """)
         self.assertEqual(_constructs(spec), {"emit"})
+
+    def test_document_params_and_transforms(self) -> None:
+        """The document keys kober 0.5.0 added, each declined once by name (#168).
+
+        A document's ``params`` are values supplied when a decode is set up,
+        not the unit parameters the same word means one level down, and the
+        note says which.
+        """
+        spec = self._load("""
+name: t
+version: "1"
+entry: m
+params:
+  key: {type: bytes, secret: true}
+transforms:
+  aes-gcm: {params: {key: bytes}}
+units:
+  m:
+    fields:
+      - {name: a, bits: 8}
+""")
+        self.assertEqual(_constructs(spec), {"params", "transforms"})
+        notes = {item.construct: item.note for item in spec.unsupported}
+        self.assertIn("document parameters", notes["params"])
+        messages = [d.message for d in check(spec).diagnostics]
+        self.assertEqual(len(messages), 2, messages)
+
+    def test_unit_params_are_still_unit_parameters(self) -> None:
+        spec = self._load("""
+name: t
+version: "1"
+entry: m
+units:
+  m:
+    params: [n]
+    fields:
+      - {name: a, bits: 8}
+""")
+        self.assertEqual(_constructs(spec), {"unit.params"})
+        self.assertIn("unit parameters", spec.unsupported[0].note)
+
+    def test_a_document_emit_is_a_typo(self) -> None:
+        """In kober `emit` is on a unit and a field, never on a document (#168).
+
+        Declining it said kober would take it, and kober refuses it too.
+        """
+        with self.assertRaises(SpecError) as ctx:
+            self._load("""
+name: t
+version: "1"
+entry: m
+emit: field
+units:
+  m:
+    fields:
+      - {name: a, bits: 8}
+""")
+        self.assertIn("no key 'emit'", str(ctx.exception))
+
+    def test_a_unit_emit_is_still_declined(self) -> None:
+        spec = self._load("""
+name: t
+version: "1"
+entry: m
+units:
+  m:
+    emit: field
+    fields:
+      - {name: a, bits: 8}
+""")
+        self.assertEqual(_constructs(spec), {"unit.emit"})
+
+    def test_the_long_enum_form(self) -> None:
+        """The long `{doc, members}` enum, which neither vendored spec writes (#166).
+
+        Invisible until someone documents an enum, which is what the form is
+        for; 0.16.0 read `doc` and `members` as two enum values.
+        """
+        spec = self._load("""
+name: t
+version: "1"
+entry: m
+enums:
+  opcode:
+    doc: RFC 1035 §4.1.1.
+    members: {0: query, 1: iquery}
+units:
+  m:
+    fields:
+      - {name: op, int: {bits: 4, enum: opcode}}
+""")
+        self.assertEqual(dict(spec.enums["opcode"].members), {0: "query", 1: "iquery"})
+        self.assertEqual(check(spec).diagnostics, ())
 
     def test_a_real_typo_is_still_an_error(self) -> None:
         """Declining known keys must not loosen anything."""

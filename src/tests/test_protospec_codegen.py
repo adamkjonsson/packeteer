@@ -583,6 +583,24 @@ class TestStreamSpecsAreRefused(unittest.TestCase):
             _source(self._STREAM)
         self.assertIn("not supported yet", str(ctx.exception))
 
+    def test_a_declined_construct_is_refused_by_name_without_check(self) -> None:
+        """`compile_spec` assumes a checked spec; this one fault it names itself.
+
+        A declined field has no type to generate, so a caller that skipped
+        `check` would otherwise meet a crash rather than the construct (#167).
+        """
+        with self.assertRaises(SpecError) as ctx:
+            _source("""
+                name: t
+                version: "1"
+                entry: m
+                units:
+                  m:
+                    fields:
+                      - {name: n, computed: "1"}
+            """)
+        self.assertIn("not supported yet: computed", str(ctx.exception))
+
     def test_the_message_says_where_such_a_protocol_belongs(self) -> None:
         with self.assertRaises(SpecError) as ctx:
             _source(self._STREAM)

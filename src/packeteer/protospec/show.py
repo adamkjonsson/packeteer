@@ -18,6 +18,7 @@ from packeteer.protospec.expr import parse, unparse
 from packeteer.protospec.spec import (
     BytesType,
     CountOf,
+    Declined,
     Endian,
     Field,
     FieldType,
@@ -62,7 +63,10 @@ def render(spec: Spec, *, docs: bool = True) -> str:
     lines = [_header(spec)]
     if spec.enums:
         lines.append("")
-        lines += [_enum_line(name, spec) for name in sorted(spec.enums)]
+        for name in sorted(spec.enums):
+            lines.append(_enum_line(name, spec))
+            if docs and spec.enums[name].doc:
+                lines += _doc_lines(spec.enums[name].doc, "  ")
     lines.append("")
 
     entry = spec.units.get(spec.entry)
@@ -212,6 +216,8 @@ def _type_text(field_type: FieldType, spec: Spec, seen: tuple[str, ...]) -> str:
         return f"→ {field_type.unit}"
     if isinstance(field_type, Switch):
         return f"switch on {_expr_text(field_type.dispatch, None)}"
+    if isinstance(field_type, Declined):
+        return field_type.construct
     return type(field_type).__name__
 
 
