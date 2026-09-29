@@ -300,6 +300,35 @@ class TestSwitch(unittest.TestCase):
         switch = from_mapping(data).units["m"].fields[1].type
         self.assertEqual(set(switch.arms), {1})
 
+    def test_text_case_keys_load_as_text_and_are_declined(self) -> None:
+        """A string switch as kober writes it: kept whole, and recorded (#171)."""
+        body = self._BODY.replace("1: {int", "chunked: {int").replace(
+            "2: {bytes", "length: {bytes")
+        spec = _spec(body)
+        switch = spec.units["m"].fields[1].type
+        self.assertIsInstance(switch, Switch)
+        self.assertEqual(set(switch.arms), {"chunked", "length"})
+        self.assertEqual({u.construct for u in spec.unsupported},
+                         {"switch on a string"})
+
+    def test_text_that_reads_as_an_integer_is_one(self) -> None:
+        """The rule kober has, and what makes JSON's `"1"` and YAML's `1` agree."""
+        body = self._BODY.replace("1: {int", "'0x10': {int")
+        self.assertEqual(set(_spec(body).units["m"].fields[1].type.arms), {16, 2})
+
+    def test_a_mix_of_text_and_integer_cases_is_refused(self) -> None:
+        body = self._BODY.replace("1: {int", "chunked: {int")
+        with self.assertRaises(SpecError) as ctx:
+            _spec(body)
+        self.assertIn("'chunked' is text beside integer cases", str(ctx.exception))
+
+    def test_a_boolean_case_key_is_still_refused(self) -> None:
+        """YAML's `yes:` is a boolean, which is no case of either kind."""
+        body = self._BODY.replace("1: {int", "yes: {int")
+        with self.assertRaises(SpecError) as ctx:
+            _spec(body)
+        self.assertIn("must be an integer", str(ctx.exception))
+
 
 class TestEnums(unittest.TestCase):
     """kober's two enum forms, and the two ways to get them wrong (#166)."""

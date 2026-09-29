@@ -430,6 +430,121 @@ class TestUnsupportedConstructsAreReportedAsSuch(unittest.TestCase):
         self.assertIn("not supported yet", _messages(result))
 
 
+class TestSwitchCaseKeys(unittest.TestCase):
+    """A switch's keys are held to the type it dispatches on (#171).
+
+    kober dispatches on an int or a str, with keys of the matching type.
+    packeteer checks the keys either way and declines a string dispatch.
+    """
+
+    def _findings(self, fields: str) -> list[str]:
+        return [d.message for d in _unit(fields).diagnostics]
+
+    def _declined(self, findings: list[str]) -> list[str]:
+        return [m for m in findings if "switch on a string" in m]
+
+    def test_the_issues_spec_is_declined_by_name(self) -> None:
+        findings = self._findings("""
+            - {name: word, string: {delimiter: " "}}
+            - name: body
+              switch:
+                dispatch: word
+                cases: {chunked: {bytes: 4}}
+                default: {bytes: 2}
+        """)
+        self.assertEqual(len(findings), 2, findings)
+        self.assertEqual(len(self._declined(findings)), 1, findings)
+        for message in findings:
+            self.assertIn("not supported yet", message)
+
+    def test_a_fixed_width_string_dispatch(self) -> None:
+        """What packeteer could build, and declines: an ASCII tag."""
+        findings = self._findings("""
+            - {name: tag, string: {size: 4, encoding: ascii}}
+            - name: body
+              switch:
+                dispatch: tag
+                cases: {"fmt ": {bytes: 4}, "data": {bytes: 2}}
+                default: {bytes: 1}
+        """)
+        self.assertEqual(findings, [
+            "not supported yet: switch on a string — text case keys; an ASCII "
+            "tag can be written as an integer switch with an enum",
+        ])
+
+    def test_a_text_case_the_wrong_width_can_never_match(self) -> None:
+        findings = self._findings("""
+            - {name: tag, string: {size: 4, encoding: ascii}}
+            - name: body
+              switch:
+                dispatch: tag
+                cases: {"fmt ": {bytes: 4}, "fmt": {bytes: 2}}
+                default: {bytes: 1}
+        """)
+        widths = [m for m in findings if "can never match" in m]
+        self.assertEqual(len(widths), 1, findings)
+        self.assertIn("'fmt' is 3 bytes, but 'tag' is always 4", widths[0])
+
+    def test_a_text_case_under_an_int_dispatch(self) -> None:
+        findings = self._findings("""
+            - {name: kind, bits: 8}
+            - name: body
+              switch: {dispatch: kind, cases: {chunked: {bytes: 4}}, default: {bytes: 1}}
+        """)
+        self.assertTrue([m for m in findings
+                         if "'chunked' does not match the int expression" in m],
+                        findings)
+
+    def test_an_int_case_under_a_string_dispatch(self) -> None:
+        findings = self._findings("""
+            - {name: tag, string: {size: 1}}
+            - name: body
+              switch: {dispatch: tag, cases: {1: {bytes: 4}}, default: {bytes: 1}}
+        """)
+        self.assertTrue([m for m in findings
+                         if "case 1 does not match the str expression" in m],
+                        findings)
+        self.assertEqual(len(self._declined(findings)), 1, findings)
+
+    def test_a_string_dispatch_with_no_cases_is_still_declined(self) -> None:
+        """No key says so; only the dispatch's type can."""
+        findings = self._findings("""
+            - {name: tag, string: {size: 1}}
+            - name: body
+              switch: {dispatch: tag, cases: {}, default: {bytes: 1}}
+        """)
+        self.assertEqual(len(self._declined(findings)), 1, findings)
+
+    def test_a_bool_dispatch_is_refused(self) -> None:
+        """Refused in kober too, whose language has no conditional to need it."""
+        findings = self._findings("""
+            - {name: kind, bits: 8}
+            - name: body
+              switch: {dispatch: "kind == 1", cases: {1: {bytes: 4}}, default: {bytes: 1}}
+        """)
+        self.assertTrue([m for m in findings
+                         if "a switch selector is bool, expected int or str" in m],
+                        findings)
+
+    def test_a_dispatch_on_a_declined_field(self) -> None:
+        """The 0.5.0 `http.yaml`'s shape: the keys have nothing to be held to."""
+        findings = self._findings("""
+            - {name: framing, computed: "'chunked'"}
+            - name: body
+              switch: {dispatch: framing, cases: {chunked: {bytes: 4}}, default: {bytes: 1}}
+        """)
+        self.assertEqual(len(findings), 2, findings)
+        for message in findings:
+            self.assertIn("not supported yet", message)
+
+    def test_an_int_switch_is_unchanged(self) -> None:
+        self.assertEqual(self._findings("""
+            - {name: kind, bits: 8}
+            - name: body
+              switch: {dispatch: kind, cases: {1: {bytes: 4}}, default: {bytes: 1}}
+        """), [])
+
+
 class TestADeclinedFieldSaysOneThing(unittest.TestCase):
     """A declined construct is reported once, by name, and nothing else (#167).
 

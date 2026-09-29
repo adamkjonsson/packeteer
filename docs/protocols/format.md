@@ -69,6 +69,7 @@ as unknown keys:
 | `computed` | A value derived at decode time; `derive` is the encode-direction answer and covers the cases that matter here |
 | `transform: {from, with, limit, …}` | Bytes after a named transform, such as a gzip body inflated.  Building one means running the transform backwards — compressing, encrypting — which is a separate question from declining it.  The shape is still checked: `from`, `with` and `limit` are required, as kober requires them |
 | `concat: repeated.member` | One member of every element of a repetition, joined, such as a chunked body's data.  Must be written `repeated.member` |
+| a `switch` on a string | Text case keys, checked against the dispatch and then declined — see [`switch`](#switch) |
 | `{size: {terminated: …}}`, `{string: {delimiter: …}}` | Delimiter framing, in either spelling |
 | `repeat: {until: …}`, `repeat: {to_end: true}` | Repeat by condition, or to the end of the run |
 | unit `params:` / `{unit: {args: …}}` | Unit parameters — see [kober's dialect](#protocols-kober) |
@@ -480,7 +481,7 @@ key sets that make lifting unambiguous.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `dispatch` | *(required)* | An integer [expression](#expressions) selecting the case |
+| `dispatch` | *(required)* | An integer [expression](#expressions) selecting the case — or a string one, which is declined (below) |
 | `cases` | *(required)* | The type to use, by value |
 | `default` | — | The type for a value no case matches |
 
@@ -488,6 +489,17 @@ key sets that make lifting unambiguous.
 undecodable** — the decoder raises and the bytes stay an opaque payload.  That
 is often what you want, so `check` warns rather than refusing, to make it a
 choice rather than an oversight.
+
+**A switch on a string is read, checked and declined.**  kober dispatches on
+an `int` or a `str`, with case keys of the matching type — a key is an integer
+where it reads as one (JSON's `"1"` and YAML's `1` are the same case) and text
+otherwise.  `check` holds the keys to the dispatch's type either way, refuses
+a switch that mixes the two, and refuses a text case that cannot match the
+fixed-width string it tests (`"fmt"` against a four-byte tag).  A switch on a
+string is then *not supported yet*.  Every one kober ships dispatches on a
+`select` or a `computed`, which packeteer declines anyway, and a protocol
+with an ASCII tag can say the same thing as an integer switch with an
+[enum](#enums) naming the values.
 
 ```{note}
 **The key was `on` until 0.13.0.**  A spec still written that way is refused

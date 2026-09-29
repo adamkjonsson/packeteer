@@ -288,14 +288,16 @@ class Switch:
 
     Attributes:
         dispatch: Expression source selecting the arm.
-        arms: Type to use, by selector value.
+        arms: Type to use, by selector value.  The keys are all integers, or
+            all text for a switch dispatched on a string — kober's, which this
+            version checks and declines rather than builds.
         default: Type for a value no arm matches, or ``None`` to leave the
             region undecoded.
 
     """
 
     dispatch: str
-    arms: Mapping[int, FieldType]
+    arms: Mapping[int | str, FieldType]
     default: FieldType | None = None
 
 

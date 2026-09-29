@@ -48,8 +48,23 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   `transform` needs `from`, `with` and a positive `limit` and takes no other
   keys than kober's six, and a `concat` must be `repeated.member`.  Building
   a transform — compressing on the way out — is not supported.  (#170)
+- **A switch on a string is read, checked and declined by name**, so a kober
+  spec that dispatches on one loads and the rest of it is checked.  0.16.0
+  refused every text case key at load.  A key is an integer where it reads as
+  one and text otherwise, as in kober.  `check` holds the keys to the type the
+  switch dispatches on, refuses a switch mixing the two, refuses a text case
+  that cannot match the fixed-width string it tests, and refuses a dispatch
+  that is neither an int nor a str.  With this, kober 0.5.0's `http.yaml`
+  loads and reports its 19 constructs and nothing else.  (#171)
 - **`EnumDef.doc`**, from kober's long enum form (below), printed by
   `protocol show` beneath the enum as a unit's doc is.  (#166)
+
+### Changed
+
+- **`Switch.arms` is keyed `int | str`.**  Its keys are text for a switch on
+  a string, which loads now and is declined.  Not breaking for a spec, and a
+  spec that checks cleanly still has integer keys only, but a consumer
+  walking a loaded spec that type-narrows the keys should know.  (#171)
 
 ### Fixed
 

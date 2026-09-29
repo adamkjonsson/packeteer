@@ -74,6 +74,16 @@ _TRANSFORM_REQUIRED: tuple[str, ...] = ("from", "with", "limit")
 _UNSUPPORTED_SIZES: dict[str, str] = {
     "terminated": "a size ending at a delimiter rather than a declared length",
 }
+#: A switch whose cases are text.  kober dispatches on a string because its
+#: expression language has no conditional and refuses a switch on a bool;
+#: every such switch kober ships dispatches on a construct packeteer declines
+#: anyway, and an ASCII tag is already writable as an integer switch with an
+#: enum.  So it is checked and declined, not built (#171).
+_STRING_SWITCH = "switch on a string"
+_UNSUPPORTED_SWITCHES: dict[str, str] = {
+    _STRING_SWITCH: "text case keys; an ASCII tag can be written as an "
+                    "integer switch with an enum",
+}
 _UNSUPPORTED_REPEATS: dict[str, str] = {
     "until":  "repeat until a condition holds after each element",
     "to_end": "repeat to the end of the enclosing run",
@@ -843,6 +853,22 @@ def _int_key(value: Any, loc: Location, what: str) -> int:
         )
 
 
+def _case_key(value: Any, loc: Location) -> int | str:
+    """Return a switch case key: an integer where it reads as one, else text.
+
+    kober's rule.  JSON object keys are always strings, so ``{"1": ...}`` and
+    YAML's ``{1: ...}`` must mean the same case, which is why text that parses
+    as an integer is one.  Whether the key's type is *right* is the checker's
+    call, against the type the switch dispatches on.
+    """
+    if isinstance(value, str):
+        try:
+            return int(value, 0)
+        except ValueError:
+            return value
+    return _int_key(value, loc, "a switch case value")
+
+
 def _reject_renamed_on(mapping: dict[str, Any], loc: Location) -> None:
     """Refuse a switch still written with the old ``on`` dispatch key.
 
@@ -875,10 +901,21 @@ def _switch(body: Any, loc: Location, ctx: _Ctx) -> Switch:
     cases_data = _as_mapping(_require(mapping, "cases", loc),
                              loc.child("cases"), "switch cases")
     arms = {
-        _int_key(value, loc.child("cases"), "a switch case value"):
+        _case_key(value, loc.child("cases")):
             _field_type(arm, loc.child("cases").child(str(value)), ctx)
         for value, arm in cases_data.items()
     }
+    kinds = {type(key) for key in arms}
+    if len(kinds) > 1:
+        texts = sorted(repr(k) for k in arms if isinstance(k, str))
+        raise SpecError(
+            f"a switch's cases are all integers or all text, not both; "
+            f"{', '.join(texts)} {'is' if len(texts) == 1 else 'are'} text "
+            f"beside integer cases", loc.child("cases"),
+        )
+    if str in kinds:
+        ctx.record(_STRING_SWITCH, loc.child("cases"),
+                   _UNSUPPORTED_SWITCHES[_STRING_SWITCH])
     default = mapping.get("default")
     return Switch(
         dispatch=_as_str(_require(mapping, "dispatch", loc),
