@@ -245,6 +245,39 @@ units:
                     f"      - {{name: joined, concat: {path}}}\n"))
 
 
+class TestTheTunnelShape(unittest.TestCase):
+    """kober's tunnel example: a sealed payload, then what opens it (#174).
+
+    The shape kober's docs teach for decryption: a header, the payload sized
+    `remaining`, then the `transform` that reads it.  The transform reads no
+    byte where it stands, so the `remaining` is correct, and packeteer said
+    to change it.
+    """
+
+    def test_only_its_constructs_are_reported(self) -> None:
+        from packeteer.protospec import loads
+        spec = loads("""
+name: t
+version: "1"
+entry: datagram
+transforms:
+  xor: {params: {key: bytes, nonce: bytes}}
+params:
+  key: {type: bytes, secret: true}
+units:
+  datagram:
+    fields:
+      - {name: nonce, bytes: 8}
+      - {name: sealed, bytes: {size: {remaining: true}}}
+      - name: inner
+        transform: {from: sealed, with: xor, limit: 1500, args: {key: key, nonce: nonce}}
+""", fmt="yaml")
+        self.assertEqual(_constructs(spec), {"params", "transforms", "transform"})
+        findings = [str(d) for d in check(spec).diagnostics
+                    if "not supported yet" not in d.message]
+        self.assertEqual(findings, [])
+
+
 class TestKoberOnlyKeys(unittest.TestCase):
     """kober's decode-only keys are declined by name, not read as typos (#144)."""
 
@@ -369,6 +402,23 @@ units:
       - {name: op, int: {bits: 4, enum: opcode}}
 """)
         self.assertEqual(dict(spec.enums["opcode"].members), {0: "query", 1: "iquery"})
+        self.assertEqual(check(spec).diagnostics, ())
+
+    def test_a_count_written_as_a_number(self) -> None:
+        """Not a construct kober has and packeteer lacks, a spelling (#175).
+
+        So it loads and checks clean, rather than being declined.
+        """
+        spec = self._load("""
+name: t
+version: "1"
+entry: m
+input: datagram
+units:
+  m:
+    fields:
+      - {name: xs, bits: 8, count: 2}
+""")
         self.assertEqual(check(spec).diagnostics, ())
 
     def test_a_real_typo_is_still_an_error(self) -> None:

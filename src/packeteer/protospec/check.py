@@ -58,6 +58,7 @@ from packeteer.protospec.spec import (
     Spec,
     StringType,
     Switch,
+    Transport,
     Unit,
     UnitRef,
 )
@@ -174,6 +175,7 @@ class _Checker:
         """Run every check and return the result."""
         self._report_unsupported()
         self._check_name()
+        self._check_ports()
         self._check_entry()
         self._build_reference_map()
         self._check_units()
@@ -220,6 +222,32 @@ class _Checker:
             protocols.check_name(self.spec.name)
         except protocols.ProtocolError as exc:
             self._error(str(exc), self.spec.loc.child("name"))
+
+    def _check_ports(self) -> None:
+        """Refuse a port another registered protocol already claims (#169).
+
+        The registry refuses the clash when the compiled module registers, so
+        without this it surfaced at compile time, reported as a bug in the
+        compiler.  It is the spec's: two protocols cannot share a transport
+        port, and the built-ins claim theirs whenever packeteer parses.  A
+        protocol of the same name is this one, compiled before, and is not a
+        clash.
+        """
+        from packeteer.app import register_builtins
+
+        register_builtins()                 # idempotent; they may not be yet
+        transports = ("udp", "tcp") if self.spec.over is Transport.EITHER \
+            else (self.spec.over.value,)
+        for transport in transports:
+            for port in sorted(self.spec.ports):
+                claimed = protocols.for_port(port, transport)
+                if claimed is not None and claimed.name != self.spec.name:
+                    self._error(
+                        f"{transport} port {port} is already claimed by "
+                        f"{claimed.name!r}; a protocol's ports must be its "
+                        f"own, so choose another or unregister {claimed.name!r}",
+                        self.spec.loc.child("ports"),
+                    )
 
     def _check_entry(self) -> None:
         if self.spec.entry not in self.spec.units:
@@ -312,12 +340,18 @@ class _Checker:
         an exhausted cursor for every input there will ever be.  There is no
         message such a spec decodes, which is why this is an error rather than
         a warning: nothing is left for the author to weigh.
+
+        A field that reads nothing where it stands — a ``computed``, a
+        ``transform`` — is not decoded *from* the cursor, so it may follow
+        (#174).  The field named is the first after it that reads.
         """
         for index, fld in enumerate(unit.fields[:-1]):
             if not _has_remaining(fld.type) or _stands_in_for_unsupported(
                     fld, self.spec):
                 continue
-            after = unit.fields[index + 1].name
+            after = _first_reading(unit.fields[index + 1:])
+            if after is None:
+                continue
             self._error(
                 f"{fld.name!r} is sized 'remaining', which takes everything "
                 f"left, but {after!r} is decoded after it and would have no "
@@ -350,9 +384,13 @@ class _Checker:
                 fld.loc,
             )
             return
+        # A declined size or repeat inside a real field leaves its width
+        # unknown.  A field that reads nothing has width 0 and is measured
+        # like any other (#174).
         if any(_stands_in_for_unsupported(after, self.spec)
+               and not _reads_nothing(after.type)
                for after in unit.fields[index + 1:]):
-            return                      # the trailer's width is not knowable
+            return
         if trailing_width(unit, index, self.spec) is None:
             self._error(
                 f"the fields after {fld.name!r} do not have a width the spec "
@@ -376,7 +414,9 @@ class _Checker:
                 culprits = [r for r in _unit_refs(fld.type) if r in relative]
                 if not culprits:
                     continue
-                after = unit.fields[index + 1].name
+                after = _first_reading(unit.fields[index + 1:])
+                if after is None:
+                    continue
                 self._error(
                     f"{fld.name!r} is unit {culprits[0]!r}, which reads to the "
                     f"end of the message through {relative[culprits[0]]!r}, but "
@@ -926,6 +966,29 @@ def _stands_in_for_unsupported(fld: Field, spec: Spec) -> bool:
     )
 
 
+def _reads_nothing(field_type: FieldType) -> bool:
+    """Whether a field of this type reads no byte where it stands (#174).
+
+    kober's ``kober.check._reads_nothing``, exactly.  Every construct this
+    version declines as a type — ``computed``, ``select``, ``pointer``,
+    ``concat``, ``transform`` — is one: each derives its value, or reads it
+    from somewhere else.  A switch reads nothing when none of its cases does,
+    such as a transform chosen by the content coding.
+    """
+    if isinstance(field_type, Switch):
+        cases = [*field_type.arms.values(), field_type.default]
+        return all(case is None or _reads_nothing(case) for case in cases)
+    return isinstance(field_type, Declined)
+
+
+def _first_reading(fields: tuple[Field, ...]) -> str | None:
+    """Return the name of the first of *fields* that reads a byte, if any."""
+    for fld in fields:
+        if not _reads_nothing(fld.type):
+            return fld.name or "<anonymous>"
+    return None
+
+
 def _has_remaining(field_type: FieldType) -> bool:
     """Whether a type is, or contains, a ``remaining``-sized region."""
     if isinstance(field_type, (BytesType, StringType)):
@@ -1016,7 +1079,12 @@ def _fixed_bits(fld: Field, spec: Spec) -> int | None:
     occupies its width or nothing at all, and which of those is not knowable
     from the spec.  Refusing here rather than approximating is what keeps a
     guessed boundary out of the framing checks that read this.
+
+    A field that reads nothing where it stands is width 0 whatever its
+    ``repeat`` or ``condition``: nothing times anything is nothing (#174).
     """
+    if _reads_nothing(fld.type):
+        return 0
     if fld.repeat is not None or fld.condition is not None:
         return None
     return _fixed_bits_of_type(fld.type, spec)

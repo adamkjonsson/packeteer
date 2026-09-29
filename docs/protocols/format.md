@@ -451,6 +451,14 @@ units:
 `data` *is* the last field of `inner`, and `inner` is perfectly correct as long
 as nothing follows it.  Only the reference site shows the fault.
 
+**"Decoded after it" means read from the input after it.**  A field that reads
+no byte where it stands may follow either one: kober's `computed`, `select`,
+`pointer`, `concat` and `transform`, and a `switch` whose every case is one of
+them.  That is the shape of a sealed payload and the transform that opens it,
+which kober's docs teach.  packeteer declines those constructs, but it does not
+also refuse the `remaining` before them.  In a `fill`'s trailer such a field
+counts as zero bytes.
+
 #### `unit`
 
 ```yaml
@@ -710,6 +718,11 @@ condition: "flags.qr == 0"
 ```
 
 Most are integer expressions; a `condition` is the one that must be boolean.
+
+**A bare integer is an expression too**: `count: 2` is the literal `2`, as in
+kober, and means what `count: "2"` means.  So does `{expr: 4}` or
+`dispatch: 0`.  A YAML boolean or float is refused by name, since `count: yes`
+and `count: 1.5` are not what they look like.
 
 | | |
 |---|---|

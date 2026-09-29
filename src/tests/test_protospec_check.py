@@ -324,12 +324,14 @@ class TestSwitchWarnings(unittest.TestCase):
 class TestStreamFraming(unittest.TestCase):
     """A stream spec must prove a reassembler can find a message's end."""
 
+    # Not port 53: the built-in `dns` claims it, and `check` refuses the
+    # clash since #169.  The framing is what is under test.
     _DNS_OVER_TCP = """
         name: dnstcp
         version: "1.0"
         input: stream
         over: tcp
-        ports: [53]
+        ports: [5399]
         entry: framed
         units:
           framed:
@@ -428,6 +430,47 @@ class TestUnsupportedConstructsAreReportedAsSuch(unittest.TestCase):
             - {name: line, type: {string: {size: {terminated: {delimiter: "\\r\\n"}}}}}
         """)
         self.assertIn("not supported yet", _messages(result))
+
+
+class TestPortsAreTheSpecsOwn(unittest.TestCase):
+    """A port another protocol claims is the spec's fault, found by check (#169).
+
+    It surfaced at compile time as *a bug in packeteer's compiler*, when the
+    generated module's registration was refused.
+    """
+
+    _BLOB = """
+        name: blob
+        version: "1"
+        entry: m
+        over: {over}
+        ports: [{port}]
+        units:
+          m:
+            fields:
+              - {{name: raw, bytes: {{size: {{remaining: true}}}}}}
+    """
+
+    def _errors(self, over: str, port: int) -> list[str]:
+        return [str(d) for d in _check(self._BLOB.format(over=over, port=port)).errors]
+
+    def test_a_built_in_port_is_refused_at_ports(self) -> None:
+        """The issue's `blob` spec, on HTTP's two ports."""
+        for port in (80, 8080):
+            with self.subTest(port=port):
+                errors = self._errors("tcp", port)
+                self.assertEqual(len(errors), 1, errors)
+                self.assertIn(f": ports: tcp port {port} is already "
+                              f"claimed by 'http'", errors[0])
+                self.assertNotIn("compiler", errors[0])
+
+    def test_either_transport_is_checked_on_both(self) -> None:
+        """DNS claims 53 on UDP and TCP; `either` meets both claims."""
+        self.assertEqual(len(self._errors("either", 53)), 2)
+
+    def test_a_port_claimed_on_the_other_transport_is_free(self) -> None:
+        """HTTP claims TCP 80, which leaves UDP 80 to anyone."""
+        self.assertEqual(self._errors("udp", 80), [])
 
 
 class TestSwitchCaseKeys(unittest.TestCase):
@@ -623,6 +666,76 @@ class TestADeclinedFieldSaysOneThing(unittest.TestCase):
             - {name: body, bytes: {size: {fill: true}}}
             - {name: crc, computed: "1"}
         """), [])
+
+    def test_one_after_a_remaining_reads_nothing(self) -> None:
+        """The terminal rule, the path #167 missed (#174).
+
+        Each of these reads no byte where it stands, so a `remaining` before
+        it takes nothing it needs; kober accepts every one.
+        """
+        cases = {
+            "computed": '{name: twice, computed: "a * 2"}',
+            "select": ("{name: s, select: {from: xs, where: 'xs.d == 1', "
+                       "value: xs.d, default: '0'}}"),
+            "concat": "{name: j, concat: parts.d}",
+            "transform": "{name: t, transform: {from: rest, with: gzip, limit: 64}}",
+            "switch": ("{name: w, switch: {dispatch: a, cases: {1: {transform: "
+                       "{from: rest, with: gzip, limit: 64}}}, default: "
+                       "{transform: {from: rest, with: deflate, limit: 64}}}}"),
+        }
+        for construct, line in cases.items():
+            with self.subTest(construct=construct):
+                self.assertEqual(self._others(f"""
+                    - {{name: a, bits: 8}}
+                    - {{name: rest, bytes: {{size: {{remaining: true}}}}}}
+                    - {line}
+                """), [])
+
+    def test_a_byte_after_one_is_still_starved_and_named(self) -> None:
+        """Reading nothing excuses that field, not the one after it."""
+        others = self._others("""
+            - {name: rest, bytes: {size: {remaining: true}}}
+            - {name: twice, computed: "1"}
+            - {name: crc, bits: 8}
+        """)
+        self.assertEqual(len(others), 1, others)
+        self.assertIn("but 'crc' is decoded after it", others[0])
+
+    def test_a_unit_that_reads_to_the_end_before_one(self) -> None:
+        """The run-relative rule asks the same question one level up."""
+        self.assertEqual([str(d) for d in _check("""
+            name: t
+            version: "1"
+            entry: m
+            units:
+              m:
+                fields:
+                  - {name: body, unit: tail}
+                  - {name: n, computed: "1"}
+              tail:
+                fields:
+                  - {name: rest, bytes: {size: {remaining: true}}}
+        """).diagnostics if "not supported yet" not in d.message], [])
+
+    def test_a_fill_measures_a_trailer_that_holds_one(self) -> None:
+        """Width 0 for the field that reads nothing, the rest as ever.
+
+        It used to skip the whole check, so a variable field beside a
+        declined one went unreported.
+        """
+        self.assertEqual(self._others("""
+            - {name: body, bytes: {size: {fill: true}}}
+            - {name: n, computed: "1"}
+            - {name: crc, bits: 16}
+        """), [])
+        others = self._others("""
+            - {name: k, bits: 8}
+            - {name: body, bytes: {size: {fill: true}}}
+            - {name: n, computed: "1"}
+            - {name: tail, bytes: {size: {expr: "k"}}}
+        """)
+        self.assertTrue([m for m in others if "'fill' cannot say where it ends" in m],
+                        others)
 
     def test_a_unit_reached_only_through_one(self) -> None:
         """The stand-in forgot what it named, so `q` looked unreachable."""

@@ -198,6 +198,13 @@ class _Generator:
         namespace: dict[str, object] = {}
         try:
             exec(compile(code, f"<{self.spec.name}>", "exec"), namespace)  # noqa: S102
+        except protocols.ProtocolError as exc:
+            # The registry refused it — a name or port already taken.  That
+            # is the spec's, and `check` reports the port case at its line;
+            # this is for a caller who compiled without checking (#169).
+            raise SpecError(
+                f"the generated module cannot register: {exc}", self.spec.loc,
+            ) from exc
         except Exception as exc:        # pragma: no cover - a generator bug
             raise SpecError(
                 f"generated module does not import ({type(exc).__name__}: "

@@ -27,6 +27,17 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ### Added
 
+- **`stream --payload http --protocol-messages FILE` sends the given
+  messages** instead of generated REST traffic, over the same conversation:
+  the handshake, both directions, segmentation at `--mss`, and every
+  impairment.  A request goes client to server and a response server to
+  client; the list repeats to make up `--requests`, as it does for any other
+  `--payload`.  It is how exact HTTP bytes, such as a `Content-Encoding: gzip`
+  body, get into a lossy stream.  The API behind it is
+  **`HTTPRestConfig.messages`**, a list of `HTTPRequest` and `HTTPResponse`
+  objects for `generate_http_stream`, and **`packeteer.app.protocol_messages`**,
+  which builds them from packet-spec sections in every shape
+  `protocol_payload_fn` accepts.  (#169)
 - **`packeteer.protospec.spec.Declined`**, the type of a field whose
   construct this version reads but does not implement, and
   **`ExprType.UNKNOWN`**, the type an expression reading one has.  Neither
@@ -55,7 +66,8 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   switch dispatches on, refuses a switch mixing the two, refuses a text case
   that cannot match the fixed-width string it tests, and refuses a dispatch
   that is neither an int nor a str.  With this, kober 0.5.0's `http.yaml`
-  loads and reports its 19 constructs and nothing else.  (#171)
+  loads and reports its 18 constructs and the stream rule, and nothing
+  else.  (#171)
 - **`EnumDef.doc`**, from kober's long enum form (below), printed by
   `protocol show` beneath the enum as a unit's doc is.  (#166)
 
@@ -85,6 +97,39 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   `check` does.  It used to compile one: a caller that skipped `check` got a
   module in which a `computed` or `select` field was an opaque `bytes` field
   reading to the end of the message.  (#167)
+- **A field that reads nothing where it stands may follow a `remaining`.**
+  The last leak through #167's stand-in, found in review of 0.17.0.dev1: a
+  `computed`, `select`, `pointer`, `concat` or `transform` after a field
+  sized `remaining`, or a `switch` whose every case is one, was reported as
+  a field with no bytes left to read, though it reads none.  kober accepts
+  all of them, and the `transform` case is the shape of a sealed payload
+  followed by what opens it.  The same holds one level up, for a unit that
+  reads to the end of the message.  A `fill`'s trailer counts such a field
+  as zero bytes and measures the rest, where it used to skip the check and
+  miss a variable field beside a declined one.  (#174)
+- **A bare integer is accepted wherever an expression is**, as in kober:
+  `count: 2`, `{expr: 4}`, `dispatch: 0`.  Each was refused as *must be a
+  string, not int*, so a kober spec fixing a table's size with an unquoted
+  number did not load.  It builds the same spec as its quoted spelling.  A
+  YAML boolean or float is still refused, now with the hint saying what YAML
+  read.  (#175)
+- **A message about the spec as a whole no longer carries an empty path.**
+  An unknown top-level key read `t.yaml:1: : a spec has no key 'emit'`, with
+  nothing between the separators, where every other message has a path
+  there.  It reads `t.yaml:1: a spec has no key 'emit'`.  (#176)
+- **`stream --payload http` no longer accepts `--protocol-messages` and
+  ignores it.**  The capture held generated traffic and nothing from the
+  file, and the run reported success.  The flag now does what it says (see
+  Added), and the options that only shape generated traffic —
+  `--error-rate`, `--chunked-rate`, `--min-chunk`, `--max-chunk`,
+  `--trailer-rate` — are refused beside it by name, from the command line or
+  a `--config` file, rather than ignored in their turn.  (#169)
+- **A spec claiming a port another protocol holds is refused by `check`**, at
+  its `ports`, naming the holder.  It used to pass `check` and fail at
+  compile time as *a bug in packeteer's compiler*, which sent the author to
+  the wrong place: the clash is the spec's, and the built-ins claim their
+  ports whenever packeteer parses.  `compile_spec` called without `check`
+  says the module *cannot register*, not that it is a bug.  (#169)
 - **A top-level `emit` is an unknown key**, as it is in kober.  It was
   declined as *not supported yet*, which told the author kober would take it.
   In kober, `emit` belongs on a unit or a field, where packeteer still
