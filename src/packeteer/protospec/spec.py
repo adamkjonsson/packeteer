@@ -120,8 +120,10 @@ class Location:
     def __str__(self) -> str:
         where = self.source or "<spec>"
         if self.line is not None:
-            return f"{where}:{self.line}: {self.path}"
-        return f"{where}: {self.path}"
+            where = f"{where}:{self.line}"
+        # The document's own location has no path, and a message about it
+        # reads `file:1: …`, not `file:1: : …` (#176).
+        return f"{where}: {self.path}" if self.path else where
 
 
 # ── declarations ──────────────────────────────────────────────────────────────

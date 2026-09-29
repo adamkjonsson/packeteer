@@ -16,6 +16,7 @@ from packeteer.protospec.spec import (
     FromExpr,
     InputShape,
     IntType,
+    Location,
     Remaining,
     SizeOf,
     Switch,
@@ -537,6 +538,30 @@ class TestLocations(unittest.TestCase):
         with self.assertRaises(SpecError) as ctx:
             load(_EXAMPLES / "nope.yaml")
         self.assertIn("nope.yaml", str(ctx.exception))
+
+    def test_the_document_itself_has_no_empty_path(self) -> None:
+        """`t.yaml:1: a spec has no key …`, not `t.yaml:1: : …` (#176)."""
+        with self.assertRaises(SpecError) as ctx:
+            _spec("""
+                name: t
+                version: "1"
+                entry: m
+                emit: field
+                units:
+                  m:
+                    fields:
+                      - {name: v, bits: 8}
+            """)
+        self.assertTrue(str(ctx.exception).startswith("test.yaml:"), ctx.exception)
+        self.assertNotIn(": :", str(ctx.exception))
+        self.assertIn(": a spec has no key 'emit'", str(ctx.exception))
+
+    def test_every_form_of_a_location_reads_cleanly(self) -> None:
+        self.assertEqual(str(Location(path="", source="t.yaml", line=1)), "t.yaml:1")
+        self.assertEqual(str(Location(path="", source="t.json")), "t.json")
+        self.assertEqual(str(Location(path="units.m", source="t.yaml", line=4)),
+                         "t.yaml:4: units.m")
+        self.assertEqual(str(Location(path="units.m")), "<spec>: units.m")
 
 
 if __name__ == "__main__":

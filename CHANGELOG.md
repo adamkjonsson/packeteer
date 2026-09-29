@@ -55,7 +55,8 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   switch dispatches on, refuses a switch mixing the two, refuses a text case
   that cannot match the fixed-width string it tests, and refuses a dispatch
   that is neither an int nor a str.  With this, kober 0.5.0's `http.yaml`
-  loads and reports its 19 constructs and nothing else.  (#171)
+  loads and reports its 18 constructs and the stream rule, and nothing
+  else.  (#171)
 - **`EnumDef.doc`**, from kober's long enum form (below), printed by
   `protocol show` beneath the enum as a unit's doc is.  (#166)
 
@@ -101,6 +102,10 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   number did not load.  It builds the same spec as its quoted spelling.  A
   YAML boolean or float is still refused, now with the hint saying what YAML
   read.  (#175)
+- **A message about the spec as a whole no longer carries an empty path.**
+  An unknown top-level key read `t.yaml:1: : a spec has no key 'emit'`, with
+  nothing between the separators, where every other message has a path
+  there.  It reads `t.yaml:1: a spec has no key 'emit'`.  (#176)
 - **A top-level `emit` is an unknown key**, as it is in kober.  It was
   declined as *not supported yet*, which told the author kober would take it.
   In kober, `emit` belongs on a unit or a field, where packeteer still
