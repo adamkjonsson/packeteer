@@ -85,6 +85,16 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   `check` does.  It used to compile one: a caller that skipped `check` got a
   module in which a `computed` or `select` field was an opaque `bytes` field
   reading to the end of the message.  (#167)
+- **A field that reads nothing where it stands may follow a `remaining`.**
+  The last leak through #167's stand-in, found in review of 0.17.0.dev1: a
+  `computed`, `select`, `pointer`, `concat` or `transform` after a field
+  sized `remaining`, or a `switch` whose every case is one, was reported as
+  a field with no bytes left to read, though it reads none.  kober accepts
+  all of them, and the `transform` case is the shape of a sealed payload
+  followed by what opens it.  The same holds one level up, for a unit that
+  reads to the end of the message.  A `fill`'s trailer counts such a field
+  as zero bytes and measures the rest, where it used to skip the check and
+  miss a variable field beside a declined one.  (#174)
 - **A top-level `emit` is an unknown key**, as it is in kober.  It was
   declined as *not supported yet*, which told the author kober would take it.
   In kober, `emit` belongs on a unit or a field, where packeteer still
