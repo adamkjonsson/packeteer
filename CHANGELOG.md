@@ -95,6 +95,12 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   reads to the end of the message.  A `fill`'s trailer counts such a field
   as zero bytes and measures the rest, where it used to skip the check and
   miss a variable field beside a declined one.  (#174)
+- **A bare integer is accepted wherever an expression is**, as in kober:
+  `count: 2`, `{expr: 4}`, `dispatch: 0`.  Each was refused as *must be a
+  string, not int*, so a kober spec fixing a table's size with an unquoted
+  number did not load.  It builds the same spec as its quoted spelling.  A
+  YAML boolean or float is still refused, now with the hint saying what YAML
+  read.  (#175)
 - **A top-level `emit` is an unknown key**, as it is in kober.  It was
   declined as *not supported yet*, which told the author kober would take it.
   In kober, `emit` belongs on a unit or a field, where packeteer still

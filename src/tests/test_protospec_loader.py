@@ -6,7 +6,7 @@ import pathlib
 import textwrap
 import unittest
 
-from packeteer.protospec import SpecError, from_mapping, load, loader, loads
+from packeteer.protospec import SpecError, check, from_mapping, load, loader, loads
 from packeteer.protospec.spec import (
     BytesType,
     Count,
@@ -395,6 +395,77 @@ class TestEnums(unittest.TestCase):
         with self.assertRaises(SpecError) as ctx:
             self._enum("members: {zero: query}")
         self.assertIn("enums.opcode.members", str(ctx.exception))
+
+
+class TestABareIntegerIsAnExpression(unittest.TestCase):
+    """`count: 2` is a literal, in every place an expression goes (#175).
+
+    kober's `_expr` takes a bare integer as a literal and refuses a boolean.
+    Each spelling here must build what its quoted twin builds, since the model
+    holds source text either way.
+    """
+
+    def _fields(self, fields: str) -> tuple:
+        return _spec(f"""
+            name: t
+            version: "1"
+            entry: m
+            units:
+              m:
+                fields:
+{textwrap.indent(textwrap.dedent(fields), " " * 18)}
+        """).units["m"].fields
+
+    def _same(self, bare: str, quoted: str) -> None:
+        a, b = self._fields(bare)[-1], self._fields(quoted)[-1]
+        self.assertEqual((a.type, a.repeat, a.condition),
+                         (b.type, b.repeat, b.condition))
+
+    def test_a_count(self) -> None:
+        """The issue's case: a fixed-size table, written the way YAML invites."""
+        self._same("- {name: xs, bits: 8, count: 2}",
+                   '- {name: xs, bits: 8, count: "2"}')
+
+    def test_a_wrapped_count(self) -> None:
+        self._same("- {name: xs, bits: 8, repeat: {count: 2}}",
+                   '- {name: xs, bits: 8, repeat: {count: "2"}}')
+
+    def test_a_size_expression(self) -> None:
+        self._same("- {name: b, bytes: {size: {expr: 4}}}",
+                   '- {name: b, bytes: {size: {expr: "4"}}}')
+
+    def test_a_dispatch(self) -> None:
+        self._same("""
+            - name: b
+              switch: {dispatch: 0, cases: {0: {bytes: 1}}, default: {bytes: 2}}
+        """, """
+            - name: b
+              switch: {dispatch: "0", cases: {0: {bytes: 1}}, default: {bytes: 2}}
+        """)
+
+    def test_a_condition_loads_and_is_typed_by_check(self) -> None:
+        """An int where a bool is wanted is the checker's to refuse, as in kober."""
+        fields = self._fields("- {name: b, bits: 8, condition: 1}")
+        self.assertEqual(fields[0].condition, "1")
+        spec = _spec("""
+            name: t
+            version: "1"
+            entry: m
+            units:
+              m:
+                fields:
+                  - {name: b, bits: 8, condition: 1}
+        """)
+        messages = [d.message for d in check(spec).diagnostics]
+        self.assertTrue([m for m in messages if "a condition is int" in m], messages)
+
+    def test_a_boolean_or_a_float_is_refused_by_name(self) -> None:
+        for value, hint in (("yes", "booleans"), ("1.5", "as a number")):
+            with self.subTest(value=value), self.assertRaises(SpecError) as ctx:
+                self._fields(f"- {{name: xs, bits: 8, count: {value}}}")
+            message = str(ctx.exception)
+            self.assertIn("must be an integer or an expression", message)
+            self.assertIn(hint, message)
 
 
 class TestJSONAndYAMLAgree(unittest.TestCase):

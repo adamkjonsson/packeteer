@@ -86,6 +86,10 @@ class TestTypeText(unittest.TestCase):
         self.assertIn("enum ghost (undefined)", self._line(
             "{name: a, type: {int: {bits: 8, enum: ghost}}}"))
 
+    def test_a_bare_integer_count(self) -> None:
+        """Shown as the literal it is, like its quoted spelling (#175)."""
+        self.assertIn("×2", self._line("{name: xs, bits: 8, count: 2}"))
+
     def test_an_anonymous_field(self) -> None:
         self.assertIn("(anonymous)", self._line(
             "{name: null, type: {int: {bits: 3}}}"))

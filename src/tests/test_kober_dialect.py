@@ -404,6 +404,23 @@ units:
         self.assertEqual(dict(spec.enums["opcode"].members), {0: "query", 1: "iquery"})
         self.assertEqual(check(spec).diagnostics, ())
 
+    def test_a_count_written_as_a_number(self) -> None:
+        """Not a construct kober has and packeteer lacks, a spelling (#175).
+
+        So it loads and checks clean, rather than being declined.
+        """
+        spec = self._load("""
+name: t
+version: "1"
+entry: m
+input: datagram
+units:
+  m:
+    fields:
+      - {name: xs, bits: 8, count: 2}
+""")
+        self.assertEqual(check(spec).diagnostics, ())
+
     def test_a_real_typo_is_still_an_error(self) -> None:
         """Declining known keys must not loosen anything."""
         with self.assertRaises(SpecError) as ctx:

@@ -340,6 +340,26 @@ def _as_str(value: Any, loc: Location, what: str) -> str:
     return value
 
 
+def _expr_source(value: Any, loc: Location, what: str) -> str:
+    """Return an expression's source text, taking a bare integer as a literal.
+
+    kober's rule, in every place an expression goes (#175): YAML reads
+    ``count: 2`` as a number, and a number is a literal expression, so it is
+    one.  A boolean or a float is refused by name, since YAML reads
+    ``count: yes`` and ``count: 1.5`` as those and neither is an expression.
+    The model holds source text either way, so nothing downstream can tell
+    which spelling was used.
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    raise SpecError(
+        f"{what} must be an integer or an expression, not "
+        f"{type(value).__name__}{_yaml_hint(value)}", loc,
+    )
+
+
 def _as_int(value: Any, loc: Location, what: str) -> int:
     """Return *value* as an integer, or raise naming what it should have been."""
     if isinstance(value, bool) or not isinstance(value, int):
@@ -593,7 +613,7 @@ def _field(data: Any, loc: Location, ctx: _Ctx) -> Field:
         loc=loc,
         repeat=repeat,
         const=None if "const" not in mapping else Const(value=mapping["const"]),
-        condition=None if "condition" not in mapping else _as_str(
+        condition=None if "condition" not in mapping else _expr_source(
             mapping["condition"], loc.child("condition"), "a condition"),
         derive=_derive(mapping.get("derive"), loc.child("derive")),
         sensitive=bool(mapping.get("sensitive", False)),
@@ -804,7 +824,7 @@ def _size_value(size: Any, loc: Location, ctx: _Ctx) -> Size:
     if kind == "fixed":
         return Fixed(length=_as_int(body, loc, "a fixed size"))
     if kind == "expr":
-        return FromExpr(expr=_as_str(body, loc, "a size expression"))
+        return FromExpr(expr=_expr_source(body, loc, "a size expression"))
     if kind == "remaining":
         return Remaining()
     if kind == "fill":
@@ -918,8 +938,8 @@ def _switch(body: Any, loc: Location, ctx: _Ctx) -> Switch:
                    _UNSUPPORTED_SWITCHES[_STRING_SWITCH])
     default = mapping.get("default")
     return Switch(
-        dispatch=_as_str(_require(mapping, "dispatch", loc),
-                         loc.child("dispatch"), "a switch selector"),
+        dispatch=_expr_source(_require(mapping, "dispatch", loc),
+                              loc.child("dispatch"), "a switch selector"),
         arms=arms,
         default=None if default is None
         else _field_type(default, loc.child("default"), ctx),
@@ -960,7 +980,7 @@ def _one_repeat(kind: str, body: Any, loc: Location, ctx: _Ctx) -> Count | None:
     if kind in _UNSUPPORTED_REPEATS:
         ctx.record(f"repeat.{kind}", loc, _UNSUPPORTED_REPEATS[kind])
         return None
-    return Count(expr=_as_str(body, loc, "a repeat count"))
+    return Count(expr=_expr_source(body, loc, "a repeat count"))
 
 
 def _derive(data: Any, loc: Location) -> Derive | None:

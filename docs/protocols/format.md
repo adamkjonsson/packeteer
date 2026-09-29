@@ -719,6 +719,11 @@ condition: "flags.qr == 0"
 
 Most are integer expressions; a `condition` is the one that must be boolean.
 
+**A bare integer is an expression too**: `count: 2` is the literal `2`, as in
+kober, and means what `count: "2"` means.  So does `{expr: 4}` or
+`dispatch: 0`.  A YAML boolean or float is refused by name, since `count: yes`
+and `count: 1.5` are not what they look like.
+
 | | |
 |---|---|
 | Arithmetic | `+` `-` `*` `/` `%` |
