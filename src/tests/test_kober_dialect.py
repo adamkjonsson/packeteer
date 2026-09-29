@@ -3,7 +3,7 @@
 `docs/protocols/format.md` calls this dialect a superset of
 [kober](https://github.com/adamkjonsson/zipline-kober)'s.  This is what makes
 that a property of two loaders rather than a sentence in two references: the
-specs under `kober/` are kober 0.2.0's shipped examples, and each assertion
+specs under `kober/` are kober 0.5.0's shipped examples, and each assertion
 here is about the *outcome*, not merely that a file parses.
 
 kober vendors packeteer's specs the same way and asserts the same kind of
@@ -98,10 +98,24 @@ class TestKoberHTTP(unittest.TestCase):
         self.assertFalse([m for m in errors if "needs a size" in m], errors)
 
     def test_it_reports_exactly_the_constructs_packeteer_lacks(self) -> None:
+        """Pinned deliberately: a new one appearing is a dialect change.
+
+        kober 0.5.0 added four to 0.2.0's four, each read before it was
+        accepted here: `unit.confirm` is the start-line guard that refuses a
+        guess after a gap (kober #50); `concat` joins a chunked body's data;
+        `transform` inflates a `Content-Encoding` body; and the two switches
+        choosing between them dispatch on strings, `framing` and `encoding`.
+        """
         self.assertEqual(
             _constructs(self.spec),
-            {"size.terminated", "computed", "select", "repeat.until"},
+            {"size.terminated", "computed", "select", "repeat.until",
+             "unit.confirm", "concat", "transform", "switch on a string"},
         )
+
+    def test_it_loads_since_kober_0_5_0_changed_it(self) -> None:
+        """0.16.0 refused this file at load, on its first string case (#170, #171)."""
+        self.assertIn("content", [f.name for f in self.spec.units["message"].fields])
+        self.assertEqual(len(check(self.spec).errors), 19)
 
     def test_every_finding_is_not_supported_yet(self) -> None:
         """What this directory's README says the test is for (#167).

@@ -743,5 +743,6 @@ rather than truncated.
 A dotted path descends into a nested unit: `header.length` reads the `length`
 field of the `header` field's unit.
 
-kober's three functions — `to_int`, `trim`, `lower` — are **not supported
-yet**, and a call is reported as such rather than as a syntax error.
+kober's five functions — `to_int`, `lower`, `trim`, and since kober 0.5.0
+`startswith` and `endswith` — are **not supported yet**, and a call is
+reported as such rather than as a syntax error.

@@ -97,6 +97,14 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   written beside `members` is refused as a mix of the two forms, and a `doc`
   in the short form is refused with a pointer to the long one.  (#166)
 
+### Documentation
+
+- **The format reference follows kober to 0.5.0**: its function table is
+  five (`to_int`, `lower`, `trim`, `startswith`, `endswith`), not three, and
+  the vendored copies of kober's `dns.yaml` and `http.yaml` that
+  `test_kober_dialect.py` holds this loader to are kober 0.5.0's, pinned in
+  `src/tests/kober/README.md`.
+
 ---
 
 ## [0.16.0] - 2026-09-16

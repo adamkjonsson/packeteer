@@ -24,7 +24,7 @@ and ``and`` / ``or`` / ``not`` need booleans — ``qdcount and ...`` is an error
 rather than a test for non-zero.  ``/`` floors, because there is no
 floating-point type, and a float literal is refused rather than truncated.
 
-This is kober's language, less its closed table of three functions.  A call is
+This is kober's language, less its closed table of five functions.  A call is
 therefore reported as *not supported yet* rather than as a syntax error, since
 a spec written for kober may well contain one.
 """
