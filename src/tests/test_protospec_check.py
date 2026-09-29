@@ -324,12 +324,14 @@ class TestSwitchWarnings(unittest.TestCase):
 class TestStreamFraming(unittest.TestCase):
     """A stream spec must prove a reassembler can find a message's end."""
 
+    # Not port 53: the built-in `dns` claims it, and `check` refuses the
+    # clash since #169.  The framing is what is under test.
     _DNS_OVER_TCP = """
         name: dnstcp
         version: "1.0"
         input: stream
         over: tcp
-        ports: [53]
+        ports: [5399]
         entry: framed
         units:
           framed:
@@ -428,6 +430,47 @@ class TestUnsupportedConstructsAreReportedAsSuch(unittest.TestCase):
             - {name: line, type: {string: {size: {terminated: {delimiter: "\\r\\n"}}}}}
         """)
         self.assertIn("not supported yet", _messages(result))
+
+
+class TestPortsAreTheSpecsOwn(unittest.TestCase):
+    """A port another protocol claims is the spec's fault, found by check (#169).
+
+    It surfaced at compile time as *a bug in packeteer's compiler*, when the
+    generated module's registration was refused.
+    """
+
+    _BLOB = """
+        name: blob
+        version: "1"
+        entry: m
+        over: {over}
+        ports: [{port}]
+        units:
+          m:
+            fields:
+              - {{name: raw, bytes: {{size: {{remaining: true}}}}}}
+    """
+
+    def _errors(self, over: str, port: int) -> list[str]:
+        return [str(d) for d in _check(self._BLOB.format(over=over, port=port)).errors]
+
+    def test_a_built_in_port_is_refused_at_ports(self) -> None:
+        """The issue's `blob` spec, on HTTP's two ports."""
+        for port in (80, 8080):
+            with self.subTest(port=port):
+                errors = self._errors("tcp", port)
+                self.assertEqual(len(errors), 1, errors)
+                self.assertIn(f": ports: tcp port {port} is already "
+                              f"claimed by 'http'", errors[0])
+                self.assertNotIn("compiler", errors[0])
+
+    def test_either_transport_is_checked_on_both(self) -> None:
+        """DNS claims 53 on UDP and TCP; `either` meets both claims."""
+        self.assertEqual(len(self._errors("either", 53)), 2)
+
+    def test_a_port_claimed_on_the_other_transport_is_free(self) -> None:
+        """HTTP claims TCP 80, which leaves UDP 80 to anyone."""
+        self.assertEqual(self._errors("udp", 80), [])
 
 
 class TestSwitchCaseKeys(unittest.TestCase):

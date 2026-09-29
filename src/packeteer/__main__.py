@@ -1516,14 +1516,24 @@ def _load_stream_config(path: str) -> dict:
     return result
 
 
-def _apply_stream_defaults(args: argparse.Namespace) -> None:
+def _apply_stream_defaults(args: argparse.Namespace) -> dict[str, str]:
     """Fill *args* from config file (if given) then from built-in defaults.
 
-    Called after ``parse_args()``.  Modifies *args* in place.
+    Called after ``parse_args()``.  Modifies *args* in place, and returns how
+    the user named each value they supplied — ``"--error-rate"``, or
+    ``"'error_rate' in FILE"`` — since once merged, a value no longer says
+    where it came from, and a refusal should name what the user wrote.
     """
+    supplied = {
+        dest: "--" + dest.replace("_", "-")
+        for dest, _, _ in _STREAM_PARAMS.values()
+        if getattr(args, dest, None) is not None
+    }
     config: dict = {}
     if args.config:
         config = _load_stream_config(args.config)
+    for dest in config:
+        supplied.setdefault(dest, f"{dest!r} in {args.config}")
 
     for dest, value in config.items():
         if getattr(args, dest, None) is None:
@@ -1532,6 +1542,7 @@ def _apply_stream_defaults(args: argparse.Namespace) -> None:
     for dest, _, default in _STREAM_PARAMS.values():
         if getattr(args, dest, None) is None:
             setattr(args, dest, default)
+    return supplied
 
 
 def _parse_stream_encap(args: argparse.Namespace) -> "list[StreamEncap] | None":
@@ -1780,17 +1791,7 @@ def _protocol_payload_fn(
             file=sys.stderr,
         )
         sys.exit(1)
-    try:
-        with open(path) as handle:
-            sections = json.load(handle)
-    except (OSError, json.JSONDecodeError) as exc:
-        print(f"Error reading '{path}': {exc}", file=sys.stderr)
-        sys.exit(1)
-    if not isinstance(sections, (list, dict)) or not sections:
-        print(f"Error: '{path}' must be a non-empty JSON array of "
-              f"{name} sections, or the output of 'packeteer parse'",
-              file=sys.stderr)
-        sys.exit(1)
+    sections = _read_protocol_messages(path, name)
 
     try:
         return app.protocol_payload_fn(proto, sections, protocol)
@@ -1858,13 +1859,67 @@ def _impairments_from_args(args: argparse.Namespace) -> ImpairmentConfig | None:
     return config if (config.packet_loss_probability or config.any_post_pass) else None
 
 
+def _read_protocol_messages(path: str, name: str) -> list | dict:
+    """Read a ``--protocol-messages`` file, exiting with a message if it is unusable."""
+    try:
+        with open(path) as handle:
+            sections = json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"Error reading '{path}': {exc}", file=sys.stderr)
+        sys.exit(1)
+    if not isinstance(sections, (list, dict)) or not sections:
+        print(f"Error: '{path}' must be a non-empty JSON array of "
+              f"{name} sections, or the output of 'packeteer parse'",
+              file=sys.stderr)
+        sys.exit(1)
+    return sections
+
+
+#: What only generated HTTP traffic uses.  Given messages are sent as
+#: written, so each of these would be accepted and ignored — #137's failure
+#: shape, and #169's — and is refused instead.
+_HTTP_CONTENT_DESTS: tuple[str, ...] = (
+    "error_rate", "chunked_rate", "min_chunk", "max_chunk", "trailer_rate",
+)
+
+
+def _http_messages(args: argparse.Namespace, supplied: dict[str, str]) -> list | None:
+    """Return the messages ``--protocol-messages`` gives ``--payload http``, if any."""
+    path = getattr(args, "protocol_messages", None)
+    if not path:
+        return None
+    ignored = [supplied[dest] for dest in _HTTP_CONTENT_DESTS if dest in supplied]
+    if ignored:
+        print(
+            f"Error: {', '.join(ignored)} shape{'s' if len(ignored) == 1 else ''} "
+            f"generated HTTP traffic, and --protocol-messages sends the given "
+            f"messages as written; drop one or the other.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    try:
+        return app.protocol_messages(
+            protocols.for_section("http"), _read_protocol_messages(path, "http"),
+            "tcp",
+        )
+    except ValueError as exc:
+        print(f"Error: '{path}': {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
 def _generate_http_payload_stream(
     args: argparse.Namespace, protocol: str, encap: object,
+    supplied: dict[str, str],
 ) -> CombinedStream:
-    """Generate an HTTP REST payload stream from parsed CLI args."""
+    """Generate an HTTP REST payload stream from parsed CLI args.
+
+    With ``--protocol-messages`` the stream carries those messages instead of
+    generated ones (#169).
+    """
     if protocol != "tcp":
         print("Error: --payload http requires --protocol tcp.", file=sys.stderr)
         sys.exit(1)
+    messages = _http_messages(args, supplied)
     try:
         return generate_http_stream(
             client_ip=args.client_ip,
@@ -1890,6 +1945,7 @@ def _generate_http_payload_stream(
                 trailer_rate=args.trailer_rate,
                 syn_options=None if args.no_tcp_options else default_syn_options(),
                 impairments=_impairments_from_args(args),
+                messages=messages,
             ),
         )
     except (ValueError, OSError) as e:
@@ -1960,13 +2016,13 @@ def _cmd_stream(args: argparse.Namespace) -> None:
         _write_stream_config_template(template_path)
         return
 
-    _apply_stream_defaults(args)
+    supplied = _apply_stream_defaults(args)
     protocol = _validate_stream_args(args)
 
     encap = _parse_stream_encap(args)
 
     if args.payload == "http":
-        stream = _generate_http_payload_stream(args, protocol, encap)
+        stream = _generate_http_payload_stream(args, protocol, encap, supplied)
         _write_stream_output(args, stream)
         return
     if args.payload == "vpn":
@@ -2536,9 +2592,10 @@ def main() -> None:
             "Application-layer payload to generate instead of random bytes. "
             "'http' simulates a REST client (TCP); 'vpn' simulates a fictive "
             "binary VPN with a key-exchange channel and a CTR-mode data "
-            "channel (UDP).  Any other registered protocol's name is also "
-            "accepted — see --load-protocol — and then --protocol-messages "
-            "says what to send."
+            "channel (UDP).  With --protocol-messages, 'http' sends the given "
+            "messages instead of generating them.  Any other registered "
+            "protocol's name is also accepted — see --load-protocol — and "
+            "then --protocol-messages says what to send."
         ),
     )
     stream_parser.add_argument(
@@ -2547,7 +2604,9 @@ def main() -> None:
             "JSON array of packet-spec sections for --payload <protocol>, sent "
             "in order and cycled when the stream is longer than the list.  A "
             "protocol says what a message looks like; this says which messages "
-            "to send."
+            "to send.  For --payload http a request goes client to server and "
+            "a response server to client, and the list repeats to make up "
+            "--requests transactions."
         ),
     )
     stream_parser.add_argument(

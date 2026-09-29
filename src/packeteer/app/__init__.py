@@ -40,8 +40,8 @@ if TYPE_CHECKING:
     from packeteer.generate.builder import PacketBuilder
 
 __all__ = [
-    "dns", "dhcp", "http", "apply_app_section", "protocol_payload_fn",
-    "register_builtins",
+    "dns", "dhcp", "http", "apply_app_section", "protocol_messages",
+    "protocol_payload_fn", "register_builtins",
 ]
 
 
@@ -167,6 +167,71 @@ def _sections_in(
     return out
 
 
+def protocol_messages(
+    proto: AppProtocol,
+    messages: Sequence[dict[str, Any]] | dict[str, Any],
+    transport: str,
+) -> list[object]:
+    """Return the messages *messages* describes, built by *proto*, in order.
+
+    The first half of :func:`protocol_payload_fn`, for a caller that sends
+    messages some other way than as one payload per packet — ``stream
+    --payload http --protocol-messages FILE``, which hands them to
+    :attr:`HTTPRestConfig.messages
+    <packeteer.generate.payloads.http.HTTPRestConfig.messages>` so an HTTP
+    conversation keeps its two directions and its segmentation (#169).
+
+    *messages* takes every shape :func:`protocol_payload_fn` does, and a
+    packet with no section of *proto* is skipped the same way.
+
+    Args:
+        proto: The protocol to build with.
+        messages: Its messages, in order, in any of the accepted shapes.  At
+            least one must carry a section.
+        transport: ``"tcp"`` or ``"udp"`` — what will carry them.
+
+    Returns:
+        One message object per section, of *proto*'s message types.
+
+    Raises:
+        ValueError: If no element carries a section, if an element is not an
+            object, if the protocol does not run over *transport*, or if a
+            section is not one of *proto* — with the element's index and the
+            protocol's own reason.
+
+    Example::
+
+        from packeteer.app import http, protocol_messages
+        from packeteer.generate import HTTPRestConfig, generate_http_stream
+
+        msgs = protocol_messages(http.PROTOCOL, sections, "tcp")
+        stream = generate_http_stream(
+            client_ip="10.0.0.2", server_ip="10.0.0.1",
+            config=HTTPRestConfig(messages=msgs),
+        )
+
+    """
+    if not proto.carries(transport):
+        raise ValueError(
+            f"{proto.name!r} is carried over {proto.over}, not {transport}"
+        )
+    sections = _sections_in(proto, messages)
+    if not sections:
+        raise ValueError(
+            f"no {proto.name} messages: nothing carries a {proto.name!r} "
+            f"section, so there is nothing to send"
+        )
+    built: list[object] = []
+    for index, section in enumerate(sections):
+        try:
+            built.append(proto.from_spec(section))
+        except _SECTION_ERRORS as exc:
+            raise ValueError(
+                f"message {index}: {type(exc).__name__}: {exc}"
+            ) from exc
+    return built
+
+
 def protocol_payload_fn(
     proto: AppProtocol,
     messages: Sequence[dict[str, Any]] | dict[str, Any],
@@ -218,20 +283,10 @@ def protocol_payload_fn(
         stream = generate_tcp_stream(config=TCPStreamConfig(payload_fn=fn))
 
     """
-    if not proto.carries(transport):
-        raise ValueError(
-            f"{proto.name!r} is carried over {proto.over}, not {transport}"
-        )
-    sections = _sections_in(proto, messages)
-    if not sections:
-        raise ValueError(
-            f"no {proto.name} messages: nothing carries a {proto.name!r} "
-            f"section, so there is nothing to send"
-        )
     encoded: list[bytes] = []
-    for index, section in enumerate(sections):
+    for index, message in enumerate(protocol_messages(proto, messages, transport)):
         try:
-            encoded.append(proto.encode(proto.from_spec(section), transport))
+            encoded.append(proto.encode(message, transport))
         except _SECTION_ERRORS as exc:
             raise ValueError(
                 f"message {index}: {type(exc).__name__}: {exc}"

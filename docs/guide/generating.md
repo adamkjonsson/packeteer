@@ -178,6 +178,27 @@ mix = generate_http_stream(
 )
 ```
 
+To send exact messages rather than generated ones — a gzip-encoded body, a
+particular header — give them as `HTTPRestConfig.messages`.  Requests go
+client to server and responses server to client, over the same handshake,
+segmentation and impairments, and the list repeats to make up `requests`:
+
+```python
+from packeteer.generate import HTTPRestConfig, generate_http_stream
+from packeteer.generate.http import HTTPRequest, HTTPResponse
+
+stream = generate_http_stream(
+    client_ip="10.0.0.2", server_ip="10.0.0.1", requests=20, mss=600, seed=1,
+    config=HTTPRestConfig(messages=[
+        HTTPRequest(method="GET", path="/doc", headers={"Host": "example.com"}),
+        HTTPResponse(headers={"Content-Encoding": "gzip"}, body=gzipped),
+    ]),
+)
+```
+
+{func}`packeteer.app.protocol_messages` turns packet-spec sections into these
+objects, which is what `stream --payload http --protocol-messages` does.
+
 ## What the handshake advertises, and what the connection carries
 
 Every generated TCP handshake carries the options a modern client sends — a

@@ -58,6 +58,7 @@ from packeteer.protospec.spec import (
     Spec,
     StringType,
     Switch,
+    Transport,
     Unit,
     UnitRef,
 )
@@ -174,6 +175,7 @@ class _Checker:
         """Run every check and return the result."""
         self._report_unsupported()
         self._check_name()
+        self._check_ports()
         self._check_entry()
         self._build_reference_map()
         self._check_units()
@@ -220,6 +222,32 @@ class _Checker:
             protocols.check_name(self.spec.name)
         except protocols.ProtocolError as exc:
             self._error(str(exc), self.spec.loc.child("name"))
+
+    def _check_ports(self) -> None:
+        """Refuse a port another registered protocol already claims (#169).
+
+        The registry refuses the clash when the compiled module registers, so
+        without this it surfaced at compile time, reported as a bug in the
+        compiler.  It is the spec's: two protocols cannot share a transport
+        port, and the built-ins claim theirs whenever packeteer parses.  A
+        protocol of the same name is this one, compiled before, and is not a
+        clash.
+        """
+        from packeteer.app import register_builtins
+
+        register_builtins()                 # idempotent; they may not be yet
+        transports = ("udp", "tcp") if self.spec.over is Transport.EITHER \
+            else (self.spec.over.value,)
+        for transport in transports:
+            for port in sorted(self.spec.ports):
+                claimed = protocols.for_port(port, transport)
+                if claimed is not None and claimed.name != self.spec.name:
+                    self._error(
+                        f"{transport} port {port} is already claimed by "
+                        f"{claimed.name!r}; a protocol's ports must be its "
+                        f"own, so choose another or unregister {claimed.name!r}",
+                        self.spec.loc.child("ports"),
+                    )
 
     def _check_entry(self) -> None:
         if self.spec.entry not in self.spec.units:

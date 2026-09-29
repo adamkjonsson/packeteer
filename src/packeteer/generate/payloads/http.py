@@ -23,7 +23,7 @@ import json
 import math
 import random
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 
 from ..http import HTTPRequest, HTTPResponse, encode_http_message
@@ -120,6 +120,16 @@ class HTTPRestConfig:
             randomness, so a capture generated without impairments still
             reproduces from its seed exactly as it did before impairments were
             available.
+        messages: Exact messages to send instead of generated ones, in
+            order: each :class:`~packeteer.generate.http.HTTPRequest` goes
+            client to server and each
+            :class:`~packeteer.generate.http.HTTPResponse` server to client,
+            byte for byte as encoded, headers and all.  A transaction is a
+            request and the responses after it, so the list must start with
+            a request; it is repeated to make up *requests* transactions, as
+            ``--payload <protocol>`` repeats its messages.  When set, the
+            content knobs above — *methods* through *trailer_rate* — do not
+            apply.  ``None`` (the default) generates traffic.  (#169)
 
     """
 
@@ -133,6 +143,7 @@ class HTTPRestConfig:
     trailer_rate: float = 0.0
     syn_options: TCPOptions | None = field(default_factory=default_syn_options)
     impairments: ImpairmentConfig | None = None
+    messages: Sequence[HTTPRequest | HTTPResponse] | None = None
 
 
 def _token(rng: random.Random, length: int = 16) -> str:
@@ -318,6 +329,41 @@ def generate_http_conversation(
     return messages
 
 
+def _transactions(
+    messages: Sequence[HTTPRequest | HTTPResponse],
+) -> list[list[AppMessage]]:
+    """Group given messages into transactions: a request and the responses after it.
+
+    Raises:
+        ValueError: If there are none, one is neither a request nor a
+            response, or the first is a response — a response answers
+            nothing before the first request.
+
+    """
+    if not messages:
+        raise ValueError("messages is empty; there is nothing to send")
+    transactions: list[list[AppMessage]] = []
+    for index, msg in enumerate(messages):
+        if isinstance(msg, HTTPRequest):
+            transactions.append([AppMessage(
+                "c2s", encode_http_message(msg), f"{msg.method} {msg.path}")])
+        elif isinstance(msg, HTTPResponse):
+            if not transactions:
+                raise ValueError(
+                    "message 0 is a response; a conversation starts with a "
+                    "request, which the responses after it answer"
+                )
+            transactions[-1].append(AppMessage(
+                "s2c", encode_http_message(msg),
+                f"{msg.status_code} {msg.reason}"))
+        else:
+            raise ValueError(
+                f"message {index} is a {type(msg).__name__}, not an "
+                f"HTTPRequest or HTTPResponse"
+            )
+    return transactions
+
+
 def _impair(
     stream: TCPStream,
     impairments: ImpairmentConfig,
@@ -420,8 +466,9 @@ def generate_http_stream(
     Raises:
         ValueError: If *requests* or *requests_per_connection* is below 1, the
             client/server IP ranges overlap, a connection's client port exceeds
-            65535, or ``config.chunk_size`` is not a range with
-            ``1 <= min <= max``.
+            65535, ``config.chunk_size`` is not a range with
+            ``1 <= min <= max``, or ``config.messages`` is empty, starts with
+            a response, or holds something that is not an HTTP message.
 
     """
     if requests < 1:
@@ -457,6 +504,8 @@ def generate_http_stream(
     if syn_options is not None and syn_options.mss == DEFAULT_MSS:
         syn_options = replace(syn_options, mss=mss)
 
+    given = None if config.messages is None else _transactions(config.messages)
+
     rng = random.Random(seed)
     start = base_time if base_time is not None else time.time()
 
@@ -466,10 +515,20 @@ def generate_http_stream(
         remaining = requests
         for conn in range(connections):
             n_txn = min(per_conn, remaining)
+            if given is None:
+                conversation = generate_http_conversation(
+                    rng, transactions=n_txn, keepalive=n_txn > 1, config=config,
+                )
+            else:
+                # Every session replays the list from its start; within one,
+                # transactions carry on across connections and wrap round.
+                done = requests - remaining
+                conversation = [
+                    message
+                    for txn in range(done, done + n_txn)
+                    for message in given[txn % len(given)]
+                ]
             remaining -= n_txn
-            conversation = generate_http_conversation(
-                rng, transactions=n_txn, keepalive=n_txn > 1, config=config,
-            )
             offset = 0.0 if first else rng.uniform(0.0, session_stagger)
             first = False
             stream = render_tcp_session(

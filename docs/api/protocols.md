@@ -106,6 +106,11 @@ and a message object.
 ```
 
 ```{eval-rst}
+.. autofunction:: packeteer.app.protocol_messages
+   :no-index:
+```
+
+```{eval-rst}
 .. autofunction:: packeteer.app.register_builtins
    :no-index:
 ```

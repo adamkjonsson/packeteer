@@ -36,7 +36,7 @@ Exactly one output flag is required; they are mutually exclusive.
 | `--sessions N` | `1` | Number of independent sessions (IP pairs) to generate (see below) |
 | `--session-stagger SECONDS` | `1.0` | Window over which session start times are spread when `--sessions > 1` |
 | `--payload NAME` | off | Application-layer payload to generate instead of random bytes: `http`, `vpn`, or any registered protocol's name (see below) |
-| `--protocol-messages FILE` | — | JSON array of packet-spec sections for `--payload <protocol>`, sent in order and cycled; the packets `packeteer parse` writes are accepted as they are |
+| `--protocol-messages FILE` | — | JSON array of packet-spec sections for `--payload <protocol>`, sent in order and cycled; the packets `packeteer parse` writes are accepted as they are.  With `--payload http`, the messages to send instead of generated ones (see [Given messages](#given-messages)) |
 | `--requests N` | `10` | HTTP only: total request/response transactions |
 | `--requests-per-connection K` | all | HTTP only: transactions per connection (`1` = a new connection per request) |
 | `--error-rate P` | `0.1` | HTTP only: probability a response is a 4xx/5xx error |
@@ -155,7 +155,8 @@ stream of those converts cleanly and a decoder run over it reports every
 message decoded, so the failure was indistinguishable from success (#137).
 The same is available from Python as
 {func}`packeteer.app.protocol_payload_fn`, which returns the `payload_fn` the
-stream generators take.
+stream generators take, and {func}`packeteer.app.protocol_messages`, which
+returns the messages themselves.
 
 **Every anomaly option applies**, because this is the ordinary stream
 generator with the payloads fed in rather than a path of its own: the packet
@@ -220,6 +221,52 @@ packeteer stream --client-ip 10.0.0.1 --server-ip 10.1.0.1 \
 
 Request bodies are always counted with `Content-Length`; the framing knobs
 apply to responses only.
+
+### Given messages
+
+With `--protocol-messages FILE`, `--payload http` sends the file's messages
+instead of generating them, over the same conversation: the handshake, both
+directions, segmentation at `--mss`, and every impairment.  That is how a
+capture gets exact HTTP bytes, a `Content-Encoding: gzip` body for instance,
+into a lossy stream.
+
+```bash
+packeteer stream --client-ip 10.0.0.2 --server-ip 10.0.0.1 \
+    --payload http --protocol-messages messages.json \
+    --requests 20 --mss 600 --packet-loss 0.05 --seed 1 --pcap gzip-lossy.pcap
+```
+
+```json
+[
+  { "http": { "type": "request", "method": "GET", "path": "/doc",
+              "headers": { "Host": "example.com", "Accept-Encoding": "gzip" } } },
+  { "http": { "type": "response", "status_code": 200, "reason": "OK",
+              "headers": { "Content-Encoding": "gzip", "Content-Length": "2523" },
+              "body": "1f8b0800…" } }
+]
+```
+
+- **Direction comes from the message.**  A request goes client to server and
+  a response server to client.  A transaction is a request and the responses
+  after it, so the list must start with a request.
+- **The list repeats** to make up `--requests` transactions, as it does for
+  any other `--payload`, and `--requests-per-connection` cuts it into
+  connections at transaction boundaries.  Each `--sessions` pair replays it
+  from the start.
+- **Messages go as written.**  `body` is hex and sent verbatim, and headers are
+  not rewritten, `Connection` included.  `Content-Length` is added only to a
+  body that has neither it nor `Transfer-Encoding`, as for any HTTP section.
+- **The generation knobs are refused beside it**: `--error-rate`,
+  `--chunked-rate`, `--min-chunk`, `--max-chunk` and `--trailer-rate`, whether
+  on the command line or in a `--config` file.  Each shapes generated traffic,
+  and would otherwise be accepted and ignored.
+- **A header name cannot appear twice**, since a section's `headers` is an
+  object.  Two `Transfer-Encoding` lines, say, are not expressible yet (#172).
+
+The file may be what `packeteer parse` writes, as for any other protocol.
+Messages that spanned several segments in the capture parse per packet, so
+replay a capture's HTTP from sections written by hand or from a single-segment
+capture.
 
 ### The handshake, and timestamps
 

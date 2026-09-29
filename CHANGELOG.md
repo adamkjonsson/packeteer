@@ -27,6 +27,17 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ### Added
 
+- **`stream --payload http --protocol-messages FILE` sends the given
+  messages** instead of generated REST traffic, over the same conversation:
+  the handshake, both directions, segmentation at `--mss`, and every
+  impairment.  A request goes client to server and a response server to
+  client; the list repeats to make up `--requests`, as it does for any other
+  `--payload`.  It is how exact HTTP bytes, such as a `Content-Encoding: gzip`
+  body, get into a lossy stream.  The API behind it is
+  **`HTTPRestConfig.messages`**, a list of `HTTPRequest` and `HTTPResponse`
+  objects for `generate_http_stream`, and **`packeteer.app.protocol_messages`**,
+  which builds them from packet-spec sections in every shape
+  `protocol_payload_fn` accepts.  (#169)
 - **`packeteer.protospec.spec.Declined`**, the type of a field whose
   construct this version reads but does not implement, and
   **`ExprType.UNKNOWN`**, the type an expression reading one has.  Neither
@@ -106,6 +117,19 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   An unknown top-level key read `t.yaml:1: : a spec has no key 'emit'`, with
   nothing between the separators, where every other message has a path
   there.  It reads `t.yaml:1: a spec has no key 'emit'`.  (#176)
+- **`stream --payload http` no longer accepts `--protocol-messages` and
+  ignores it.**  The capture held generated traffic and nothing from the
+  file, and the run reported success.  The flag now does what it says (see
+  Added), and the options that only shape generated traffic —
+  `--error-rate`, `--chunked-rate`, `--min-chunk`, `--max-chunk`,
+  `--trailer-rate` — are refused beside it by name, from the command line or
+  a `--config` file, rather than ignored in their turn.  (#169)
+- **A spec claiming a port another protocol holds is refused by `check`**, at
+  its `ports`, naming the holder.  It used to pass `check` and fail at
+  compile time as *a bug in packeteer's compiler*, which sent the author to
+  the wrong place: the clash is the spec's, and the built-ins claim their
+  ports whenever packeteer parses.  `compile_spec` called without `check`
+  says the module *cannot register*, not that it is a bug.  (#169)
 - **A top-level `emit` is an unknown key**, as it is in kober.  It was
   declined as *not supported yet*, which told the author kober would take it.
   In kober, `emit` belongs on a unit or a field, where packeteer still

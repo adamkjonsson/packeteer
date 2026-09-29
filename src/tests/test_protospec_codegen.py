@@ -583,6 +583,32 @@ class TestStreamSpecsAreRefused(unittest.TestCase):
             _source(self._STREAM)
         self.assertIn("not supported yet", str(ctx.exception))
 
+    def test_a_port_clash_is_not_blamed_on_the_compiler(self) -> None:
+        """For a caller who compiles without checking (#169).
+
+        `check` reports the clash at `ports`; `compile_spec` meets it as the
+        registry's refusal, and says so rather than calling itself buggy.
+        """
+        from packeteer.app import register_builtins
+
+        register_builtins()
+        with self.assertRaises(SpecError) as ctx:
+            _source("""
+                name: blob
+                version: "1"
+                entry: m
+                over: tcp
+                ports: [80]
+                units:
+                  m:
+                    fields:
+                      - {name: raw, bytes: {size: {remaining: true}}}
+            """)
+        message = str(ctx.exception)
+        self.assertIn("cannot register", message)
+        self.assertIn("already claimed by 'http'", message)
+        self.assertNotIn("bug", message)
+
     def test_a_declined_construct_is_refused_by_name_without_check(self) -> None:
         """`compile_spec` assumes a checked spec; this one fault it names itself.
 
