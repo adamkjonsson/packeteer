@@ -40,6 +40,14 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   `params` are values supplied when a decode is set up, not the unit
   parameters the same word means on a unit, and the message says which.
   (#168)
+- **kober 0.5.0's `transform` and `concat` are recognised and declined by
+  name**, on a field and as a switch case, so a spec using them loads and the
+  rest of it is checked.  kober's `http.yaml` uses both since it began
+  inflating `Content-Encoding` bodies, and 0.16.0 refused it at load as
+  unknown keys.  Their shape is still checked, as kober checks it: a
+  `transform` needs `from`, `with` and a positive `limit` and takes no other
+  keys than kober's six, and a `concat` must be `repeated.member`.  Building
+  a transform — compressing on the way out — is not supported.  (#170)
 - **`EnumDef.doc`**, from kober's long enum form (below), printed by
   `protocol show` beneath the enum as a unit's doc is.  (#166)
 

@@ -67,6 +67,8 @@ as unknown keys:
 | `pointer` | Decoding one is straightforward; *encoding* one needs a compression model of the protocol's own, which is what makes DNS a hand-written protocol here rather than a spec |
 | `select` | A question asked across a repeated field — what HTTP needs to decide its own framing |
 | `computed` | A value derived at decode time; `derive` is the encode-direction answer and covers the cases that matter here |
+| `transform: {from, with, limit, …}` | Bytes after a named transform, such as a gzip body inflated.  Building one means running the transform backwards — compressing, encrypting — which is a separate question from declining it.  The shape is still checked: `from`, `with` and `limit` are required, as kober requires them |
+| `concat: repeated.member` | One member of every element of a repetition, joined, such as a chunked body's data.  Must be written `repeated.member` |
 | `{size: {terminated: …}}`, `{string: {delimiter: …}}` | Delimiter framing, in either spelling |
 | `repeat: {until: …}`, `repeat: {to_end: true}` | Repeat by condition, or to the end of the run |
 | unit `params:` / `{unit: {args: …}}` | Unit parameters — see [kober's dialect](#protocols-kober) |

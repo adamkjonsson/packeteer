@@ -117,6 +117,120 @@ class TestKoberHTTP(unittest.TestCase):
         self.assertEqual(findings, [])
 
 
+class TestTransformAndConcat(unittest.TestCase):
+    """kober 0.5.0's two field types, declined by name and still shape-checked (#170)."""
+
+    _HEAD = """
+name: t
+version: "1"
+entry: m
+units:
+  m:
+    fields:
+      - {name: n, bits: 8}
+      - {name: chunks, unit: chunk, count: n}
+      - {name: body, bytes: {size: {expr: n}}}
+"""
+    _CHUNK = """
+  chunk:
+    fields:
+      - {name: size, bits: 8}
+      - {name: data, bytes: {size: {expr: size}}}
+"""
+
+    def _load(self, fields: str, extra: str = "") -> object:
+        from packeteer.protospec import loads
+        return loads(self._HEAD + fields + self._CHUNK + extra, fmt="yaml")
+
+    def _declines(self, spec: object) -> list[str]:
+        return [d.message for d in check(spec).diagnostics
+                if d.severity == "error"]
+
+    def test_the_issues_spec(self) -> None:
+        """Refused at load as unknown keys in 0.16.0; now one message each."""
+        spec = self._load("""\
+      - {name: joined, concat: chunks.data}
+      - name: content
+        transform: {from: body, with: gzip, limit: 64}
+""")
+        self.assertEqual(_constructs(spec), {"concat", "transform"})
+        errors = self._declines(spec)
+        self.assertEqual(len(errors), 2, errors)
+        for message in errors:
+            self.assertIn("not supported yet", message)
+
+    def test_either_as_a_switch_case(self) -> None:
+        """The 0.5.0 `http.yaml` has both as switch arms."""
+        spec = self._load("""\
+      - name: content
+        switch:
+          dispatch: n
+          cases:
+            1: {concat: chunks.data}
+            2: {transform: {from: body, with: deflate, limit: 64}}
+          default: {bytes: 1}
+""")
+        self.assertEqual(_constructs(spec), {"concat", "transform"})
+        self.assertEqual(len(self._declines(spec)), 2)
+
+    def test_every_transform_key(self) -> None:
+        spec = self._load("""\
+      - name: content
+        transform:
+          from: body
+          with: aes-gcm
+          limit: 64
+          args: {key: "n"}
+          type: {unit: document}
+          content_type: application/json
+""", """
+  document:
+    fields:
+      - {name: v, bits: 8}
+""")
+        self.assertEqual(_constructs(spec), {"transform"})
+
+    def test_a_unit_a_transform_decodes_as_is_reached(self) -> None:
+        """Its `type` names the unit; #167's stand-in remembers that."""
+        spec = self._load("""\
+      - name: content
+        transform: {from: body, with: gzip, limit: 64, type: {unit: document}}
+""", """
+  document:
+    fields:
+      - {name: v, bits: 8}
+""")
+        messages = [d.message for d in check(spec).diagnostics]
+        self.assertFalse([m for m in messages if "never referenced" in m], messages)
+
+    def _refused(self, fields: str) -> str:
+        with self.assertRaises(SpecError) as ctx:
+            self._load(fields)
+        return str(ctx.exception)
+
+    def test_a_transform_missing_a_required_key(self) -> None:
+        """Declining it must not loosen it: kober requires all three."""
+        self.assertIn("needs 'limit'", self._refused("""\
+      - {name: content, transform: {from: body, with: gzip}}
+"""))
+
+    def test_a_transform_with_an_unknown_key(self) -> None:
+        self.assertIn("no key 'lmit'", self._refused("""\
+      - {name: content, transform: {from: body, with: gzip, lmit: 64}}
+"""))
+
+    def test_a_transform_limit_that_is_not_positive(self) -> None:
+        self.assertIn("must be positive", self._refused("""\
+      - {name: content, transform: {from: body, with: gzip, limit: 0}}
+"""))
+
+    def test_a_concat_that_is_not_repeated_dot_member(self) -> None:
+        for path in ("chunks", "chunks.data.more", ".data"):
+            with self.subTest(path=path):
+                self.assertIn("as 'chunks.data'", self._refused(
+                    f"      - {{name: joined, concat: {path}}}\n"))
+
+
 class TestKoberOnlyKeys(unittest.TestCase):
     """kober's decode-only keys are declined by name, not read as typos (#144)."""
 

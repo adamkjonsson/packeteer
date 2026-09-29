@@ -62,7 +62,15 @@ _UNSUPPORTED_TYPES: dict[str, str] = {
     "pointer":  "read a type at an offset and carry on — needs a compression "
                 "model to encode",
     "select":   "a question asked across a repeated field",
+    "transform": "bytes after a named transform, such as decompression — "
+                 "building one needs the inverse transform",
+    "concat":   "one member of every element of a repetition, joined",
 }
+#: kober's `transform` keys, and the three it requires.
+_TRANSFORM_KEYS: frozenset[str] = frozenset({
+    "from", "with", "limit", "args", "type", "content_type",
+})
+_TRANSFORM_REQUIRED: tuple[str, ...] = ("from", "with", "limit")
 _UNSUPPORTED_SIZES: dict[str, str] = {
     "terminated": "a size ending at a delimiter rather than a declared length",
 }
@@ -603,6 +611,7 @@ def _field_type(data: Any, loc: Location, ctx: _Ctx) -> FieldType:
 def _one_type(kind: str, body: Any, loc: Location, ctx: _Ctx) -> FieldType:
     """Build the type named by *kind*, whether it was lifted or wrapped."""
     if kind in _UNSUPPORTED_TYPES:
+        _check_declined_shape(kind, body, loc, ctx)
         ctx.record(kind, loc, _UNSUPPORTED_TYPES[kind])
         # Stand in for it so loading can finish and the checker can report
         # every fault at once rather than only the first.  A stand-in with a
@@ -625,6 +634,51 @@ def _one_type(kind: str, body: Any, loc: Location, ctx: _Ctx) -> FieldType:
     if kind == "switch":
         return _switch(body, loc, ctx)
     raise SpecError(f"unknown field type {kind!r}", loc)
+
+
+def _check_declined_shape(kind: str, body: Any, loc: Location, ctx: _Ctx) -> None:
+    """Refuse a malformed ``transform`` or ``concat``, as kober would (#170).
+
+    Declining a construct must not loosen it: a typo inside one is still a
+    typo, and an author writing for kober should hear about it from either
+    loader.  The rules are kober 0.5.0's.  What the names refer to — an
+    earlier field, a declared transform — is not checked, since nothing here
+    reads them.
+    """
+    if kind == "concat":
+        text = _as_str(body, loc, "a concat")
+        repeated, dot, member = text.partition(".")
+        if not dot or not repeated or not member or "." in member:
+            raise SpecError(
+                f"a concat names a repeated field and the field of each "
+                f"element to join, as 'chunks.data'; got {text!r}", loc,
+            )
+        return
+    if kind != "transform":
+        return
+    mapping = _as_mapping(body, loc, "a transform")
+    _reject_unknown(mapping, _TRANSFORM_KEYS, "a transform", loc)
+    missing = [key for key in _TRANSFORM_REQUIRED if key not in mapping]
+    if missing:
+        listed = ", ".join(repr(key) for key in missing)
+        raise SpecError(f"a transform needs {listed}", loc)
+    _as_str(mapping["from"], loc.child("from"), "a transform's source")
+    _as_str(mapping["with"], loc.child("with"), "a transform's name")
+    limit = _as_int(mapping["limit"], loc.child("limit"), "a transform's limit")
+    if limit < 1:
+        raise SpecError(
+            f"a transform's limit must be positive, not {limit}", loc.child("limit"),
+        )
+    for name in _as_mapping(mapping.get("args", {}), loc.child("args"),
+                            "a transform's args"):
+        _as_str(name, loc.child("args"), "an argument name")
+    if "content_type" in mapping:
+        _as_str(mapping["content_type"], loc.child("content_type"),
+                "a transform's content_type")
+    if "type" in mapping:
+        # Built for its faults only: a nested construct this version lacks is
+        # recorded and reported like any other.
+        _field_type(mapping["type"], loc.child("type"), ctx)
 
 
 def _units_named(body: Any) -> tuple[str, ...]:
