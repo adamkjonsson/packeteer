@@ -119,6 +119,45 @@ class TestARawSection(unittest.TestCase):
                 self.assertEqual(http.encode(msg), wire)
 
 
+class TestTypeIsRequestOrResponse(unittest.TestCase):
+    """Anything else was read as a request, in silence (#180).
+
+    With `raw`, `type` overrides the start line, so a misspelt `response`
+    sent a response's exact bytes from the client.
+    """
+
+    _RESPONSE = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nR1".hex()
+
+    def test_a_misspelling_is_refused_by_name(self) -> None:
+        for section in ({"raw": self._RESPONSE, "type": "respnse"},
+                        {"type": "reqest", "method": "GET"},
+                        {"type": "Response", "status_code": 200}):
+            with self.subTest(type=section["type"]), \
+                    self.assertRaises(ValueError) as ctx:
+                http.from_spec(section)
+            self.assertIn(f"type must be 'request' or 'response', not "
+                          f"{section['type']!r}", str(ctx.exception))
+
+    def test_it_names_the_message_in_a_list(self) -> None:
+        """What `--protocol-messages` reports: which message, and why."""
+        with self.assertRaises(ValueError) as ctx:
+            protocol_messages(protocols.for_section("http"), [
+                {"http": {"raw": b"GET /a HTTP/1.1\r\n\r\n".hex()}},
+                {"http": {"raw": self._RESPONSE, "type": "respnse"}},
+            ], "tcp")
+        self.assertIn("message 1", str(ctx.exception))
+        self.assertIn("'respnse'", str(ctx.exception))
+
+    def test_left_out_it_keeps_its_meaning(self) -> None:
+        """The start line decides for `raw`; a structured section is a request."""
+        self.assertIsInstance(http.from_spec({"raw": self._RESPONSE}), HTTPResponse)
+        self.assertIsInstance(http.from_spec({"method": "GET"}), HTTPRequest)
+
+    def test_both_spellings_still_work(self) -> None:
+        self.assertIsInstance(http.from_spec({"type": "request"}), HTTPRequest)
+        self.assertIsInstance(http.from_spec({"type": "response"}), HTTPResponse)
+
+
 class TestSanitiseDropsRawWhenItRedacts(unittest.TestCase):
     """`raw` wins on build, so a redaction that left it would redact nothing."""
 

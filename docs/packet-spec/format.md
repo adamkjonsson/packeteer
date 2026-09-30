@@ -1202,7 +1202,7 @@ The `type` field selects between request and response:
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `type` | `"request"` | Must be `"request"` |
+| `type` | `"request"` | `"request"`; any value but `"request"` or `"response"` is refused.  With [`raw`](#http-raw), left out means the start line decides |
 | `method` | `"GET"` | HTTP method string (e.g. `"GET"`, `"POST"`) |
 | `path` | `"/"` | Request-target (path, optionally with query string) |
 | `version` | `"1.1"` | HTTP version without the `"HTTP/"` prefix |
@@ -1214,7 +1214,7 @@ The `type` field selects between request and response:
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `type` | — | Must be `"response"` |
+| `type` | — | `"response"`; any value but `"request"` or `"response"` is refused.  With [`raw`](#http-raw), left out means the start line decides |
 | `version` | `"1.1"` | HTTP version without the `"HTTP/"` prefix |
 | `status_code` | `200` | 3-digit integer status code |
 | `reason` | `"OK"` | Reason phrase |

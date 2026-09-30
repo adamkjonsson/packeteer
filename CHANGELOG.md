@@ -136,6 +136,11 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   `--error-rate`, `--chunked-rate`, `--min-chunk`, `--max-chunk`,
   `--trailer-rate` — are refused beside it by name, from the command line or
   a `--config` file, rather than ignored in their turn.  (#169)
+- **An `http` section's `type` must be `request` or `response`.**  Any
+  other value was read as a request, so a misspelt `"respnse"` built a
+  request from a response's fields, and since `raw` it sent a response's
+  exact bytes from the client, with the run reporting success.  It is now
+  refused naming the value.  Left out, it means what it did.  (#180)
 - **A repeated HTTP header is combined, not dropped.**  `parse` kept the last
   value of a header that appeared twice and lost the others, silently: two
   `Transfer-Encoding` lines, `gzip` then `chunked`, parsed as only `chunked`,

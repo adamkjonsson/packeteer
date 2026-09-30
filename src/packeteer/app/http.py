@@ -91,9 +91,8 @@ def from_spec(section: dict[str, Any]) -> HTTPRequest | HTTPResponse:
 
     Args:
         section: The object found under ``"http"`` in a packet spec.
-            ``type`` of ``"response"`` selects
-            :class:`~packeteer.generate.http.HTTPResponse`; anything else is
-            read as a request.
+            ``type`` is ``"request"`` or ``"response"``.  Left out, it is a
+            request, unless ``raw``'s start line says response.
 
     Returns:
         The message it describes.
@@ -101,10 +100,18 @@ def from_spec(section: dict[str, Any]) -> HTTPRequest | HTTPResponse:
     Raises:
         ValueError: If *section* is non-empty and none of its keys is one an
             HTTP section has — most often a whole packet spec passed where
-            its ``"http"`` object was meant.
+            its ``"http"`` object was meant — or if ``type`` is anything but
+            ``"request"`` or ``"response"``.
 
     """
     check_section("http", section, _SECTION_KEYS)
+    kind = section.get("type")
+    if kind is not None and kind not in ("request", "response"):
+        # Read as a request, a misspelt `response` sent a response's bytes
+        # from the client, and with `raw` it overrides the start line (#180).
+        raise ValueError(
+            f"http: type must be 'request' or 'response', not {kind!r}"
+        )
     if section.get("raw"):
         return _from_raw(bytes.fromhex(section["raw"]), section.get("type"))
     headers = section.get("headers", {})
