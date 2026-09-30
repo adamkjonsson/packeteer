@@ -993,7 +993,7 @@ reproduced from [`raw`](#dns-top-level-fields) instead.
 | `answers` | Array of resource records in the answer section |
 | `authority` | Array of resource records in the authority section |
 | `additional` | Array of resource records in the additional section |
-| `raw` | — | The message exactly as captured, hex-encoded, written by `parse` only when re-encoding the decoded fields would not reproduce it — a message whose sender **compressed names differently** from packeteer's encoder, in practice.  It is written out verbatim and **takes precedence over every other key here**, so editing them has no effect while it is present; delete it to hand-edit a captured message.  `packeteer sanitise` deletes it whenever it changes the section, since a redacted name that is still in `raw` is not redacted |
+| `raw` | — | The message exactly as captured, hex-encoded, written by `parse` only when re-encoding the decoded fields would not reproduce it — a message whose sender **compressed names differently** from packeteer's encoder, in practice.  It is written out verbatim and **takes precedence over every other key here**, so editing them has no effect while it is present; delete it to hand-edit a captured message.  `packeteer sanitise` deletes it whenever it changes the section, since a redacted name that is still in `raw` is not redacted.  An empty `raw` is refused rather than read as absent |
 
 ### `dns.flags`
 

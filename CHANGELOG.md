@@ -56,7 +56,8 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   message keeps its number of lines.  (#181)
 - **`packeteer.protocols.section_bytes`**, beside `check_section`: a
   section's hex key read as bytes, refusing a bad value in words that name
-  the protocol and the key.  (#181)
+  the protocol and the key.  (#181)  And **`section_raw`**, the same for a
+  `raw` key, which also refuses one that is present and empty.  (#183)
 - **`packeteer.protospec.spec.Declined`**, the type of a field whose
   construct this version reads but does not implement, and
   **`ExprType.UNKNOWN`**, the type an expression reading one has.  Neither
@@ -160,9 +161,11 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   as Python spells it, `Set-Cookie: ['a=1']`, and the run reported success.
   It is now refused naming the header and the item.  An integer is still
   taken as its digits.  (#182)
-- **An empty `raw` in an `http` section is refused.**  It was read as
-  absent, so a default `GET / HTTP/1.1` went on the wire in its place,
-  though a `raw` that is present says to send exactly its bytes.  (#181)
+- **An empty `raw` is refused, in an `http` section and a `dns` one.**  It
+  was read as absent, so a message built from the other fields went on the
+  wire in its place — a default `GET / HTTP/1.1` for HTTP, whatever the other
+  keys said for DNS — though a `raw` that is present says to send exactly
+  its bytes.  (#181, #183)
 - **Bad hex in a section names its protocol and key**: `http: raw is not
   hex: 'z' at position 0 is not a hex digit`, for an `http` section's `raw`
   and `body` and a `dns` section's `raw`.  It was Python's own message,

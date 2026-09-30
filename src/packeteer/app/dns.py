@@ -39,7 +39,7 @@ from packeteer.generate.dns import (
     _build_dns_message,
     _build_dns_message_tcp,
 )
-from packeteer.protocols import AppProtocol, check_section, section_bytes
+from packeteer.protocols import AppProtocol, check_section, section_raw
 
 if TYPE_CHECKING:
     from packeteer.generate.dns import DNSRData
@@ -204,7 +204,7 @@ def from_spec(section: dict[str, Any]) -> DNSMessage:
         answers=_rrs("answers"),
         authority=_rrs("authority"),
         additional=_rrs("additional"),
-        raw=section_bytes("dns", section, "raw"),
+        raw=section_raw("dns", section) or b"",
     )
 
 

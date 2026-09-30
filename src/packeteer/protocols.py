@@ -58,6 +58,7 @@ __all__ = [
     "check_name",
     "check_section",
     "section_bytes",
+    "section_raw",
 ]
 
 # Names a protocol may not take.  A protocol's name is both its packet-spec
@@ -487,6 +488,44 @@ def section_bytes(name: str, section: Mapping[str, Any], key: str) -> bytes:
     why = ("an odd number of hex digits" if bad is None
            else f"{value[bad]!r} at position {bad} is not a hex digit")
     raise ValueError(f"{name}: {key} is not hex: {why}")
+
+
+def section_raw(name: str, section: Mapping[str, Any]) -> bytes | None:
+    """Return *section*'s ``raw``, or ``None`` when it has none.
+
+    ``raw`` is a message's exact bytes, and wherever a protocol has one it
+    wins over the decoded fields.  So a ``raw`` that is present says to send
+    exactly its bytes, and an empty one is refused rather than read as
+    absent: building the message from the other fields instead puts a
+    message nobody wrote on the wire (#181 for ``http``, #183 for ``dns``).
+    Nothing packeteer writes has an empty ``raw`` — ``parse`` leaves the key
+    out, and ``sanitise`` deletes it.
+
+    Args:
+        name: The protocol's :attr:`~AppProtocol.name`, for the message.
+        section: The object handed to ``from_spec``.
+
+    Returns:
+        The bytes, or ``None`` when ``raw`` is absent.
+
+    Raises:
+        ValueError: If ``raw`` is present and empty, or is not hex — see
+            :func:`section_bytes`.
+
+    Example::
+
+        raw = section_raw("dns", section)
+
+    """
+    if "raw" not in section:
+        return None
+    raw = section_bytes(name, section, "raw")
+    if not raw:
+        raise ValueError(
+            f"{name}: raw is empty; give the message's bytes, or leave raw "
+            f"out to build the message from the other fields"
+        )
+    return raw
 
 
 def registered() -> tuple[AppProtocol, ...]:

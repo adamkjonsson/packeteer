@@ -167,6 +167,28 @@ class TestTheEdgesOfRaw(unittest.TestCase):
             http.from_spec({"raw": ""})
         self.assertIn("http: raw is empty", str(ctx.exception))
 
+    def test_an_empty_dns_raw_is_refused_too(self) -> None:
+        """A `raw` that is present sends exactly its bytes, in either protocol (#183).
+
+        It was read as absent, and a message built from `id` went out in its
+        place.
+        """
+        with self.assertRaises(ValueError) as ctx:
+            dns.from_spec({"raw": "", "id": 7})
+        self.assertIn("dns: raw is empty", str(ctx.exception))
+
+    def test_an_absent_raw_means_what_it_did(self) -> None:
+        self.assertEqual(dns.from_spec({"id": 7}).raw, b"")
+        self.assertEqual(http.from_spec({"method": "GET"}).raw, b"")
+
+    def test_section_raw_is_the_one_check(self) -> None:
+        """What a protocol with a `raw` key calls, now or later."""
+        self.assertIsNone(protocols.section_raw("t", {}))
+        self.assertEqual(protocols.section_raw("t", {"raw": "00ff"}), b"\x00\xff")
+        with self.assertRaises(ValueError) as ctx:
+            protocols.section_raw("t", {"raw": ""})
+        self.assertIn("t: raw is empty", str(ctx.exception))
+
     def test_bad_hex_names_its_protocol_and_key(self) -> None:
         cases = (
             (http, {"raw": "zz"}, "http: raw is not hex: 'z' at position 0"),
