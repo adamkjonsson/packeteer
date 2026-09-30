@@ -51,6 +51,18 @@ class HTTPRequest:
             the body is non-empty and neither ``Content-Length`` nor
             ``Transfer-Encoding`` is present (matched case-insensitively).
         body: Optional request body bytes (e.g. a POST body).
+        raw: The message exactly as sent, when re-encoding the fields
+            would not reproduce it: a repeated header, a header without the
+            space after its colon, a status line with no reason phrase.
+            Written out verbatim, so such a message round-trips; empty
+            otherwise.  Same reasoning as
+            :attr:`~packeteer.generate.dns.DNSMessage.raw`.
+
+            It takes precedence over the fields, so **editing them has no
+            effect while it is set** — clear it to hand-edit a captured
+            message.  ``packeteer sanitise`` clears it whenever it changes the
+            section, since a header redacted while still in *raw* would not
+            be redacted at all.  (#178)
 
     """
 
@@ -59,6 +71,7 @@ class HTTPRequest:
     version: str = "1.1"
     headers: dict[str, str] = field(default_factory=dict)
     body:    bytes = b""
+    raw:     bytes = b""
 
 
 @dataclass
@@ -77,6 +90,18 @@ class HTTPResponse:
             the body is non-empty and neither ``Content-Length`` nor
             ``Transfer-Encoding`` is present (matched case-insensitively).
         body: Optional response body bytes.
+        raw: The message exactly as sent, when re-encoding the fields
+            would not reproduce it: a repeated header, a header without the
+            space after its colon, a status line with no reason phrase.
+            Written out verbatim, so such a message round-trips; empty
+            otherwise.  Same reasoning as
+            :attr:`~packeteer.generate.dns.DNSMessage.raw`.
+
+            It takes precedence over the fields, so **editing them has no
+            effect while it is set** — clear it to hand-edit a captured
+            message.  ``packeteer sanitise`` clears it whenever it changes the
+            section, since a header redacted while still in *raw* would not
+            be redacted at all.  (#178)
 
     """
 
@@ -85,6 +110,7 @@ class HTTPResponse:
     reason:      str = "OK"
     headers:     dict[str, str] = field(default_factory=dict)
     body:        bytes = b""
+    raw:         bytes = b""
 
 
 # Type alias for the message union.
@@ -107,6 +133,9 @@ def _build_http_message(msg: HTTPMessage) -> bytes:  # type: ignore[valid-type]
     The body is written out verbatim; the encoder never chunks it.  A caller
     who sets ``Transfer-Encoding: chunked`` is responsible for supplying an
     already-chunked body.
+
+    A message carrying :attr:`~HTTPRequest.raw` is returned as those bytes,
+    and none of the above applies.
 
     Args:
         msg: The HTTP message to encode.
@@ -136,6 +165,9 @@ def _build_http_message(msg: HTTPMessage) -> bytes:  # type: ignore[valid-type]
             ))
 
     """
+    if msg.raw:
+        # Exact bytes win over the fields — see `HTTPRequest.raw`.
+        return msg.raw
     headers = dict(msg.headers)
     present = {name.lower() for name in headers}
     if msg.body and "content-length" not in present and "transfer-encoding" not in present:

@@ -10,7 +10,12 @@ from __future__ import annotations
 
 import contextlib
 
-from packeteer.generate.http import HTTPMessage, HTTPRequest, HTTPResponse
+from packeteer.generate.http import (
+    HTTPMessage,
+    HTTPRequest,
+    HTTPResponse,
+    encode_http_message,
+)
 
 _CRLF2 = b"\r\n\r\n"
 _LF2   = b"\n\n"
@@ -33,6 +38,20 @@ def parse_http(data: bytes) -> HTTPMessage:  # type: ignore[valid-type]
     payload**: a 70-byte body split ``1c/c/18/4`` and the same body split
     ``40/6`` are different bytes on the wire and identical once de-chunked, so
     a de-chunked body cannot be re-chunked back into the capture it came from.
+
+    **A message the fields cannot rebuild keeps its bytes** in
+    :attr:`~packeteer.generate.http.HTTPRequest.raw` (#178): a header with no
+    space after its colon, a status line with no reason phrase, bare-LF line
+    endings.  A canonical message, which is most of them, gets none.
+
+    **A repeated header is combined**, its values joined with ``", "`` in the
+    order they came, as RFC 7230 §3.2.2 allows for a field defined as a list.
+    Two ``Transfer-Encoding`` lines, ``gzip`` then ``chunked``, are the one
+    value ``gzip, chunked``, which means the same thing.  It used to keep the
+    last and drop the rest, which changed how the body is framed.  Names match
+    case-insensitively, the first spelling kept.  ``Set-Cookie`` is the one
+    field the RFC says cannot be combined; it is joined the same way, which is
+    lossy in ``headers`` alone, since *raw* carries both lines exactly.
 
     It is the same reasoning that put stream-shaped protocols outside
     packeteer in 0.11.0: reassembly and byte-exact reconstruction want
@@ -73,21 +92,32 @@ def parse_http(data: bytes) -> HTTPMessage:  # type: ignore[valid-type]
     if not lines:
         raise ValueError("HTTP message has no start line")
 
-    start = lines[0]
-
     headers: dict[str, str] = {}
+    spelled: dict[str, str] = {}         # lower-case name → first spelling
     for line in lines[1:]:
         if ":" in line:
             name, _, value = line.partition(":")
-            headers[name.strip()] = value.strip()
+            key = spelled.setdefault(name.strip().lower(), name.strip())
+            value = value.strip()
+            headers[key] = f"{headers[key]}, {value}" if key in headers else value
 
-    # Trim body to Content-Length when present.
-    cl = headers.get("Content-Length") or headers.get("content-length")
+    # Trim body to Content-Length when present, however its name is spelled.
+    cl = headers.get(spelled.get("content-length", ""))
     if cl is not None:
         with contextlib.suppress(ValueError):
             body = body[:int(cl)]
 
-    # Response: first token starts with "HTTP/"
+    msg = _message(lines[0], headers, body)
+    # Only the message's own bytes: what follows a Content-Length body in
+    # the segment is not part of it.
+    sent = head_bytes + sep + body
+    if encode_http_message(msg) != sent:
+        msg.raw = sent
+    return msg
+
+
+def _message(start: str, headers: dict[str, str], body: bytes) -> HTTPMessage:  # type: ignore[valid-type]
+    """Build the request or response *start* names."""
     if start.upper().startswith("HTTP/"):
         parts = start.split(None, 2)
         if len(parts) < 2:
