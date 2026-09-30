@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 
 from packeteer import protocols
-from packeteer.app import http, protocol_messages
+from packeteer.app import dns, http, protocol_messages
 from packeteer.generate import HTTPRestConfig, generate_http_stream
 from packeteer.generate.http import HTTPRequest, HTTPResponse
 from packeteer.parse import iter_packets
@@ -156,6 +156,74 @@ class TestTypeIsRequestOrResponse(unittest.TestCase):
     def test_both_spellings_still_work(self) -> None:
         self.assertIsInstance(http.from_spec({"type": "request"}), HTTPRequest)
         self.assertIsInstance(http.from_spec({"type": "response"}), HTTPResponse)
+
+
+class TestTheEdgesOfRaw(unittest.TestCase):
+    """An empty `raw`, and hex that is not hex (#181)."""
+
+    def test_an_empty_raw_is_refused(self) -> None:
+        """It sent a default `GET /` nobody wrote, though `raw` wins."""
+        with self.assertRaises(ValueError) as ctx:
+            http.from_spec({"raw": ""})
+        self.assertIn("http: raw is empty", str(ctx.exception))
+
+    def test_bad_hex_names_its_protocol_and_key(self) -> None:
+        cases = (
+            (http, {"raw": "zz"}, "http: raw is not hex: 'z' at position 0"),
+            (http, {"body": "4g"}, "http: body is not hex: 'g' at position 1"),
+            (dns, {"raw": "zz"}, "dns: raw is not hex: 'z' at position 0"),
+            (http, {"raw": "abc"}, "http: raw is not hex: an odd number"),
+            (http, {"raw": 5}, "http: raw must be a hex string, not int"),
+        )
+        for module, section, expected in cases:
+            with self.subTest(section=section), self.assertRaises(ValueError) as ctx:
+                module.from_spec(section)
+            self.assertIn(expected, str(ctx.exception))
+
+    def test_section_bytes_reads_what_fromhex_reads(self) -> None:
+        """Whitespace between digits is allowed, and absent is empty."""
+        self.assertEqual(protocols.section_bytes("t", {"k": "de ad"}, "k"),
+                         b"\xde\xad")
+        self.assertEqual(protocols.section_bytes("t", {}, "k"), b"")
+
+
+class TestSetCookieIsKeptApart(unittest.TestCase):
+    """RFC 7230's one field that cannot be combined, as a list (#181).
+
+    A cookie's `Expires` has a comma in it, so a folded value is ambiguous,
+    and `sanitise`, which drops `raw` as it redacts, rebuilt two lines as one.
+    """
+
+    _WIRE = (b"HTTP/1.1 200 OK\r\n"
+             b"Set-Cookie: a=1; Expires=Wed, 21 Oct 2026 07:28:00 GMT\r\n"
+             b"Set-Cookie: b=2\r\nContent-Length: 0\r\n\r\n")
+
+    def test_a_repeated_set_cookie_is_a_list(self) -> None:
+        self.assertEqual(parse_http(self._WIRE).headers["Set-Cookie"],
+                         ["a=1; Expires=Wed, 21 Oct 2026 07:28:00 GMT", "b=2"])
+
+    def test_the_fields_alone_rebuild_it(self) -> None:
+        """So it needs no `raw`, and nothing is lost when `raw` goes."""
+        section = http.to_spec(http.decode(self._WIRE))
+        self.assertNotIn("raw", section)
+        self.assertEqual(http.encode(http.from_spec(section)), self._WIRE)
+
+    def test_sanitise_keeps_the_number_of_lines(self) -> None:
+        section = http.to_spec(http.decode(self._WIRE))
+        http.sanitise(section, None, SanitiseOptions(http_headers=True))
+        out = http.encode(http.from_spec(section))
+        self.assertEqual(out.count(b"Set-Cookie: [redacted]\r\n"), 2)
+
+    def test_one_set_cookie_is_still_a_string(self) -> None:
+        msg = parse_http(b"HTTP/1.1 200 OK\r\nSet-Cookie: a=1\r\n\r\n")
+        self.assertEqual(msg.headers["Set-Cookie"], "a=1")
+
+    def test_any_header_may_be_written_as_a_list(self) -> None:
+        """Two Transfer-Encoding lines, without `raw`."""
+        msg = http.from_spec({"type": "response", "headers": {
+            "Transfer-Encoding": ["gzip", "chunked"]}})
+        self.assertEqual(http.encode(msg), b"HTTP/1.1 200 OK\r\n"
+                         b"Transfer-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n\r\n")
 
 
 class TestSanitiseDropsRawWhenItRedacts(unittest.TestCase):

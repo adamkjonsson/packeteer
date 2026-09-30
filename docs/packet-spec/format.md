@@ -1206,7 +1206,7 @@ The `type` field selects between request and response:
 | `method` | `"GET"` | HTTP method string (e.g. `"GET"`, `"POST"`) |
 | `path` | `"/"` | Request-target (path, optionally with query string) |
 | `version` | `"1.1"` | HTTP version without the `"HTTP/"` prefix |
-| `headers` | `{}` | Object of header name → value string pairs.  A header repeated on the wire is one entry, its values joined with `", "` |
+| `headers` | `{}` | Object of header name → value.  A value is a string, or a list of strings for a header on several lines — see [repeated headers](#http-repeated-headers) |
 | `body` | `""` | Request body as a hex string, **as it appears on the wire** — see the note below |
 | `raw` | — | The message exactly as sent, hex-encoded; **wins over every other field** — see [`http.raw`](#http-raw) |
 
@@ -1218,7 +1218,7 @@ The `type` field selects between request and response:
 | `version` | `"1.1"` | HTTP version without the `"HTTP/"` prefix |
 | `status_code` | `200` | 3-digit integer status code |
 | `reason` | `"OK"` | Reason phrase |
-| `headers` | `{}` | Object of header name → value string pairs.  A header repeated on the wire is one entry, its values joined with `", "` |
+| `headers` | `{}` | Object of header name → value.  A value is a string, or a list of strings for a header on several lines — see [repeated headers](#http-repeated-headers) |
 | `body` | `""` | Response body as a hex string, **as it appears on the wire** — see the note below |
 | `raw` | — | The message exactly as sent, hex-encoded; **wins over every other field** — see [`http.raw`](#http-raw) |
 
@@ -1247,11 +1247,29 @@ given, as [`dns.raw`](#dns-top-level-fields) is for DNS.
 - **`sanitise` drops it** whenever it redacts the section, since a header
   redacted in `headers` but left in `raw` would go back on the wire as it was.
 
-A header repeated on the wire, `Transfer-Encoding: gzip` then
-`Transfer-Encoding: chunked`, is one `headers` entry, `"gzip, chunked"`, which
-RFC 7230 §3.2.2 says means the same.  The two lines are in `raw`.  A
-`headers` object cannot hold a name twice (#172), and `raw` is how a message
-that needs to is written.
+`raw` must hold bytes: `{"raw": ""}` is refused rather than read as absent,
+and so is anything that is not hex, naming the key.
+
+(http-repeated-headers)=
+### Repeated headers
+
+A header's value may be a **list**, which is one line per item, in order,
+under the same name:
+
+```json
+"headers": { "Set-Cookie": ["session=abc; Expires=Wed, 21 Oct 2026 07:28:00 GMT", "theme=dark"] }
+```
+
+`parse` writes one only for a repeated `Set-Cookie`, the one field RFC 7230
+§3.2.2 says cannot be combined: a cookie's `Expires` has a comma in it, so
+folding two into one line is ambiguous.  Any other header repeated on the
+wire, `Transfer-Encoding: gzip` then `Transfer-Encoding: chunked`, is one
+string, `"gzip, chunked"`, which the RFC says means the same, and the two
+lines are in `raw`.  A list may be written for any header by hand.
+
+`sanitise` redacts a list item by item, so a message keeps its number of
+lines.  What a list cannot say is order *across* names — `A`, `B`, then `A`
+again — which is #172.
 
 ```{note}
 **A chunked body keeps its framing.**  `body` for a

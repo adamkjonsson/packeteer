@@ -262,10 +262,12 @@ packeteer stream --client-ip 10.0.0.2 --server-ip 10.0.0.1 \
   and would otherwise be accepted and ignored.
 - **For exact bytes, give `raw`.**  A section may be just
   `{"http": {"raw": "<hex>"}}`, sent as written, whatever its spacing, line
-  endings or repeated headers — two `Transfer-Encoding` lines, say, which a
-  `headers` object cannot hold.  A start line beginning `HTTP/` makes it a
-  response; `type` beside it says otherwise.  See
-  [`http.raw`](http-raw).
+  endings or repeated headers.  A start line beginning `HTTP/` makes it a
+  response; `type` beside it, `"request"` or `"response"`, says otherwise.
+  See [`http.raw`](http-raw).
+- **A repeated header can also be written as a list**,
+  `"Transfer-Encoding": ["gzip", "chunked"]`, one line per item, without
+  `raw`.
 
 The file may be what `packeteer parse` writes, as for any other protocol.
 Messages that spanned several segments in the capture parse per packet, so

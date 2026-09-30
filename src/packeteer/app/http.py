@@ -14,7 +14,7 @@ from packeteer.generate.http import (
     HTTPResponse,
     _build_http_message,
 )
-from packeteer.protocols import AppProtocol, check_section
+from packeteer.protocols import AppProtocol, check_section, section_bytes
 
 
 def encode(msg: object, transport: str = "tcp") -> bytes:
@@ -112,10 +112,19 @@ def from_spec(section: dict[str, Any]) -> HTTPRequest | HTTPResponse:
         raise ValueError(
             f"http: type must be 'request' or 'response', not {kind!r}"
         )
-    if section.get("raw"):
-        return _from_raw(bytes.fromhex(section["raw"]), section.get("type"))
+    if "raw" in section:
+        raw = section_bytes("http", section, "raw")
+        if not raw:
+            # Present, `raw` says "send exactly these bytes", and there are
+            # none.  Building from the defaults instead put a `GET /` nobody
+            # wrote on the wire (#181).
+            raise ValueError(
+                "http: raw is empty; give the message's bytes, or leave raw "
+                "out to build the message from the other fields"
+            )
+        return _from_raw(raw, kind)
     headers = section.get("headers", {})
-    body = bytes.fromhex(section.get("body", ""))
+    body = section_bytes("http", section, "body")
     if section.get("type") == "response":
         return HTTPResponse(
             version=section.get("version", "1.1"),

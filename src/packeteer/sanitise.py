@@ -586,7 +586,11 @@ def _sanitise_http(http: dict, opts: SanitiseOptions) -> None:
         return
     for key in list(headers):
         if key.lower() in _HTTP_SENSITIVE_HEADERS:
-            headers[key] = _HTTP_REDACTED
+            # Item by item for a repeated header, so the message keeps its
+            # number of lines — a decoder under test sees the same shape (#181).
+            value = headers[key]
+            headers[key] = ([_HTTP_REDACTED] * len(value) if isinstance(value, list)
+                            else _HTTP_REDACTED)
 
 
 # ── Recursive packet walker ───────────────────────────────────────────────────

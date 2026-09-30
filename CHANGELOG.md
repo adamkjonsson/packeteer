@@ -50,6 +50,13 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   message, which none in the real-capture corpus needs, and `sanitise` drops
   it whenever it redacts the section, so a redacted header never goes back on
   the wire from `raw`.  (#178)
+- **An HTTP header's value may be a list**, one line per item under the same
+  name: `"Set-Cookie": ["a=1; Expires=…", "b=2"]`, or two `Transfer-Encoding`
+  lines without `raw`.  `sanitise` redacts a list item by item, so a
+  message keeps its number of lines.  (#181)
+- **`packeteer.protocols.section_bytes`**, beside `check_section`: a
+  section's hex key read as bytes, refusing a bad value in words that name
+  the protocol and the key.  (#181)
 - **`packeteer.protospec.spec.Declined`**, the type of a field whose
   construct this version reads but does not implement, and
   **`ExprType.UNKNOWN`**, the type an expression reading one has.  Neither
@@ -85,6 +92,13 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ### Changed
 
+- **`HTTPRequest.headers` and `HTTPResponse.headers` are
+  `dict[str, str | list[str]]`**, and `packeteer parse` writes a repeated
+  `Set-Cookie` as a list of its lines rather than one folded string.  Every
+  other header is a string as before.  A consumer that assumed a string
+  meets a list only where the output used to be wrong: RFC 7230 §3.2.2 says
+  `Set-Cookie` cannot be combined, and a cookie's `Expires` has a comma in
+  it, so the folded value was ambiguous.  (#181)
 - **`Switch.arms` is keyed `int | str`.**  Its keys are text for a switch on
   a string, which loads now and is declined.  Not breaking for a spec, and a
   spec that checks cleanly still has integer keys only, but a consumer
@@ -141,11 +155,20 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   request from a response's fields, and since `raw` it sent a response's
   exact bytes from the client, with the run reporting success.  It is now
   refused naming the value.  Left out, it means what it did.  (#180)
+- **An empty `raw` in an `http` section is refused.**  It was read as
+  absent, so a default `GET / HTTP/1.1` went on the wire in its place,
+  though a `raw` that is present says to send exactly its bytes.  (#181)
+- **Bad hex in a section names its protocol and key**: `http: raw is not
+  hex: 'z' at position 0 is not a hex digit`, for an `http` section's `raw`
+  and `body` and a `dns` section's `raw`.  It was Python's own message,
+  naming neither, so an author with many sections had to guess.  (#181)
 - **A repeated HTTP header is combined, not dropped.**  `parse` kept the last
   value of a header that appeared twice and lost the others, silently: two
   `Transfer-Encoding` lines, `gzip` then `chunked`, parsed as only `chunked`,
   which frames the body differently.  They are now one value, `gzip,
   chunked`, as RFC 7230 §3.2.2 allows, and `raw` keeps the two lines.
+  `Set-Cookie`, which the RFC says cannot be combined, is kept apart as a
+  list (see Changed).
   `Content-Length` is also found however its name is spelled, so a body
   after `CONTENT-LENGTH:` is trimmed to it as one after `Content-Length:` is.
   A captured HTTP message the fields cannot rebuild now round-trips byte for

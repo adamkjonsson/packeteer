@@ -50,8 +50,9 @@ def parse_http(data: bytes) -> HTTPMessage:  # type: ignore[valid-type]
     value ``gzip, chunked``, which means the same thing.  It used to keep the
     last and drop the rest, which changed how the body is framed.  Names match
     case-insensitively, the first spelling kept.  ``Set-Cookie`` is the one
-    field the RFC says cannot be combined; it is joined the same way, which is
-    lossy in ``headers`` alone, since *raw* carries both lines exactly.
+    field the RFC says cannot be combined — a cookie's ``Expires`` has a comma
+    in it — so a repeated one is a list, one item per line, which the encoder
+    writes back as separate lines (#181).
 
     It is the same reasoning that put stream-shaped protocols outside
     packeteer in 0.11.0: reassembly and byte-exact reconstruction want
@@ -92,14 +93,20 @@ def parse_http(data: bytes) -> HTTPMessage:  # type: ignore[valid-type]
     if not lines:
         raise ValueError("HTTP message has no start line")
 
-    headers: dict[str, str] = {}
+    headers: dict[str, str | list[str]] = {}
     spelled: dict[str, str] = {}         # lower-case name → first spelling
     for line in lines[1:]:
         if ":" in line:
             name, _, value = line.partition(":")
             key = spelled.setdefault(name.strip().lower(), name.strip())
             value = value.strip()
-            headers[key] = f"{headers[key]}, {value}" if key in headers else value
+            if key not in headers:
+                headers[key] = value
+            elif key.lower() == "set-cookie":
+                seen = headers[key]
+                headers[key] = [*(seen if isinstance(seen, list) else [seen]), value]
+            else:
+                headers[key] = f"{headers[key]}, {value}"
 
     # Trim body to Content-Length when present, however its name is spelled.
     cl = headers.get(spelled.get("content-length", ""))
@@ -116,7 +123,8 @@ def parse_http(data: bytes) -> HTTPMessage:  # type: ignore[valid-type]
     return msg
 
 
-def _message(start: str, headers: dict[str, str], body: bytes) -> HTTPMessage:  # type: ignore[valid-type]
+def _message(start: str, headers: dict[str, str | list[str]],
+             body: bytes) -> HTTPMessage:  # type: ignore[valid-type]
     """Build the request or response *start* names."""
     if start.upper().startswith("HTTP/"):
         parts = start.split(None, 2)
