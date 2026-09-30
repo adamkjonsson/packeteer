@@ -62,9 +62,10 @@ class HTTPRequest:
 
             It takes precedence over the fields, so **editing them has no
             effect while it is set** — clear it to hand-edit a captured
-            message.  ``packeteer sanitise`` clears it whenever it changes the
-            section, since a header redacted while still in *raw* would not
-            be redacted at all.  (#178)
+            message.  ``packeteer sanitise`` redacts a header inside it as
+            well as in *headers*, keeping every other byte (#184), and drops
+            it when the head cannot be read line by line, since a header
+            redacted while still in *raw* would not be redacted at all.
 
     """
 
@@ -103,9 +104,10 @@ class HTTPResponse:
 
             It takes precedence over the fields, so **editing them has no
             effect while it is set** — clear it to hand-edit a captured
-            message.  ``packeteer sanitise`` clears it whenever it changes the
-            section, since a header redacted while still in *raw* would not
-            be redacted at all.  (#178)
+            message.  ``packeteer sanitise`` redacts a header inside it as
+            well as in *headers*, keeping every other byte (#184), and drops
+            it when the head cannot be read line by line, since a header
+            redacted while still in *raw* would not be redacted at all.
 
     """
 

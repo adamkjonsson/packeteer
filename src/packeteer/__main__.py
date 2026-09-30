@@ -2453,7 +2453,10 @@ def main() -> None:
     san_parser.add_argument(
         "--http-headers", action="store_true",
         help="Redact sensitive HTTP headers: Host, Cookie, Set-Cookie, "
-             "Authorization, Location, Referer, Origin (default: kept)",
+             "Authorization, Location, Referer, Origin (default: kept).  A "
+             "message's exact bytes are redacted in place, keeping its "
+             "headers' order and repetition; one whose head cannot be read "
+             "line by line is rebuilt from its fields instead",
     )
     san_parser.add_argument(
         "--scan-pii", action=argparse.BooleanOptionalAction, default=True, dest="scan_pii",

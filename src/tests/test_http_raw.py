@@ -283,8 +283,15 @@ class TestAHeaderValueIsAStringOrAListOfThem(unittest.TestCase):
         self.assertEqual(self._lines([]), [])
 
 
-class TestSanitiseDropsRawWhenItRedacts(unittest.TestCase):
-    """`raw` wins on build, so a redaction that left it would redact nothing."""
+class TestSanitiseRedactsInsideRaw(unittest.TestCase):
+    """A redacted header is redacted in `raw` too, and `raw` stays (#184).
+
+    `raw` wins on build, so a redaction that left it would redact nothing.
+    #178 dropped it, and the rebuilt message lost the capture's shape:
+    repeated headers regrouped, repeated `Transfer-Encoding` lines merged.
+    A sanitised capture stands in for a real one, and a decoder's tests are
+    about exactly that shape.
+    """
 
     _SECRET = b"GET / HTTP/1.1\r\nAuthorization:Bearer s3cret\r\n\r\n"
 
@@ -294,20 +301,68 @@ class TestSanitiseDropsRawWhenItRedacts(unittest.TestCase):
         http.sanitise(section, None, SanitiseOptions(**opts))
         return section
 
-    def test_a_redacted_header_takes_raw_with_it(self) -> None:
-        section = self._sanitised(self._SECRET, http_headers=True)
-        self.assertNotIn("raw", section)
-        self.assertEqual(section["headers"]["Authorization"], "[redacted]")
-        self.assertNotIn(b"s3cret", http.encode(http.from_spec(section)))
+    def _wire(self, section: dict) -> bytes:
+        return http.encode(http.from_spec(section))
 
-    def test_nothing_redacted_keeps_raw(self) -> None:
-        section = self._sanitised(b"GET / HTTP/1.1\r\nX-Trace:1\r\n\r\n",
-                                  http_headers=True)
-        self.assertIn("raw", section)
+    def test_a_redacted_value_is_redacted_in_raw(self) -> None:
+        section = self._sanitised(self._SECRET, http_headers=True)
+        self.assertEqual(section["headers"]["Authorization"], "[redacted]")
+        self.assertEqual(self._wire(section),
+                         b"GET / HTTP/1.1\r\nAuthorization:[redacted]\r\n\r\n")
+
+    def test_the_issues_two_shapes_are_kept(self) -> None:
+        """Every byte but the sensitive values, as captured."""
+        cases = (
+            (b"HTTP/1.1 200 OK\r\nSet-Cookie: session=abc; Expires=Wed, 21 Oct 2026"
+             b" 07:28:00 GMT\r\nContent-Length: 2\r\nSet-Cookie: theme=dark\r\n\r\nok",
+             b"HTTP/1.1 200 OK\r\nSet-Cookie: [redacted]\r\nContent-Length: 2\r\n"
+             b"Set-Cookie: [redacted]\r\n\r\nok"),
+            (b"HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\nTransfer-Encoding: "
+             b"chunked\r\nSet-Cookie: s=1\r\n\r\n0\r\n\r\n",
+             b"HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\nTransfer-Encoding: "
+             b"chunked\r\nSet-Cookie: [redacted]\r\n\r\n0\r\n\r\n"),
+        )
+        for wire, expected in cases:
+            with self.subTest(wire=wire[:40]):
+                section = self._sanitised(wire, http_headers=True)
+                self.assertIn("raw", section)
+                self.assertEqual(self._wire(section), expected)
+
+    def test_spacing_and_line_endings_are_kept(self) -> None:
+        cases = (
+            (b"GET / HTTP/1.1\r\nHost:  h\r\nX:y\r\n\r\n",
+             b"GET / HTTP/1.1\r\nHost:  [redacted]\r\nX:y\r\n\r\n"),
+            (b"GET / HTTP/1.1\nCookie: a=1\nX: y\n\n",
+             b"GET / HTTP/1.1\nCookie: [redacted]\nX: y\n\n"),
+        )
+        for wire, expected in cases:
+            with self.subTest(wire=wire):
+                self.assertEqual(self._wire(self._sanitised(wire, http_headers=True)),
+                                 expected)
+
+    def test_a_head_it_cannot_read_falls_back_to_dropping_raw(self) -> None:
+        """A folded line above all: a secret continued onto it would survive."""
+        cases = (
+            b"GET / HTTP/1.1\r\nAuthorization: Bearer s3\r\n cret\r\n\r\n",
+            b"GET / HTTP/1.1\r\nAuthorization: Bearer s3cret\r\nno colon\r\n\r\n",
+        )
+        for wire in cases:
+            with self.subTest(wire=wire):
+                section = self._sanitised(wire, http_headers=True)
+                self.assertNotIn("raw", section)
+                out = self._wire(section)
+                self.assertNotIn(b"s3", out)
+                self.assertNotIn(b"cret", out)
+
+    def test_nothing_redacted_keeps_raw_as_it_was(self) -> None:
+        wire = b"GET / HTTP/1.1\r\nX-Trace:1\r\n\r\n"
+        section = self._sanitised(wire, http_headers=True)
+        self.assertEqual(bytes.fromhex(section["raw"]), wire)
 
     def test_header_redaction_off_changes_nothing(self) -> None:
         """Off by default: the section is untouched, so `raw` stays with it."""
-        self.assertIn("raw", self._sanitised(self._SECRET))
+        section = self._sanitised(self._SECRET)
+        self.assertEqual(bytes.fromhex(section["raw"]), self._SECRET)
 
 
 class TestExactBytesInAStream(unittest.TestCase):

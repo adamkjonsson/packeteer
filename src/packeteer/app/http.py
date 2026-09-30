@@ -191,9 +191,17 @@ def _from_raw(raw: bytes, kind: str | None) -> HTTPRequest | HTTPResponse:
 def sanitise(section: dict[str, Any], replacer: Any, options: Any) -> None:
     """Redact *section* in place.
 
-    Drops ``raw`` if anything changed, as DNS does: it is written out in
-    preference to the fields, so a header redacted while still in ``raw``
-    would go back on the wire unredacted.
+    A redacted header is redacted **inside** ``raw`` too, which keeps it: the
+    value of each sensitive header line becomes ``[redacted]``, and every
+    other byte stays as captured — the order and repetition of headers, the
+    spacing, the line endings, the body.  A sanitised capture stands in for
+    a real one, and a decoder's tests are about exactly that shape (#184).
+
+    When the head cannot be read line by line with certainty — a folded
+    continuation line above all, which could carry the rest of a secret —
+    ``raw`` is dropped instead, as DNS drops its own, and the message is
+    rebuilt from the redacted fields: repeated headers grouped, and every one
+    but ``Set-Cookie`` combined into one line.
 
     Args:
         section: An ``http`` packet-spec section.
@@ -205,10 +213,51 @@ def sanitise(section: dict[str, Any], replacer: Any, options: Any) -> None:
 
     before = json.dumps(section, sort_keys=True, default=str)
     _sanitise_http(section, options)
-    if "raw" in section and json.dumps(section, sort_keys=True, default=str) != before:
-        # The rebuilt message loses what made it non-canonical — a repeated
-        # header becomes one combined line — which is the right trade.
+    if "raw" not in section or json.dumps(section, sort_keys=True, default=str) == before:
+        return
+    try:
+        redacted = _redact_raw(section_bytes("http", section, "raw"))
+    except ValueError:
+        redacted = None
+    if redacted is None:
+        # `raw` wins on build, so leaving it would put every redacted value
+        # straight back on the wire.
         del section["raw"]
+    else:
+        section["raw"] = redacted.hex()
+
+
+def _redact_raw(raw: bytes) -> bytes | None:
+    """Return *raw* with each sensitive header's value redacted, or ``None``.
+
+    ``None`` means the head could not be read line by line with certainty,
+    and the caller drops ``raw`` rather than risk a secret left in it: no
+    header/body separator, a start line that does not parse, a line without
+    a colon, or one beginning with whitespace — an obs-fold continuation,
+    which a line-by-line rewrite would leave as it was.
+    """
+    from packeteer.parse.http import parse_http
+    from packeteer.sanitise import _HTTP_REDACTED, _HTTP_SENSITIVE_HEADERS
+
+    try:
+        parse_http(raw)
+    except (ValueError, UnicodeDecodeError):
+        return None
+    # The separator `parse_http` splits on, so both read the same head.
+    sep = b"\r\n\r\n" if b"\r\n\r\n" in raw else b"\n\n"
+    head, rest = raw.split(sep, 1)
+    lines = head.split(b"\n")
+    out = [lines[0]]
+    for line in lines[1:]:
+        text, ending = (line[:-1], b"\r") if line.endswith(b"\r") else (line, b"")
+        if not text or text[:1] in b" \t" or b":" not in text:
+            return None
+        name, value = text.split(b":", 1)
+        if name.strip().decode("latin-1").lower() in _HTTP_SENSITIVE_HEADERS:
+            spacing = value[:len(value) - len(value.lstrip(b" \t"))]
+            text = name + b":" + spacing + _HTTP_REDACTED.encode()
+        out.append(text + ending)
+    return b"\n".join(out) + sep + rest
 
 
 PROTOCOL = AppProtocol(

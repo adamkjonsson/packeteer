@@ -47,13 +47,14 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   start line begins `HTTP/` unless `type` says otherwise, so `stream --payload
   http --protocol-messages` can put any HTTP bytes into an impaired stream.
   `parse` writes `raw` only when the fields would not rebuild the captured
-  message, which none in the real-capture corpus needs, and `sanitise` drops
-  it whenever it redacts the section, so a redacted header never goes back on
-  the wire from `raw`.  (#178)
+  message, which none in the real-capture corpus needs, and `sanitise`
+  redacts a header inside it as well as in `headers` (see Changed), so a
+  redacted header never goes back on the wire from `raw`.  (#178)
 - **An HTTP header's value may be a list**, one line per item under the same
   name: `"Set-Cookie": ["a=1; Expires=…", "b=2"]`, or two `Transfer-Encoding`
   lines without `raw`.  `sanitise` redacts a list item by item, so a
-  message keeps its number of lines.  (#181)
+  message rebuilt from its fields keeps its number of `Set-Cookie` lines.
+  (#181)
 - **`packeteer.protocols.section_bytes`**, beside `check_section`: a
   section's hex key read as bytes, refusing a bad value in words that name
   the protocol and the key.  (#181)  And **`section_raw`**, the same for a
@@ -93,6 +94,15 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ### Changed
 
+- **`sanitise --http-headers` keeps an HTTP message's shape.**  It redacts a
+  sensitive header's value inside the message's `raw` bytes as well as in
+  its fields, and keeps `raw`, so the capture is the one captured less its
+  secrets: headers in their order and repetition, spacing and line endings
+  as sent.  It used to drop `raw` and rebuild the message from its fields,
+  which grouped a repeated header and merged two `Transfer-Encoding` lines
+  into one — equivalent HTTP, but not the capture a decoder's tests stood
+  in for.  When the head cannot be read line by line, a folded continuation
+  line above all, `raw` is still dropped and the message rebuilt.  (#184)
 - **`HTTPRequest.headers` and `HTTPResponse.headers` are
   `dict[str, str | list[str]]`**, and `packeteer parse` writes a repeated
   `Set-Cookie` as a list of its lines rather than one folded string.  Every

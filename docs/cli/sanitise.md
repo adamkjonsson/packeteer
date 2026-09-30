@@ -61,6 +61,15 @@ replaced.
 the values of `Host`, `Cookie`, `Set-Cookie`, `Authorization`, `Location`,
 `Referer`, and `Origin`.
 
+A message whose exact bytes the capture kept — its [`raw`](http-raw), written
+by `parse` when a message is not in the form packeteer would rebuild — is
+redacted **inside those bytes**, value by value, and everything else stays as
+captured: the order and repetition of headers, spacing, line endings.  When
+its head cannot be read line by line, a folded continuation line above all,
+the bytes are dropped instead and the message is rebuilt from its redacted
+fields, which groups a repeated header and combines every one but
+`Set-Cookie` into one line.
+
 ## PII scanning
 
 PII scanning is **enabled by default** (`--scan-pii`; `--no-scan-pii` turns it
