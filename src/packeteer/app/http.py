@@ -203,6 +203,10 @@ def sanitise(section: dict[str, Any], replacer: Any, options: Any) -> None:
     rebuilt from the redacted fields: repeated headers grouped, and every one
     but ``Set-Cookie`` combined into one line.
 
+    With ``--payload``, the body is zeroed too, in ``body`` and in the body
+    part of ``raw``, at the same length so ``Content-Length`` stays true.  A
+    chunked body keeps its framing and loses only its chunk data (#185).
+
     Args:
         section: An ``http`` packet-spec section.
         replacer: Unused — HTTP redaction needs no consistent replacement map.
@@ -213,18 +217,138 @@ def sanitise(section: dict[str, Any], replacer: Any, options: Any) -> None:
 
     before = json.dumps(section, sort_keys=True, default=str)
     _sanitise_http(section, options)
-    if "raw" not in section or json.dumps(section, sort_keys=True, default=str) == before:
-        return
+    if "raw" in section and json.dumps(section, sort_keys=True, default=str) != before:
+        try:
+            redacted = _redact_raw(section_bytes("http", section, "raw"))
+        except ValueError:
+            redacted = None
+        if redacted is None:
+            # `raw` wins on build, so leaving it would put every redacted value
+            # straight back on the wire.
+            del section["raw"]
+        else:
+            section["raw"] = redacted.hex()
+    if getattr(options, "payload", False):
+        _zero_bodies(section)
+
+
+def _zero_bodies(section: dict[str, Any]) -> None:
+    """Zero *section*'s body, in ``body`` and in ``raw``, keeping its length.
+
+    ``--payload`` zeroed a packet's top-level payload and nothing else, and
+    once ``parse`` had decoded an HTTP message into this section its body went
+    back on the wire as captured: a password, an email (#185).
+    """
+    chunked = _is_chunked(section.get("headers", {}))
+    if isinstance(section.get("body"), str) and section["body"]:
+        body = bytes.fromhex(section["body"])
+        section["body"] = _zeroed(body, chunked).hex()
+    if isinstance(section.get("raw"), str) and section["raw"]:
+        raw = bytes.fromhex(section["raw"])
+        split = _split_head(raw)
+        if split is None:
+            # No head to keep: nothing of it can be told from body.
+            section["raw"] = bytes(len(raw)).hex()
+        else:
+            head, sep, rest = split
+            section["raw"] = (head + sep + _zeroed(rest, _raw_is_chunked(raw))).hex()
+
+
+def _split_head(raw: bytes) -> tuple[bytes, bytes, bytes] | None:
+    """Return *raw*'s head, separator and body, split as ``parse_http`` does."""
+    sep = b"\r\n\r\n" if b"\r\n\r\n" in raw else b"\n\n"
+    if sep not in raw:
+        return None
+    head, rest = raw.split(sep, 1)
+    return head, sep, rest
+
+
+def _is_chunked(headers: Any) -> bool:
+    """Whether *headers* frame the body in chunks: ``chunked`` coded last."""
+    if not isinstance(headers, dict):
+        return False
+    for name, value in headers.items():
+        if str(name).lower() == "transfer-encoding":
+            lines = value if isinstance(value, list) else [value]
+            codings = ",".join(str(line) for line in lines).split(",")
+            return codings[-1].strip().lower() == "chunked"
+    return False
+
+
+def _raw_is_chunked(raw: bytes) -> bool:
+    """Whether *raw*'s own head frames its body in chunks."""
+    from packeteer.parse.http import parse_http
+
     try:
-        redacted = _redact_raw(section_bytes("http", section, "raw"))
-    except ValueError:
-        redacted = None
-    if redacted is None:
-        # `raw` wins on build, so leaving it would put every redacted value
-        # straight back on the wire.
-        del section["raw"]
-    else:
-        section["raw"] = redacted.hex()
+        return _is_chunked(parse_http(raw).headers)
+    except (ValueError, UnicodeDecodeError):
+        return False
+
+
+def _zeroed(body: bytes, chunked: bool) -> bytes:
+    """Return *body* zeroed at its length, a chunked one keeping its framing.
+
+    Only chunk data is zeroed in a chunked body — size lines, extensions and
+    CRLFs stay, so the message still parses — and a body whose chunks cannot
+    be walked is zeroed whole: it may no longer parse, but none of it survives.
+    """
+    if chunked:
+        walked = _zero_chunks(body)
+        if walked is not None:
+            return walked
+    return bytes(len(body))
+
+
+def _zero_chunks(body: bytes) -> bytes | None:
+    """Return *body* with every chunk's data zeroed, or ``None`` if unwalkable.
+
+    Trailer fields after the last chunk are headers, not body, and are kept.
+    Anything after the trailer section's end belongs to no message here, and
+    is zeroed.
+    """
+    out = bytearray()
+    pos = 0
+    while True:
+        end = body.find(b"\r\n", pos)
+        if end < 0:
+            return None
+        try:
+            size = int(body[pos:end].split(b";", 1)[0].strip(), 16)
+        except ValueError:
+            return None
+        out += body[pos:end + 2]
+        pos = end + 2
+        if size == 0:
+            break
+        if body[pos + size:pos + size + 2] != b"\r\n":
+            return None
+        out += bytes(size) + b"\r\n"
+        pos += size + 2
+    tail = body[pos:]
+    stop = 2 if tail.startswith(b"\r\n") else tail.find(b"\r\n\r\n") + 4
+    if stop < 2:
+        stop = len(tail)
+    return bytes(out + tail[:stop] + bytes(len(tail) - stop))
+
+
+def body_text(section: dict[str, Any]) -> str | None:
+    """Return *section*'s body as text, for the PII scan, or ``None``.
+
+    The scan reads every string in a section, and a body is hex, so the text
+    in it — where a password or an email is likeliest to be — was never read
+    (#185).  The body of ``raw`` is preferred, since it is what goes on the
+    wire; a body that is not UTF-8, a compressed one included, is not scanned.
+    """
+    raw = section.get("raw")
+    try:
+        if isinstance(raw, str) and raw:
+            split = _split_head(bytes.fromhex(raw))
+            body = split[2] if split is not None else b""
+        else:
+            body = bytes.fromhex(section.get("body", "") or "")
+        return body.decode("utf-8") if body else None
+    except (ValueError, TypeError):
+        return None
 
 
 def _redact_raw(raw: bytes) -> bytes | None:
@@ -243,9 +367,10 @@ def _redact_raw(raw: bytes) -> bytes | None:
         parse_http(raw)
     except (ValueError, UnicodeDecodeError):
         return None
-    # The separator `parse_http` splits on, so both read the same head.
-    sep = b"\r\n\r\n" if b"\r\n\r\n" in raw else b"\n\n"
-    head, rest = raw.split(sep, 1)
+    split = _split_head(raw)
+    if split is None:                    # parse_http already refused it
+        return None
+    head, sep, rest = split
     lines = head.split(b"\n")
     out = [lines[0]]
     for line in lines[1:]:

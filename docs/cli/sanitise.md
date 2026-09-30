@@ -37,6 +37,7 @@ When none are given, the sanitised packet spec is printed to stdout.
 | Ethernet `src_mac` / `dst_mac` | **replaced** | `--no-macs` to keep |
 | TCP/UDP port numbers | kept | `--ports` to replace |
 | `payload.data` | kept | `--payload` to zero (same byte length; encoding field removed after zeroing) |
+| HTTP bodies | kept | `--payload` to zero (same byte length; a chunked body keeps its chunk framing) |
 | `packet_metadata` timestamps | kept | `--timestamps` to zero |
 | DNS transaction IDs | kept | `--dns-ids` to zero |
 | DHCP transaction IDs (`xid`) | kept | `--dhcp-xids` to zero |
@@ -57,7 +58,10 @@ addresses use the same replacement pool as IP headers.
 (`ciaddr`, `yiaddr`, `siaddr`, `giaddr`) and `chaddr` (MAC portion) are
 replaced.
 
-**HTTP** — header values are kept by default.  Add `--http-headers` to redact
+**HTTP** — bodies and header values are kept by default.  `--payload` zeroes
+a body, in place and at its length, as it zeroes any payload: only the data of
+a chunked body, so its framing still parses.  Trailer fields after the last
+chunk are headers, and are kept.  Add `--http-headers` to redact
 the values of `Host`, `Cookie`, `Set-Cookie`, `Authorization`, `Location`,
 `Referer`, and `Origin`.
 
@@ -75,10 +79,13 @@ fields, which groups a repeated header and combines every one but
 PII scanning is **enabled by default** (`--scan-pii`; `--no-scan-pii` turns it
 off).  Two things are scanned for email addresses and personal names:
 
-- every UTF-8 encoded **payload**, and
+- every UTF-8 encoded **payload**,
 - every string in an **application-protocol section** — a decoded field is
   where a name is likeliest to be, and until 0.12.0 only the payload was
-  looked at.
+  looked at — and
+- every **HTTP body** that is UTF-8 text.  A body is hex in its section, so
+  until 0.17.0 the string scan passed over it.  One compressed by
+  `Content-Encoding` is not text and is not scanned.
 
 A warning is emitted for each unique finding, consolidated across all packets
 in the run: if the same email address appears in several packets, one warning
@@ -109,7 +116,7 @@ packeteer sanitise capture.pcap --no-scan-pii --pcap clean.pcap
 ```
 
 The scan does not modify the output — it only reports findings.  Combine with
-`--payload` to zero the payloads after inspection.
+`--payload` to zero the payloads, HTTP bodies included, after inspection.
 
 Only `"utf8"` encoded payloads are scanned; hex payloads are left untouched.
 

@@ -9,7 +9,11 @@ when the fields would not rebuild the message.
 from __future__ import annotations
 
 import gzip
+import json
 import random
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -363,6 +367,143 @@ class TestSanitiseRedactsInsideRaw(unittest.TestCase):
         """Off by default: the section is untouched, so `raw` stays with it."""
         section = self._sanitised(self._SECRET)
         self.assertEqual(bytes.fromhex(section["raw"]), self._SECRET)
+
+
+class TestPayloadZeroesTheBody(unittest.TestCase):
+    """`--payload` zeroes an HTTP body, and `--scan-pii` reads one (#185).
+
+    Once `parse` decoded a message into an `http` section, its body went back
+    on the wire as captured: `--payload` touched only a packet's top-level
+    payload, and the scan read strings, where a body is hex.
+    """
+
+    _LOGIN = (b"POST /login HTTP/1.1\r\nHost: shop.example.com\r\n"
+              b"Content-Length: 29\r\n\r\nuser=alice&password=hunter2!!")
+    _CHUNKED = (b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+                b"5\r\nhello\r\n6;ext=1\r\n world\r\n0\r\nX-Trailer: t\r\n\r\n")
+
+    def _payload(self, wire: bytes, *, structured: bool = False) -> dict:
+        section = http.to_spec(http.decode(wire))
+        if structured:
+            section.pop("raw", None)
+        http.sanitise(section, None, SanitiseOptions(payload=True))
+        return section
+
+    def test_a_length_framed_body_is_zeroed_at_its_length(self) -> None:
+        out = http.encode(http.from_spec(self._payload(self._LOGIN)))
+        head, body = out.split(b"\r\n\r\n", 1)
+        self.assertEqual(body, bytes(29))
+        self.assertIn(b"Content-Length: 29", head)
+
+    def test_a_chunked_body_keeps_its_framing(self) -> None:
+        """Only chunk data is zeroed, so the message still parses."""
+        for structured in (False, True):
+            with self.subTest(structured=structured):
+                section = self._payload(self._CHUNKED, structured=structured)
+                out = http.encode(http.from_spec(section))
+                self.assertEqual(out.split(b"\r\n\r\n", 1)[1],
+                                 b"5\r\n" + bytes(5) + b"\r\n6;ext=1\r\n" + bytes(6)
+                                 + b"\r\n0\r\nX-Trailer: t\r\n\r\n")
+                parse_http(out)
+
+    def test_a_chunked_body_it_cannot_walk_is_zeroed_whole(self) -> None:
+        wire = (b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+                b"zz\r\nsecret-data\r\n")
+        out = http.encode(http.from_spec(self._payload(wire)))
+        body = out.split(b"\r\n\r\n", 1)[1]
+        self.assertEqual(body, bytes(len(body)))
+        self.assertNotIn(b"secret", out)
+
+    def test_a_structured_body_is_zeroed_too(self) -> None:
+        section = self._payload(self._LOGIN, structured=True)
+        self.assertEqual(bytes.fromhex(section["body"]), bytes(29))
+
+    def test_without_payload_the_body_is_left(self) -> None:
+        section = http.to_spec(http.decode(self._LOGIN))
+        http.sanitise(section, None, SanitiseOptions())
+        self.assertIn(b"hunter2", http.encode(http.from_spec(section)))
+
+    def test_the_scan_reads_a_body_as_text(self) -> None:
+        """The email in a response body is found, and named by packet."""
+        from packeteer.sanitise import PersonalDataWarning, _scan_http_body
+
+        wire = (b"HTTP/1.1 200 OK\r\nContent-Length: 20\r\n\r\n"
+                b'{"email":"a@b.com"}\n')
+        for structured in (False, True):
+            section = http.to_spec(http.decode(wire))
+            section["raw"] = wire.hex()
+            if structured:
+                section.pop("raw")
+            with self.subTest(structured=structured), \
+                    self.assertWarns(PersonalDataWarning) as ctx:
+                _scan_http_body(section, 6)
+            self.assertIn("in packet 6", str(ctx.warning))
+
+    def test_with_payload_it_is_scanned_first_and_zeroed(self) -> None:
+        """As a payload is: the warning says what was there, and it goes."""
+        from packeteer.sanitise import PersonalDataWarning, sanitise
+
+        wire = (b"HTTP/1.1 200 OK\r\nContent-Length: 20\r\n\r\n"
+                b'{"email":"a@b.com"}\n')
+        config = {"packets": [{"network": {}, "http": http.to_spec(http.decode(wire))}]}
+        with self.assertWarns(PersonalDataWarning):
+            out = sanitise(config, SanitiseOptions(payload=True))
+        self.assertNotIn(b"a@b.com",
+                         http.encode(http.from_spec(out["packets"][0]["http"])))
+
+    def test_a_body_that_is_not_text_is_not_scanned(self) -> None:
+        """A gzip body, say: packeteer inflates bodies nowhere."""
+        body = gzip.compress(b'{"email":"a@b.com"}', mtime=0)
+        section = {"type": "response", "headers": {"Content-Encoding": "gzip"},
+                   "body": body.hex()}
+        self.assertIsNone(http.body_text(section))
+
+
+def _cli(*args: str) -> None:
+    done = subprocess.run([sys.executable, "-m", "packeteer", *args],
+                          capture_output=True, text=True, check=False)
+    assert done.returncode == 0, done.stderr
+
+
+class TestNoBodyByteSurvivesSanitise(unittest.TestCase):
+    """The pin kober asked for, through the CLI as the issue reproduced it (#185)."""
+
+    _BODIES = (b"user=alice&password=hunter2!!", b'{"email":"a@b.com","n":123456}',
+               b"first-chunk-of-secrets", b"second-chunk-of-secrets")
+
+    def test_payload_leaves_no_run_of_any_original_body(self) -> None:
+        login, email, one, two = self._BODIES
+        messages = [
+            b"POST /login HTTP/1.1\r\nHost: h\r\nContent-Length: %d\r\n\r\n" % len(login)
+            + login,
+            b"HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n" % len(email) + email,
+            b"GET /c HTTP/1.1\r\nHost: h\r\n\r\n",
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+            + b"%x\r\n" % len(one) + one + b"\r\n" + b"%x\r\n" % len(two) + two
+            + b"\r\n0\r\n\r\n",
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            for form in ("raw", "structured"):
+                with self.subTest(form=form):
+                    sections = [
+                        {"http": {"raw": m.hex()} if form == "raw"
+                         else {k: v for k, v in http.to_spec(http.decode(m)).items()
+                               if k != "raw"}}
+                        for m in messages
+                    ]
+                    src, out = Path(tmp, f"{form}.pcap"), Path(tmp, f"{form}-out.pcap")
+                    Path(tmp, "m.json").write_text(json.dumps(sections))
+                    _cli("stream", "--payload", "http", "--protocol-messages",
+                         str(Path(tmp, "m.json")), "--requests", "2", "--mss", "200",
+                         "--client-ip", "10.0.0.2", "--server-ip", "10.0.0.1",
+                         "--seed", "1", "--pcap", str(src))
+                    self.assertIn(login, src.read_bytes())
+                    _cli("sanitise", str(src), "--payload", "--pcap", str(out))
+                    wire = b"".join(bytes(p.payload or b"")
+                                    for p in iter_packets(path=out, decode_app=False))
+                    for body in self._BODIES:
+                        for start in range(len(body) - 7):
+                            self.assertNotIn(body[start:start + 8], wire, body)
 
 
 class TestExactBytesInAStream(unittest.TestCase):

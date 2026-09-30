@@ -2436,7 +2436,8 @@ def main() -> None:
     )
     san_parser.add_argument(
         "--payload", action="store_true",
-        help="Zero out payload data (default: kept)",
+        help="Zero out payload data, HTTP bodies included, keeping each one's "
+             "length; a chunked body keeps its chunk framing (default: kept)",
     )
     san_parser.add_argument(
         "--timestamps", action="store_true",

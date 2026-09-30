@@ -314,8 +314,10 @@ class SanitiseOptions:
         ports: Replace ``src_port`` and ``dst_port`` in every ``transport``
             section.  The same original port always maps to the same synthetic
             port (10000–59999).
-        payload: Zero out ``payload.data`` hex strings.  The byte length is
-            preserved so the rebuilt packet has the same size.
+        payload: Zero out ``payload.data`` hex strings, and an HTTP
+            message's body, in its ``body`` and its ``raw`` (#185).  The byte
+            length is preserved so the rebuilt packet has the same size, and
+            a chunked body keeps its chunk framing.
         timestamps: Zero ``timestamp_s`` and ``timestamp_us`` / ``timestamp_ns``
             in every ``metadata`` section.
         dns_ids: Zero the 16-bit transaction ``id`` field in every ``dns``
@@ -1016,10 +1018,29 @@ def _sanitise_app_layers(
                 ),
                 stacklevel=2,
             )
+        if opts.scan_pii and proto.name == "http":
+            # Before the protocol's own sanitise, which may zero the body —
+            # as the payload scan runs before `_sanitise_payloads` (#185).
+            _scan_http_body(pkt[proto.name], packet_num)
         if proto.sanitise is not None:
             proto.sanitise(pkt[proto.name], r, opts)
         if opts.scan_pii:
             _scan_section_text(pkt[proto.name], packet_num)
+
+
+def _scan_http_body(section: dict, packet_num: int) -> None:
+    """Scan an HTTP body as text, which the string scan cannot see (#185).
+
+    It is hex in the section, so :func:`_scan_section_text` passes over it.
+    Run before the section is sanitised, as a payload is scanned before
+    ``--payload`` zeroes it: the warning says what was there, and
+    ``--payload`` still takes it out.
+    """
+    from packeteer.app.http import body_text
+
+    text = body_text(section)
+    if text:
+        _scan_utf8_payload({"data": text}, packet_num)
 
 
 def _scan_section_text(value: object, packet_num: int) -> None:

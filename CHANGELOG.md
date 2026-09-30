@@ -209,6 +209,22 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   written beside `members` is refused as a mix of the two forms, and a `doc`
   in the short form is refused with a pointer to the long one.  (#166)
 
+### Security
+
+- **`sanitise --payload` zeroes HTTP bodies.**  It zeroed a packet's
+  top-level payload and nothing else, and once `parse` had decoded a TCP
+  payload into an `http` section, the message was rebuilt from that
+  section, whose body went back on the wire as captured: a login's
+  password, a response's email.  The run reported success, and the file
+  looked sanitised.  `--payload` now zeroes an HTTP body in its `body` and
+  in its `raw`, at the same length so `Content-Length` stays true, and a
+  chunked body loses only its chunk data, keeping the framing that makes it
+  parse.  The PII scan, which read a section's strings but not its hex, now
+  reads a UTF-8 body as text too, before `--payload` zeroes it, as it does a
+  payload.  This was so in every release that decoded HTTP into its own
+  section; **re-sanitise any capture shared after `sanitise --payload`** if
+  it held HTTP.  (#185)
+
 ### Documentation
 
 - **The format reference follows kober to 0.5.0**: its function table is
