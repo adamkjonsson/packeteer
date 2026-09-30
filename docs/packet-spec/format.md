@@ -1206,8 +1206,9 @@ The `type` field selects between request and response:
 | `method` | `"GET"` | HTTP method string (e.g. `"GET"`, `"POST"`) |
 | `path` | `"/"` | Request-target (path, optionally with query string) |
 | `version` | `"1.1"` | HTTP version without the `"HTTP/"` prefix |
-| `headers` | `{}` | Object of header name → value string pairs |
+| `headers` | `{}` | Object of header name → value string pairs.  A header repeated on the wire is one entry, its values joined with `", "` |
 | `body` | `""` | Request body as a hex string, **as it appears on the wire** — see the note below |
+| `raw` | — | The message exactly as sent, hex-encoded; **wins over every other field** — see [`http.raw`](#http-raw) |
 
 ### `http` fields — response
 
@@ -1217,13 +1218,40 @@ The `type` field selects between request and response:
 | `version` | `"1.1"` | HTTP version without the `"HTTP/"` prefix |
 | `status_code` | `200` | 3-digit integer status code |
 | `reason` | `"OK"` | Reason phrase |
-| `headers` | `{}` | Object of header name → value string pairs |
+| `headers` | `{}` | Object of header name → value string pairs.  A header repeated on the wire is one entry, its values joined with `", "` |
 | `body` | `""` | Response body as a hex string, **as it appears on the wire** — see the note below |
+| `raw` | — | The message exactly as sent, hex-encoded; **wins over every other field** — see [`http.raw`](#http-raw) |
 
 `Content-Length` is added automatically by the builder when `body` is
 non-empty and the message does not already frame itself — that is, when
 neither `Content-Length` nor `Transfer-Encoding` is present.  Header names are
 matched case-insensitively.
+
+(http-raw)=
+### `http.raw`: the exact bytes
+
+The fields above rebuild a message in one canonical form: one space after each
+colon, a reason phrase after the status, CRLF line endings, each header once.
+Real traffic does not always look like that, and a decoder's tests want the
+cases where it does not.  `raw` is the message's bytes in hex, sent exactly as
+given, as [`dns.raw`](#dns-top-level-fields) is for DNS.
+
+- **`parse` writes it** only when the fields would not rebuild the captured
+  message.  A canonical message, and everything packeteer generates, has none.
+- **It wins over every other field**, which stay beside it so the section is
+  readable.  Delete it to edit the fields and have the change take effect.
+- **On its own it is a whole section**: `{"raw": "…"}` is enough.  The fields
+  are read from the bytes, and `type` says whether it is a request or a
+  response, or else the bytes do: a start line beginning `HTTP/` is a
+  response.  Bytes that do not parse as HTTP are still sent as given.
+- **`sanitise` drops it** whenever it redacts the section, since a header
+  redacted in `headers` but left in `raw` would go back on the wire as it was.
+
+A header repeated on the wire, `Transfer-Encoding: gzip` then
+`Transfer-Encoding: chunked`, is one `headers` entry, `"gzip, chunked"`, which
+RFC 7230 §3.2.2 says means the same.  The two lines are in `raw`.  A
+`headers` object cannot hold a name twice (#172), and `raw` is how a message
+that needs to is written.
 
 ```{note}
 **A chunked body keeps its framing.**  `body` for a

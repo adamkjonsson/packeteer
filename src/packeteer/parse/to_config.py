@@ -890,6 +890,11 @@ def _apply_http(config: dict[str, Any], msg: HTTPMessage) -> None:  # type: igno
             "headers":     dict(msg.headers),
             "body":        msg.body.hex(),
         }
+    if msg.raw:
+        # Only when the fields do not re-encode to what was captured.  It wins
+        # over them on build, and `sanitise` drops it when it edits the
+        # section — see `HTTPRequest.raw` (#178).
+        config["http"]["raw"] = msg.raw.hex()
 
 
 def update_config(

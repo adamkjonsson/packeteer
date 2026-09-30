@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from packeteer.generate.http import (
@@ -73,12 +74,20 @@ def to_spec(msg: object) -> dict[str, Any]:
 #: not a section — see :func:`packeteer.protocols.check_section`.
 _SECTION_KEYS: frozenset[str] = frozenset({
     "type", "method", "path", "version", "status_code", "reason", "headers",
-    "body",
+    "body", "raw",
 })
 
 
 def from_spec(section: dict[str, Any]) -> HTTPRequest | HTTPResponse:
     """Build an HTTP message from a spec section.
+
+    A ``raw`` key, in hex, is the message exactly as it is to be sent, and
+    **wins over the other fields** when it is encoded — see
+    :attr:`~packeteer.generate.http.HTTPRequest.raw` (#178).  Its fields are
+    read from the bytes, so a label or a status is the message's own, and
+    ``type`` beside it says which it is, or else the bytes do: a start line
+    beginning ``HTTP/`` is a response.  Bytes that do not parse as HTTP are
+    still sent as given, as the type their start line names.
 
     Args:
         section: The object found under ``"http"`` in a packet spec.
@@ -96,6 +105,8 @@ def from_spec(section: dict[str, Any]) -> HTTPRequest | HTTPResponse:
 
     """
     check_section("http", section, _SECTION_KEYS)
+    if section.get("raw"):
+        return _from_raw(bytes.fromhex(section["raw"]), section.get("type"))
     headers = section.get("headers", {})
     body = bytes.fromhex(section.get("body", ""))
     if section.get("type") == "response":
@@ -115,8 +126,30 @@ def from_spec(section: dict[str, Any]) -> HTTPRequest | HTTPResponse:
     )
 
 
+def _from_raw(raw: bytes, kind: str | None) -> HTTPRequest | HTTPResponse:
+    """Build the message *raw* is, carrying *raw* to be sent as it is."""
+    from packeteer.parse.http import parse_http
+
+    response = kind == "response" if kind is not None else raw[:5].upper() == b"HTTP/"
+    wanted = HTTPResponse if response else HTTPRequest
+    try:
+        msg = parse_http(raw)
+    except (ValueError, UnicodeDecodeError):
+        msg = None
+    if not isinstance(msg, wanted):
+        # Deliberately malformed bytes, or a `type` that overrides what they
+        # look like: the bytes still go as given, as the type asked for.
+        msg = wanted()
+    msg.raw = raw
+    return msg
+
+
 def sanitise(section: dict[str, Any], replacer: Any, options: Any) -> None:
     """Redact *section* in place.
+
+    Drops ``raw`` if anything changed, as DNS does: it is written out in
+    preference to the fields, so a header redacted while still in ``raw``
+    would go back on the wire unredacted.
 
     Args:
         section: An ``http`` packet-spec section.
@@ -126,7 +159,12 @@ def sanitise(section: dict[str, Any], replacer: Any, options: Any) -> None:
     """
     from packeteer.sanitise import _sanitise_http
 
+    before = json.dumps(section, sort_keys=True, default=str)
     _sanitise_http(section, options)
+    if "raw" in section and json.dumps(section, sort_keys=True, default=str) != before:
+        # The rebuilt message loses what made it non-canonical — a repeated
+        # header becomes one combined line — which is the right trade.
+        del section["raw"]
 
 
 PROTOCOL = AppProtocol(

@@ -260,8 +260,12 @@ packeteer stream --client-ip 10.0.0.2 --server-ip 10.0.0.1 \
   `--chunked-rate`, `--min-chunk`, `--max-chunk` and `--trailer-rate`, whether
   on the command line or in a `--config` file.  Each shapes generated traffic,
   and would otherwise be accepted and ignored.
-- **A header name cannot appear twice**, since a section's `headers` is an
-  object.  Two `Transfer-Encoding` lines, say, are not expressible yet (#172).
+- **For exact bytes, give `raw`.**  A section may be just
+  `{"http": {"raw": "<hex>"}}`, sent as written, whatever its spacing, line
+  endings or repeated headers — two `Transfer-Encoding` lines, say, which a
+  `headers` object cannot hold.  A start line beginning `HTTP/` makes it a
+  response; `type` beside it says otherwise.  See
+  [`http.raw`](http-raw).
 
 The file may be what `packeteer parse` writes, as for any other protocol.
 Messages that spanned several segments in the capture parse per packet, so

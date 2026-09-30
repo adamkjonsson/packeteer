@@ -38,6 +38,18 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   objects for `generate_http_stream`, and **`packeteer.app.protocol_messages`**,
   which builds them from packet-spec sections in every shape
   `protocol_payload_fn` accepts.  (#169)
+- **An `http` section carries `raw`**, the message's exact bytes in hex, as a
+  `dns` section does, and **`HTTPRequest.raw` / `HTTPResponse.raw`** hold them.
+  It wins over the other fields, so a message is sent exactly as given: a
+  header with no space after its colon, a status line with no reason phrase,
+  bare-LF line endings, a header repeated on its own line.
+  `{"http": {"raw": "…"}}` is a whole section, read as a response when its
+  start line begins `HTTP/` unless `type` says otherwise, so `stream --payload
+  http --protocol-messages` can put any HTTP bytes into an impaired stream.
+  `parse` writes `raw` only when the fields would not rebuild the captured
+  message, which none in the real-capture corpus needs, and `sanitise` drops
+  it whenever it redacts the section, so a redacted header never goes back on
+  the wire from `raw`.  (#178)
 - **`packeteer.protospec.spec.Declined`**, the type of a field whose
   construct this version reads but does not implement, and
   **`ExprType.UNKNOWN`**, the type an expression reading one has.  Neither
@@ -124,6 +136,15 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   `--error-rate`, `--chunked-rate`, `--min-chunk`, `--max-chunk`,
   `--trailer-rate` — are refused beside it by name, from the command line or
   a `--config` file, rather than ignored in their turn.  (#169)
+- **A repeated HTTP header is combined, not dropped.**  `parse` kept the last
+  value of a header that appeared twice and lost the others, silently: two
+  `Transfer-Encoding` lines, `gzip` then `chunked`, parsed as only `chunked`,
+  which frames the body differently.  They are now one value, `gzip,
+  chunked`, as RFC 7230 §3.2.2 allows, and `raw` keeps the two lines.
+  `Content-Length` is also found however its name is spelled, so a body
+  after `CONTENT-LENGTH:` is trimmed to it as one after `Content-Length:` is.
+  A captured HTTP message the fields cannot rebuild now round-trips byte for
+  byte through `packeteer parse` and `build`.  (#178)
 - **A spec claiming a port another protocol holds is refused by `check`**, at
   its `ports`, naming the holder.  It used to pass `check` and fail at
   compile time as *a bug in packeteer's compiler*, which sent the author to
