@@ -226,6 +226,41 @@ class TestSetCookieIsKeptApart(unittest.TestCase):
                          b"Transfer-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n\r\n")
 
 
+class TestAHeaderValueIsAStringOrAListOfThem(unittest.TestCase):
+    """Anything else went on the wire as Python spells it (#182)."""
+
+    def _lines(self, value: object) -> list[bytes]:
+        msg = http.from_spec({"type": "response", "headers": {"Set-Cookie": value}})
+        return http.encode(msg).split(b"\r\n")[1:-2]
+
+    def test_what_is_not_a_header_value_is_refused_by_name(self) -> None:
+        cases = (
+            ([["a=1"]], "header 'Set-Cookie' item 0 must be a string, not list"),
+            ([{"x": 1}], "header 'Set-Cookie' item 0 must be a string, not dict"),
+            (["a=1", True], "header 'Set-Cookie' item 1 must be a string, not bool"),
+            (True, "header 'Set-Cookie' must be a string, not bool"),
+            (None, "header 'Set-Cookie' must be a string, not NoneType"),
+            (1.5, "header 'Set-Cookie' must be a string, not float"),
+        )
+        for value, expected in cases:
+            with self.subTest(value=value), self.assertRaises(ValueError) as ctx:
+                self._lines(value)
+            self.assertIn(f"http: {expected}", str(ctx.exception))
+
+    def test_headers_must_be_an_object(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            http.from_spec({"type": "response", "headers": ["Set-Cookie: a=1"]})
+        self.assertIn("http: headers must be an object, not list", str(ctx.exception))
+
+    def test_what_always_worked_still_does(self) -> None:
+        """A string, an integer as its digits, and a list of those."""
+        self.assertEqual(self._lines("a=1"), [b"Set-Cookie: a=1"])
+        self.assertEqual(self._lines(2), [b"Set-Cookie: 2"])
+        self.assertEqual(self._lines(["a=1", 2]),
+                         [b"Set-Cookie: a=1", b"Set-Cookie: 2"])
+        self.assertEqual(self._lines([]), [])
+
+
 class TestSanitiseDropsRawWhenItRedacts(unittest.TestCase):
     """`raw` wins on build, so a redaction that left it would redact nothing."""
 

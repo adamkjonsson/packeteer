@@ -123,7 +123,7 @@ def from_spec(section: dict[str, Any]) -> HTTPRequest | HTTPResponse:
                 "out to build the message from the other fields"
             )
         return _from_raw(raw, kind)
-    headers = section.get("headers", {})
+    headers = _headers(section.get("headers", {}))
     body = section_bytes("http", section, "body")
     if section.get("type") == "response":
         return HTTPResponse(
@@ -139,6 +139,37 @@ def from_spec(section: dict[str, Any]) -> HTTPRequest | HTTPResponse:
         version=section.get("version", "1.1"),
         headers=headers,
         body=body,
+    )
+
+
+def _headers(value: Any) -> dict[str, str | list[str]]:
+    """Return a section's headers, each value a string or a list of strings.
+
+    An integer is taken as its digits, which is what it always meant.
+    Anything else is refused naming the header, and the item in a list: it
+    went on the wire as Python spells it — ``['a=1']``, ``True`` — which is
+    bytes the section did not say (#182).
+    """
+    if not isinstance(value, dict):
+        raise ValueError(
+            f"http: headers must be an object, not {type(value).__name__}"
+        )
+    return {
+        name: ([_header_line(name, item, index) for index, item in enumerate(line)]
+               if isinstance(line, list) else _header_line(name, line, None))
+        for name, line in value.items()
+    }
+
+
+def _header_line(name: str, value: Any, index: int | None) -> str:
+    """Return one header line's value as text, or refuse it by name."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    where = f"header {name!r}" if index is None else f"header {name!r} item {index}"
+    raise ValueError(
+        f"http: {where} must be a string, not {type(value).__name__}"
     )
 
 

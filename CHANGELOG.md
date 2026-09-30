@@ -155,6 +155,11 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   request from a response's fields, and since `raw` it sent a response's
   exact bytes from the client, with the run reporting success.  It is now
   refused naming the value.  Left out, it means what it did.  (#180)
+- **An HTTP header value is a string, or a list of them.**  A list item that
+  was anything else — a nested list, an object, a boolean — went on the wire
+  as Python spells it, `Set-Cookie: ['a=1']`, and the run reported success.
+  It is now refused naming the header and the item.  An integer is still
+  taken as its digits.  (#182)
 - **An empty `raw` in an `http` section is refused.**  It was read as
   absent, so a default `GET / HTTP/1.1` went on the wire in its place,
   though a `raw` that is present says to send exactly its bytes.  (#181)

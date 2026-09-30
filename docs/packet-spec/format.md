@@ -1206,7 +1206,7 @@ The `type` field selects between request and response:
 | `method` | `"GET"` | HTTP method string (e.g. `"GET"`, `"POST"`) |
 | `path` | `"/"` | Request-target (path, optionally with query string) |
 | `version` | `"1.1"` | HTTP version without the `"HTTP/"` prefix |
-| `headers` | `{}` | Object of header name → value.  A value is a string, or a list of strings for a header on several lines — see [repeated headers](#http-repeated-headers) |
+| `headers` | `{}` | Object of header name → value.  A value is a string, or a list of strings for a header on several lines — see [repeated headers](#http-repeated-headers).  An integer is taken as its digits; anything else is refused, naming the header |
 | `body` | `""` | Request body as a hex string, **as it appears on the wire** — see the note below |
 | `raw` | — | The message exactly as sent, hex-encoded; **wins over every other field** — see [`http.raw`](#http-raw) |
 
@@ -1218,7 +1218,7 @@ The `type` field selects between request and response:
 | `version` | `"1.1"` | HTTP version without the `"HTTP/"` prefix |
 | `status_code` | `200` | 3-digit integer status code |
 | `reason` | `"OK"` | Reason phrase |
-| `headers` | `{}` | Object of header name → value.  A value is a string, or a list of strings for a header on several lines — see [repeated headers](#http-repeated-headers) |
+| `headers` | `{}` | Object of header name → value.  A value is a string, or a list of strings for a header on several lines — see [repeated headers](#http-repeated-headers).  An integer is taken as its digits; anything else is refused, naming the header |
 | `body` | `""` | Response body as a hex string, **as it appears on the wire** — see the note below |
 | `raw` | — | The message exactly as sent, hex-encoded; **wins over every other field** — see [`http.raw`](#http-raw) |
 
