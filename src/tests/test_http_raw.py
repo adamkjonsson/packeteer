@@ -509,6 +509,53 @@ class TestAWalkThatFailsDoesNotEndTheRun(unittest.TestCase):
         self.assertEqual((section["body"], section["raw"]), ("0000", "0000"))
 
 
+class TestTheHeadEndsAtTheFirstBlankLine(unittest.TestCase):
+    """Whichever of CRLF CRLF and LF LF comes first ends the head (#188).
+
+    The separator was chosen by whether CRLF CRLF occurred anywhere, so a
+    bare-LF head ran on into a body that held a CRLF pair.  `--payload` kept
+    the body's first line, and `parse_http` read it as a header.
+    """
+
+    _LF_HEAD = (b"HTTP/1.1 200 OK\nContent-Type: text/plain\nContent-Length: 30"
+                b"\n\nSECRETC\r\n\r\nSECRETD-more-text")
+
+    def test_parse_reads_the_body_from_its_first_byte(self) -> None:
+        msg = parse_http(self._LF_HEAD)
+        self.assertEqual(msg.body, b"SECRETC\r\n\r\nSECRETD-more-text")
+        self.assertEqual(set(msg.headers), {"Content-Type", "Content-Length"})
+
+    def test_payload_keeps_no_byte_of_the_body(self) -> None:
+        section = {"type": "response", "raw": self._LF_HEAD.hex()}
+        http.sanitise(section, None, SanitiseOptions(payload=True))
+        out = bytes.fromhex(section["raw"])
+        self.assertNotIn(b"SECRET", out)
+        self.assertEqual(len(out), len(self._LF_HEAD))
+
+    def test_headers_are_redacted_in_place_by_the_same_split(self) -> None:
+        wire = (b"HTTP/1.1 200 OK\nSet-Cookie: s=1\nContent-Length: 14\n\n"
+                b"a\r\n\r\nb: secret")
+        section = http.to_spec(http.decode(wire))
+        http.sanitise(section, None, SanitiseOptions(http_headers=True))
+        self.assertEqual(bytes.fromhex(section["raw"]),
+                         b"HTTP/1.1 200 OK\nSet-Cookie: [redacted]\n"
+                         b"Content-Length: 14\n\na\r\n\r\nb: secret")
+
+    def test_the_other_way_round(self) -> None:
+        """A CRLF head with an LF pair in its body."""
+        wire = b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nab\n\ncd"
+        self.assertEqual(parse_http(wire).body, b"ab\n\ncd")
+
+    def test_split_head(self) -> None:
+        from packeteer.parse.http import split_head
+
+        self.assertEqual(split_head(b"H\r\nA: 1\r\n\r\nB"),
+                         (b"H\r\nA: 1", b"\r\n\r\n", b"B"))
+        self.assertEqual(split_head(b"H\nA: 1\n\nB\r\n\r\nC"),
+                         (b"H\nA: 1", b"\n\n", b"B\r\n\r\nC"))
+        self.assertIsNone(split_head(b"H\r\nA: 1"))
+
+
 def _cli(*args: str) -> None:
     done = subprocess.run([sys.executable, "-m", "packeteer", *args],
                           capture_output=True, text=True, check=False)

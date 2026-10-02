@@ -84,11 +84,11 @@ def parse_http(data: bytes) -> HTTPMessage:  # type: ignore[valid-type]
             print(msg.method, msg.path)   # GET /
 
     """
-    sep = _CRLF2 if _CRLF2 in data else _LF2
-    if sep not in data:
+    split = split_head(data)
+    if split is None:
         raise ValueError("HTTP message has no header/body separator")
 
-    head_bytes, body = data.split(sep, 1)
+    head_bytes, sep, body = split
     lines = head_bytes.decode("latin-1").splitlines()
     if not lines:
         raise ValueError("HTTP message has no start line")
@@ -121,6 +121,30 @@ def parse_http(data: bytes) -> HTTPMessage:  # type: ignore[valid-type]
     if encode_http_message(msg) != sent:
         msg.raw = sent
     return msg
+
+
+def split_head(data: bytes) -> tuple[bytes, bytes, bytes] | None:
+    r"""Return *data*'s head, the blank line that ends it, and what follows.
+
+    The head ends at the **first** blank line, ``\r\n\r\n`` or ``\n\n``,
+    whichever comes earlier.  Choosing by whether ``\r\n\r\n`` occurs
+    *anywhere* ran a bare-LF head on into a body that held a CRLF pair, so
+    the body's first line was read as a header (#188).  Everything that
+    needs to know where a body starts — this parser, and ``sanitise``
+    redacting a head or zeroing a body — asks here, so none can disagree.
+
+    Args:
+        data: An HTTP message, or the start of one.
+
+    Returns:
+        ``(head, separator, rest)``, or ``None`` when there is no blank line.
+
+    """
+    found = [(at, sep) for sep in (_CRLF2, _LF2) if (at := data.find(sep)) >= 0]
+    if not found:
+        return None
+    at, sep = min(found)
+    return data[:at], sep, data[at + len(sep):]
 
 
 def _message(start: str, headers: dict[str, str | list[str]],

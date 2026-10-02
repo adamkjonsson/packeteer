@@ -268,12 +268,14 @@ def _hex_or_none(value: str) -> bytes | None:
 
 
 def _split_head(raw: bytes) -> tuple[bytes, bytes, bytes] | None:
-    """Return *raw*'s head, separator and body, split as ``parse_http`` does."""
-    sep = b"\r\n\r\n" if b"\r\n\r\n" in raw else b"\n\n"
-    if sep not in raw:
-        return None
-    head, rest = raw.split(sep, 1)
-    return head, sep, rest
+    """Return *raw*'s head, separator and body, split as ``parse_http`` does.
+
+    It asks :func:`~packeteer.parse.http.split_head`, so redaction, zeroing
+    and parsing agree on where a body starts (#188).
+    """
+    from packeteer.parse.http import split_head
+
+    return split_head(raw)
 
 
 def _is_chunked(headers: Any) -> bool:
