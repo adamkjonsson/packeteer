@@ -166,6 +166,12 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   request from a response's fields, and since `raw` it sent a response's
   exact bytes from the client, with the run reporting success.  It is now
   refused naming the value.  Left out, it means what it did.  (#180)
+- **`sanitise --payload` no longer ends the run on a chunked body cut short
+  after its last chunk.**  A trailer section with no terminating blank line
+  raised *negative count*, and nothing was written, whatever else the
+  capture held.  Such a trailer is now zeroed from where it starts, and any
+  body the chunk walk cannot read is zeroed whole, so one message's framing
+  never ends a run.  (#186)
 - **An HTTP header value is a string, or a list of them.**  A list item that
   was anything else — a nested list, an object, a boolean — went on the wire
   as Python spells it, `Set-Cookie: ['a=1']`, and the run reported success.

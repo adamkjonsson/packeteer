@@ -459,6 +459,56 @@ class TestPayloadZeroesTheBody(unittest.TestCase):
         self.assertIsNone(http.body_text(section))
 
 
+class TestAWalkThatFailsDoesNotEndTheRun(unittest.TestCase):
+    """A body that cannot be walked is zeroed whole, and the run goes on (#186).
+
+    A chunked body cut after its last-chunk line raised "negative count",
+    and `sanitise` ended the whole run, writing nothing.
+    """
+
+    _HEAD = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+    _BODY = (b"8\r\nSECRETA1\r\n8;ext=v\r\nSECRETB2\r\n0\r\n"
+             b"X-Trail: t\r\n\r\n")
+
+    def test_the_issues_tails(self) -> None:
+        from packeteer.app.http import _zeroed
+
+        for body in (b"7\r\nSECRETA\r\n0\r\n", b"7\r\nSECRETA\r\n0\r\nXY",
+                     b"7\r\nSECRETA\r\n0\r\nX-Trail: SECRETB-no-end",
+                     b"-5\r\nABCDE\r\n0\r\n\r\n"):
+            with self.subTest(body=body):
+                out = _zeroed(body, True)
+                self.assertEqual(len(out), len(body))
+                for secret in (b"SECRET", b"ABCDE"):
+                    self.assertNotIn(secret, out)
+
+    def test_a_body_cut_at_every_offset(self) -> None:
+        """What kober asked for: none raises, and no chunk data is kept."""
+        from packeteer.sanitise import sanitise
+
+        for cut in range(len(self._BODY) + 1):
+            body = self._BODY[:cut]
+            section = {"type": "response",
+                       "headers": {"Transfer-Encoding": "chunked"},
+                       "body": body.hex(), "raw": (self._HEAD + body).hex()}
+            with self.subTest(cut=cut):
+                out = sanitise({"packets": [{"network": {}, "http": section}]},
+                               SanitiseOptions(payload=True, scan_pii=False))
+                result = out["packets"][0]["http"]
+                for key in ("body", "raw"):
+                    kept = bytes.fromhex(result[key])
+                    for secret in (b"SECRETA1", b"SECRETB2"):
+                        for start in range(len(secret) - 3):
+                            self.assertNotIn(secret[start:start + 4], kept)
+
+    def test_hex_that_is_not_hex_is_zeroed_not_raised(self) -> None:
+        from packeteer.app.http import _zero_bodies
+
+        section = {"type": "response", "body": "zz11", "raw": "zz11"}
+        _zero_bodies(section)
+        self.assertEqual((section["body"], section["raw"]), ("0000", "0000"))
+
+
 def _cli(*args: str) -> None:
     done = subprocess.run([sys.executable, "-m", "packeteer", *args],
                           capture_output=True, text=True, check=False)

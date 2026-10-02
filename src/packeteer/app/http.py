@@ -241,10 +241,15 @@ def _zero_bodies(section: dict[str, Any]) -> None:
     """
     chunked = _is_chunked(section.get("headers", {}))
     if isinstance(section.get("body"), str) and section["body"]:
-        body = bytes.fromhex(section["body"])
-        section["body"] = _zeroed(body, chunked).hex()
+        body = _hex_or_none(section["body"])
+        section["body"] = ("00" * (len(section["body"]) // 2) if body is None
+                           else _zeroed(body, chunked).hex())
     if isinstance(section.get("raw"), str) and section["raw"]:
-        raw = bytes.fromhex(section["raw"])
+        raw = _hex_or_none(section["raw"])
+        if raw is None:
+            # Not hex, so not readable as a message: zeroed whole (#186).
+            section["raw"] = "00" * (len(section["raw"]) // 2)
+            return
         split = _split_head(raw)
         if split is None:
             # No head to keep: nothing of it can be told from body.
@@ -252,6 +257,14 @@ def _zero_bodies(section: dict[str, Any]) -> None:
         else:
             head, sep, rest = split
             section["raw"] = (head + sep + _zeroed(rest, _raw_is_chunked(raw))).hex()
+
+
+def _hex_or_none(value: str) -> bytes | None:
+    """Return *value* read as hex, or ``None`` when it is not hex."""
+    try:
+        return bytes.fromhex(value)
+    except ValueError:
+        return None
 
 
 def _split_head(raw: bytes) -> tuple[bytes, bytes, bytes] | None:
@@ -291,9 +304,14 @@ def _zeroed(body: bytes, chunked: bool) -> bytes:
     Only chunk data is zeroed in a chunked body — size lines, extensions and
     CRLFs stay, so the message still parses — and a body whose chunks cannot
     be walked is zeroed whole: it may no longer parse, but none of it survives.
+    Nothing here raises, whatever the bytes: one message's odd framing must
+    not end a sanitise run (#186).
     """
     if chunked:
-        walked = _zero_chunks(body)
+        try:
+            walked = _zero_chunks(body)
+        except (ValueError, OverflowError, MemoryError):
+            walked = None
         if walked is not None:
             return walked
     return bytes(len(body))
@@ -316,6 +334,8 @@ def _zero_chunks(body: bytes) -> bytes | None:
             size = int(body[pos:end].split(b";", 1)[0].strip(), 16)
         except ValueError:
             return None
+        if size < 0:                     # `int` reads "-5"; a length cannot be
+            return None
         out += body[pos:end + 2]
         pos = end + 2
         if size == 0:
@@ -325,9 +345,15 @@ def _zero_chunks(body: bytes) -> bytes | None:
         out += bytes(size) + b"\r\n"
         pos += size + 2
     tail = body[pos:]
-    stop = 2 if tail.startswith(b"\r\n") else tail.find(b"\r\n\r\n") + 4
-    if stop < 2:
-        stop = len(tail)
+    if tail.startswith(b"\r\n"):
+        stop = 2                         # no trailer fields
+    else:
+        end = tail.find(b"\r\n\r\n")
+        # A trailer section with no end has nothing to keep it up to, so it
+        # is zeroed from where it starts.  `find`'s -1 plus the separator's
+        # length was 3, which kept 3 bytes and, for a shorter tail, raised
+        # "negative count" and ended the run (#186).
+        stop = 0 if end < 0 else end + 4
     return bytes(out + tail[:stop] + bytes(len(tail) - stop))
 
 
