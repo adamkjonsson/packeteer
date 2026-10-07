@@ -62,8 +62,8 @@ replaced.
 a body, in place and at its length, as it zeroes any payload.  A chunked body
 keeps its framing, so it still parses, and loses whatever can carry its
 data: the chunk data, each chunk extension's value (zeroed at its length),
-and each trailer field's value (`[redacted]`), since a trailer is where a
-checksum over the body is sent.
+and each trailer field's value (`[redacted]`, at its length), since a
+trailer is where a checksum over the body is sent.
 
 **Framing is kept only for a message within one TCP segment.**  `sanitise`
 works packet by packet, and a body that spans segments, which is most bodies
@@ -78,6 +78,17 @@ packeteer.
 Add `--http-headers` to redact
 the values of `Host`, `Cookie`, `Set-Cookie`, `Authorization`, `Location`,
 `Referer`, and `Origin`.
+
+**A redacted value keeps its length.**  It becomes `[redacted]` cut or padded
+with spaces to the length of what it replaces — `shop.example.com` becomes
+`[redacted]      `, a four-byte value `[red` — so no TCP segment changes
+size.  `sanitise` rebuilds each packet with the sequence number it was
+captured with, and a segment that shrank or grew would leave every sequence
+number after it false: a reassembler would find gaps or overlaps the capture
+never had.  Trailing spaces in a header value are optional whitespace, so a
+parser still reads `[redacted]`.  The exception is a message rebuilt from its
+fields because its head could not be read line by line, whose length can
+change with the rebuild.
 
 A message whose exact bytes the capture kept — its [`raw`](http-raw), written
 by `parse` when a message is not in the form packeteer would rebuild — is

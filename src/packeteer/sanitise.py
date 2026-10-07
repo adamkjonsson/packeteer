@@ -25,8 +25,8 @@ Replacement strategy
   Payload   Zero-filled hex string, same byte length
   DNS name  label0.label1... — each unique label replaced
             consistently so shared parents are preserved
-  HTTP hdr  ``[redacted]`` for Host, Cookie, Set-Cookie,
-            Authorization, Location, Referer, Origin
+  HTTP hdr  ``[redacted]``, at the value's length, for Host, Cookie,
+            Set-Cookie, Authorization, Location, Referer, Origin
   ========  =====================================================
 
 Example::
@@ -334,7 +334,9 @@ class SanitiseOptions:
             always sanitised when a ``dhcp`` section is present (controlled by
             *ips* for addresses; *macs* for ``chaddr``).
         http_headers: Replace the values of sensitive HTTP headers in every
-            ``http`` section with ``"[redacted]"``.  Affected headers:
+            ``http`` section with ``"[redacted]"``, cut or space-padded to
+            the value's length so no TCP segment changes size (#191).
+            Affected headers:
             ``Host``, ``Cookie``, ``Set-Cookie``, ``Authorization``,
             ``Location``, ``Referer``, ``Origin``.  Non-sensitive structural
             headers (``Content-Type``, ``Content-Length``, etc.) are left
@@ -583,6 +585,19 @@ _HTTP_SENSITIVE_HEADERS: frozenset[str] = frozenset({
 _HTTP_REDACTED = "[redacted]"
 
 
+def _redaction(length: int) -> str:
+    """Return ``[redacted]`` cut or space-padded to *length* characters.
+
+    A redacted value keeps the length of what it replaces (#191).  A TCP
+    segment that changed size left the sequence numbers after it false, and a
+    reassembler read the sanitised stream as one with gaps the capture never
+    had.  Trailing spaces are optional whitespace in a header value, so a
+    parser still reads ``[redacted]``; a value shorter than that gets as much
+    of it as fits.  The length is no more than ``--payload`` already keeps.
+    """
+    return (_HTTP_REDACTED + " " * max(0, length - len(_HTTP_REDACTED)))[:length]
+
+
 def _sanitise_http(http: dict, opts: SanitiseOptions) -> None:
     """Sanitise an ``http`` section dict in-place."""
     if not opts.http_headers:
@@ -595,8 +610,8 @@ def _sanitise_http(http: dict, opts: SanitiseOptions) -> None:
             # Item by item for a repeated header, so the message keeps its
             # number of lines — a decoder under test sees the same shape (#181).
             value = headers[key]
-            headers[key] = ([_HTTP_REDACTED] * len(value) if isinstance(value, list)
-                            else _HTTP_REDACTED)
+            headers[key] = ([_redaction(len(str(item))) for item in value]
+                            if isinstance(value, list) else _redaction(len(str(value))))
 
 
 # ── Recursive packet walker ───────────────────────────────────────────────────

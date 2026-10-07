@@ -172,6 +172,17 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   capture held.  Such a trailer is now zeroed from where it starts, and any
   body the chunk walk cannot read is zeroed whole, so one message's framing
   never ends a run.  (#186)
+- **A redacted HTTP header value keeps its length**, so a sanitised TCP
+  stream keeps its sequence numbers true.  `sanitise --http-headers` wrote
+  `[redacted]` whatever the length of the value it replaced, so the segment
+  carrying it shrank or grew while every sequence number after it stayed as
+  captured, and a reassembler found gaps or overlaps the capture never had
+  — two in three requests carrying `Host: shop.example.com`.  A value now
+  becomes `[redacted]` cut or space-padded to its own length, in the
+  section's fields and in its `raw`, and a parser still reads `[redacted]`.
+  A test holds every TCP segment of every real capture, and of generated
+  HTTP, to its length under each `sanitise` flag.  DNS over TCP has the same
+  fault and is #192.  (#191)
 - **An HTTP head ends at its first empty line, however its line endings are
   spelled.**  The head/body separator was chosen by whether `\r\n\r\n`
   occurred anywhere in the message, so a head with bare-LF line endings ran
@@ -238,7 +249,8 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   chunked body within one TCP segment keeps the framing that makes it parse
   and loses what can
   carry its data: the chunk data, each chunk extension's value, and each
-  trailer field's value, where a checksum over the body is sent — a digest
+  trailer field's value, at its length, where a checksum over the body is
+  sent — a digest
   is enough to confirm a guessed body (#189).  A body spanning segments is
   zeroed whole, framing included, since `sanitise` works packet by packet
   and reassembling TCP is out of scope (#187).  The PII scan, which read a section's strings but not its hex, now

@@ -411,6 +411,13 @@ class TestToConfigHTTP(unittest.TestCase):
         assert req.headers["Host"] == "h"
 
 
+def _redacted_as(original: str) -> str:
+    """Return a redacted header value: ``[redacted]`` at *original*'s length (#191)."""
+    from packeteer.sanitise import _redaction
+
+    return _redaction(len(original))
+
+
 class TestSanitiseHTTP(unittest.TestCase):
     def _spec(self, msg: HTTPMessage) -> dict[str, Any]:
         from packeteer.parse.to_config import update_config
@@ -422,25 +429,27 @@ class TestSanitiseHTTP(unittest.TestCase):
         from packeteer.sanitise import SanitiseOptions, sanitise
         spec = self._spec(HTTPRequest(headers={"Host": "secret.example.com"}))
         clean = sanitise(spec, SanitiseOptions(http_headers=True))
-        assert clean["packets"][0]["http"]["headers"]["Host"] == "[redacted]"
+        assert clean["packets"][0]["http"]["headers"]["Host"] == _redacted_as("secret.example.com")
 
     def test_cookie_redacted(self):
         from packeteer.sanitise import SanitiseOptions, sanitise
         spec = self._spec(HTTPRequest(headers={"Cookie": "session=abc123"}))
         clean = sanitise(spec, SanitiseOptions(http_headers=True))
-        assert clean["packets"][0]["http"]["headers"]["Cookie"] == "[redacted]"
+        assert clean["packets"][0]["http"]["headers"]["Cookie"] == _redacted_as("session=abc123")
 
     def test_set_cookie_redacted(self):
         from packeteer.sanitise import SanitiseOptions, sanitise
         spec = self._spec(HTTPResponse(headers={"Set-Cookie": "token=xyz; Path=/"}))
         clean = sanitise(spec, SanitiseOptions(http_headers=True))
-        assert clean["packets"][0]["http"]["headers"]["Set-Cookie"] == "[redacted]"
+        assert (clean["packets"][0]["http"]["headers"]["Set-Cookie"]
+                == _redacted_as("token=xyz; Path=/"))
 
     def test_authorization_redacted(self):
         from packeteer.sanitise import SanitiseOptions, sanitise
         spec = self._spec(HTTPRequest(headers={"Authorization": "Bearer tok"}))
         clean = sanitise(spec, SanitiseOptions(http_headers=True))
-        assert clean["packets"][0]["http"]["headers"]["Authorization"] == "[redacted]"
+        assert (clean["packets"][0]["http"]["headers"]["Authorization"]
+                == _redacted_as("Bearer tok"))
 
     def test_non_sensitive_header_kept(self):
         from packeteer.sanitise import SanitiseOptions, sanitise
@@ -450,7 +459,7 @@ class TestSanitiseHTTP(unittest.TestCase):
         clean = sanitise(spec, SanitiseOptions(http_headers=True))
         h = clean["packets"][0]["http"]["headers"]
         assert h["Content-Type"] == "text/html"
-        assert h["Host"] == "[redacted]"
+        assert h["Host"] == _redacted_as("secret.com")
 
     def test_http_headers_false_keeps_headers(self):
         from packeteer.sanitise import SanitiseOptions, sanitise
@@ -473,7 +482,7 @@ class TestSanitiseHTTP(unittest.TestCase):
             headers={"Location": "https://secret.example.com/"},
         ))
         clean = sanitise(spec, SanitiseOptions(http_headers=True))
-        assert clean["packets"][0]["http"]["headers"]["Location"] == "[redacted]"
+        assert clean["packets"][0]["http"]["headers"]["Location"] == _redacted_as("https://secret.example.com/")
 
 
 class TestCLIHTTPHeaders(unittest.TestCase):
@@ -509,7 +518,7 @@ class TestCLIHTTPHeaders(unittest.TestCase):
             with open(out_file) as f:
                 result = json.load(f)
             host = result["packets"][0]["http"]["headers"]["Host"]
-            assert host == "[redacted]", host
+            assert host == _redacted_as("secret.example.com"), host
         finally:
             os.unlink(fname)
             if os.path.exists(out_file):

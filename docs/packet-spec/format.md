@@ -1245,7 +1245,8 @@ given, as [`dns.raw`](#dns-top-level-fields) is for DNS.
   response, or else the bytes do: a start line beginning `HTTP/` is a
   response.  Bytes that do not parse as HTTP are still sent as given.
 - **`sanitise` redacts inside it.**  A sensitive header's value becomes
-  `[redacted]` in `raw` as in `headers`, and every other byte stays as
+  `[redacted]`, cut or space-padded to the value's length, in `raw` as in
+  `headers`, and every other byte stays as
   captured: the order and repetition of headers, spacing, line endings, the
   body.  When the head cannot be read line by line — a folded continuation
   line, a line without a colon — `raw` is dropped instead, since a header

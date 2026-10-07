@@ -192,8 +192,8 @@ def sanitise(section: dict[str, Any], replacer: Any, options: Any) -> None:
     """Redact *section* in place.
 
     A redacted header is redacted **inside** ``raw`` too, which keeps it: the
-    value of each sensitive header line becomes ``[redacted]``, and every
-    other byte stays as captured — the order and repetition of headers, the
+    value of each sensitive header line becomes ``[redacted]`` at its
+    length (#191), and every other byte stays as captured — the order and repetition of headers, the
     spacing, the line endings, the body.  A sanitised capture stands in for
     a real one, and a decoder's tests are about exactly that shape (#184).
 
@@ -324,7 +324,7 @@ def _zero_chunks(body: bytes) -> bytes | None:
 
     What can carry the body's data goes too (#189): a chunk extension's value
     becomes ``0``s of its length, and a trailer field's value
-    ``[redacted]`` — a trailer is where a checksum or a signature over the
+    ``[redacted]`` at its length (#191) — a trailer is where a checksum or a signature over the
     body is sent, and a digest is enough to confirm a guessed body.  Names,
     size lines and CRLFs stay, so the message still parses.  A trailer
     section that cannot be read line by line is zeroed whole, and anything
@@ -461,12 +461,18 @@ def _is_field(text: bytes) -> bool:
 
 
 def _redacted(text: bytes) -> bytes:
-    """Return a ``name: value`` line with its value redacted, spacing kept."""
-    from packeteer.sanitise import _HTTP_REDACTED
+    """Return a ``name: value`` line with its value redacted, at its length.
+
+    The name and the spacing after the colon are kept, and the value — up to
+    the line's end, trailing whitespace included — becomes ``[redacted]`` cut
+    or padded to the same number of bytes, so the line, the message and the
+    TCP segment carrying it keep their lengths (#191).
+    """
+    from packeteer.sanitise import _redaction
 
     name, value = text.split(b":", 1)
     spacing = value[:len(value) - len(value.lstrip(b" \t"))]
-    return name + b":" + spacing + _HTTP_REDACTED.encode()
+    return name + b":" + spacing + _redaction(len(value) - len(spacing)).encode()
 
 
 PROTOCOL = AppProtocol(

@@ -40,6 +40,13 @@ _NON_CANONICAL = {
 }
 
 
+def _r(original: bytes) -> bytes:
+    """Return a redacted value as on the wire: ``[redacted]`` at *original*'s length (#191)."""
+    from packeteer.sanitise import _redaction
+
+    return _redaction(len(original)).encode()
+
+
 def _round_trip(wire: bytes) -> tuple[bytes, dict]:
     """Run the issue's path: decode, to_spec, from_spec, encode."""
     section = http.to_spec(http.decode(wire))
@@ -238,7 +245,9 @@ class TestSetCookieIsKeptApart(unittest.TestCase):
         section = http.to_spec(http.decode(self._WIRE))
         http.sanitise(section, None, SanitiseOptions(http_headers=True))
         out = http.encode(http.from_spec(section))
-        self.assertEqual(out.count(b"Set-Cookie: [redacted]\r\n"), 2)
+        self.assertEqual(out.count(b"Set-Cookie: "), 2)
+        for value in (b"a=1; Expires=Wed, 21 Oct 2026 07:28:00 GMT", b"b=2"):
+            self.assertIn(b"Set-Cookie: " + _r(value) + b"\r\n", out)
 
     def test_one_set_cookie_is_still_a_string(self) -> None:
         msg = parse_http(b"HTTP/1.1 200 OK\r\nSet-Cookie: a=1\r\n\r\n")
@@ -310,21 +319,25 @@ class TestSanitiseRedactsInsideRaw(unittest.TestCase):
 
     def test_a_redacted_value_is_redacted_in_raw(self) -> None:
         section = self._sanitised(self._SECRET, http_headers=True)
-        self.assertEqual(section["headers"]["Authorization"], "[redacted]")
+        self.assertEqual(section["headers"]["Authorization"],
+                         _r(b"Bearer s3cret").decode())
         self.assertEqual(self._wire(section),
-                         b"GET / HTTP/1.1\r\nAuthorization:[redacted]\r\n\r\n")
+                         b"GET / HTTP/1.1\r\nAuthorization:" + _r(b"Bearer s3cret")
+                         + b"\r\n\r\n")
 
     def test_the_issues_two_shapes_are_kept(self) -> None:
         """Every byte but the sensitive values, as captured."""
         cases = (
             (b"HTTP/1.1 200 OK\r\nSet-Cookie: session=abc; Expires=Wed, 21 Oct 2026"
              b" 07:28:00 GMT\r\nContent-Length: 2\r\nSet-Cookie: theme=dark\r\n\r\nok",
-             b"HTTP/1.1 200 OK\r\nSet-Cookie: [redacted]\r\nContent-Length: 2\r\n"
-             b"Set-Cookie: [redacted]\r\n\r\nok"),
+             b"HTTP/1.1 200 OK\r\nSet-Cookie: "
+             + _r(b"session=abc; Expires=Wed, 21 Oct 2026 07:28:00 GMT")
+             + b"\r\nContent-Length: 2\r\nSet-Cookie: " + _r(b"theme=dark")
+             + b"\r\n\r\nok"),
             (b"HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\nTransfer-Encoding: "
              b"chunked\r\nSet-Cookie: s=1\r\n\r\n0\r\n\r\n",
              b"HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\nTransfer-Encoding: "
-             b"chunked\r\nSet-Cookie: [redacted]\r\n\r\n0\r\n\r\n"),
+             b"chunked\r\nSet-Cookie: " + _r(b"s=1") + b"\r\n\r\n0\r\n\r\n"),
         )
         for wire, expected in cases:
             with self.subTest(wire=wire[:40]):
@@ -335,9 +348,9 @@ class TestSanitiseRedactsInsideRaw(unittest.TestCase):
     def test_spacing_and_line_endings_are_kept(self) -> None:
         cases = (
             (b"GET / HTTP/1.1\r\nHost:  h\r\nX:y\r\n\r\n",
-             b"GET / HTTP/1.1\r\nHost:  [redacted]\r\nX:y\r\n\r\n"),
+             b"GET / HTTP/1.1\r\nHost:  " + _r(b"h") + b"\r\nX:y\r\n\r\n"),
             (b"GET / HTTP/1.1\nCookie: a=1\nX: y\n\n",
-             b"GET / HTTP/1.1\nCookie: [redacted]\nX: y\n\n"),
+             b"GET / HTTP/1.1\nCookie: " + _r(b"a=1") + b"\nX: y\n\n"),
         )
         for wire, expected in cases:
             with self.subTest(wire=wire):
@@ -407,7 +420,7 @@ class TestPayloadZeroesTheBody(unittest.TestCase):
                 out = http.encode(http.from_spec(section))
                 self.assertEqual(out.split(b"\r\n\r\n", 1)[1],
                                  b"5\r\n" + bytes(5) + b"\r\n6;ext=0\r\n" + bytes(6)
-                                 + b"\r\n0\r\nX-Trailer: [redacted]\r\n\r\n")
+                                 + b"\r\n0\r\nX-Trailer: " + _r(b"t") + b"\r\n\r\n")
                 parse_http(out)
 
     def test_a_chunked_body_it_cannot_walk_is_zeroed_whole(self) -> None:
@@ -542,7 +555,7 @@ class TestTheHeadEndsAtTheFirstBlankLine(unittest.TestCase):
         section = http.to_spec(http.decode(wire))
         http.sanitise(section, None, SanitiseOptions(http_headers=True))
         self.assertEqual(bytes.fromhex(section["raw"]),
-                         b"HTTP/1.1 200 OK\nSet-Cookie: [redacted]\n"
+                         b"HTTP/1.1 200 OK\nSet-Cookie: " + _r(b"s=1") + b"\n"
                          b"Content-Length: 14\n\na\r\n\r\nb: secret")
 
     def test_the_other_way_round(self) -> None:
@@ -574,7 +587,7 @@ class TestPayloadTakesWhatCanCarryTheBody(unittest.TestCase):
                   b"X-Checksum: SECRET4-digest\r\n\r\n")
         self.assertEqual(_zeroed(before, True),
                          b"7;ext=0000000\r\n" + bytes(7) + b"\r\n6\r\n" + bytes(6)
-                         + b"\r\n0\r\nX-Checksum: [redacted]\r\n\r\n")
+                         + b"\r\n0\r\nX-Checksum: " + _r(b"SECRET4-digest") + b"\r\n\r\n")
 
     def test_extensions(self) -> None:
         from packeteer.app.http import _zero_extensions
@@ -595,8 +608,8 @@ class TestPayloadTakesWhatCanCarryTheBody(unittest.TestCase):
         from packeteer.app.http import _zeroed
 
         out = _zeroed(b"1\r\nA\r\n0\r\nX-A: one\r\nX-B:two\r\n\r\n", True)
-        self.assertEqual(out, b"1\r\n\x00\r\n0\r\nX-A: [redacted]\r\n"
-                              b"X-B:[redacted]\r\n\r\n")
+        self.assertEqual(out, b"1\r\n\x00\r\n0\r\nX-A: " + _r(b"one") + b"\r\n"
+                              b"X-B:" + _r(b"two") + b"\r\n\r\n")
 
     def test_a_trailer_it_cannot_read_is_zeroed_whole(self) -> None:
         """A folded line, or one with no colon, could carry the rest of a value."""
