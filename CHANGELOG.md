@@ -25,6 +25,10 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
+---
+
+## [0.17.0] - 2026-10-07
+
 **Kober 0.5.0, and HTTP on the wire.**  Two strands, most of the work found
 by [kober](https://github.com/adamkjonsson/zipline-kober) reviewing eight
 `.dev` builds.  The **spec dialect** follows kober to 0.5.0: its transforms,
@@ -3706,7 +3710,8 @@ the exhaustive API reference.
      tagged with names that predate this convention, so only the entries below
      carry compare links. -->
 
-[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/adamkjonsson/packeteer/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/adamkjonsson/packeteer/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/adamkjonsson/packeteer/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/adamkjonsson/packeteer/compare/v0.13.0...v0.14.0
