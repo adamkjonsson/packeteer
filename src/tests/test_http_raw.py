@@ -396,14 +396,18 @@ class TestPayloadZeroesTheBody(unittest.TestCase):
         self.assertIn(b"Content-Length: 29", head)
 
     def test_a_chunked_body_keeps_its_framing(self) -> None:
-        """Only chunk data is zeroed, so the message still parses."""
+        """Only what can carry data goes, so the message still parses.
+
+        Chunk data is zeroed; since #189 an extension's value and a trailer
+        field's value go too, and the names, sizes and CRLFs stay.
+        """
         for structured in (False, True):
             with self.subTest(structured=structured):
                 section = self._payload(self._CHUNKED, structured=structured)
                 out = http.encode(http.from_spec(section))
                 self.assertEqual(out.split(b"\r\n\r\n", 1)[1],
-                                 b"5\r\n" + bytes(5) + b"\r\n6;ext=1\r\n" + bytes(6)
-                                 + b"\r\n0\r\nX-Trailer: t\r\n\r\n")
+                                 b"5\r\n" + bytes(5) + b"\r\n6;ext=0\r\n" + bytes(6)
+                                 + b"\r\n0\r\nX-Trailer: [redacted]\r\n\r\n")
                 parse_http(out)
 
     def test_a_chunked_body_it_cannot_walk_is_zeroed_whole(self) -> None:
@@ -556,6 +560,55 @@ class TestTheHeadEndsAtTheFirstBlankLine(unittest.TestCase):
         self.assertIsNone(split_head(b"H\r\nA: 1"))
 
 
+class TestPayloadTakesWhatCanCarryTheBody(unittest.TestCase):
+    """A chunk extension's value and a trailer field's value go too (#189).
+
+    A trailer is where a checksum or signature over the body is sent, and a
+    digest survived zeroing: enough to confirm a guessed body.
+    """
+
+    def test_the_issues_before_and_after(self) -> None:
+        from packeteer.app.http import _zeroed
+
+        before = (b"7;ext=SECRET1\r\nSECRET2\r\n6\r\nSECRE3\r\n0\r\n"
+                  b"X-Checksum: SECRET4-digest\r\n\r\n")
+        self.assertEqual(_zeroed(before, True),
+                         b"7;ext=0000000\r\n" + bytes(7) + b"\r\n6\r\n" + bytes(6)
+                         + b"\r\n0\r\nX-Checksum: [redacted]\r\n\r\n")
+
+    def test_extensions(self) -> None:
+        from packeteer.app.http import _zero_extensions
+
+        cases = (
+            (b"7", b"7"),
+            (b"7;ext", b"7;ext"),
+            (b'7;ext="SECRET"', b'7;ext="000000"'),
+            (b"7; a=1 ;b= v ", b"7; a=0 ;b= 0 "),
+            (b'7;q="a;b"', b"7;0000000"),        # a ";" inside quotes: all of it
+            (b'7;x="open', b"7;0000000"),        # an unclosed quote: all of it
+        )
+        for line, expected in cases:
+            with self.subTest(line=line):
+                self.assertEqual(_zero_extensions(line), expected)
+
+    def test_several_trailer_fields_each_redacted(self) -> None:
+        from packeteer.app.http import _zeroed
+
+        out = _zeroed(b"1\r\nA\r\n0\r\nX-A: one\r\nX-B:two\r\n\r\n", True)
+        self.assertEqual(out, b"1\r\n\x00\r\n0\r\nX-A: [redacted]\r\n"
+                              b"X-B:[redacted]\r\n\r\n")
+
+    def test_a_trailer_it_cannot_read_is_zeroed_whole(self) -> None:
+        """A folded line, or one with no colon, could carry the rest of a value."""
+        from packeteer.app.http import _zeroed
+
+        for trailer in (b"X-A: sec\r\n ret", b"no colon secret"):
+            with self.subTest(trailer=trailer):
+                out = _zeroed(b"1\r\nA\r\n0\r\n" + trailer + b"\r\n\r\n", True)
+                self.assertNotIn(b"sec", out)
+                self.assertTrue(out.endswith(bytes(len(trailer)) + b"\r\n\r\n"))
+
+
 def _cli(*args: str) -> None:
     done = subprocess.run([sys.executable, "-m", "packeteer", *args],
                           capture_output=True, text=True, check=False)
@@ -566,10 +619,11 @@ class TestNoBodyByteSurvivesSanitise(unittest.TestCase):
     """The pin kober asked for, through the CLI as the issue reproduced it (#185)."""
 
     _BODIES = (b"user=alice&password=hunter2!!", b'{"email":"a@b.com","n":123456}',
-               b"first-chunk-of-secrets", b"second-chunk-of-secrets")
+               b"first-chunk-of-secrets", b"second-chunk-of-secrets",
+               b"digest-of-the-secrets")
 
     def test_payload_leaves_no_run_of_any_original_body(self) -> None:
-        login, email, one, two = self._BODIES
+        login, email, one, two, digest = self._BODIES
         messages = [
             b"POST /login HTTP/1.1\r\nHost: h\r\nContent-Length: %d\r\n\r\n" % len(login)
             + login,
@@ -577,7 +631,7 @@ class TestNoBodyByteSurvivesSanitise(unittest.TestCase):
             b"GET /c HTTP/1.1\r\nHost: h\r\n\r\n",
             b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
             + b"%x\r\n" % len(one) + one + b"\r\n" + b"%x\r\n" % len(two) + two
-            + b"\r\n0\r\n\r\n",
+            + b"\r\n0\r\nX-Checksum: " + digest + b"\r\n\r\n",
         ]
         with tempfile.TemporaryDirectory() as tmp:
             for form in ("raw", "structured"):

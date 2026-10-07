@@ -322,9 +322,13 @@ def _zeroed(body: bytes, chunked: bool) -> bytes:
 def _zero_chunks(body: bytes) -> bytes | None:
     """Return *body* with every chunk's data zeroed, or ``None`` if unwalkable.
 
-    Trailer fields after the last chunk are headers, not body, and are kept.
-    Anything after the trailer section's end belongs to no message here, and
-    is zeroed.
+    What can carry the body's data goes too (#189): a chunk extension's value
+    becomes ``0``s of its length, and a trailer field's value
+    ``[redacted]`` — a trailer is where a checksum or a signature over the
+    body is sent, and a digest is enough to confirm a guessed body.  Names,
+    size lines and CRLFs stay, so the message still parses.  A trailer
+    section that cannot be read line by line is zeroed whole, and anything
+    after its end belongs to no message here and is zeroed too.
     """
     out = bytearray()
     pos = 0
@@ -338,7 +342,7 @@ def _zero_chunks(body: bytes) -> bytes | None:
             return None
         if size < 0:                     # `int` reads "-5"; a length cannot be
             return None
-        out += body[pos:end + 2]
+        out += _zero_extensions(body[pos:end]) + b"\r\n"
         pos = end + 2
         if size == 0:
             break
@@ -348,15 +352,49 @@ def _zero_chunks(body: bytes) -> bytes | None:
         pos += size + 2
     tail = body[pos:]
     if tail.startswith(b"\r\n"):
-        stop = 2                         # no trailer fields
-    else:
-        end = tail.find(b"\r\n\r\n")
+        return bytes(out + b"\r\n" + bytes(len(tail) - 2))   # no trailer fields
+    end = tail.find(b"\r\n\r\n")
+    if end < 0:
         # A trailer section with no end has nothing to keep it up to, so it
         # is zeroed from where it starts.  `find`'s -1 plus the separator's
         # length was 3, which kept 3 bytes and, for a shorter tail, raised
         # "negative count" and ended the run (#186).
-        stop = 0 if end < 0 else end + 4
-    return bytes(out + tail[:stop] + bytes(len(tail) - stop))
+        return bytes(out + bytes(len(tail)))
+    fields = tail[:end].split(b"\r\n")
+    trailer = (b"\r\n".join(_redacted(field) for field in fields)
+               if all(_is_field(field) for field in fields) else bytes(end))
+    return bytes(out + trailer + b"\r\n\r\n" + bytes(len(tail) - end - 4))
+
+
+def _zero_extensions(line: bytes) -> bytes:
+    """Return a chunk-size line with each extension's value zeroed (#189).
+
+    ``7;name=value`` becomes ``7;name=00000``, and a quoted value keeps its
+    quotes, so the line stays a size and its extensions with the length it
+    had.  A quoted value holding a ``;`` cannot be split on ``;`` with
+    certainty, so every byte of the extensions becomes ``0``, the first
+    ``;`` kept.
+    """
+    size, semi, extensions = line.partition(b";")
+    if not semi:
+        return line
+    parts = extensions.split(b";")
+    zeroed = []
+    for part in parts:
+        name, eq, value = part.partition(b"=")
+        inner = value.strip(b" \t")
+        lead = value[:len(value) - len(value.lstrip(b" \t"))]
+        trail = value[len(lead) + len(inner):]
+        if b'"' in name or inner.count(b'"') not in (0, 2) or (
+                b'"' in inner and not (inner[:1] == inner[-1:] == b'"')):
+            return size + b";" + b"0" * len(extensions)
+        if not eq:
+            zeroed.append(part)
+        elif inner[:1] == b'"':
+            zeroed.append(name + eq + lead + b'"' + b"0" * (len(inner) - 2) + b'"' + trail)
+        else:
+            zeroed.append(name + eq + lead + b"0" * len(inner) + trail)
+    return size + b";" + b";".join(zeroed)
 
 
 def body_text(section: dict[str, Any]) -> str | None:
@@ -389,7 +427,7 @@ def _redact_raw(raw: bytes) -> bytes | None:
     which a line-by-line rewrite would leave as it was.
     """
     from packeteer.parse.http import parse_http
-    from packeteer.sanitise import _HTTP_REDACTED, _HTTP_SENSITIVE_HEADERS
+    from packeteer.sanitise import _HTTP_SENSITIVE_HEADERS
 
     try:
         parse_http(raw)
@@ -403,14 +441,32 @@ def _redact_raw(raw: bytes) -> bytes | None:
     out = [lines[0]]
     for line in lines[1:]:
         text, ending = (line[:-1], b"\r") if line.endswith(b"\r") else (line, b"")
-        if not text or text[:1] in b" \t" or b":" not in text:
+        if not _is_field(text):
             return None
-        name, value = text.split(b":", 1)
+        name = text.split(b":", 1)[0]
         if name.strip().decode("latin-1").lower() in _HTTP_SENSITIVE_HEADERS:
-            spacing = value[:len(value) - len(value.lstrip(b" \t"))]
-            text = name + b":" + spacing + _HTTP_REDACTED.encode()
+            text = _redacted(text)
         out.append(text + ending)
     return b"\n".join(out) + sep + rest
+
+
+def _is_field(text: bytes) -> bool:
+    """Whether *text* reads as one ``name: value`` line, and nothing else.
+
+    Not one that begins with whitespace — an obs-fold continuation, whose
+    value belongs to the line before and which a line-by-line rewrite would
+    leave as it was — nor one without a colon.
+    """
+    return bool(text) and text[:1] not in b" \t" and b":" in text
+
+
+def _redacted(text: bytes) -> bytes:
+    """Return a ``name: value`` line with its value redacted, spacing kept."""
+    from packeteer.sanitise import _HTTP_REDACTED
+
+    name, value = text.split(b":", 1)
+    spacing = value[:len(value) - len(value.lstrip(b" \t"))]
+    return name + b":" + spacing + _HTTP_REDACTED.encode()
 
 
 PROTOCOL = AppProtocol(

@@ -37,7 +37,7 @@ When none are given, the sanitised packet spec is printed to stdout.
 | Ethernet `src_mac` / `dst_mac` | **replaced** | `--no-macs` to keep |
 | TCP/UDP port numbers | kept | `--ports` to replace |
 | `payload.data` | kept | `--payload` to zero (same byte length; encoding field removed after zeroing) |
-| HTTP bodies | kept | `--payload` to zero (same byte length; a chunked body keeps its chunk framing) |
+| HTTP bodies | kept | `--payload` to zero (same byte length; a chunked body keeps its chunk framing, and its extension and trailer values go too) |
 | `packet_metadata` timestamps | kept | `--timestamps` to zero |
 | DNS transaction IDs | kept | `--dns-ids` to zero |
 | DHCP transaction IDs (`xid`) | kept | `--dhcp-xids` to zero |
@@ -59,9 +59,11 @@ addresses use the same replacement pool as IP headers.
 replaced.
 
 **HTTP** — bodies and header values are kept by default.  `--payload` zeroes
-a body, in place and at its length, as it zeroes any payload: only the data of
-a chunked body, so its framing still parses.  Trailer fields after the last
-chunk are headers, and are kept.  Add `--http-headers` to redact
+a body, in place and at its length, as it zeroes any payload.  A chunked body
+keeps its framing, so it still parses, and loses whatever can carry its
+data: the chunk data, each chunk extension's value (zeroed at its length),
+and each trailer field's value (`[redacted]`), since a trailer is where a
+checksum over the body is sent.  Add `--http-headers` to redact
 the values of `Host`, `Cookie`, `Set-Cookie`, `Authorization`, `Location`,
 `Referer`, and `Origin`.
 
