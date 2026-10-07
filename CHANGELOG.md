@@ -232,10 +232,13 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   password, a response's email.  The run reported success, and the file
   looked sanitised.  `--payload` now zeroes an HTTP body in its `body` and
   in its `raw`, at the same length so `Content-Length` stays true, and a
-  chunked body keeps the framing that makes it parse and loses what can
+  chunked body within one TCP segment keeps the framing that makes it parse
+  and loses what can
   carry its data: the chunk data, each chunk extension's value, and each
   trailer field's value, where a checksum over the body is sent — a digest
-  is enough to confirm a guessed body (#189).  The PII scan, which read a section's strings but not its hex, now
+  is enough to confirm a guessed body (#189).  A body spanning segments is
+  zeroed whole, framing included, since `sanitise` works packet by packet
+  and reassembling TCP is out of scope (#187).  The PII scan, which read a section's strings but not its hex, now
   reads a UTF-8 body as text too, before `--payload` zeroes it, as it does a
   payload.  This was so in every release that decoded HTTP into its own
   section; **re-sanitise any capture shared after `sanitise --payload`** if

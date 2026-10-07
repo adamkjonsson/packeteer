@@ -657,6 +657,43 @@ class TestNoBodyByteSurvivesSanitise(unittest.TestCase):
                             self.assertNotIn(body[start:start + 8], wire, body)
 
 
+class TestABodyThatSpansSegments(unittest.TestCase):
+    """Framing is kept only within one TCP segment; nothing of the body is (#187).
+
+    `sanitise` works packet by packet, and keeping a chunked body's framing
+    across segments would mean reassembling each TCP direction, which is out
+    of scope for packeteer.  A body that spans segments is zeroed whole,
+    framing included: its shape is lost, and none of its content is kept.
+    """
+
+    def test_no_byte_of_a_spanning_body_survives(self) -> None:
+        chunk = b"A" * 299 + b"Z"
+        response = (b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n12c\r\n"
+                    + chunk + b"\r\n12c\r\n" + chunk
+                    + b"\r\n0\r\nX-Checksum: digest-of-it\r\n\r\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            messages = Path(tmp, "m.json")
+            messages.write_text(json.dumps([
+                {"http": {"raw": b"GET / HTTP/1.1\r\n\r\n".hex()}},
+                {"http": {"raw": response.hex()}},
+            ]))
+            src, out = Path(tmp, "span.pcap"), Path(tmp, "out.pcap")
+            _cli("stream", "--payload", "http", "--protocol-messages", str(messages),
+                 "--requests", "1", "--mss", "200", "--client-ip", "10.0.0.2",
+                 "--server-ip", "10.0.0.1", "--seed", "1", "--pcap", str(src))
+            _cli("sanitise", str(src), "--payload", "--no-scan-pii", "--pcap", str(out))
+
+            def server(path: Path) -> list[bytes]:
+                return [bytes(p.payload) for p in iter_packets(path=path, decode_app=False)
+                        if p.payload and p.transport.src_port == 80]
+
+            self.assertGreater(len(server(src)), 2, "the body must span segments")
+            wire = b"".join(server(out))
+            self.assertNotIn(b"AAAA", wire)
+            self.assertNotIn(b"digest", wire)
+            self.assertTrue(wire.startswith(b"HTTP/1.1 200 OK\r\n"))
+
+
 class TestExactBytesInAStream(unittest.TestCase):
     """The issue's purpose: exact HTTP bytes into an impaired stream."""
 

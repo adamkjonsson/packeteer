@@ -37,7 +37,7 @@ When none are given, the sanitised packet spec is printed to stdout.
 | Ethernet `src_mac` / `dst_mac` | **replaced** | `--no-macs` to keep |
 | TCP/UDP port numbers | kept | `--ports` to replace |
 | `payload.data` | kept | `--payload` to zero (same byte length; encoding field removed after zeroing) |
-| HTTP bodies | kept | `--payload` to zero (same byte length; a chunked body keeps its chunk framing, and its extension and trailer values go too) |
+| HTTP bodies | kept | `--payload` to zero (same byte length; a chunked body within one TCP segment keeps its chunk framing, and its extension and trailer values go too) |
 | `packet_metadata` timestamps | kept | `--timestamps` to zero |
 | DNS transaction IDs | kept | `--dns-ids` to zero |
 | DHCP transaction IDs (`xid`) | kept | `--dhcp-xids` to zero |
@@ -63,7 +63,19 @@ a body, in place and at its length, as it zeroes any payload.  A chunked body
 keeps its framing, so it still parses, and loses whatever can carry its
 data: the chunk data, each chunk extension's value (zeroed at its length),
 and each trailer field's value (`[redacted]`), since a trailer is where a
-checksum over the body is sent.  Add `--http-headers` to redact
+checksum over the body is sent.
+
+**Framing is kept only for a message within one TCP segment.**  `sanitise`
+works packet by packet, and a body that spans segments, which is most bodies
+larger than the MSS, cannot be walked from its first segment.  It is zeroed
+whole, framing included, and so are the segments that continue it, which do
+not parse as HTTP and are zeroed as payloads.  Nothing of the body is kept,
+but neither is its shape: a decoder reading the sanitised capture loses that
+message's end, and any message after it in the same segment.  Keeping the
+framing would mean reassembling each TCP direction, which is out of scope for
+packeteer.
+
+Add `--http-headers` to redact
 the values of `Host`, `Cookie`, `Set-Cookie`, `Authorization`, `Location`,
 `Referer`, and `Origin`.
 

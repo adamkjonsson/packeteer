@@ -319,6 +319,9 @@ class SanitiseOptions:
             length is preserved so the rebuilt packet has the same size, and
             a chunked body keeps its chunk framing, losing its chunk
             extensions' and trailer fields' values with its data (#189).
+            Framing is kept only for a message within one TCP segment: this
+            works packet by packet, and a body spanning segments is zeroed
+            whole, framing included (#187).
         timestamps: Zero ``timestamp_s`` and ``timestamp_us`` / ``timestamp_ns``
             in every ``metadata`` section.
         dns_ids: Zero the 16-bit transaction ``id`` field in every ``dns``
