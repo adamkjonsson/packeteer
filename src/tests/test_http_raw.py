@@ -609,6 +609,57 @@ class TestPayloadTakesWhatCanCarryTheBody(unittest.TestCase):
                 self.assertTrue(out.endswith(bytes(len(trailer)) + b"\r\n\r\n"))
 
 
+class TestEverySpellingOfTheEmptyLine(unittest.TestCase):
+    """The head ends at its first empty line, however it is spelled (#190).
+
+    #188 searched for two fixed pairs and missed the third spelling, a last
+    header ended by LF and an empty line by CRLF, which ran the head into the
+    body.  A property over every spelling and every kind of body, rather than
+    the one case, since this round's faults were in earlier rounds' fixes.
+    """
+
+    _SPELLINGS = (b"\r\n\r\n", b"\n\n", b"\n\r\n", b"\r\n\n")
+    _BODIES = (b"SECRETG-and-more", b"SECRETG\r\n\r\nSECRETH",
+               b"SECRETG\n\nSECRETH", b"SECRETG\n\n\r\n\r\nSECRETH")
+
+    def _cases(self) -> list[tuple[bytes, bytes, bytes]]:
+        head = b"HTTP/1.1 200 OK\r\nSet-Cookie: s=1"
+        return [(spelling, body,
+                 head.replace(b"\r\nSet", b"\r\nContent-Length: %d\r\nSet" % len(body))
+                 + spelling + body)
+                for spelling in self._SPELLINGS for body in self._BODIES]
+
+    def test_split_head_and_parse(self) -> None:
+        from packeteer.parse.http import split_head
+
+        for spelling, body, wire in self._cases():
+            with self.subTest(spelling=spelling, body=body):
+                head, sep, rest = split_head(wire)
+                self.assertEqual(sep, spelling)
+                self.assertFalse(head.endswith(b"\r"))
+                self.assertEqual(rest, body)
+                self.assertEqual(parse_http(wire).body, body)
+
+    def test_payload_keeps_no_body_byte(self) -> None:
+        for spelling, body, wire in self._cases():
+            with self.subTest(spelling=spelling, body=body):
+                section = {"type": "response", "raw": wire.hex()}
+                http.sanitise(section, None, SanitiseOptions(payload=True))
+                out = bytes.fromhex(section["raw"])
+                self.assertNotIn(b"SECRET", out)
+                self.assertTrue(out.endswith(spelling + bytes(len(body))))
+
+    def test_headers_are_redacted_in_place(self) -> None:
+        for spelling, body, wire in self._cases():
+            with self.subTest(spelling=spelling, body=body):
+                section = http.to_spec(http.decode(wire))
+                section["raw"] = wire.hex()
+                http.sanitise(section, None, SanitiseOptions(http_headers=True))
+                out = bytes.fromhex(section["raw"])
+                self.assertNotIn(b"s=1", out)
+                self.assertTrue(out.endswith(spelling + body), out)
+
+
 def _cli(*args: str) -> None:
     done = subprocess.run([sys.executable, "-m", "packeteer", *args],
                           capture_output=True, text=True, check=False)

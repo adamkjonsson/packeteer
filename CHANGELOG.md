@@ -172,14 +172,17 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   capture held.  Such a trailer is now zeroed from where it starts, and any
   body the chunk walk cannot read is zeroed whole, so one message's framing
   never ends a run.  (#186)
-- **An HTTP head ends at its first blank line.**  The head/body separator
-  was chosen by whether `\r\n\r\n` occurred anywhere in the message, so a
-  head with bare-LF line endings ran on into a body that held a CRLF pair.
-  `parse` read the body's first line as a header and the body from the
-  wrong place, and `sanitise --payload` kept that first line.  One function,
-  `packeteer.parse.http.split_head`, now ends the head at whichever blank
-  line comes first, and parsing, header redaction and body zeroing all ask
-  it.  (#188)
+- **An HTTP head ends at its first empty line, however its line endings are
+  spelled.**  The head/body separator was chosen by whether `\r\n\r\n`
+  occurred anywhere in the message, so a head with bare-LF line endings ran
+  on into a body that held a CRLF pair, and a last header ended by LF before
+  a CRLF empty line, `\n\r\n`, was not seen at all.  `parse` read the body's
+  first line as a header and the body from the wrong place, and `sanitise
+  --payload` kept that first line.  One function,
+  `packeteer.parse.http.split_head`, now walks the lines and ends the head
+  at the first empty one — `\r\n\r\n`, `\n\n`, `\n\r\n` and `\r\n\n`
+  alike, as RFC 7230 §3.5 allows — and parsing, header redaction and body
+  zeroing all ask it.  (#188, #190)
 - **An HTTP header value is a string, or a list of them.**  A list item that
   was anything else — a nested list, an object, a boolean — went on the wire
   as Python spells it, `Set-Cookie: ['a=1']`, and the run reported success.

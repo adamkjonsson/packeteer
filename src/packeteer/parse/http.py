@@ -17,9 +17,6 @@ from packeteer.generate.http import (
     encode_http_message,
 )
 
-_CRLF2 = b"\r\n\r\n"
-_LF2   = b"\n\n"
-
 
 def parse_http(data: bytes) -> HTTPMessage:  # type: ignore[valid-type]
     r"""Parse an HTTP/1.x message from raw TCP payload bytes.
@@ -126,25 +123,37 @@ def parse_http(data: bytes) -> HTTPMessage:  # type: ignore[valid-type]
 def split_head(data: bytes) -> tuple[bytes, bytes, bytes] | None:
     r"""Return *data*'s head, the blank line that ends it, and what follows.
 
-    The head ends at the **first** blank line, ``\r\n\r\n`` or ``\n\n``,
-    whichever comes earlier.  Choosing by whether ``\r\n\r\n`` occurs
-    *anywhere* ran a bare-LF head on into a body that held a CRLF pair, so
-    the body's first line was read as a header (#188).  Everything that
-    needs to know where a body starts — this parser, and ``sanitise``
+    The head ends at the **first empty line** after the start line, however
+    its line endings are spelled.  RFC 7230 §3.5 lets a recipient take a lone
+    LF as a line ending and ignore a CR before it, so ``\r\n\r\n``,
+    ``\n\n``, ``\n\r\n`` and ``\r\n\n`` all end a head.  The lines are
+    walked rather than searched for: choosing a separator by whether
+    ``\r\n\r\n`` occurred anywhere ran a bare-LF head into a body that held
+    a CRLF pair (#188), and searching for two fixed pairs missed ``\n\r\n``
+    and left a stray CR on a head ended by ``\r\n\n`` (#190).  Everything
+    that needs to know where a body starts — this parser, and ``sanitise``
     redacting a head or zeroing a body — asks here, so none can disagree.
 
     Args:
         data: An HTTP message, or the start of one.
 
     Returns:
-        ``(head, separator, rest)``, or ``None`` when there is no blank line.
+        ``(head, separator, rest)``, where *head* ends without a line ending
+        and *separator* is its last line's ending and the empty line; or
+        ``None`` when there is no empty line.
 
     """
-    found = [(at, sep) for sep in (_CRLF2, _LF2) if (at := data.find(sep)) >= 0]
-    if not found:
+    start = data.find(b"\n") + 1           # past the start line
+    if start == 0:
         return None
-    at, sep = min(found)
-    return data[:at], sep, data[at + len(sep):]
+    while True:
+        end = data.find(b"\n", start)
+        if end < 0:
+            return None
+        if data[start:end] in (b"", b"\r"):
+            cut = start - (2 if data[:start].endswith(b"\r\n") else 1)
+            return data[:cut], data[cut:end + 1], data[end + 1:]
+        start = end + 1
 
 
 def _message(start: str, headers: dict[str, str | list[str]],
