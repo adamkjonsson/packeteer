@@ -269,7 +269,7 @@ class _Generator:
         self._emit()
         self._emit("from packeteer.protocols import AppProtocol, check_section, "
                    "register")
-        self._emit("from packeteer.protospec.runtime import Reader, Writer")
+        self._emit("from packeteer.protospec.runtime import Reader, Writer, redact_text")
         self._emit()
 
     def _emit_dataclasses(self) -> None:
@@ -658,7 +658,10 @@ class _Generator:
     def _redact(self, field_type: FieldType, value: str) -> str:
         """Return the redacted stand-in for one value of *field_type*."""
         if isinstance(field_type, StringType):
-            return "'[redacted]'"
+            # At the value's encoded length, so a derived size stays true and
+            # a fixed one is still met: over TCP a message that changed size
+            # left every sequence number after it false (#191).
+            return f"redact_text({value}, {field_type.encoding!r})"
         if isinstance(field_type, BytesType):
             # Hex in a spec, and the length is often what a `size` field
             # derives from, so zero the bytes rather than dropping them.
@@ -766,7 +769,7 @@ class _Generator:
         self._emit('    """Blank every leaf of a value whose shape is only '
                    'known at run time."""')
         self._emit("    if isinstance(_value, str):")
-        self._emit("        return '[redacted]'")
+        self._emit("        return redact_text(_value)")
         self._emit("    if isinstance(_value, bool):")
         self._emit("        return False")
         self._emit("    if isinstance(_value, int):")

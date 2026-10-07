@@ -169,12 +169,16 @@ class TestTheSpecKey(_Workspace):
 
     def test_sanitise_redacts_the_loaded_protocol(self) -> None:
         """#117's redaction reached through #118's loading."""
+        from packeteer.protospec.runtime import redaction
+
         spec = self._parse_to_spec()
+        owner = json.loads(spec.read_text())["packets"][0]["sensor"]["owner"]
         clean = self.dir / "clean.json"
         done = _packeteer("sanitise", str(spec), "-o", str(clean))
         self.assertEqual(done.returncode, 0, done.stderr)
         section = json.loads(clean.read_text())["packets"][0]["sensor"]
-        self.assertEqual(section["owner"], "[redacted]")
+        # At the value's length, so the message keeps its size (#191).
+        self.assertEqual(section["owner"], redaction(len(owner)))
         self.assertEqual(section["value"], 21, "and only what is annotated")
 
     def test_a_malformed_key_is_rejected(self) -> None:

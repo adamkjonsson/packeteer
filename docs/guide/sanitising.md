@@ -129,7 +129,8 @@ protocol was made:
 
 **Compiled from a spec** — every field marked
 [`sensitive: true`](sensitive) is redacted, and nothing else.  A `string`
-becomes `"[redacted]"`, `bytes` become zeros of the same length, an `int`
+becomes `"[redacted]"` cut or padded to its own length, `bytes` become zeros
+of the same length, an `int`
 becomes `0`.
 
 ```yaml

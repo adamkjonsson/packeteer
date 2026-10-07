@@ -181,8 +181,14 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   becomes `[redacted]` cut or space-padded to its own length, in the
   section's fields and in its `raw`, and a parser still reads `[redacted]`.
   A test holds every TCP segment of every real capture, and of generated
-  HTTP, to its length under each `sanitise` flag.  DNS over TCP has the same
-  fault and is #192.  (#191)
+  HTTP, to its length under each `sanitise` flag.  **A compiled protocol's
+  `sensitive:` strings follow the same rule**: its generated `sanitise`
+  wrote `[redacted]` whatever the string's length, so a string sized by a
+  derived length changed its message's size, and a fixed-size one might not
+  fit.  It now writes `[redacted]` fitted to the string's encoded length,
+  through `packeteer.protospec.runtime.redact_text`; **recompile** a module
+  compiled by an earlier release to get it.  DNS over TCP has the same fault
+  and is #192.  (#191)
 - **An HTTP head ends at its first empty line, however its line endings are
   spelled.**  The head/body separator was chosen by whether `\r\n\r\n`
   occurred anywhere in the message, so a head with bare-LF line endings ran

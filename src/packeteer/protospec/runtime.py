@@ -17,9 +17,60 @@ message.
 """
 from __future__ import annotations
 
-__all__ = ["Reader", "Writer"]
+__all__ = ["Reader", "Writer", "redact_text", "redaction"]
 
 _BITS_PER_BYTE = 8
+
+_REDACTED = "[redacted]"
+
+
+def redaction(length: int) -> str:
+    """Return ``[redacted]`` cut or space-padded to *length* characters.
+
+    A redacted value keeps the length of what it replaces (#191).  A TCP
+    segment that changed size left the sequence numbers after it false, and a
+    reassembler read a sanitised stream as one with gaps the capture never
+    had.  A value shorter than ``[redacted]`` gets as much of it as fits.
+
+    Args:
+        length: How many characters the redaction must be.
+
+    Returns:
+        The redaction, exactly *length* characters long.
+
+    """
+    return (_REDACTED + " " * max(0, length - len(_REDACTED)))[:length]
+
+
+def redact_text(value: str, encoding: str = "utf-8") -> str:
+    """Return a redaction of *value* that encodes to as many bytes as it does.
+
+    What a compiled protocol's ``sanitise`` writes for a ``sensitive:``
+    string.  It used to write ``[redacted]`` whatever the value's length, so
+    a string sized by a derived length changed its message's size, and over
+    TCP every sequence number after it went false; a fixed-size one might not
+    fit its size at all (#191).  Measured in encoded bytes, since an encoding
+    may spend more than one byte on a character.
+
+    Args:
+        value: The value being redacted.
+        encoding: The field's encoding, as its spec names it.
+
+    Returns:
+        The longest form of ``[redacted]``, space-padded where needed, that
+        encodes to *value*'s byte length; ``[redacted]`` itself if the value
+        cannot be measured in that encoding.
+
+    """
+    try:
+        target = len(value.encode(encoding))
+    except (LookupError, UnicodeEncodeError):
+        return _REDACTED
+    for count in range(target, -1, -1):
+        candidate = redaction(count)
+        if len(candidate.encode(encoding)) == target:
+            return candidate
+    return _REDACTED
 
 
 class Reader:

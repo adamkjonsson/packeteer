@@ -588,14 +588,15 @@ _HTTP_REDACTED = "[redacted]"
 def _redaction(length: int) -> str:
     """Return ``[redacted]`` cut or space-padded to *length* characters.
 
-    A redacted value keeps the length of what it replaces (#191).  A TCP
-    segment that changed size left the sequence numbers after it false, and a
-    reassembler read the sanitised stream as one with gaps the capture never
-    had.  Trailing spaces are optional whitespace in a header value, so a
-    parser still reads ``[redacted]``; a value shorter than that gets as much
-    of it as fits.  The length is no more than ``--payload`` already keeps.
+    A redacted value keeps the length of what it replaces (#191); the rule is
+    :func:`packeteer.protospec.runtime.redaction`, which a compiled protocol's
+    ``sanitise`` uses too.  Trailing spaces are optional whitespace in a
+    header value, so a parser still reads ``[redacted]``.  The length is no
+    more than ``--payload`` already keeps.
     """
-    return (_HTTP_REDACTED + " " * max(0, length - len(_HTTP_REDACTED)))[:length]
+    from packeteer.protospec.runtime import redaction
+
+    return redaction(length)
 
 
 def _sanitise_http(http: dict, opts: SanitiseOptions) -> None:

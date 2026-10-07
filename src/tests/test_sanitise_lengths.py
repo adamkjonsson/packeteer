@@ -14,7 +14,9 @@ keeps its size, so a TCP packet built from the sanitised spec is the length
 of the one built from the parsed spec exactly when its payload is.
 
 DNS over TCP is left out of the generated streams: label redaction changes a
-DNS message's length, and that is #192.
+DNS message's length, and that is #192.  A compiled protocol over TCP is in:
+its generated `sanitise` wrote `[redacted]` for a sensitive string whatever
+the string's length, which is #191 again outside HTTP.
 """
 from __future__ import annotations
 
@@ -104,7 +106,8 @@ class TestARedactionKeepsTheValuesLength(unittest.TestCase):
         self.assertEqual(msg.headers["Host"], "[redacted]")
 
 
-class TestEveryTCPSegmentKeepsItsLength(unittest.TestCase):
+class _LengthCheck(unittest.TestCase):
+    """Holds every TCP packet of a capture to its length under each flag."""
 
     def _check(self, path: Path) -> None:
         config = json.loads(parse_pcap_file(path=path))
@@ -116,6 +119,9 @@ class TestEveryTCPSegmentKeepsItsLength(unittest.TestCase):
                 changed = {i: (before[i], after[i]) for i in before
                            if before[i] != after.get(i)}
                 self.assertEqual(changed, {}, "packet: (before, after)")
+
+
+class TestEveryTCPSegmentKeepsItsLength(_LengthCheck):
 
     def test_the_real_capture_corpus(self) -> None:
         captures = sorted(_CORPUS.glob("*.pcap*"))
@@ -129,6 +135,60 @@ class TestEveryTCPSegmentKeepsItsLength(unittest.TestCase):
             directory = _http_capture(Path(tmp))
             for name in ("given.pcap", "generated.pcap"):
                 self._check(directory / name)
+
+
+class TestACompiledProtocolKeepsItsLength(_LengthCheck):
+    """A sensitive string sized by a derived length, carried over TCP (#191).
+
+    The generated `sanitise` wrote `[redacted]` whatever the string's length,
+    so the derived length, the message and the segment all changed size.
+    """
+
+    _SPEC = """
+name: lenproto
+version: "1.0"
+over: tcp
+ports: [9310]
+input: datagram
+entry: Reading
+units:
+  Reading:
+    fields:
+      - {name: magic, type: {int: {bits: 16}}, const: 21317}
+      - {name: owner_len, type: {int: {bits: 8}}, derive: {size_of: owner}}
+      - {name: owner, type: {string: {size: {expr: owner_len}}}, sensitive: true}
+      - {name: tag, type: {string: {size: 12}}, sensitive: true}
+      - {name: value, type: {int: {bits: 16}}}
+"""
+
+    def test_a_derived_size_and_a_fixed_one(self) -> None:
+        from packeteer import protocols
+
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            (directory / "spec.yaml").write_text(self._SPEC)
+            module, capture = directory / "lenproto.py", directory / "c.pcap"
+            messages = directory / "m.json"
+            messages.write_text(json.dumps([
+                {"magic": 21317, "owner": owner, "tag": "tag-01234567", "value": 7}
+                for owner in ("x", "alice", "bob-the-builder", "a-much-longer-owner-name")
+            ]))
+            for args in (("protocol", "compile", str(directory / "spec.yaml"),
+                          "-o", str(module)),
+                         ("stream", "--load-protocol", str(module), "--protocol", "tcp",
+                          "--payload", "lenproto", "--protocol-messages", str(messages),
+                          "--packets", "8", "--server-port", "9310",
+                          "--client-ip", "10.0.0.2", "--server-ip", "10.0.0.1",
+                          "--seed", "1", "--pcap", str(capture))):
+                done = subprocess.run([sys.executable, "-m", "packeteer", *args],
+                                      capture_output=True, text=True, check=False)
+                self.assertEqual(done.returncode, 0, done.stderr)
+            protocols.load_module(module)
+            self.addCleanup(protocols.unregister, "lenproto")
+            config = json.loads(parse_pcap_file(path=capture))
+            self.assertTrue(any("lenproto" in p for p in config["packets"]),
+                            "the capture must decode as the protocol")
+            self._check(capture)
 
 
 if __name__ == "__main__":
