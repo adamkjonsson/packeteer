@@ -38,7 +38,7 @@ is kept:
 | Ports, payload, timestamps | unchanged |
 | DNS names and addresses | replaced automatically when `dns` section present |
 | DHCP IPs and client MAC | replaced automatically when `dhcp` section present |
-| HTTP header values | unchanged |
+| HTTP header values and bodies | unchanged |
 
 ## Enabling optional replacements
 
@@ -51,7 +51,7 @@ from packeteer.sanitise import sanitise, SanitiseOptions
 # Zero port numbers too
 clean = sanitise(spec, SanitiseOptions(ports=True))
 
-# Zero payload bytes (same byte length preserved; encoding field removed)
+# Zero payload bytes, HTTP bodies included (same byte length preserved)
 clean = sanitise(spec, SanitiseOptions(payload=True))
 
 # Zero all timestamps
@@ -116,10 +116,16 @@ fields (`ciaddr`, `yiaddr`, `siaddr`, `giaddr`) and the client hardware
 address (`chaddr`) are replaced using the same mapping tables as all other
 IP and MAC fields.
 
-**HTTP** — header values are kept by default.  Set `http_headers=True` to
-redact the values of `Host`, `Cookie`, `Set-Cookie`, `Authorization`,
-`Location`, `Referer`, and `Origin`.  The header keys and non-sensitive headers
-are always kept unchanged.
+**HTTP** — bodies and header values are kept by default.  Set
+`http_headers=True` to redact the values of `Host`, `Cookie`, `Set-Cookie`,
+`Authorization`, `Location`, `Referer`, and `Origin`; the header names and
+every other header are kept.  Set `payload=True` to zero each body, as any
+payload is zeroed.  Both keep every length — a redacted value becomes
+`[redacted]` cut or padded to the length it replaces — so a sanitised TCP
+stream keeps its sequence numbers true.  A message whose exact bytes the
+capture kept in `raw` is sanitised inside them, keeping the order and
+repetition of its headers.  The CLI page, {doc}`../cli/sanitise`, has the
+detail: chunked bodies, and a body that spans TCP segments.
 
 ### A protocol you registered
 
@@ -251,9 +257,11 @@ one warning is emitted that names all three packet numbers.  The `packet_num`
 attribute holds the number of the first occurrence; the full list is embedded
 in the warning message string.
 
-Only `"utf8"` encoded payloads are scanned; hex payloads are never inspected.
-The scan does not modify the output — combine with `payload=True` to both flag
-and zero the payloads:
+A top-level payload is scanned only when it is `"utf8"` encoded; a hex
+payload is never inspected.  An HTTP body is decoded from its hex and scanned
+when it is UTF-8 text.  The scan does not modify the output, and it reads a
+payload before `payload=True` zeroes it — so combine the two to both flag and
+zero the payloads:
 
 ```python
 clean = sanitise(spec, SanitiseOptions(payload=True))  # scan_pii=True by default

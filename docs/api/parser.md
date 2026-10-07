@@ -264,3 +264,23 @@ def packet_parser(data: bytes) -> tuple[int, int | None, HeaderType | None]:
 | `gre_packet_parser` | `packeteer.parse.gre` | `GREHeader` |
 
 All names are exported from `packeteer.parse` (the top-level package).
+
+## HTTP messages
+
+An HTTP message is not a header with a fixed layout, so it is read by its own
+pair of functions rather than a `packet_parser`.  {func}`parse_http
+<packeteer.parse.http.parse_http>` reads one message, and keeps its exact bytes
+in `raw` when its fields would not rebuild it.  {func}`split_head
+<packeteer.parse.http.split_head>` says where a message's head ends — at its
+first empty line, however the line endings are spelled — which is the one
+answer parsing and `sanitise` both use.
+
+```{eval-rst}
+.. autofunction:: packeteer.parse.http.parse_http
+   :no-index:
+```
+
+```{eval-rst}
+.. autofunction:: packeteer.parse.http.split_head
+   :no-index:
+```

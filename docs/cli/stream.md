@@ -228,7 +228,9 @@ With `--protocol-messages FILE`, `--payload http` sends the file's messages
 instead of generating them, over the same conversation: the handshake, both
 directions, segmentation at `--mss`, and every impairment.  That is how a
 capture gets exact HTTP bytes, a `Content-Encoding: gzip` body for instance,
-into a lossy stream.
+into a lossy stream.  Loss alone leaves a permanent gap where a segment went;
+add `--retransmit-lost` for the resend that fills it, when the body should
+still arrive whole.
 
 ```bash
 packeteer stream --client-ip 10.0.0.2 --server-ip 10.0.0.1 \

@@ -1244,15 +1244,16 @@ given, as [`dns.raw`](#dns-top-level-fields) is for DNS.
   are read from the bytes, and `type` says whether it is a request or a
   response, or else the bytes do: a start line beginning `HTTP/` is a
   response.  Bytes that do not parse as HTTP are still sent as given.
-- **`sanitise` redacts inside it.**  A sensitive header's value becomes
-  `[redacted]`, cut or space-padded to the value's length, in `raw` as in
-  `headers`, and every other byte stays as
-  captured: the order and repetition of headers, spacing, line endings, the
-  body.  When the head cannot be read line by line — a folded continuation
-  line, a line without a colon — `raw` is dropped instead, since a header
-  redacted in `headers` but left in `raw` would go back on the wire as it was,
-  and the message is rebuilt from its fields: repeated headers grouped, and
-  every one but `Set-Cookie` combined.
+- **`sanitise` works inside it.**  With `--http-headers`, a sensitive
+  header's value becomes `[redacted]`, cut or space-padded to the value's
+  length, in `raw` as in `headers`; with `--payload`, the body is zeroed in
+  `raw` as in `body`.  Every other byte stays as captured: the order and
+  repetition of headers, spacing, line endings.  When the head cannot be read
+  line by line — a folded continuation line, a line without a colon — `raw`
+  is dropped instead, since a value redacted in `headers` but left in `raw`
+  would go back on the wire as it was, and the message is rebuilt from its
+  fields: repeated headers grouped, and every one but `Set-Cookie`
+  combined.
 
 `raw` must hold bytes: `{"raw": ""}` is refused rather than read as absent,
 and so is anything that is not hex, naming the key.
@@ -1274,9 +1275,10 @@ wire, `Transfer-Encoding: gzip` then `Transfer-Encoding: chunked`, is one
 string, `"gzip, chunked"`, which the RFC says means the same, and the two
 lines are in `raw`.  A list may be written for any header by hand.
 
-`sanitise` redacts a list item by item, so a message rebuilt from its
-fields keeps its number of `Set-Cookie` lines.  What a list cannot say is order *across* names — `A`, `B`, then `A`
-again — which is #172.
+`sanitise` redacts a list item by item, so a message rebuilt from its fields
+keeps its number of `Set-Cookie` lines.  What a list cannot say is order
+*across* names — `A`, `B`, then `A` again — which is
+[#172](https://github.com/adamkjonsson/packeteer/issues/172).
 
 ```{note}
 **A chunked body keeps its framing.**  `body` for a

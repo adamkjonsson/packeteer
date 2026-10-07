@@ -25,6 +25,19 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
+**Kober 0.5.0, and HTTP on the wire.**  Two strands, most of the work found
+by [kober](https://github.com/adamkjonsson/zipline-kober) reviewing eight
+`.dev` builds.  The **spec dialect** follows kober to 0.5.0: its transforms,
+its string switches, its long enums and its document keys load here and are
+declined by name, and a declined construct is reported once and nothing else
+is said about it.  **HTTP** gains given messages for `stream --payload http`,
+exact bytes in an `http` section's `raw`, and a `sanitise` that keeps a
+capture's shape: it redacts and zeroes inside the bytes, keeps every length
+so sequence numbers stay true, and — the `Security` entry — zeroes HTTP
+bodies, which `--payload` had never done.  Two changes are breaking, both
+under `Changed`: a redacted value is no longer exactly `[redacted]`, and a
+repeated `Set-Cookie` is a list.
+
 ### Added
 
 - **`stream --payload http --protocol-messages FILE` sends the given
@@ -44,21 +57,30 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   header with no space after its colon, a status line with no reason phrase,
   bare-LF line endings, a header repeated on its own line.
   `{"http": {"raw": "…"}}` is a whole section, read as a response when its
-  start line begins `HTTP/` unless `type` says otherwise, so `stream --payload
-  http --protocol-messages` can put any HTTP bytes into an impaired stream.
-  `parse` writes `raw` only when the fields would not rebuild the captured
-  message, which none in the real-capture corpus needs, and `sanitise`
-  redacts a header inside it as well as in `headers` (see Changed), so a
-  redacted header never goes back on the wire from `raw`.  (#178)
+  start line begins `HTTP/` unless `type` says otherwise; an empty `raw` is
+  refused rather than read as absent.  `parse` writes `raw` only when the
+  fields would not rebuild the captured message, which none in the
+  real-capture corpus needs, so a captured message the fields cannot rebuild
+  now round-trips byte for byte.  **`sanitise` works inside it**: it redacts
+  a header and zeroes a body in the bytes themselves, so a sanitised message
+  keeps its headers' order and repetition, its spacing and its line endings.
+  When a head cannot be read line by line, a folded continuation line above
+  all, `raw` is dropped and the message rebuilt from its sanitised fields.
+  (#178, #181, #184)
 - **An HTTP header's value may be a list**, one line per item under the same
   name: `"Set-Cookie": ["a=1; Expires=…", "b=2"]`, or two `Transfer-Encoding`
-  lines without `raw`.  `sanitise` redacts a list item by item, so a
-  message rebuilt from its fields keeps its number of `Set-Cookie` lines.
-  (#181)
-- **`packeteer.protocols.section_bytes`**, beside `check_section`: a
-  section's hex key read as bytes, refusing a bad value in words that name
-  the protocol and the key.  (#181)  And **`section_raw`**, the same for a
-  `raw` key, which also refuses one that is present and empty.  (#183)
+  lines without `raw`.  A value is a string, an integer taken as its digits,
+  or a list of those; anything else is refused naming the header and the
+  item.  `sanitise` redacts a list item by item, keeping its number of lines.
+  (#181, #182)
+- **`packeteer.protocols.section_bytes`** and **`section_raw`**, beside
+  `check_section`: a section's hex key read as bytes, refusing a bad value in
+  words that name the protocol and the key, and its `raw`, refusing one that
+  is present and empty.  (#181, #183)
+- **`packeteer.parse.http.split_head`**, where an HTTP message's head ends —
+  see Fixed — and **`packeteer.protospec.runtime.redaction`** and
+  **`redact_text`**, the same-length redaction a compiled protocol uses —
+  see Changed.  (#188, #190, #191)
 - **`packeteer.protospec.spec.Declined`**, the type of a field whose
   construct this version reads but does not implement, and
   **`ExprType.UNKNOWN`**, the type an expression reading one has.  Neither
@@ -66,12 +88,6 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   `Declined` exactly where `Spec.unsupported` has an entry for the field's
   type, and `protocol show` prints the construct's name there (`select`,
   `pointer`) rather than `bytes[rest]`.  (#167)
-- **kober 0.5.0's document keys, `params` and `transforms`, are recognised
-  and declined by name**, each at its own line, so a spec declaring a key or
-  a non-core transform loads and the rest of it is checked.  A document's
-  `params` are values supplied when a decode is set up, not the unit
-  parameters the same word means on a unit, and the message says which.
-  (#168)
 - **kober 0.5.0's `transform` and `concat` are recognised and declined by
   name**, on a field and as a switch case, so a spec using them loads and the
   rest of it is checked.  kober's `http.yaml` uses both since it began
@@ -89,27 +105,42 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   that is neither an int nor a str.  With this, kober 0.5.0's `http.yaml`
   loads and reports its 18 constructs and the stream rule, and nothing
   else.  (#171)
-- **`EnumDef.doc`**, from kober's long enum form (below), printed by
+- **kober 0.5.0's document keys, `params` and `transforms`, are recognised
+  and declined by name**, each at its own line, so a spec declaring a key or
+  a non-core transform loads and the rest of it is checked.  A document's
+  `params` are values supplied when a decode is set up, not the unit
+  parameters the same word means on a unit, and the message says which.
+  (#168)
+- **`EnumDef.doc`**, from kober's long enum form (see Fixed), printed by
   `protocol show` beneath the enum as a unit's doc is.  (#166)
 
 ### Changed
 
-- **`sanitise --http-headers` keeps an HTTP message's shape.**  It redacts a
-  sensitive header's value inside the message's `raw` bytes as well as in
-  its fields, and keeps `raw`, so the capture is the one captured less its
-  secrets: headers in their order and repetition, spacing and line endings
-  as sent.  It used to drop `raw` and rebuild the message from its fields,
-  which grouped a repeated header and merged two `Transfer-Encoding` lines
-  into one — equivalent HTTP, but not the capture a decoder's tests stood
-  in for.  When the head cannot be read line by line, a folded continuation
-  line above all, `raw` is still dropped and the message rebuilt.  (#184)
-- **`HTTPRequest.headers` and `HTTPResponse.headers` are
-  `dict[str, str | list[str]]`**, and `packeteer parse` writes a repeated
-  `Set-Cookie` as a list of its lines rather than one folded string.  Every
-  other header is a string as before.  A consumer that assumed a string
-  meets a list only where the output used to be wrong: RFC 7230 §3.2.2 says
-  `Set-Cookie` cannot be combined, and a cookie's `Expires` has a comma in
-  it, so the folded value was ambiguous.  (#181)
+- **Breaking: a redacted value keeps its length, so it is no longer exactly
+  `[redacted]`.**  `sanitise --http-headers` wrote `[redacted]` whatever the
+  length of the value it replaced, so the TCP segment carrying it shrank or
+  grew while every sequence number after it stayed as captured, and a
+  reassembler found gaps or overlaps the capture never had — two in three
+  requests carrying `Host: shop.example.com`.  A value now becomes
+  `[redacted]` cut or space-padded to its own length: `shop.example.com`
+  becomes `[redacted]      `, a four-byte value `[red`.  A header parser still
+  reads `[redacted]`, since trailing spaces are optional whitespace there.  A
+  compiled protocol's `sensitive:` strings follow the same rule, measured in
+  the string's encoding, where a string sized by a derived length had
+  changed its message's size and a fixed-size one might not have fit.  **Code
+  that compares a redacted value to `"[redacted]"`** should strip it first,
+  or compare to `packeteer.protospec.runtime.redaction(len(original))`; and
+  a module compiled by an earlier release keeps the old behaviour until it is
+  **recompiled**.  A test holds every TCP segment of every real capture, and
+  of generated HTTP and a compiled protocol, to its length under each
+  `sanitise` flag.  DNS over TCP has the same fault and is #192.  (#191)
+- **Breaking: a repeated `Set-Cookie` is a list.**  `HTTPRequest.headers`
+  and `HTTPResponse.headers` are `dict[str, str | list[str]]`, and `packeteer
+  parse` writes a `Set-Cookie` that appears on several lines as a list of
+  them.  RFC 7230 §3.2.2 says it cannot be combined into one line — a
+  cookie's `Expires` has a comma in it — and 0.16.0 kept only the last.
+  Every other header is a string as before.  **Code that reads a header
+  value** should accept a list where it reads `Set-Cookie`.  (#181)
 - **`Switch.arms` is keyed `int | str`.**  Its keys are text for a switch on
   a string, which loads now and is declined.  Not breaking for a spec, and a
   spec that checks cleanly still has integer keys only, but a consumer
@@ -126,34 +157,42 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   operand of 'not' is bytes` — and 2 warnings telling the author to `derive` a
   length that is a `select`.  It now reports its 11 constructs and nothing
   else.  The same stand-in could produce a `const`, `derive` or `fill` error,
-  refuse a dotted path through a `pointer`, or warn that a unit reached only
-  through a `pointer` was never referenced; none of those can happen now.
-  Real faults beside a declined field are still reported: an unknown operand
-  is compatible with anything, and the other operand is still typed.  (#167)
+  refuse a dotted path through a `pointer`, warn that a unit reached only
+  through a `pointer` was never referenced, or call a field after a
+  `remaining` starved though it reads nothing where it stands — the shape of
+  a sealed payload and the `transform` that opens it.  None of those can
+  happen now.  Real faults beside a declined field are still reported.
+  (#167, #174)
 - **`compile_spec` refuses a spec with a declined construct**, naming it, as
   `check` does.  It used to compile one: a caller that skipped `check` got a
   module in which a `computed` or `select` field was an opaque `bytes` field
   reading to the end of the message.  (#167)
-- **A field that reads nothing where it stands may follow a `remaining`.**
-  The last leak through #167's stand-in, found in review of 0.17.0.dev1: a
-  `computed`, `select`, `pointer`, `concat` or `transform` after a field
-  sized `remaining`, or a `switch` whose every case is one, was reported as
-  a field with no bytes left to read, though it reads none.  kober accepts
-  all of them, and the `transform` case is the shape of a sealed payload
-  followed by what opens it.  The same holds one level up, for a unit that
-  reads to the end of the message.  A `fill`'s trailer counts such a field
-  as zero bytes and measures the rest, where it used to skip the check and
-  miss a variable field beside a declined one.  (#174)
 - **A bare integer is accepted wherever an expression is**, as in kober:
   `count: 2`, `{expr: 4}`, `dispatch: 0`.  Each was refused as *must be a
   string, not int*, so a kober spec fixing a table's size with an unquoted
   number did not load.  It builds the same spec as its quoted spelling.  A
   YAML boolean or float is still refused, now with the hint saying what YAML
   read.  (#175)
+- **kober's long enum form loads.**  `{doc: …, members: {0: …}}` was read as
+  the members themselves, so `doc` and `members` were taken for values and
+  refused with *a value of enum 'opcode' must be an integer, not 'doc'* — a
+  kober spelling reported as a typo.  The short form is unchanged.  A member
+  written beside `members` is refused as a mix of the two forms, and a `doc`
+  in the short form is refused with a pointer to the long one.  (#166)
+- **A top-level `emit` is an unknown key**, as it is in kober.  It was
+  declined as *not supported yet*, which told the author kober would take it.
+  In kober, `emit` belongs on a unit or a field, where packeteer still
+  declines it.  (#168)
 - **A message about the spec as a whole no longer carries an empty path.**
   An unknown top-level key read `t.yaml:1: : a spec has no key 'emit'`, with
-  nothing between the separators, where every other message has a path
-  there.  It reads `t.yaml:1: a spec has no key 'emit'`.  (#176)
+  nothing between the separators.  It reads `t.yaml:1: a spec has no key
+  'emit'`.  (#176)
+- **A spec claiming a port another protocol holds is refused by `check`**, at
+  its `ports`, naming the holder.  It used to pass `check` and fail at
+  compile time as *a bug in packeteer's compiler*, which sent the author to
+  the wrong place: the clash is the spec's, and the built-ins claim their
+  ports whenever packeteer parses.  `compile_spec` called without `check`
+  says the module *cannot register*, not that it is a bug.  (#169)
 - **`stream --payload http` no longer accepts `--protocol-messages` and
   ignores it.**  The capture held generated traffic and nothing from the
   file, and the run reported success.  The flag now does what it says (see
@@ -161,87 +200,38 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   `--error-rate`, `--chunked-rate`, `--min-chunk`, `--max-chunk`,
   `--trailer-rate` — are refused beside it by name, from the command line or
   a `--config` file, rather than ignored in their turn.  (#169)
-- **An `http` section's `type` must be `request` or `response`.**  Any
-  other value was read as a request, so a misspelt `"respnse"` built a
-  request from a response's fields, and since `raw` it sent a response's
-  exact bytes from the client, with the run reporting success.  It is now
-  refused naming the value.  Left out, it means what it did.  (#180)
-- **`sanitise --payload` no longer ends the run on a chunked body cut short
-  after its last chunk.**  A trailer section with no terminating blank line
-  raised *negative count*, and nothing was written, whatever else the
-  capture held.  Such a trailer is now zeroed from where it starts, and any
-  body the chunk walk cannot read is zeroed whole, so one message's framing
-  never ends a run.  (#186)
-- **A redacted HTTP header value keeps its length**, so a sanitised TCP
-  stream keeps its sequence numbers true.  `sanitise --http-headers` wrote
-  `[redacted]` whatever the length of the value it replaced, so the segment
-  carrying it shrank or grew while every sequence number after it stayed as
-  captured, and a reassembler found gaps or overlaps the capture never had
-  — two in three requests carrying `Host: shop.example.com`.  A value now
-  becomes `[redacted]` cut or space-padded to its own length, in the
-  section's fields and in its `raw`, and a parser still reads `[redacted]`.
-  A test holds every TCP segment of every real capture, and of generated
-  HTTP, to its length under each `sanitise` flag.  **A compiled protocol's
-  `sensitive:` strings follow the same rule**: its generated `sanitise`
-  wrote `[redacted]` whatever the string's length, so a string sized by a
-  derived length changed its message's size, and a fixed-size one might not
-  fit.  It now writes `[redacted]` fitted to the string's encoded length,
-  through `packeteer.protospec.runtime.redact_text`; **recompile** a module
-  compiled by an earlier release to get it.  DNS over TCP has the same fault
-  and is #192.  (#191)
-- **An HTTP head ends at its first empty line, however its line endings are
-  spelled.**  The head/body separator was chosen by whether `\r\n\r\n`
-  occurred anywhere in the message, so a head with bare-LF line endings ran
-  on into a body that held a CRLF pair, and a last header ended by LF before
-  a CRLF empty line, `\n\r\n`, was not seen at all.  `parse` read the body's
-  first line as a header and the body from the wrong place, and `sanitise
-  --payload` kept that first line.  One function,
-  `packeteer.parse.http.split_head`, now walks the lines and ends the head
-  at the first empty one — `\r\n\r\n`, `\n\n`, `\n\r\n` and `\r\n\n`
-  alike, as RFC 7230 §3.5 allows — and parsing, header redaction and body
-  zeroing all ask it.  (#188, #190)
-- **An HTTP header value is a string, or a list of them.**  A list item that
-  was anything else — a nested list, an object, a boolean — went on the wire
-  as Python spells it, `Set-Cookie: ['a=1']`, and the run reported success.
-  It is now refused naming the header and the item.  An integer is still
-  taken as its digits.  (#182)
-- **An empty `raw` is refused, in an `http` section and a `dns` one.**  It
-  was read as absent, so a message built from the other fields went on the
-  wire in its place — a default `GET / HTTP/1.1` for HTTP, whatever the other
-  keys said for DNS — though a `raw` that is present says to send exactly
-  its bytes.  (#181, #183)
-- **Bad hex in a section names its protocol and key**: `http: raw is not
-  hex: 'z' at position 0 is not a hex digit`, for an `http` section's `raw`
-  and `body` and a `dns` section's `raw`.  It was Python's own message,
-  naming neither, so an author with many sections had to guess.  (#181)
 - **A repeated HTTP header is combined, not dropped.**  `parse` kept the last
   value of a header that appeared twice and lost the others, silently: two
   `Transfer-Encoding` lines, `gzip` then `chunked`, parsed as only `chunked`,
   which frames the body differently.  They are now one value, `gzip,
   chunked`, as RFC 7230 §3.2.2 allows, and `raw` keeps the two lines.
-  `Set-Cookie`, which the RFC says cannot be combined, is kept apart as a
-  list (see Changed).
+  `Set-Cookie`, which cannot be combined, is a list (see Changed).
   `Content-Length` is also found however its name is spelled, so a body
   after `CONTENT-LENGTH:` is trimmed to it as one after `Content-Length:` is.
-  A captured HTTP message the fields cannot rebuild now round-trips byte for
-  byte through `packeteer parse` and `build`.  (#178)
-- **A spec claiming a port another protocol holds is refused by `check`**, at
-  its `ports`, naming the holder.  It used to pass `check` and fail at
-  compile time as *a bug in packeteer's compiler*, which sent the author to
-  the wrong place: the clash is the spec's, and the built-ins claim their
-  ports whenever packeteer parses.  `compile_spec` called without `check`
-  says the module *cannot register*, not that it is a bug.  (#169)
-- **A top-level `emit` is an unknown key**, as it is in kober.  It was
-  declined as *not supported yet*, which told the author kober would take it.
-  In kober, `emit` belongs on a unit or a field, where packeteer still
-  declines it.  The reference's table said `document, unit, field` and now
-  says `unit, field`.  (#168)
-- **kober's long enum form loads.**  `{doc: …, members: {0: …}}` was read as
-  the members themselves, so `doc` and `members` were taken for values and
-  refused with *a value of enum 'opcode' must be an integer, not 'doc'* — a
-  kober spelling reported as a typo.  The short form is unchanged.  A member
-  written beside `members` is refused as a mix of the two forms, and a `doc`
-  in the short form is refused with a pointer to the long one.  (#166)
+  (#178, #181)
+- **An HTTP head ends at its first empty line, however its line endings are
+  spelled.**  The head/body separator was chosen by whether `\r\n\r\n`
+  occurred anywhere in the message, so a head with bare-LF line endings ran
+  on into a body that held a CRLF pair, and a last header ended by LF before
+  a CRLF empty line, `\n\r\n`, was not seen at all.  `parse` read the body's
+  first line as a header and the body from the wrong place.  One function,
+  `packeteer.parse.http.split_head`, now walks the lines and ends the head
+  at the first empty one — `\r\n\r\n`, `\n\n`, `\n\r\n` and `\r\n\n`
+  alike, as RFC 7230 §3.5 allows — and parsing and `sanitise` both ask it.
+  (#188, #190)
+- **An `http` section's `type` must be `request` or `response`.**  Any
+  other value was read as a request, so a misspelt `"respnse"` built a
+  request from a response's fields, with the run reporting success.  It is
+  now refused naming the value.  Left out, it means what it did, and with
+  `raw` the start line decides.  (#180)
+- **Bad hex in a section names its protocol and key**: `http: raw is not
+  hex: 'z' at position 0 is not a hex digit`, for an `http` section's `raw`
+  and `body` and a `dns` section's `raw`.  It was Python's own message,
+  naming neither, so an author with many sections had to guess.  (#181)
+- **An empty `raw` in a `dns` section is refused**, as it is in an `http`
+  one.  It was read as absent, and a message built from the other keys went
+  out in its place, though a `raw` that is present says to send exactly its
+  bytes.  (#183)
 
 ### Security
 
@@ -250,20 +240,22 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   payload into an `http` section, the message was rebuilt from that
   section, whose body went back on the wire as captured: a login's
   password, a response's email.  The run reported success, and the file
-  looked sanitised.  `--payload` now zeroes an HTTP body in its `body` and
-  in its `raw`, at the same length so `Content-Length` stays true, and a
-  chunked body within one TCP segment keeps the framing that makes it parse
-  and loses what can
-  carry its data: the chunk data, each chunk extension's value, and each
-  trailer field's value, at its length, where a checksum over the body is
-  sent — a digest
-  is enough to confirm a guessed body (#189).  A body spanning segments is
-  zeroed whole, framing included, since `sanitise` works packet by packet
-  and reassembling TCP is out of scope (#187).  The PII scan, which read a section's strings but not its hex, now
-  reads a UTF-8 body as text too, before `--payload` zeroes it, as it does a
-  payload.  This was so in every release that decoded HTTP into its own
-  section; **re-sanitise any capture shared after `sanitise --payload`** if
-  it held HTTP.  (#185)
+  looked sanitised.  This was so in every release that decoded HTTP into its
+  own section; **re-sanitise any capture shared after `sanitise --payload`**
+  if it held HTTP.
+
+  `--payload` now zeroes an HTTP body in its `body` and in its `raw`, at the
+  same length so `Content-Length` and every TCP sequence number stay true.
+  A chunked body within one TCP segment keeps the framing that makes it
+  parse, and loses everything that can carry its data: the chunk data, each
+  chunk extension's value, and each trailer field's value — where a checksum
+  over the body is sent, and a digest is enough to confirm a guessed body.
+  A chunked body that cannot be walked is zeroed whole.  A body spanning TCP
+  segments is zeroed whole too, framing included, since `sanitise` works
+  packet by packet and reassembling TCP is out of scope.  The PII scan, which
+  read a section's strings but not its hex, now reads a UTF-8 body as text,
+  before `--payload` zeroes it, as it does a payload.
+  (#185, #186, #187, #189)
 
 ### Documentation
 
@@ -272,6 +264,12 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   the vendored copies of kober's `dns.yaml` and `http.yaml` that
   `test_kober_dialect.py` holds this loader to are kober 0.5.0's, pinned in
   `src/tests/kober/README.md`.
+- **The sanitise page and guide are one account again.**  Each review round
+  had added its paragraph; the HTTP section now reads bodies, headers, then
+  exact bytes, says which lengths are kept and the two known exceptions, and
+  no longer claims that hex is never scanned.  `parse_http`, `split_head` and
+  the runtime's redaction functions are in the API reference, and the README
+  says what HTTP support now covers.
 
 ---
 
