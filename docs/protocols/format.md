@@ -642,7 +642,7 @@ What each type becomes:
 
 | Type | Redacted to |
 |---|---|
-| `string` | `"[redacted]"` |
+| `string` | `"[redacted]"`, cut or space-padded to the value's length in its encoding — a `size` field may derive from it, and over TCP a message that changed size would leave every sequence number after it false |
 | `bytes` | zeros of the same length — a `size` field elsewhere may derive from it |
 | `int` | `0` |
 | a unit, or a `switch` arm | every leaf beneath it, blanked by the same rules |

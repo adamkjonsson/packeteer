@@ -19,7 +19,7 @@ compiled extensions — Python 3.10+ and the standard library only.
 - **Stream generation** — complete TCP / UDP / SCTP flows written to pcap, pcapng, or packet spec, with the TCP options a real connection negotiates and a timestamp on every segment; all streams can be wrapped in any encapsulation layer (VLAN, QinQ, MPLS, PPPoE, GRE, EtherIP, IP-in-IP), combined as a stack, and fragmented through a simulated low-MTU middlebox
 - **Your own protocols** — describe one in YAML and compile it with `packeteer protocol compile`; the result is parsed, built, serialised and redacted exactly like a built-in, reached by its own name — `pkt.sensor`, `.sensor(msg)` — with no packeteer-specific loader in the generated module.  The dialect is a superset of [kober](https://github.com/adamkjonsson/zipline-kober)'s, so a spec written for either project loads in both
 - **Capture filtering** — `packeteer parse` accepts filter flags (`--proto`, `--port`, `--src`, `--dst`, `--host`, `--app`, …) to keep only the traffic you care about; values can be negated with `!` and addresses accept CIDR notation for both IPv4 and IPv6
-- **PII scanning** — `packeteer sanitise` scans UTF-8 payloads for email addresses and personal names by default; findings are consolidated across packets and reported as structured `PersonalDataWarning` instances (`--no-scan-pii` to disable)
+- **PII scanning** — `packeteer sanitise` scans UTF-8 payloads, application-protocol fields and HTTP bodies for email addresses and personal names by default; findings are consolidated across packets and reported as structured `PersonalDataWarning` instances (`--no-scan-pii` to disable)
 - **Fuzzing** — `packeteer fuzz` produces adversarial packet variants for decoder robustness testing: boundary values, reserved-bit settings, pathological TCP flag combinations, truncated/extended payloads, bit flips, wrong checksums, and wrong length fields; full Python API via `packeteer.fuzz`
 
 ## Supported protocols
@@ -30,7 +30,7 @@ compiled extensions — Python 3.10+ and the standard library only.
 - **Tunnels**: IP-in-IP (RFC 2003/4213), EtherIP (RFC 3378), GRE (RFC 2784/2890) with Key, Sequence, Checksum, and TEB
 - **DNS** (RFC 1035) and **mDNS** (RFC 6762) — parse, build, and sanitise A, AAAA, NS, CNAME, MX, SOA, PTR, and TXT records over UDP or TCP, with names compressed as a resolver compresses them; mDNS QU and cache-flush bits; port 5353 dispatch
 - **DHCP** (RFC 2131 / RFC 2132) — parse, build, and sanitise DHCP messages including all common option types; dispatch on ports 67/68
-- **HTTP/1.x** (RFC 7230) — parse, build, and sanitise HTTP requests and responses over TCP; automatic port 80/8080 dispatch; sensitive header redaction
+- **HTTP/1.x** (RFC 7230) — parse, build, and sanitise HTTP requests and responses over TCP; automatic port 80/8080 dispatch; a message the fields cannot rebuild keeps its exact bytes; sensitive header redaction and body zeroing that keep every length; `packeteer stream --payload http --protocol-messages` sends given messages
 - **UTF-8 payload encoding** — packet specs use readable strings for text-protocol payloads; `packeteer parse` auto-detects printable ASCII and encodes accordingly
 - **IPv4 and IPv6 fragmentation** in one call
 - **pcap and pcapng** file I/O with microsecond or nanosecond timestamps

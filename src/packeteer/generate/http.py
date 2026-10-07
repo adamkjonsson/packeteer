@@ -46,7 +46,9 @@ class HTTPRequest:
             (e.g. ``"/search?q=hello"``).
         version: HTTP version without the ``HTTP/`` prefix: ``"1.0"`` or
             ``"1.1"``.
-        headers: Ordered mapping of header name to header value.
+        headers: Ordered mapping of header name to header value.  A value
+            that is a list is one line per item, in order, under the same
+            name — how ``Set-Cookie`` repeats (#181).
             ``Content-Length`` is added automatically by the encoder when
             the body is non-empty and neither ``Content-Length`` nor
             ``Transfer-Encoding`` is present (matched case-insensitively).
@@ -60,16 +62,17 @@ class HTTPRequest:
 
             It takes precedence over the fields, so **editing them has no
             effect while it is set** — clear it to hand-edit a captured
-            message.  ``packeteer sanitise`` clears it whenever it changes the
-            section, since a header redacted while still in *raw* would not
-            be redacted at all.  (#178)
+            message.  ``packeteer sanitise`` redacts a header inside it as
+            well as in *headers*, keeping every other byte (#184), and drops
+            it when the head cannot be read line by line, since a header
+            redacted while still in *raw* would not be redacted at all.
 
     """
 
     method:  str = "GET"
     path:    str = "/"
     version: str = "1.1"
-    headers: dict[str, str] = field(default_factory=dict)
+    headers: dict[str, str | list[str]] = field(default_factory=dict)
     body:    bytes = b""
     raw:     bytes = b""
 
@@ -85,7 +88,9 @@ class HTTPResponse:
             ``404``).
         reason: Human-readable reason phrase (e.g. ``"OK"``,
             ``"Not Found"``).
-        headers: Ordered mapping of header name to header value.
+        headers: Ordered mapping of header name to header value.  A value
+            that is a list is one line per item, in order, under the same
+            name — how ``Set-Cookie`` repeats (#181).
             ``Content-Length`` is added automatically by the encoder when
             the body is non-empty and neither ``Content-Length`` nor
             ``Transfer-Encoding`` is present (matched case-insensitively).
@@ -99,16 +104,17 @@ class HTTPResponse:
 
             It takes precedence over the fields, so **editing them has no
             effect while it is set** — clear it to hand-edit a captured
-            message.  ``packeteer sanitise`` clears it whenever it changes the
-            section, since a header redacted while still in *raw* would not
-            be redacted at all.  (#178)
+            message.  ``packeteer sanitise`` redacts a header inside it as
+            well as in *headers*, keeping every other byte (#184), and drops
+            it when the head cannot be read line by line, since a header
+            redacted while still in *raw* would not be redacted at all.
 
     """
 
     version:     str = "1.1"
     status_code: int = 200
     reason:      str = "OK"
-    headers:     dict[str, str] = field(default_factory=dict)
+    headers:     dict[str, str | list[str]] = field(default_factory=dict)
     body:        bytes = b""
     raw:         bytes = b""
 
@@ -178,7 +184,11 @@ def _build_http_message(msg: HTTPMessage) -> bytes:  # type: ignore[valid-type]
     else:
         start_line = f"HTTP/{msg.version} {msg.status_code} {msg.reason}\r\n"
 
-    header_block = "".join(f"{k}: {v}\r\n" for k, v in headers.items())
+    header_block = "".join(
+        f"{name}: {line}\r\n"
+        for name, value in headers.items()
+        for line in (value if isinstance(value, list) else [value])
+    )
     head = (start_line + header_block + "\r\n").encode("latin-1")
     return head + msg.body
 

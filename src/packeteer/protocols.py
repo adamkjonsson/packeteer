@@ -39,6 +39,7 @@ from __future__ import annotations
 import importlib.util
 import keyword
 import os
+import string
 import sys
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
@@ -56,6 +57,8 @@ __all__ = [
     "load_module",
     "check_name",
     "check_section",
+    "section_bytes",
+    "section_raw",
 ]
 
 # Names a protocol may not take.  A protocol's name is both its packet-spec
@@ -442,6 +445,87 @@ def check_section(
         f"{name}: not a {name} section — none of its keys ({shown}) is one "
         f"{name} reads ({', '.join(sorted(expected))}){hint}"
     )
+
+
+def section_bytes(name: str, section: Mapping[str, Any], key: str) -> bytes:
+    """Return *section*'s *key* read as hex, or ``b""`` when it is absent.
+
+    A ``from_spec`` helper, beside :func:`check_section`.  :meth:`bytes.fromhex`
+    names neither the protocol nor the key when it refuses a value — *non-
+    hexadecimal number found in fromhex() arg at position 0* — so an author
+    with a file of sections has to guess which one is wrong (#181).  This
+    says both.
+
+    Args:
+        name: The protocol's :attr:`~AppProtocol.name`, for the message.
+        section: The object handed to ``from_spec``.
+        key: The key holding hex.  Whitespace between digits is allowed, as
+            :meth:`bytes.fromhex` allows it.
+
+    Returns:
+        The bytes, or ``b""`` when *key* is absent.
+
+    Raises:
+        ValueError: If the value is not a string, or not hex, naming *name*,
+            *key* and the first character that is wrong.
+
+    Example::
+
+        body = section_bytes("http", section, "body")
+
+    """
+    value = section.get(key, "")
+    if not isinstance(value, str):
+        raise ValueError(
+            f"{name}: {key} must be a hex string, not {type(value).__name__}"
+        )
+    try:
+        return bytes.fromhex(value)
+    except ValueError:
+        pass
+    bad = next((i for i, char in enumerate(value)
+                if char not in string.hexdigits and not char.isspace()), None)
+    why = ("an odd number of hex digits" if bad is None
+           else f"{value[bad]!r} at position {bad} is not a hex digit")
+    raise ValueError(f"{name}: {key} is not hex: {why}")
+
+
+def section_raw(name: str, section: Mapping[str, Any]) -> bytes | None:
+    """Return *section*'s ``raw``, or ``None`` when it has none.
+
+    ``raw`` is a message's exact bytes, and wherever a protocol has one it
+    wins over the decoded fields.  So a ``raw`` that is present says to send
+    exactly its bytes, and an empty one is refused rather than read as
+    absent: building the message from the other fields instead puts a
+    message nobody wrote on the wire (#181 for ``http``, #183 for ``dns``).
+    Nothing packeteer writes has an empty ``raw`` — ``parse`` leaves the key
+    out, and ``sanitise`` deletes it.
+
+    Args:
+        name: The protocol's :attr:`~AppProtocol.name`, for the message.
+        section: The object handed to ``from_spec``.
+
+    Returns:
+        The bytes, or ``None`` when ``raw`` is absent.
+
+    Raises:
+        ValueError: If ``raw`` is present and empty, or is not hex — see
+            :func:`section_bytes`.
+
+    Example::
+
+        raw = section_raw("dns", section)
+
+    """
+    if "raw" not in section:
+        return None
+    raw = section_bytes(name, section, "raw")
+    if not raw:
+        raise ValueError(
+            f"{name}: raw is empty; give the message's bytes, or leave raw "
+            f"out to build the message from the other fields"
+        )
+    return raw
 
 
 def registered() -> tuple[AppProtocol, ...]:

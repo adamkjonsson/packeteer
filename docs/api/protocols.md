@@ -83,6 +83,16 @@ over `"tcp"` or `"udp"` — `True` when `over` is that transport or `"either"`.
    :no-index:
 ```
 
+```{eval-rst}
+.. autofunction:: packeteer.protocols.section_bytes
+   :no-index:
+```
+
+```{eval-rst}
+.. autofunction:: packeteer.protocols.section_raw
+   :no-index:
+```
+
 ---
 
 ## The built-ins

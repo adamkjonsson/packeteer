@@ -8,6 +8,7 @@ from typing import Any
 from packeteer import protocols
 from packeteer.protospec import loads
 from packeteer.protospec.codegen import compile_spec
+from packeteer.protospec.runtime import redaction
 from packeteer.sanitise import (
     PersonalDataWarning,
     SanitiseOptions,
@@ -71,7 +72,9 @@ class TestAnnotatedFieldsAreRedacted(_CompiledSpec):
                 "device_id": 4242, "reading": 21}
 
     def test_a_string_becomes_the_redaction_marker(self) -> None:
-        self.assertEqual(self.redact(self._section())["owner"], "[redacted]")
+        """At the value's length, so a message keeps its size (#191)."""
+        self.assertEqual(self.redact(self._section())["owner"],
+                         redaction(len("alice.smith")))
 
     def test_bytes_are_zeroed_and_keep_their_length(self) -> None:
         """A `size` field elsewhere may derive from it, so length matters."""
@@ -114,14 +117,14 @@ class TestNestedAndRepeatedFields(_CompiledSpec):
     def test_a_nested_unit_is_followed(self) -> None:
         out = self.redact({"count": 0, "inner": {"secret": "hunter2", "keep": 7},
                            "items": []})
-        self.assertEqual(out["inner"]["secret"], "[redacted]")
+        self.assertEqual(out["inner"]["secret"], redaction(len("hunter2")))
         self.assertEqual(out["inner"]["keep"], 7, "and only the marked field")
 
     def test_every_element_of_a_repeated_unit_is_redacted(self) -> None:
         out = self.redact({"count": 2, "inner": {"secret": "x", "keep": 1},
                            "items": [{"label": "abcd"}, {"label": "efgh"}]})
         self.assertEqual([i["label"] for i in out["items"]],
-                         ["[redacted]", "[redacted]"])
+                         [redaction(4), redaction(4)])
 
 
 class TestASpecThatAnnotatesNothing(_CompiledSpec):
@@ -196,7 +199,7 @@ class TestAnnotatedSpecsDoNotWarn(_CompiledSpec):
             out = sanitise(config)
         self.assertNotIn("redacts nothing",
                          " ".join(str(w.message) for w in caught))
-        self.assertEqual(out["packets"][0][self.name]["owner"], "[redacted]")
+        self.assertEqual(out["packets"][0][self.name]["owner"], redaction(len("alice")))
 
 
 class TestStringFieldsAreScannedForPII(_CompiledSpec):

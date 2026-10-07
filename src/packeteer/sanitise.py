@@ -25,8 +25,8 @@ Replacement strategy
   Payload   Zero-filled hex string, same byte length
   DNS name  label0.label1... — each unique label replaced
             consistently so shared parents are preserved
-  HTTP hdr  ``[redacted]`` for Host, Cookie, Set-Cookie,
-            Authorization, Location, Referer, Origin
+  HTTP hdr  ``[redacted]``, at the value's length, for Host, Cookie,
+            Set-Cookie, Authorization, Location, Referer, Origin
   ========  =====================================================
 
 Example::
@@ -314,8 +314,14 @@ class SanitiseOptions:
         ports: Replace ``src_port`` and ``dst_port`` in every ``transport``
             section.  The same original port always maps to the same synthetic
             port (10000–59999).
-        payload: Zero out ``payload.data`` hex strings.  The byte length is
-            preserved so the rebuilt packet has the same size.
+        payload: Zero out ``payload.data`` hex strings, and an HTTP
+            message's body, in its ``body`` and its ``raw`` (#185).  The byte
+            length is preserved so the rebuilt packet has the same size, and
+            a chunked body keeps its chunk framing, losing its chunk
+            extensions' and trailer fields' values with its data (#189).
+            Framing is kept only for a message within one TCP segment: this
+            works packet by packet, and a body spanning segments is zeroed
+            whole, framing included (#187).
         timestamps: Zero ``timestamp_s`` and ``timestamp_us`` / ``timestamp_ns``
             in every ``metadata`` section.
         dns_ids: Zero the 16-bit transaction ``id`` field in every ``dns``
@@ -328,7 +334,9 @@ class SanitiseOptions:
             always sanitised when a ``dhcp`` section is present (controlled by
             *ips* for addresses; *macs* for ``chaddr``).
         http_headers: Replace the values of sensitive HTTP headers in every
-            ``http`` section with ``"[redacted]"``.  Affected headers:
+            ``http`` section with ``"[redacted]"``, cut or space-padded to
+            the value's length so no TCP segment changes size (#191).
+            Affected headers:
             ``Host``, ``Cookie``, ``Set-Cookie``, ``Authorization``,
             ``Location``, ``Referer``, ``Origin``.  Non-sensitive structural
             headers (``Content-Type``, ``Content-Length``, etc.) are left
@@ -577,6 +585,20 @@ _HTTP_SENSITIVE_HEADERS: frozenset[str] = frozenset({
 _HTTP_REDACTED = "[redacted]"
 
 
+def _redaction(length: int) -> str:
+    """Return ``[redacted]`` cut or space-padded to *length* characters.
+
+    A redacted value keeps the length of what it replaces (#191); the rule is
+    :func:`packeteer.protospec.runtime.redaction`, which a compiled protocol's
+    ``sanitise`` uses too.  Trailing spaces are optional whitespace in a
+    header value, so a parser still reads ``[redacted]``.  The length is no
+    more than ``--payload`` already keeps.
+    """
+    from packeteer.protospec.runtime import redaction
+
+    return redaction(length)
+
+
 def _sanitise_http(http: dict, opts: SanitiseOptions) -> None:
     """Sanitise an ``http`` section dict in-place."""
     if not opts.http_headers:
@@ -586,7 +608,11 @@ def _sanitise_http(http: dict, opts: SanitiseOptions) -> None:
         return
     for key in list(headers):
         if key.lower() in _HTTP_SENSITIVE_HEADERS:
-            headers[key] = _HTTP_REDACTED
+            # Item by item for a repeated header, so the message keeps its
+            # number of lines — a decoder under test sees the same shape (#181).
+            value = headers[key]
+            headers[key] = ([_redaction(len(str(item))) for item in value]
+                            if isinstance(value, list) else _redaction(len(str(value))))
 
 
 # ── Recursive packet walker ───────────────────────────────────────────────────
@@ -1012,10 +1038,29 @@ def _sanitise_app_layers(
                 ),
                 stacklevel=2,
             )
+        if opts.scan_pii and proto.name == "http":
+            # Before the protocol's own sanitise, which may zero the body —
+            # as the payload scan runs before `_sanitise_payloads` (#185).
+            _scan_http_body(pkt[proto.name], packet_num)
         if proto.sanitise is not None:
             proto.sanitise(pkt[proto.name], r, opts)
         if opts.scan_pii:
             _scan_section_text(pkt[proto.name], packet_num)
+
+
+def _scan_http_body(section: dict, packet_num: int) -> None:
+    """Scan an HTTP body as text, which the string scan cannot see (#185).
+
+    It is hex in the section, so :func:`_scan_section_text` passes over it.
+    Run before the section is sanitised, as a payload is scanned before
+    ``--payload`` zeroes it: the warning says what was there, and
+    ``--payload`` still takes it out.
+    """
+    from packeteer.app.http import body_text
+
+    text = body_text(section)
+    if text:
+        _scan_utf8_payload({"data": text}, packet_num)
 
 
 def _scan_section_text(value: object, packet_num: int) -> None:

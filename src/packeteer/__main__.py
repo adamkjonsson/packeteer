@@ -2436,7 +2436,10 @@ def main() -> None:
     )
     san_parser.add_argument(
         "--payload", action="store_true",
-        help="Zero out payload data (default: kept)",
+        help="Zero out payload data, HTTP bodies included, keeping each one's "
+             "length; a chunked body within one TCP segment keeps its "
+             "framing, its extension and trailer values going too, and one "
+             "spanning segments is zeroed whole (default: kept)",
     )
     san_parser.add_argument(
         "--timestamps", action="store_true",
@@ -2453,7 +2456,10 @@ def main() -> None:
     san_parser.add_argument(
         "--http-headers", action="store_true",
         help="Redact sensitive HTTP headers: Host, Cookie, Set-Cookie, "
-             "Authorization, Location, Referer, Origin (default: kept)",
+             "Authorization, Location, Referer, Origin (default: kept).  A "
+             "message's exact bytes are redacted in place, keeping its "
+             "headers' order and repetition; one whose head cannot be read "
+             "line by line is rebuilt from its fields instead",
     )
     san_parser.add_argument(
         "--scan-pii", action=argparse.BooleanOptionalAction, default=True, dest="scan_pii",

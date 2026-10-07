@@ -113,6 +113,20 @@ unit plus `encode`, `decode`, `to_spec` and `from_spec`.
    :no-index:
 ```
 
+A generated module's `sanitise` redacts a `sensitive:` string through the
+runtime, so that a redacted string keeps the length of what it replaces and a
+message keeps its size:
+
+```{eval-rst}
+.. autofunction:: packeteer.protospec.runtime.redact_text
+   :no-index:
+```
+
+```{eval-rst}
+.. autofunction:: packeteer.protospec.runtime.redaction
+   :no-index:
+```
+
 ## Rendering
 
 ```{eval-rst}

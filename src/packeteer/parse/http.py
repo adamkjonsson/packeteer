@@ -17,9 +17,6 @@ from packeteer.generate.http import (
     encode_http_message,
 )
 
-_CRLF2 = b"\r\n\r\n"
-_LF2   = b"\n\n"
-
 
 def parse_http(data: bytes) -> HTTPMessage:  # type: ignore[valid-type]
     r"""Parse an HTTP/1.x message from raw TCP payload bytes.
@@ -50,8 +47,9 @@ def parse_http(data: bytes) -> HTTPMessage:  # type: ignore[valid-type]
     value ``gzip, chunked``, which means the same thing.  It used to keep the
     last and drop the rest, which changed how the body is framed.  Names match
     case-insensitively, the first spelling kept.  ``Set-Cookie`` is the one
-    field the RFC says cannot be combined; it is joined the same way, which is
-    lossy in ``headers`` alone, since *raw* carries both lines exactly.
+    field the RFC says cannot be combined — a cookie's ``Expires`` has a comma
+    in it — so a repeated one is a list, one item per line, which the encoder
+    writes back as separate lines (#181).
 
     It is the same reasoning that put stream-shaped protocols outside
     packeteer in 0.11.0: reassembly and byte-exact reconstruction want
@@ -83,23 +81,29 @@ def parse_http(data: bytes) -> HTTPMessage:  # type: ignore[valid-type]
             print(msg.method, msg.path)   # GET /
 
     """
-    sep = _CRLF2 if _CRLF2 in data else _LF2
-    if sep not in data:
+    split = split_head(data)
+    if split is None:
         raise ValueError("HTTP message has no header/body separator")
 
-    head_bytes, body = data.split(sep, 1)
+    head_bytes, sep, body = split
     lines = head_bytes.decode("latin-1").splitlines()
     if not lines:
         raise ValueError("HTTP message has no start line")
 
-    headers: dict[str, str] = {}
+    headers: dict[str, str | list[str]] = {}
     spelled: dict[str, str] = {}         # lower-case name → first spelling
     for line in lines[1:]:
         if ":" in line:
             name, _, value = line.partition(":")
             key = spelled.setdefault(name.strip().lower(), name.strip())
             value = value.strip()
-            headers[key] = f"{headers[key]}, {value}" if key in headers else value
+            if key not in headers:
+                headers[key] = value
+            elif key.lower() == "set-cookie":
+                seen = headers[key]
+                headers[key] = [*(seen if isinstance(seen, list) else [seen]), value]
+            else:
+                headers[key] = f"{headers[key]}, {value}"
 
     # Trim body to Content-Length when present, however its name is spelled.
     cl = headers.get(spelled.get("content-length", ""))
@@ -116,7 +120,44 @@ def parse_http(data: bytes) -> HTTPMessage:  # type: ignore[valid-type]
     return msg
 
 
-def _message(start: str, headers: dict[str, str], body: bytes) -> HTTPMessage:  # type: ignore[valid-type]
+def split_head(data: bytes) -> tuple[bytes, bytes, bytes] | None:
+    r"""Return *data*'s head, the blank line that ends it, and what follows.
+
+    The head ends at the **first empty line** after the start line, however
+    its line endings are spelled.  RFC 7230 §3.5 lets a recipient take a lone
+    LF as a line ending and ignore a CR before it, so ``\r\n\r\n``,
+    ``\n\n``, ``\n\r\n`` and ``\r\n\n`` all end a head.  The lines are
+    walked rather than searched for: choosing a separator by whether
+    ``\r\n\r\n`` occurred anywhere ran a bare-LF head into a body that held
+    a CRLF pair (#188), and searching for two fixed pairs missed ``\n\r\n``
+    and left a stray CR on a head ended by ``\r\n\n`` (#190).  Everything
+    that needs to know where a body starts — this parser, and ``sanitise``
+    redacting a head or zeroing a body — asks here, so none can disagree.
+
+    Args:
+        data: An HTTP message, or the start of one.
+
+    Returns:
+        ``(head, separator, rest)``, where *head* ends without a line ending
+        and *separator* is its last line's ending and the empty line; or
+        ``None`` when there is no empty line.
+
+    """
+    start = data.find(b"\n") + 1           # past the start line
+    if start == 0:
+        return None
+    while True:
+        end = data.find(b"\n", start)
+        if end < 0:
+            return None
+        if data[start:end] in (b"", b"\r"):
+            cut = start - (2 if data[:start].endswith(b"\r\n") else 1)
+            return data[:cut], data[cut:end + 1], data[end + 1:]
+        start = end + 1
+
+
+def _message(start: str, headers: dict[str, str | list[str]],
+             body: bytes) -> HTTPMessage:  # type: ignore[valid-type]
     """Build the request or response *start* names."""
     if start.upper().startswith("HTTP/"):
         parts = start.split(None, 2)

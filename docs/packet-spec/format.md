@@ -993,7 +993,7 @@ reproduced from [`raw`](#dns-top-level-fields) instead.
 | `answers` | Array of resource records in the answer section |
 | `authority` | Array of resource records in the authority section |
 | `additional` | Array of resource records in the additional section |
-| `raw` | — | The message exactly as captured, hex-encoded, written by `parse` only when re-encoding the decoded fields would not reproduce it — a message whose sender **compressed names differently** from packeteer's encoder, in practice.  It is written out verbatim and **takes precedence over every other key here**, so editing them has no effect while it is present; delete it to hand-edit a captured message.  `packeteer sanitise` deletes it whenever it changes the section, since a redacted name that is still in `raw` is not redacted |
+| `raw` | — | The message exactly as captured, hex-encoded, written by `parse` only when re-encoding the decoded fields would not reproduce it — a message whose sender **compressed names differently** from packeteer's encoder, in practice.  It is written out verbatim and **takes precedence over every other key here**, so editing them has no effect while it is present; delete it to hand-edit a captured message.  `packeteer sanitise` deletes it whenever it changes the section, since a redacted name that is still in `raw` is not redacted.  An empty `raw` is refused rather than read as absent |
 
 ### `dns.flags`
 
@@ -1202,11 +1202,11 @@ The `type` field selects between request and response:
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `type` | `"request"` | Must be `"request"` |
+| `type` | `"request"` | `"request"`; any value but `"request"` or `"response"` is refused.  With [`raw`](#http-raw), left out means the start line decides |
 | `method` | `"GET"` | HTTP method string (e.g. `"GET"`, `"POST"`) |
 | `path` | `"/"` | Request-target (path, optionally with query string) |
 | `version` | `"1.1"` | HTTP version without the `"HTTP/"` prefix |
-| `headers` | `{}` | Object of header name → value string pairs.  A header repeated on the wire is one entry, its values joined with `", "` |
+| `headers` | `{}` | Object of header name → value.  A value is a string, or a list of strings for a header on several lines — see [repeated headers](#http-repeated-headers).  An integer is taken as its digits; anything else is refused, naming the header |
 | `body` | `""` | Request body as a hex string, **as it appears on the wire** — see the note below |
 | `raw` | — | The message exactly as sent, hex-encoded; **wins over every other field** — see [`http.raw`](#http-raw) |
 
@@ -1214,11 +1214,11 @@ The `type` field selects between request and response:
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `type` | — | Must be `"response"` |
+| `type` | — | `"response"`; any value but `"request"` or `"response"` is refused.  With [`raw`](#http-raw), left out means the start line decides |
 | `version` | `"1.1"` | HTTP version without the `"HTTP/"` prefix |
 | `status_code` | `200` | 3-digit integer status code |
 | `reason` | `"OK"` | Reason phrase |
-| `headers` | `{}` | Object of header name → value string pairs.  A header repeated on the wire is one entry, its values joined with `", "` |
+| `headers` | `{}` | Object of header name → value.  A value is a string, or a list of strings for a header on several lines — see [repeated headers](#http-repeated-headers).  An integer is taken as its digits; anything else is refused, naming the header |
 | `body` | `""` | Response body as a hex string, **as it appears on the wire** — see the note below |
 | `raw` | — | The message exactly as sent, hex-encoded; **wins over every other field** — see [`http.raw`](#http-raw) |
 
@@ -1244,14 +1244,41 @@ given, as [`dns.raw`](#dns-top-level-fields) is for DNS.
   are read from the bytes, and `type` says whether it is a request or a
   response, or else the bytes do: a start line beginning `HTTP/` is a
   response.  Bytes that do not parse as HTTP are still sent as given.
-- **`sanitise` drops it** whenever it redacts the section, since a header
-  redacted in `headers` but left in `raw` would go back on the wire as it was.
+- **`sanitise` works inside it.**  With `--http-headers`, a sensitive
+  header's value becomes `[redacted]`, cut or space-padded to the value's
+  length, in `raw` as in `headers`; with `--payload`, the body is zeroed in
+  `raw` as in `body`.  Every other byte stays as captured: the order and
+  repetition of headers, spacing, line endings.  When the head cannot be read
+  line by line — a folded continuation line, a line without a colon — `raw`
+  is dropped instead, since a value redacted in `headers` but left in `raw`
+  would go back on the wire as it was, and the message is rebuilt from its
+  fields: repeated headers grouped, and every one but `Set-Cookie`
+  combined.
 
-A header repeated on the wire, `Transfer-Encoding: gzip` then
-`Transfer-Encoding: chunked`, is one `headers` entry, `"gzip, chunked"`, which
-RFC 7230 §3.2.2 says means the same.  The two lines are in `raw`.  A
-`headers` object cannot hold a name twice (#172), and `raw` is how a message
-that needs to is written.
+`raw` must hold bytes: `{"raw": ""}` is refused rather than read as absent,
+and so is anything that is not hex, naming the key.
+
+(http-repeated-headers)=
+### Repeated headers
+
+A header's value may be a **list**, which is one line per item, in order,
+under the same name:
+
+```json
+"headers": { "Set-Cookie": ["session=abc; Expires=Wed, 21 Oct 2026 07:28:00 GMT", "theme=dark"] }
+```
+
+`parse` writes one only for a repeated `Set-Cookie`, the one field RFC 7230
+§3.2.2 says cannot be combined: a cookie's `Expires` has a comma in it, so
+folding two into one line is ambiguous.  Any other header repeated on the
+wire, `Transfer-Encoding: gzip` then `Transfer-Encoding: chunked`, is one
+string, `"gzip, chunked"`, which the RFC says means the same, and the two
+lines are in `raw`.  A list may be written for any header by hand.
+
+`sanitise` redacts a list item by item, so a message rebuilt from its fields
+keeps its number of `Set-Cookie` lines.  What a list cannot say is order
+*across* names — `A`, `B`, then `A` again — which is
+[#172](https://github.com/adamkjonsson/packeteer/issues/172).
 
 ```{note}
 **A chunked body keeps its framing.**  `body` for a
