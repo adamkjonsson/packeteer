@@ -142,6 +142,38 @@ class TestParseOutputRoundTrips(_Workspace):
         self.assertIn(f"not a {self.name} section", done.stderr)
 
 
+class TestImpairmentsOverUDP(_Workspace):
+    """#194: on UDP, `--packet-loss` and `--payload-corruption` were dropped."""
+
+    name = "sensor_lossy"
+    port = 9004
+
+    def test_packet_loss_applies(self) -> None:
+        out = self.dir / "s.pcap"
+        done = self._stream("--packet-loss", "0.5", "--seed", "5",
+                            "--pcap", str(out), packets=40)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertLess(len(self._payloads(out)), 40)
+
+    def test_payload_corruption_applies(self) -> None:
+        """Each datagram differs from the clean run in its last byte, nowhere else."""
+        clean, corrupt = self.dir / "clean.pcap", self.dir / "corrupt.pcap"
+        for out, extra in ((clean, ()), (corrupt, ("--payload-corruption", "1.0"))):
+            done = self._stream(*extra, "--seed", "5", "--pcap", str(out), packets=4)
+            self.assertEqual(done.returncode, 0, done.stderr)
+        before, after = self._payloads(clean), self._payloads(corrupt)
+        self.assertEqual(len(before), 4)
+        for was, now in zip(before, after, strict=True):
+            self.assertEqual(now[:-1], was[:-1])
+            self.assertEqual(now[-1], was[-1] ^ 0xFF)
+
+    def _payloads(self, pcap: Path) -> list[bytes]:
+        """Every datagram's UDP payload, decoded or not: a corrupted one may not decode."""
+        from packeteer.pcap import read_pcap
+
+        return [raw[14 + 20 + 8:] for raw, _, _ in read_pcap(path=pcap).packets]
+
+
 class TestOverTCP(_Workspace):
     """The same, over a TCP session — and impairments must still apply."""
 

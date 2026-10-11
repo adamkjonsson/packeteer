@@ -1822,7 +1822,10 @@ def _build_stream_config(
             seed=args.seed,
         )
     if protocol == "udp":
-        return UDPStreamConfig(gap_jitter=args.gap_jitter, seed=args.seed)
+        return UDPStreamConfig(
+            gap_jitter=args.gap_jitter, seed=args.seed,
+            impairments=_impairments_from_args(args),
+        )
     return SCTPStreamConfig(gap_jitter=args.gap_jitter, seed=args.seed)
 
 
@@ -1833,7 +1836,51 @@ _TCP_ONLY_ANOMALY_FLAGS = (
     ("retransmission_probability", "--retransmission-probability"),
     ("server_rst_probability", "--server-rst"),
     ("stray_packet_count", "--stray-packets"),
+    ("retransmit_lost", "--retransmit-lost"),
 )
+
+#: Anomaly options that describe what a wire does to a datagram, so they
+#: apply on a UDP flow as well as on a TCP connection.
+_DATAGRAM_ANOMALY_FLAGS = (
+    ("packet_loss_probability", "--packet-loss"),
+    ("payload_corruption_probability", "--payload-corruption"),
+)
+
+
+def _refuse_anomalies(
+    args: argparse.Namespace, flags: tuple[tuple[str, str], ...], reason: str,
+) -> None:
+    """Exit naming each of *flags* that was given, since none of them applies.
+
+    A flag counts as given when its value is not zero, which is the value
+    that would otherwise be dropped in silence — #83's failure, and #194's.
+    """
+    given = [flag for attr, flag in flags if getattr(args, attr, None)]
+    if given:
+        one = len(given) == 1
+        print(f"Error: {', '.join(given)} {'does' if one else 'do'} not apply "
+              f"{reason}; drop {'it' if one else 'them'}.", file=sys.stderr)
+        sys.exit(1)
+
+
+def _refuse_unapplied_anomalies(args: argparse.Namespace, protocol: str) -> None:
+    """Refuse every anomaly flag the *protocol* stream cannot apply (#194).
+
+    UDP applies loss and corruption, and nothing that describes a
+    connection; SCTP applies none of them yet.  ``--payload vpn`` is UDP
+    whatever ``--protocol`` says.
+    """
+    if protocol == "udp" or args.payload == "vpn":
+        _refuse_anomalies(
+            args, _TCP_ONLY_ANOMALY_FLAGS,
+            "to a UDP stream, which has no connection for it to act on "
+            "(--packet-loss and --payload-corruption do apply)",
+        )
+    elif protocol == "sctp":
+        _refuse_anomalies(
+            args, _DATAGRAM_ANOMALY_FLAGS + _TCP_ONLY_ANOMALY_FLAGS,
+            "to an SCTP stream, which takes no impairments yet",
+        )
 
 
 def _impairments_from_args(args: argparse.Namespace) -> ImpairmentConfig | None:
@@ -1957,14 +2004,6 @@ def _generate_vpn_payload_stream(
     args: argparse.Namespace, encap: object,
 ) -> CombinedStream:
     """Generate a fictive-VPN payload stream from parsed CLI args."""
-    ignored = [flag for attr, flag in _TCP_ONLY_ANOMALY_FLAGS if getattr(args, attr, None)]
-    if ignored:
-        print(
-            f"Warning: {', '.join(ignored)} describe TCP connection behaviour "
-            "and are not applied with --payload vpn, which is UDP; ignoring "
-            "them. --packet-loss and --payload-corruption do apply.",
-            file=sys.stderr,
-        )
     try:
         return generate_vpn_stream(
             client_ip=args.client_ip,
@@ -2020,6 +2059,7 @@ def _cmd_stream(args: argparse.Namespace) -> None:
     protocol = _validate_stream_args(args)
 
     encap = _parse_stream_encap(args)
+    _refuse_unapplied_anomalies(args, protocol)
 
     if args.payload == "http":
         stream = _generate_http_payload_stream(args, protocol, encap, supplied)
@@ -2738,10 +2778,11 @@ def main() -> None:
         dest="packet_loss_probability",
         help=(
             "Probability (0.0-1.0) that a packet is lost on the wire (default: "
-            "0.0). A lost segment is never acknowledged and the receiver's "
-            "acknowledgement number stops advancing, so the segments after it "
-            "draw duplicate ACKs. The SYNs are exempt. Nothing retransmits "
-            "unless --retransmit-lost is given"
+            "0.0). On TCP, a lost segment is never acknowledged and the "
+            "receiver's acknowledgement number stops advancing, so the segments "
+            "after it draw duplicate ACKs; the SYNs are exempt, and nothing "
+            "retransmits unless --retransmit-lost is given. Applies to UDP too; "
+            "refused on SCTP"
         ),
     )
     stream_parser.add_argument(
@@ -2782,8 +2823,8 @@ def main() -> None:
         "--payload-corruption", type=float, default=None, metavar="PROB",
         dest="payload_corruption_probability",
         help=(
-            "Probability (0.0-1.0) that each data segment's payload is corrupted"
-            " in transit (default: 0.0)"
+            "Probability (0.0-1.0) that each data packet's payload is corrupted"
+            " in transit (default: 0.0). Applies to TCP and UDP; refused on SCTP"
         ),
     )
     stream_parser.add_argument(

@@ -6,7 +6,8 @@ before a full request/response model is layered on top.
 
 Unlike TCP, UDP has no connection state: there is no handshake, no
 acknowledgement, and no teardown.  The stream is simply *num_data_packets*
-datagrams with realistic inter-packet timestamps.
+datagrams with realistic inter-packet timestamps, optionally thinned out and
+corrupted on the wire (:attr:`UDPStreamConfig.impairments`).
 
 The payload is drawn from the same continuous ``default_payload.txt`` source
 as the TCP stream generator: the file is tiled once across the total required
@@ -41,6 +42,7 @@ from ._stream_common import (
     _repeat_payload,
 )
 from .builder import PacketBuilder
+from .impairments import ImpairmentConfig, apply_datagram_impairments
 from .stream_encap import (  # noqa: F401  (StreamEncap needed for Sphinx type resolution)
     EncapSpec,
     StreamEncap,
@@ -127,6 +129,16 @@ class UDPStreamConfig:
         seed: Integer seed for the random number generator.  When set, two
             calls with identical arguments produce byte-identical output.
             Defaults to ``None`` (non-deterministic).
+        impairments: Wire impairments
+            (:class:`~packeteer.generate.impairments.ImpairmentConfig`) applied
+            to the datagrams before any middlebox fragmentation.  This is UDP,
+            so only the two fields that describe what a wire does to a
+            datagram are read — ``packet_loss_probability`` and
+            ``payload_corruption_probability`` — as for
+            :attr:`~packeteer.generate.payloads.vpn.VPNConfig.impairments`.
+            ``None`` (the default) leaves the stream clean and draws no
+            randomness, so a seeded stream reproduces exactly as it did
+            before this field existed.
 
     """
 
@@ -135,6 +147,7 @@ class UDPStreamConfig:
     base_time: float | None = None
     gap_jitter: float = 0.0
     seed: int | None = None
+    impairments: ImpairmentConfig | None = None
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -315,6 +328,15 @@ def generate_udp_stream(
     # Re-sort if jitter was applied
     if gap_jitter > 0:
         packets.sort(key=lambda p: (p.ts_sec, p.ts_usec))
+
+    # Wire impairments, after every size and jitter draw so that a stream
+    # without them reproduces from its seed as it always has (#194).  Before
+    # fragmentation: a lost datagram is never fragmented, and a corrupted one
+    # is fragmented with its corruption.
+    if config.impairments is not None:
+        packets = apply_datagram_impairments(
+            packets, rng=rng, config=config.impairments,
+        )
 
     # Middlebox fragmentation
     if mtu is not None:

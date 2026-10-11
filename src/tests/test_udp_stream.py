@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import struct
 
+from packeteer.generate.impairments import ImpairmentConfig
+from packeteer.generate.session_mix import generate_session_mix
 from packeteer.generate.udp_stream import (
     UDPStream,
     UDPStreamConfig,
@@ -223,3 +226,97 @@ class TestSeed:
     def test_different_seed_different_output(self):
         a, b = self._seeded(7), self._seeded(8)
         assert [p.raw for p in a.packets] != [p.raw for p in b.packets]
+
+
+# ── Wire impairments (#194) ───────────────────────────────────────────────────
+
+def _impaired(impairments: ImpairmentConfig | None, **kw: object) -> UDPStream:
+    defaults: dict[str, object] = {
+        "client_ip": "10.0.0.2",
+        "server_ip": "10.0.0.1",
+        "num_data_packets": 40,
+    }
+    defaults.update(kw)
+    return generate_udp_stream(**defaults, config=UDPStreamConfig(
+        base_time=1_700_000_000.0, seed=5, impairments=impairments,
+    ))
+
+
+class TestImpairments:
+    def test_loss_drops_datagrams(self):
+        s = _impaired(ImpairmentConfig(packet_loss_probability=0.5))
+        assert 0 < len(s.packets) < 40
+
+    def test_survivors_are_unchanged(self):
+        """A lost datagram has no consequence for the ones around it."""
+        clean = {p.label: p for p in _impaired(None).packets}
+        for pkt in _impaired(ImpairmentConfig(packet_loss_probability=0.5)).packets:
+            assert pkt.raw == clean[pkt.label].raw
+            assert (pkt.ts_sec, pkt.ts_usec) == (clean[pkt.label].ts_sec, clean[pkt.label].ts_usec)
+
+    def test_corruption_flips_the_last_byte_only(self):
+        clean = _impaired(None).packets
+        corrupt = _impaired(ImpairmentConfig(payload_corruption_probability=1.0)).packets
+        assert len(corrupt) == len(clean)
+        for before, after in zip(clean, corrupt, strict=True):
+            assert after.raw[:-1] == before.raw[:-1]
+            assert after.raw[-1] == before.raw[-1] ^ 0xFF
+            assert after.label == before.label.replace("DATA", "CORRUPT")
+
+    def test_no_impairments_draw_nothing(self):
+        """None and an all-zero config give the stream they always gave."""
+        none = [p.raw for p in _impaired(None).packets]
+        zero = [p.raw for p in _impaired(ImpairmentConfig()).packets]
+        assert none == zero
+
+    def test_a_seeded_clean_stream_is_unchanged(self):
+        """Pinned against 0.17.0's output for the same call, before #194."""
+        s = generate_udp_stream(
+            client_ip="10.0.0.2", server_ip="10.0.0.1", num_data_packets=20,
+            config=UDPStreamConfig(base_time=1_700_000_000.0, gap_jitter=0.002, seed=5),
+        )
+        h = hashlib.sha256()
+        for raw, sec, usec in s.to_pcap_tuples():
+            h.update(raw)
+            h.update(sec.to_bytes(8, "big"))
+            h.update(usec.to_bytes(4, "big"))
+        assert h.hexdigest() == (
+            "1a59cc09a581512e0803b47a54f79793aa71497a8656df4134cf4807fed31a58"
+        )
+
+    def test_a_lost_datagram_is_never_fragmented(self):
+        s = _impaired(ImpairmentConfig(packet_loss_probability=1.0),
+                      min_payload=1400, max_payload=1400, mtu=576)
+        assert s.packets == []
+
+    def test_a_corrupted_datagram_is_fragmented_with_its_corruption(self):
+        s = _impaired(ImpairmentConfig(payload_corruption_probability=1.0),
+                      num_data_packets=1, min_payload=1400, max_payload=1400,
+                      payload_distribution="fixed", mtu=576)
+        assert len(s.packets) > 1
+        assert all(p.label.startswith("FRAG[CORRUPT[") for p in s.packets)
+
+    def test_tcp_only_fields_are_ignored(self):
+        """The API reads only loss and corruption; the CLI refuses the rest."""
+        clean = [p.raw for p in _impaired(None).packets]
+        tcp_only = ImpairmentConfig(
+            retransmission_probability=1.0, server_rst_probability=1.0,
+            stray_packet_count=3,
+        )
+        assert [p.raw for p in _impaired(tcp_only).packets] == clean
+
+    def test_every_session_is_impaired(self):
+        mix = generate_session_mix(
+            client_ip="10.0.0.2", server_ip="10.1.0.1", num_data_packets=40,
+            sessions=3,
+            config=UDPStreamConfig(
+                base_time=1_700_000_000.0, seed=5,
+                impairments=ImpairmentConfig(packet_loss_probability=0.5),
+            ),
+        )
+        per_client: dict[bytes, int] = {}
+        for pkt in mix.packets:
+            src = pkt.raw[14 + 12:14 + 16]
+            per_client[src] = per_client.get(src, 0) + 1
+        assert len(per_client) == 3
+        assert all(0 < n < 40 for n in per_client.values())

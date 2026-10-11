@@ -60,22 +60,43 @@ Exactly one output flag is required; they are mutually exclusive.
 
 ## TCP-only arguments
 
-Silently ignored for `--protocol udp` and `--protocol sctp`.
+They shape the TCP header and handshake, so they have no effect on
+`--protocol udp` or `--protocol sctp`, which have no TCP header.
 
 | Argument | Default | Description |
 |----------|---------|-------------|
 | `--window BYTES` | `65535` | TCP receive window size |
 | `--psh-probability PROB` | `0.5` | Probability (0–1) PSH is set on each data segment |
-| `--packet-loss PROB` | `0.0` | Probability a packet is lost on the wire (see below) |
-| `--retransmit-lost` | off | Retransmit a lost segment so the connection recovers |
 | `--no-tcp-options` | off | Send a bare handshake with no TCP options, and therefore no timestamps on any segment (see below) |
-| `--retransmission-probability PROB` | `0.0` | Probability each data segment is retransmitted |
-| `--retransmission-timeout SECONDS` | `0.2` | RTO — seconds after send that the retransmit fires |
-| `--payload-corruption PROB` | `0.0` | Probability a segment payload is corrupted |
-| `--server-rst PROB` | `0.0` | Probability the server terminates mid-stream with RST |
-| `--rst-propagation-delay SECONDS` | `0.0` | Seconds for the RST to reach the client |
-| `--stray-packets N` | `0` | Number of forged TCP hijack packets to inject |
-| `--stray-timing-window N` | off | Constrain stray timestamps to within N packets of target |
+
+## Impairments
+
+What a wire or a misbehaving peer does to the stream.  The **UDP** column
+covers `--protocol udp` and `--payload vpn`, which is UDP.  An option is
+**refused**, naming it, on a stream it cannot apply to: a flag accepted and
+then ignored makes a clean capture look like an impaired one.  On
+`--protocol sctp` every impairment is refused, because the SCTP stream takes
+none yet.
+
+| Argument | Default | TCP | UDP | Description |
+|----------|---------|-----|-----|-------------|
+| `--packet-loss PROB` | `0.0` | yes | yes | Probability a packet is lost on the wire (see below) |
+| `--payload-corruption PROB` | `0.0` | yes | yes | Probability a data packet's payload is corrupted (last byte flipped).  On TCP the segment is then retransmitted cleanly |
+| `--retransmit-lost` | off | yes | refused | Retransmit a lost segment so the connection recovers |
+| `--retransmission-probability PROB` | `0.0` | yes | refused | Probability each data segment is retransmitted |
+| `--retransmission-timeout SECONDS` | `0.2` | yes | — | RTO: seconds after send that the retransmit fires |
+| `--server-rst PROB` | `0.0` | yes | refused | Probability the server terminates mid-stream with RST |
+| `--rst-propagation-delay SECONDS` | `0.0` | yes | — | Seconds for the RST to reach the client |
+| `--stray-packets N` | `0` | yes | refused | Number of forged TCP hijack packets to inject |
+| `--stray-timing-window N` | off | yes | — | Constrain stray timestamps to within N packets of target |
+
+A **—** is a setting of the option above it.  It changes nothing on its own,
+so it is not refused.
+
+On UDP, a lost datagram has no further consequence: there is no
+acknowledgement to withhold, and the datagrams around it are unchanged.
+With `--mtu`, a lost datagram is never fragmented, and a corrupted one is
+fragmented with its corruption.
 
 ## Multiple sessions
 
@@ -313,7 +334,7 @@ a timestamp either.
 ### What packet loss means
 
 `--packet-loss` loses a packet **on the wire**: neither the capture point nor
-the far end sees it.  So a lost segment is never acknowledged, and the
+the far end sees it.  On UDP that is all it does.  On TCP, a lost segment is never acknowledged, and the
 receiver's acknowledgement number stops advancing at the gap — the segments
 after it are answered with **duplicate ACKs**, which is the signal an analyser
 looks for around a loss event.  A sender's own sequence numbers are unaffected,
@@ -409,10 +430,10 @@ makes the capture reproducible.  In `--json` output, labels read e.g.
 `--payload vpn` is UDP, which splits the anomaly options in two.
 `--packet-loss` and `--payload-corruption` describe what a wire does to a
 datagram and apply here unchanged, per channel.
-`--retransmission-probability`, `--server-rst` and `--stray-packets` describe
-TCP connection behaviour — a retransmission timer, a connection reset, a
-hijacked sequence number — none of which exists in UDP; they are ignored with a
-warning naming them, rather than approximated.
+`--retransmission-probability`, `--retransmit-lost`, `--server-rst` and
+`--stray-packets` describe TCP connection behaviour — a retransmission timer,
+a connection reset, a hijacked sequence number — none of which exists in UDP;
+they are refused, naming them, rather than approximated.
 
 ```bash
 # 4 key epochs, 20 data packets each, on the default UDP ports

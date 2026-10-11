@@ -25,6 +25,42 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
+### Added
+
+- **`UDPStreamConfig.impairments`**, an `ImpairmentConfig` applied to a
+  generated UDP stream: loss and payload corruption, as for
+  `VPNConfig.impairments`.  The other fields describe a TCP connection and
+  are not read.  It is applied before `mtu` fragmentation, so a lost
+  datagram is never fragmented, and with `None`, the default, a seeded
+  stream is byte-identical to 0.17.0's.  (#194)
+
+### Changed
+
+- **Breaking:** an impairment option that a stream cannot apply is
+  **refused** instead of being ignored.  On `--protocol udp`, and with
+  `--payload vpn`, that is `--retransmission-probability`,
+  `--retransmit-lost`, `--server-rst` and `--stray-packets`, which describe a
+  TCP connection.  `--payload vpn` warned about the first three and went on.
+  On `--protocol sctp`, it is every impairment option, `--packet-loss` and
+  `--payload-corruption` included, because the SCTP stream takes none yet.
+  A command line that passed one of these got a clean capture; drop the
+  option to get the same capture now.  (#194)
+
+### Fixed
+
+- **`stream --protocol udp` applies `--packet-loss` and
+  `--payload-corruption`.**  They were accepted and then ignored, so every
+  datagram was written unchanged, for random payloads, built-in protocols
+  such as `--payload dns`, compiled protocols, and `--sessions`.  A "lossy"
+  UDP stream generated before this release was not lossy.  (#194)
+
+### Documentation
+
+- `stream.md`'s *TCP-only arguments*, which said the impairment options were
+  silently ignored on UDP and SCTP while a later example used
+  `--packet-loss` on UDP, splits into the TCP-only header options and an
+  *Impairments* table saying where each option applies.  (#194)
+
 ---
 
 ## [0.17.0] - 2026-10-07

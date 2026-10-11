@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import random
 import re
 import tempfile
 import unittest
 from io import StringIO
+from pathlib import Path
 from unittest.mock import patch
 
 import packeteer.__main__ as cli
@@ -455,12 +457,85 @@ class TestCmdStreamImpairments(unittest.TestCase):
         stderr = self._run(payload="http", requests=4, packet_loss_probability=0.5)
         self.assertEqual(stderr, "")
 
-    def test_vpn_warns_only_about_tcp_only_options(self) -> None:
-        stderr = self._run(
+    def _refused(self, **over: object) -> str:
+        """Run a stream that must be refused, and return what it said."""
+        err = StringIO()
+        with patch("sys.stdout", new=StringIO()), patch("sys.stderr", new=err), \
+                self.assertRaises(SystemExit) as caught:
+            cli._cmd_stream(self._args(pcap=os.devnull, **over))
+        self.assertEqual(caught.exception.code, 1)
+        return err.getvalue()
+
+    def _labels(self, **over: object) -> list[str]:
+        """Run a stream to JSON and return each packet's label."""
+        fd, out = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        self.addCleanup(os.remove, out)
+        with patch("sys.stdout", new=StringIO()):
+            cli._cmd_stream(self._args(json=out, **over))
+        return [p["packet_metadata"]["label"]
+                for p in json.loads(Path(out).read_text())["packets"]]
+
+    def test_vpn_refuses_tcp_only_options(self) -> None:
+        """It used to warn and drop them; now every path refuses (#194)."""
+        stderr = self._refused(
             payload="vpn", server_rst_probability=0.5, packet_loss_probability=0.2,
         )
-        self.assertIn("--server-rst", stderr)
+        self.assertIn("--server-rst does not apply to a UDP stream", stderr)
         self.assertNotIn("--packet-loss,", stderr)
+
+    def test_udp_applies_packet_loss(self) -> None:
+        """#194: 40 of 40 datagrams were written at a loss of 0.5."""
+        labels = self._labels(protocol="udp", packets=40, packet_loss_probability=0.5)
+        self.assertLess(len(labels), 40)
+        self.assertGreater(len(labels), 0)
+
+    def test_udp_applies_payload_corruption(self) -> None:
+        labels = self._labels(protocol="udp", packets=5,
+                              payload_corruption_probability=1.0)
+        self.assertEqual(labels, [f"CORRUPT[{i}]" for i in range(5)])
+
+    def test_udp_applies_impairments_to_every_session(self) -> None:
+        labels = self._labels(protocol="udp", packets=10, sessions=3,
+                              payload_corruption_probability=1.0)
+        self.assertEqual(len(labels), 30)
+        self.assertTrue(all(lbl.startswith("CORRUPT[") for lbl in labels), labels)
+
+    def test_udp_dns_applies_packet_loss(self) -> None:
+        fd, messages = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        self.addCleanup(os.remove, messages)
+        Path(messages).write_text(json.dumps([{"id": 1, "questions": [
+            {"name": "www.example.com.", "qtype": 1, "qclass": 1}]}]))
+        labels = self._labels(protocol="udp", payload="dns", server_port=53,
+                              protocol_messages=messages, packets=40,
+                              packet_loss_probability=0.5)
+        self.assertLess(len(labels), 40)
+
+    def test_udp_refuses_each_tcp_only_option(self) -> None:
+        for attr, flag in cli._TCP_ONLY_ANOMALY_FLAGS:
+            with self.subTest(flag=flag):
+                stderr = self._refused(protocol="udp", **{attr: 1})
+                self.assertIn(f"{flag} does not apply to a UDP stream", stderr)
+
+    def test_udp_names_every_refused_option(self) -> None:
+        stderr = self._refused(protocol="udp", server_rst_probability=0.5,
+                               stray_packet_count=2)
+        self.assertIn("--server-rst, --stray-packets do not apply", stderr)
+        self.assertIn("drop them", stderr)
+
+    def test_sctp_refuses_every_impairment(self) -> None:
+        """SCTP takes no impairments, and said so only in the docs (#194)."""
+        flags = cli._DATAGRAM_ANOMALY_FLAGS + cli._TCP_ONLY_ANOMALY_FLAGS
+        for attr, flag in flags:
+            with self.subTest(flag=flag):
+                stderr = self._refused(protocol="sctp", **{attr: 1})
+                self.assertIn(f"{flag} does not apply to an SCTP stream", stderr)
+
+    def test_a_zero_rate_is_not_refused(self) -> None:
+        """Zero is the default and asks for nothing, so there is nothing to drop."""
+        stderr = self._run(protocol="udp", server_rst_probability=0.0)
+        self.assertEqual(stderr, "")
 
     def test_vpn_silent_when_only_applicable_options_given(self) -> None:
         stderr = self._run(
