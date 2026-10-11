@@ -80,7 +80,7 @@ from .tcp_stream import (
     _build_packet,
     _TCPEndpoint,
 )
-from .udp_stream import UDPStream, UDPStreamPacket, _build_udp_packet
+from .udp_stream import UDPStream, UDPStreamPacket, _build_directed_udp_packet
 
 _WRAP = 2 ** 32
 
@@ -588,19 +588,11 @@ class UDPSession:
             usec_cursor += gap_usec
             ts = _alloc_usec(usec_cursor, used_ts)
 
-            if direction == "c2s":
-                src_ip, dst_ip = self.client_ip, self.server_ip
-                src_port, dst_port = self.client_port, self.server_port
-                src_mac, dst_mac = self.client_mac, self.server_mac
-            else:
-                src_ip, dst_ip = self.server_ip, self.client_ip
-                src_port, dst_port = self.server_port, self.client_port
-                src_mac, dst_mac = self.server_mac, self.client_mac
-
-            raw = _build_udp_packet(
-                src_ip=src_ip, dst_ip=dst_ip,
-                src_port=src_port, dst_port=dst_port,
-                src_mac=src_mac, dst_mac=dst_mac,
+            raw = _build_directed_udp_packet(
+                direction,
+                client_ip=self.client_ip, server_ip=self.server_ip,
+                client_port=self.client_port, server_port=self.server_port,
+                client_mac=self.client_mac, server_mac=self.server_mac,
                 payload=payload,
                 include_ethernet=self.include_ethernet,
                 ip_ttl=self.ip_ttl,

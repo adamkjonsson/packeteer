@@ -33,6 +33,17 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   are not read.  It is applied before `mtu` fragmentation, so a lost
   datagram is never fragmented, and with `None`, the default, a seeded
   stream is byte-identical to 0.17.0's.  (#194)
+- **A UDP stream sends each message in its own direction.**
+  **`UDPStreamConfig.messages`** takes a list of `AppMessage`, sent in order
+  and cycled, with an `s2c` message going from the server's address, port
+  and MAC to the client's.  **`packeteer.app.protocol_conversation`** builds
+  that list from packet-spec sections in every shape `protocol_payload_fn`
+  accepts, and `stream --protocol udp --payload <protocol>` uses it.  The
+  direction is a packet's `packet_metadata.direction`; for a packet
+  without one, as `parse` writes it, the side on one of the protocol's
+  ports, or else the first sender in the flow; a `"direction"` key beside
+  a section wrapped under the protocol's name; or `c2s` for a bare
+  section.  (#195)
 
 ### Changed
 
@@ -45,6 +56,21 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   `--payload-corruption` included, because the SCTP stream takes none yet.
   A command line that passed one of these got a clean capture; drop the
   option to get the same capture now.  (#194)
+- **`stream --protocol udp --payload <protocol>` replays a capture in both
+  directions.**  The same command line gives a different capture: replies
+  now leave from the server, where every datagram used to leave from the
+  client.  (#195)
+- **Breaking:** a message that travels server to client is refused by
+  `protocol_payload_fn`, and so by `stream --protocol tcp --payload
+  <protocol>`, instead of being sent from the client.  That includes the
+  replies in a parsed capture.  Over UDP, use `protocol_conversation` and
+  `UDPStreamConfig.messages`, as the CLI now does.  A TCP stream with data
+  both ways is #198.  (#195)
+- **Breaking:** a section wrapped under the protocol's name in
+  `--protocol-messages` may have nothing beside it except `"direction"`.
+  Any other key, such as a misspelling, was ignored and is now refused.
+  With `--payload http`, where a message's type gives its direction, a
+  `"direction"` key is refused too.  (#195)
 
 ### Fixed
 
@@ -53,6 +79,9 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   datagram was written unchanged, for random payloads, built-in protocols
   such as `--payload dns`, compiled protocols, and `--sessions`.  A "lossy"
   UDP stream generated before this release was not lossy.  (#194)
+- **A UDP stream's replies travel server to client.**  A DNS stream built
+  from queries and responses sent the responses from the client's port to
+  the server's.  (#195)
 
 ### Documentation
 

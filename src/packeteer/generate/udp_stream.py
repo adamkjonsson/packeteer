@@ -1,8 +1,10 @@
 """UDP stream generation.
 
-This module generates a sequence of UDP datagrams representing a unidirectional
-client-to-server flow — for example a DNS, TFTP, or application-layer session
-before a full request/response model is layered on top.
+This module generates a sequence of UDP datagrams between a client and a
+server — for example a DNS, TFTP, or application-layer session.  Generated
+payloads all travel client to server; given messages
+(:attr:`UDPStreamConfig.messages`) each travel their own way, so a reply
+leaves from the server.
 
 Unlike TCP, UDP has no connection state: there is no handshake, no
 acknowledgement, and no teardown.  The stream is simply *num_data_packets*
@@ -30,9 +32,10 @@ Typical usage::
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from random import Random
+from typing import TYPE_CHECKING
 
 from ._stream_common import (
     _alloc_usec,
@@ -49,6 +52,9 @@ from .stream_encap import (  # noqa: F401  (StreamEncap needed for Sphinx type r
     _apply_encap,
     _encap_ip_start,
 )
+
+if TYPE_CHECKING:  # pragma: no cover - payloads.base imports this module
+    from .payloads.base import AppMessage
 
 # ── Data model ────────────────────────────────────────────────────────────────
 
@@ -115,11 +121,24 @@ class UDPStreamConfig:
             *direction* is always ``"c2s"`` here; it is in the signature so
             the callable is the same shape as
             :attr:`~packeteer.generate.tcp_stream.TCPStreamConfig.payload_fn`
-            and one written for a TCP stream works for a UDP one.
+            and one written for a TCP stream works for a UDP one.  For
+            datagrams in both directions, use *messages*.
+        messages: The datagrams to send, each in its own direction:
+            datagram *i* is ``messages[i % len(messages)]``, so a short list
+            repeats to make up *num_data_packets*, as every ``--payload``
+            does.  An ``"s2c"`` message is sent from the server's address,
+            port and MAC to the client's.  Each
+            :class:`~packeteer.generate.payloads.base.AppMessage` supplies
+            its direction and bytes; its label is not used, and datagrams
+            are labelled ``DATA[i]`` as always, so impairments name them the
+            same way on every path.
+            :func:`packeteer.app.protocol_conversation` builds the list from
+            packet-spec sections (#195).  Overrides the size-based
+            generation, and may not be combined with *payload_fn*.
         payload_sizes: Explicit list of payload sizes, one per datagram.
             When provided, overrides *min_payload*, *max_payload*, and
             *payload_distribution*.  Must have exactly *num_data_packets*
-            entries.  Ignored when *payload_fn* is set.
+            entries.  Ignored when *payload_fn* or *messages* is set.
         base_time: Start timestamp in seconds.  Defaults to
             ``time.time()`` when ``None``.
         gap_jitter: Maximum additional random delay per inter-packet gap in
@@ -143,6 +162,7 @@ class UDPStreamConfig:
     """
 
     payload_fn: Callable[[int, str], bytes] | None = None
+    messages: Sequence[AppMessage] | None = None
     payload_sizes: list[int] | None = None
     base_time: float | None = None
     gap_jitter: float = 0.0
@@ -174,6 +194,38 @@ def _build_udp_packet(
         .udp(src_port=src_port, dst_port=dst_port)
         .payload(data=payload)
         .build()
+    )
+
+
+def _build_directed_udp_packet(
+    direction: str,
+    *,
+    client_ip: str,
+    server_ip: str,
+    client_port: int,
+    server_port: int,
+    client_mac: str,
+    server_mac: str,
+    payload: bytes,
+    include_ethernet: bool,
+    ip_ttl: int,
+    encap: EncapSpec = None,
+) -> bytes:
+    """Build a datagram from the client, or from the server when *direction* is ``s2c``."""
+    if direction == "c2s":
+        return _build_udp_packet(
+            src_ip=client_ip, dst_ip=server_ip,
+            src_port=client_port, dst_port=server_port,
+            src_mac=client_mac, dst_mac=server_mac,
+            payload=payload, include_ethernet=include_ethernet,
+            ip_ttl=ip_ttl, encap=encap,
+        )
+    return _build_udp_packet(
+        src_ip=server_ip, dst_ip=client_ip,
+        src_port=server_port, dst_port=client_port,
+        src_mac=server_mac, dst_mac=client_mac,
+        payload=payload, include_ethernet=include_ethernet,
+        ip_ttl=ip_ttl, encap=encap,
     )
 
 
@@ -227,7 +279,7 @@ def generate_udp_stream(
     encap: EncapSpec = None,
     config: UDPStreamConfig | None = None,
 ) -> UDPStream:
-    """Generate a sequence of UDP datagrams from client to server.
+    """Generate a sequence of UDP datagrams between a client and a server.
 
     Args:
         client_ip: Client IP address (IPv4 or IPv6).
@@ -268,6 +320,10 @@ def generate_udp_stream(
         A :class:`UDPStream` whose :attr:`~UDPStream.packets` list contains
         the assembled datagrams in timestamp order.
 
+    Raises:
+        ValueError: If *config* sets both ``payload_fn`` and ``messages``,
+            or ``messages`` is empty.
+
     Example::
 
         stream = generate_udp_stream(
@@ -289,7 +345,19 @@ def generate_udp_stream(
     used_ts: set[int] = set()
     usec_cursor = int(base_time * 1_000_000)
 
-    if config.payload_fn is not None:
+    if config.messages is not None:
+        if config.payload_fn is not None:
+            raise ValueError(
+                "UDPStreamConfig takes payload_fn or messages, not both: "
+                "each says what every datagram carries"
+            )
+        if not config.messages:
+            raise ValueError("UDPStreamConfig.messages is empty: nothing to send")
+        given = [config.messages[i % len(config.messages)]
+                 for i in range(num_data_packets)]
+        chunks = [message.data for message in given]
+        directions = [message.direction for message in given]
+    elif config.payload_fn is not None:
         chunks = [config.payload_fn(i, "c2s") for i in range(num_data_packets)]
     else:
         sizes = _payload_sizes(
@@ -303,14 +371,17 @@ def generate_udp_stream(
         for size in sizes:
             chunks.append(payload_data[offset:offset + size])
             offset += size
-    for i, chunk in enumerate(chunks):
+    if config.messages is None:
+        directions = ["c2s"] * len(chunks)
+    for i, (chunk, direction) in enumerate(zip(chunks, directions, strict=True)):
         gap_usec = int((inter_packet_gap + rng.uniform(0, gap_jitter)) * 1_000_000)
         usec_cursor += gap_usec
         ts = _alloc_usec(usec_cursor, used_ts)
-        raw = _build_udp_packet(
-            src_ip=client_ip, dst_ip=server_ip,
-            src_port=client_port, dst_port=server_port,
-            src_mac=client_mac, dst_mac=server_mac,
+        raw = _build_directed_udp_packet(
+            direction,
+            client_ip=client_ip, server_ip=server_ip,
+            client_port=client_port, server_port=server_port,
+            client_mac=client_mac, server_mac=server_mac,
             payload=chunk,
             include_ethernet=include_ethernet,
             ip_ttl=ip_ttl,
@@ -320,7 +391,7 @@ def generate_udp_stream(
             raw=raw,
             ts_sec=ts // 1_000_000,
             ts_usec=ts % 1_000_000,
-            direction="c2s",
+            direction=direction,
             payload_len=len(chunk),
             label=f"DATA[{i}]",
         ))

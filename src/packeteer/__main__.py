@@ -41,7 +41,6 @@ import configparser
 import json
 import os
 import sys
-from collections.abc import Callable
 from importlib.metadata import PackageNotFoundError as _PkgNotFoundError
 from importlib.metadata import version as _pkg_version
 
@@ -1749,22 +1748,31 @@ def _validate_stream_args(args: argparse.Namespace) -> str:
 
 
 
-def _protocol_payload_fn(
+def _set_protocol_payload(
     args: argparse.Namespace, protocol: str,
-) -> "Callable[[int, str], bytes] | None":
-    """Return a ``payload_fn`` for ``--payload <registered protocol>``.
+    config: TCPStreamConfig | UDPStreamConfig | SCTPStreamConfig,
+) -> None:
+    """Point *config* at the messages of ``--payload <registered protocol>``.
 
-    ``None`` when ``--payload`` was not given, leaving the stream generators
-    to make up random bytes as they always have.  ``http`` and ``vpn`` are
-    handled before this and never reach it.
+    Does nothing when ``--payload`` was not given, leaving the stream
+    generators to make up random bytes as they always have.  ``http`` and
+    ``vpn`` are handled before this and never reach it.
 
     The messages come from ``--protocol-messages``: a protocol describes what
     a message *looks like*, not what conversation to have, so the two are
-    separate on purpose and neither belongs in the spec grammar.
+    separate on purpose and neither belongs in the spec grammar.  On UDP each
+    is sent in its own direction (#195); on TCP every message is sent from
+    the client, and a reply is refused until #198.
+
+    Deliberately the ordinary generator rather than a path of its own: #83
+    was ``--payload http`` emitting labels the impairment passes did not
+    recognise, so every anomaly flag was silently dropped.  Feeding payloads
+    in leaves the labels — DATA[i], ACK[i] — exactly as they are, so
+    impairments apply without knowing a protocol was involved.
     """
     name = getattr(args, "payload", None)
     if name is None:
-        return None
+        return
 
     proto = protocols.for_section(name)
     if proto is None:
@@ -1794,7 +1802,10 @@ def _protocol_payload_fn(
     sections = _read_protocol_messages(path, name)
 
     try:
-        return app.protocol_payload_fn(proto, sections, protocol)
+        if isinstance(config, UDPStreamConfig):
+            config.messages = app.protocol_conversation(proto, sections, protocol)
+        else:
+            config.payload_fn = app.protocol_payload_fn(proto, sections, protocol)
     except ValueError as exc:
         print(f"Error: '{path}': {exc}", file=sys.stderr)
         sys.exit(1)
@@ -2069,8 +2080,6 @@ def _cmd_stream(args: argparse.Namespace) -> None:
         stream = _generate_vpn_payload_stream(args, encap)
         _write_stream_output(args, stream)
         return
-    payload_fn = _protocol_payload_fn(args, protocol)
-
     # Common keyword arguments shared by all protocol generators
     common = {
         "client_ip": args.client_ip,
@@ -2091,13 +2100,7 @@ def _cmd_stream(args: argparse.Namespace) -> None:
     }
 
     config = _build_stream_config(protocol, args)
-    if payload_fn is not None:
-        # Deliberately the ordinary generator rather than a path of its own:
-        # #83 was `--payload http` emitting labels the impairment passes did
-        # not recognise, so every anomaly flag was silently dropped.  Feeding
-        # payloads in leaves the labels — DATA[i], ACK[i] — exactly as they
-        # are, so impairments apply without knowing a protocol was involved.
-        config.payload_fn = payload_fn
+    _set_protocol_payload(args, protocol, config)
 
     try:
         if args.sessions > 1:
