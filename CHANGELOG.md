@@ -55,6 +55,9 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   packet is captured twice, the copy with identical bytes 1 µs later,
   labelled `DUP[i]`.  TCP and UDP; refused on SCTP.  New INI keys
   `reorder`, `reorder_depth` and `duplicate`.  (#196)
+- **`apply_datagram_impairments` takes `include_ethernet` and `encap`**, with
+  the names and defaults the stream generators use, so it can find the IP
+  header and corrupt the payload rather than the frame's padding.  (#200)
 
 ### Changed
 
@@ -100,6 +103,14 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   that cannot happen on UDP or SCTP.  It now says what it does on each
   protocol: on TCP a capture delay that can overtake, on UDP and SCTP a
   longer gap that cannot.  (#196)
+- **`--payload-corruption` corrupts the payload in a short frame.**  It
+  flipped the frame's last byte.  In an Ethernet frame under 60 bytes that
+  is padding, which no checksum covers, so the packet was labelled
+  `CORRUPT[i]` and was valid, with its payload unchanged.  That covers IPv4
+  UDP payloads under 18 bytes, IPv4 TCP segments without options under 6,
+  and IPv6 payloads under 6, on UDP and TCP alike.  It now flips the last
+  byte of the IP datagram, read from the IP header.  A frame that was never
+  padded corrupts the same byte as before.  (#200)
 
 ### Documentation
 

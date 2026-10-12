@@ -412,6 +412,7 @@ def generate_udp_stream(
     if config.impairments is not None:
         packets = apply_datagram_impairments(
             packets, rng=rng, config=config.impairments,
+            include_ethernet=include_ethernet, encap=encap,
         )
 
     # Middlebox fragmentation

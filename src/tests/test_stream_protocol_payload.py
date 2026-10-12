@@ -168,10 +168,16 @@ class TestImpairmentsOverUDP(_Workspace):
             self.assertEqual(now[-1], was[-1] ^ 0xFF)
 
     def _payloads(self, pcap: Path) -> list[bytes]:
-        """Every datagram's UDP payload, decoded or not: a corrupted one may not decode."""
+        """Every datagram's UDP payload, decoded or not: a corrupted one may not decode.
+
+        Read up to the UDP length, not the end of the frame: these frames are
+        under 60 bytes and padded, and the padding is not payload (#200).
+        """
         from packeteer.pcap import read_pcap
 
-        return [raw[14 + 20 + 8:] for raw, _, _ in read_pcap(path=pcap).packets]
+        udp = 14 + 20
+        return [raw[udp + 8:udp + int.from_bytes(raw[udp + 4:udp + 6], "big")]
+                for raw, _, _ in read_pcap(path=pcap).packets]
 
 
 class TestOverTCP(_Workspace):

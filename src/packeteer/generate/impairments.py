@@ -40,7 +40,7 @@ from ._stream_common import (
     _TimestampClock,
     _tsecr_at,
 )
-from .stream_encap import EncapSpec
+from .stream_encap import EncapSpec, _encap_ip_start
 from .tcp import TCP_ACK, TCP_FIN, TCP_PSH, TCP_RST, TCP_SYN, TCPOptions
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle avoided at runtime
@@ -373,6 +373,42 @@ def _ack_positions(packets: list["TCPStreamPacket"]) -> dict[int, int]:
     return positions
 
 
+# ── Payload corruption ───────────────────────────────────────────────────────
+
+def _datagram_end(raw: bytes, ip_start: int) -> int:
+    """Return the offset just past the outermost IP datagram in *raw*.
+
+    The IP header's own length says where the datagram ends, and a frame
+    can go on after it: an Ethernet frame under the 60-byte minimum is
+    padded, and padding is outside every checksum.  Anything that is not
+    IPv4 or IPv6 at *ip_start* ends with the frame.
+    """
+    version = raw[ip_start] >> 4 if ip_start < len(raw) else 0
+    if version == 4:
+        end = ip_start + int.from_bytes(raw[ip_start + 2:ip_start + 4], "big")
+    elif version == 6:
+        end = ip_start + 40 + int.from_bytes(raw[ip_start + 4:ip_start + 6], "big")
+    else:
+        return len(raw)
+    return min(end, len(raw))
+
+
+def _corrupted(raw: bytes, ip_start: int) -> bytes:
+    """Return *raw* with the last byte of its IP datagram flipped.
+
+    That is the payload's last byte, which is often an integrity tag and is
+    what makes corruption detectable at all.  It used to be the frame's last
+    byte, which in a padded frame was padding: the packet was labelled
+    corrupt and was valid (#200).  In a tunnel it is the inner payload's
+    last byte, and under ESP the ICV's or the ciphertext's, which is what a
+    wire would break.  A frame that is not padded flips the same byte as
+    before.
+    """
+    buf = bytearray(raw)
+    buf[_datagram_end(raw, ip_start) - 1] ^= 0xFF
+    return bytes(buf)
+
+
 # ── Packet loss ──────────────────────────────────────────────────────────────
 
 def drop_packet(rng: Random, probability: float) -> bool:
@@ -487,7 +523,12 @@ def _reorder_datagrams(
 
 
 def apply_datagram_impairments(
-    packets: list, *, rng: Random, config: ImpairmentConfig,
+    packets: list,
+    *,
+    rng: Random,
+    config: ImpairmentConfig,
+    include_ethernet: bool = True,
+    encap: EncapSpec = None,
 ) -> list:
     """Apply the impairments that mean something on a connectionless flow.
 
@@ -506,6 +547,12 @@ def apply_datagram_impairments(
             draws nothing.
         config: Impairments to apply; the loss, corruption, reorder and
             duplicate fields are read.
+        include_ethernet: Whether each datagram starts with an Ethernet
+            header, as the stream generators take it.  With *encap*, it says
+            where the IP header is, so that corruption flips the payload's
+            last byte and never the frame's padding (#200).
+        encap: The encapsulation the datagrams were built with, as the
+            stream generators take it.
 
     Returns:
         The impaired datagram list, in timestamp order.
@@ -518,13 +565,13 @@ def apply_datagram_impairments(
         packets, rng=rng, probability=config.packet_loss_probability,
     )
     if config.payload_corruption_probability:
+        ip_start = _encap_ip_start(encap, include_ethernet)
         for i, pkt in enumerate(packets):
             if not _is_data(pkt) or rng.random() >= config.payload_corruption_probability:
                 continue
-            raw = bytearray(pkt.raw)
-            raw[-1] ^= 0xFF
             packets[i] = replace(
-                pkt, raw=bytes(raw), label=_derive_label("CORRUPT", pkt.label),
+                pkt, raw=_corrupted(pkt.raw, ip_start),
+                label=_derive_label("CORRUPT", pkt.label),
             )
     if config.reorder_probability:
         packets = _reorder_datagrams(packets, rng=rng, config=config)
@@ -947,6 +994,7 @@ def _apply_corruption(
     it was holding and echoes the retransmission (#163).
     """
     rto_usec = int(config.retransmission_timeout * 1_000_000)
+    ip_start = _encap_ip_start(flow.encap, flow.include_ethernet)
     acks = _ack_positions(packets)
     used_ts = {_pkt_usec(p) for p in packets}
     additions: list["TCPStreamPacket"] = []
@@ -957,10 +1005,9 @@ def _apply_corruption(
         pkt = packets[i]
         corrupted.add(i)
 
-        raw_corrupt = bytearray(pkt.raw)
-        raw_corrupt[-1] ^= 0xFF
         packets[i] = replace(
-            pkt, raw=bytes(raw_corrupt), label=_derive_label("CORRUPT", pkt.label),
+            pkt, raw=_corrupted(pkt.raw, ip_start),
+            label=_derive_label("CORRUPT", pkt.label),
         )
 
         delay_usec = rng.randint(0, jitter_usec) if jitter_usec else 0
