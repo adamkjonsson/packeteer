@@ -231,10 +231,18 @@ gap_jitter = 0.0
 # seed  (default: unset — non-deterministic)
 #   Integer seed for the random number generator.  When set, two runs with
 #   identical configuration produce byte-identical captures, which is useful
-#   for regression testing, reproducible examples, and diff-based workflows.
-#   Applies to all protocols (tcp, udp, sctp).  Omit or comment out to let
-#   the generator choose random values on each run.
+#   for regression testing, reproducible examples, and diff-based workflows:
+#   the same packets, and timestamps from the same start (start_time, or
+#   1700000000 when start_time is not set).  Applies to all protocols (tcp,
+#   udp, sctp).  Omit or comment out to let the generator choose random
+#   values on each run.
 # seed = 42
+
+# start_time  (default: 1700000000 with seed, else the current time)
+#   Unix time, in seconds, at which the stream starts.  1700000000 is
+#   2023-11-14.  Without seed the default is the current time, so a capture
+#   is dated when it was made.
+# start_time = 1700000000
 
 # ── Realism ────────────────────────────────────────────────────────────────────
 

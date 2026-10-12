@@ -58,6 +58,9 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 - **`apply_datagram_impairments` takes `include_ethernet` and `encap`**, with
   the names and defaults the stream generators use, so it can find the IP
   header and corrupt the payload rather than the frame's padding.  (#200)
+- **`stream --start-time SECONDS`**, and the INI key `start_time`: the Unix
+  time the stream starts at, on every path (TCP, UDP, SCTP, `--sessions`,
+  `--payload http` and `--payload vpn`).  (#202)
 
 ### Changed
 
@@ -70,6 +73,11 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   `--payload-corruption` included, because the SCTP stream takes none yet.
   A command line that passed one of these got a clean capture; drop the
   option to get the same capture now.  (#194)
+- **A seeded `stream` run starts at a fixed time**, `1700000000`
+  (2023-11-14), when `--start-time` does not say otherwise.  It started at
+  the clock.  Every seeded capture's timestamps change, and its packets do
+  not.  Pass `--start-time` to choose the start.  An unseeded run still
+  starts at the current time.  (#202)
 - **`stream --protocol udp --payload <protocol>` replays a capture in both
   directions.**  The same command line gives a different capture: replies
   now leave from the server, where every datagram used to leave from the
@@ -111,6 +119,9 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   and IPv6 payloads under 6, on UDP and TCP alike.  It now flips the last
   byte of the IP datagram, read from the IP header.  A frame that was never
   padded corrupts the same byte as before.  (#200)
+- **`stream --seed` reproduces the file**, as documented.  Two runs wrote
+  the same packets with different timestamps, because the start came from
+  the clock and the CLI could not set it.  (#202)
 
 ### Documentation
 
@@ -118,6 +129,10 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   silently ignored on UDP and SCTP while a later example used
   `--packet-loss` on UDP, splits into the TCP-only header options and an
   *Impairments* table saying where each option applies.  (#194)
+- The guide and the generator internals said a `seed` alone gives
+  byte-identical output from the API.  It gives identical packets; the
+  timestamps also need `base_time`.  The guide also said `gap_jitter`
+  reorders, which is true on TCP only.  (#202)
 - The `stream --write-config` template said the same thing, and that
   `--payload vpn` warned.  It now marks where each impairment applies.
   (#196)

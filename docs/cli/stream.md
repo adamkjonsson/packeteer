@@ -55,7 +55,8 @@ Exactly one output flag is required; they are mutually exclusive.
 | `--ttl N` | `64` | IP TTL / hop limit |
 | `--gap SECONDS` | `0.001` | Base inter-packet gap |
 | `--gap-jitter SECONDS` | `0.0` | Maximum random delay.  On TCP each packet's capture time is delayed by up to this, so a packet can overtake the one before it.  On UDP and SCTP each gap is lengthened by up to this, so nothing overtakes anything; use `--reorder` for that |
-| `--seed N` | off | Integer RNG seed; two runs with the same seed produce byte-identical captures |
+| `--seed N` | off | Integer RNG seed; two runs with the same seed produce byte-identical captures: the same packets, and timestamps from the same start |
+| `--start-time SECONDS` | see description | Unix time at which the stream starts.  Defaults to `1700000000` (2023-11-14) with `--seed`, so that a seeded capture reproduces as a file, and to the current time without it |
 | `--mtu BYTES` | off | Fragment packets exceeding this IP-layer size |
 
 ## TCP-only arguments

@@ -32,8 +32,11 @@ All three share the same four leading fields in the same order:
 ## RNG and reproducibility
 
 Each generator call creates a private `random.Random(seed)` instance.
-Setting `seed` to the same integer value produces byte-identical captures
-across runs, which is useful for regression tests and diff-based workflows.
+Setting `seed` to the same integer value produces byte-identical packets
+across runs, and with `base_time` set as well, byte-identical captures,
+which is useful for regression tests and diff-based workflows.  The CLI's
+`--seed` sets a fixed `base_time` when `--start-time` does not give one
+(#202).
 Using a per-call instance keeps the generator's random state fully isolated
 from the rest of the process — calling one generator never affects the
 sequence of any other.

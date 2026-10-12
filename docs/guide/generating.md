@@ -542,13 +542,17 @@ The session builders cover most synthetic-data use cases.  Reach for
 - **Statistical anomaly injection** — the impairments above are available on
   every generator, but `payload_distribution`, `mtu` and `packet_hooks` are
   not
-- **Timestamp jitter** — `gap_jitter` models capture delay and produces
-  genuine out-of-order timestamps
+- **Timestamp jitter** — on TCP, `gap_jitter` models capture delay and
+  produces genuine out-of-order timestamps; on UDP and SCTP it lengthens
+  gaps, and `ImpairmentConfig.reorder_probability` is what reorders
 - **IP fragmentation** — `mtu` splits packets at a simulated middlebox
 - **Reproducible captures** — pass `seed` in the config object (`TCPStreamConfig`,
-  `UDPStreamConfig`, or `SCTPStreamConfig`) to pin the RNG; two calls with the
-  same seed and parameters produce byte-identical output, useful for regression
-  tests and diff-based workflows
+  `UDPStreamConfig`, or `SCTPStreamConfig`) to pin the RNG, and `base_time` to
+  pin the start; two calls with the same seed, start and parameters produce
+  byte-identical output, useful for regression tests and diff-based
+  workflows.  Without `base_time` the packets are the same and the timestamps
+  start at the current time.  `packeteer stream --seed` sets a fixed start
+  for you
 - **Packet hooks** — `TCPStreamConfig.packet_hooks` applies arbitrary
   transformations or drops during generation
 

@@ -1438,6 +1438,7 @@ _STREAM_PARAMS: dict[str, tuple[str, object, object]] = {
     "no_tcp_options":     ("no_tcp_options",                   bool,  False),
     "no_ethernet":        ("no_ethernet",                     bool,  False),
     "seed":               ("seed",                            int,   None),
+    "start_time":         ("start_time",                      float, None),
     "pcap":               ("pcap",                            str,   None),
     "pcapng":             ("pcapng",                          str,   None),
     "json":               ("json",                            str,   None),
@@ -1814,6 +1815,23 @@ def _set_protocol_payload(
         sys.exit(1)
 
 
+#: Where a seeded run starts when --start-time does not say: 2023-11-14.
+#: A constant, so that two runs with the same seed write the same file
+#: (#202), and a recent date rather than 1970, so a capture reads normally.
+_SEEDED_START_TIME = 1_700_000_000.0
+
+
+def _start_time(args: argparse.Namespace) -> float | None:
+    """Return the stream's start time, or ``None`` to start at the clock.
+
+    ``--start-time`` if given; otherwise a constant when ``--seed`` is, so
+    that a seeded run reproduces as a file and not only as packets (#202).
+    """
+    if args.start_time is not None:
+        return float(args.start_time)
+    return _SEEDED_START_TIME if args.seed is not None else None
+
+
 def _build_stream_config(
     protocol: str, args: argparse.Namespace,
 ) -> TCPStreamConfig | UDPStreamConfig | SCTPStreamConfig:
@@ -1836,13 +1854,17 @@ def _build_stream_config(
             duplicate_probability=args.duplicate_probability,
             retransmit_lost=args.retransmit_lost,
             seed=args.seed,
+            base_time=_start_time(args),
         )
     if protocol == "udp":
         return UDPStreamConfig(
             gap_jitter=args.gap_jitter, seed=args.seed,
+            base_time=_start_time(args),
             impairments=_impairments_from_args(args),
         )
-    return SCTPStreamConfig(gap_jitter=args.gap_jitter, seed=args.seed)
+    return SCTPStreamConfig(
+        gap_jitter=args.gap_jitter, seed=args.seed, base_time=_start_time(args),
+    )
 
 
 #: Anomaly options that describe TCP connection behaviour, so they have no
@@ -2022,6 +2044,7 @@ def _generate_http_payload_stream(
             mss=args.mss,
             encap=encap,
             seed=args.seed,
+            base_time=_start_time(args),
             config=HTTPRestConfig(
                 error_rate=args.error_rate,
                 chunked_rate=args.chunked_rate,
@@ -2059,6 +2082,7 @@ def _generate_vpn_payload_stream(
             max_payload=args.max_payload,
             encap=encap,
             seed=args.seed,
+            base_time=_start_time(args),
             config=VPNConfig(
                 data_port=args.vpn_data_port,
                 key_port=args.vpn_key_port,
@@ -3114,7 +3138,18 @@ def main() -> None:
     )
     stream_parser.add_argument(
         "--seed", type=int, default=None, metavar="N",
-        help="RNG seed for reproducible stream generation (default: non-deterministic)",
+        help=(
+            "RNG seed (default: non-deterministic). Two runs with the same seed"
+            " write byte-identical files: the same packets, and timestamps from"
+            " the same start, --start-time or else a fixed one"
+        ),
+    )
+    stream_parser.add_argument(
+        "--start-time", type=float, default=None, metavar="SECONDS",
+        help=(
+            "Unix time of the stream's start (default: 1700000000, which is"
+            " 2023-11-14, with --seed; otherwise the current time)"
+        ),
     )
     stream_parser.set_defaults(func=_cmd_stream)
 
