@@ -385,7 +385,8 @@ class TestToConfigHTTP(unittest.TestCase):
         assert h["method"] == "POST"
         assert h["path"] == "/api"
         assert h["version"] == "1.1"
-        assert h["headers"]["Host"] == "example.com"
+        assert h["headers"] == [["Host", "example.com"],
+                                ["Content-Type", "application/json"]]
         assert h["body"] == b'{"k":"v"}'.hex()
 
     def test_response_fields(self):
@@ -404,11 +405,16 @@ class TestToConfigHTTP(unittest.TestCase):
         h = self._config(HTTPRequest())
         assert h["body"] == ""
 
-    def test_headers_dict_is_copy(self):
+    def test_headers_are_a_copy(self):
         req = HTTPRequest(headers={"Host": "h"})
         h = self._config(req)
-        h["headers"]["Host"] = "mutated"
+        h["headers"][0][1] = "mutated"
         assert req.headers["Host"] == "h"
+
+    def test_headers_are_pairs_in_order_and_repeated(self):
+        """#172: every line, in order, a name repeated across others."""
+        req = HTTPRequest(headers=[("A", "1"), ("B", "2"), ("A", "3")])
+        assert self._config(req)["headers"] == [["A", "1"], ["B", "2"], ["A", "3"]]
 
 
 def _redacted_as(original: str) -> str:
@@ -429,26 +435,28 @@ class TestSanitiseHTTP(unittest.TestCase):
         from packeteer.sanitise import SanitiseOptions, sanitise
         spec = self._spec(HTTPRequest(headers={"Host": "secret.example.com"}))
         clean = sanitise(spec, SanitiseOptions(http_headers=True))
-        assert clean["packets"][0]["http"]["headers"]["Host"] == _redacted_as("secret.example.com")
+        headers = dict(clean["packets"][0]["http"]["headers"])
+        assert headers["Host"] == _redacted_as("secret.example.com")
 
     def test_cookie_redacted(self):
         from packeteer.sanitise import SanitiseOptions, sanitise
         spec = self._spec(HTTPRequest(headers={"Cookie": "session=abc123"}))
         clean = sanitise(spec, SanitiseOptions(http_headers=True))
-        assert clean["packets"][0]["http"]["headers"]["Cookie"] == _redacted_as("session=abc123")
+        headers = dict(clean["packets"][0]["http"]["headers"])
+        assert headers["Cookie"] == _redacted_as("session=abc123")
 
     def test_set_cookie_redacted(self):
         from packeteer.sanitise import SanitiseOptions, sanitise
         spec = self._spec(HTTPResponse(headers={"Set-Cookie": "token=xyz; Path=/"}))
         clean = sanitise(spec, SanitiseOptions(http_headers=True))
-        assert (clean["packets"][0]["http"]["headers"]["Set-Cookie"]
+        assert (dict(clean["packets"][0]["http"]["headers"])["Set-Cookie"]
                 == _redacted_as("token=xyz; Path=/"))
 
     def test_authorization_redacted(self):
         from packeteer.sanitise import SanitiseOptions, sanitise
         spec = self._spec(HTTPRequest(headers={"Authorization": "Bearer tok"}))
         clean = sanitise(spec, SanitiseOptions(http_headers=True))
-        assert (clean["packets"][0]["http"]["headers"]["Authorization"]
+        assert (dict(clean["packets"][0]["http"]["headers"])["Authorization"]
                 == _redacted_as("Bearer tok"))
 
     def test_non_sensitive_header_kept(self):
@@ -457,7 +465,7 @@ class TestSanitiseHTTP(unittest.TestCase):
             "Host": "secret.com", "Content-Type": "text/html",
         }))
         clean = sanitise(spec, SanitiseOptions(http_headers=True))
-        h = clean["packets"][0]["http"]["headers"]
+        h = dict(clean["packets"][0]["http"]["headers"])
         assert h["Content-Type"] == "text/html"
         assert h["Host"] == _redacted_as("secret.com")
 
@@ -465,7 +473,7 @@ class TestSanitiseHTTP(unittest.TestCase):
         from packeteer.sanitise import SanitiseOptions, sanitise
         spec = self._spec(HTTPRequest(headers={"Host": "secret.com", "Cookie": "s=1"}))
         clean = sanitise(spec, SanitiseOptions(http_headers=False))
-        h = clean["packets"][0]["http"]["headers"]
+        h = dict(clean["packets"][0]["http"]["headers"])
         assert h["Host"] == "secret.com"
         assert h["Cookie"] == "s=1"
 
@@ -473,7 +481,7 @@ class TestSanitiseHTTP(unittest.TestCase):
         from packeteer.sanitise import SanitiseOptions, sanitise
         spec = self._spec(HTTPRequest(headers={"Host": "secret.com"}))
         sanitise(spec, SanitiseOptions(http_headers=True))
-        assert spec["packets"][0]["http"]["headers"]["Host"] == "secret.com"
+        assert dict(spec["packets"][0]["http"]["headers"])["Host"] == "secret.com"
 
     def test_location_redacted(self):
         from packeteer.sanitise import SanitiseOptions, sanitise
@@ -482,7 +490,7 @@ class TestSanitiseHTTP(unittest.TestCase):
             headers={"Location": "https://secret.example.com/"},
         ))
         clean = sanitise(spec, SanitiseOptions(http_headers=True))
-        assert clean["packets"][0]["http"]["headers"]["Location"] == _redacted_as("https://secret.example.com/")
+        assert dict(clean["packets"][0]["http"]["headers"])["Location"] == _redacted_as("https://secret.example.com/")
 
 
 class TestCLIHTTPHeaders(unittest.TestCase):

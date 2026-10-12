@@ -196,6 +196,19 @@ stream = generate_http_stream(
 )
 ```
 
+A message's `headers` is an {class}`~packeteer.generate.http.HTTPHeaders`:
+its lines, in order, where a name may repeat.  A dict is converted, as above;
+give `(name, value)` pairs for a header on several lines, or for an order
+across names:
+
+```python
+HTTPResponse(headers=[("Transfer-Encoding", "gzip"), ("Content-Type", "text/html"),
+                      ("Transfer-Encoding", "chunked")], body=chunked)
+```
+
+`headers["Transfer-Encoding"]` reads it as `"gzip, chunked"`, and
+`headers.get_all(...)` as the two lines.
+
 {func}`packeteer.app.protocol_messages` turns packet-spec sections into these
 objects, which is what `stream --payload http --protocol-messages` does.
 

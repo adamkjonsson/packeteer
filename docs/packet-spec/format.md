@@ -1174,10 +1174,10 @@ The `type` field selects between request and response:
   "method":  "GET",
   "path":    "/index.html",
   "version": "1.1",
-  "headers": {
-    "Host":   "example.com",
-    "Accept": "text/html"
-  },
+  "headers": [
+    ["Host",   "example.com"],
+    ["Accept", "text/html"]
+  ],
   "body": ""
 }
 ```
@@ -1191,9 +1191,9 @@ The `type` field selects between request and response:
   "version":     "1.1",
   "status_code": 200,
   "reason":      "OK",
-  "headers": {
-    "Content-Type": "text/html"
-  },
+  "headers": [
+    ["Content-Type", "text/html"]
+  ],
   "body": "3c68746d6c3e48656c6c6f3c2f68746d6c3e"
 }
 ```
@@ -1206,7 +1206,7 @@ The `type` field selects between request and response:
 | `method` | `"GET"` | HTTP method string (e.g. `"GET"`, `"POST"`) |
 | `path` | `"/"` | Request-target (path, optionally with query string) |
 | `version` | `"1.1"` | HTTP version without the `"HTTP/"` prefix |
-| `headers` | `{}` | Object of header name → value.  A value is a string, or a list of strings for a header on several lines — see [repeated headers](#http-repeated-headers).  An integer is taken as its digits; anything else is refused, naming the header |
+| `headers` | `[]` | The header lines, in order, as `[name, value]` pairs; a name may repeat.  An object of name → value (or list of values) is also read — see [header lines](#http-repeated-headers).  A value is a string; an integer is taken as its digits; anything else is refused, naming the header |
 | `body` | `""` | Request body as a hex string, **as it appears on the wire** — see the note below |
 | `raw` | — | The message exactly as sent, hex-encoded; **wins over every other field** — see [`http.raw`](#http-raw) |
 
@@ -1218,7 +1218,7 @@ The `type` field selects between request and response:
 | `version` | `"1.1"` | HTTP version without the `"HTTP/"` prefix |
 | `status_code` | `200` | 3-digit integer status code |
 | `reason` | `"OK"` | Reason phrase |
-| `headers` | `{}` | Object of header name → value.  A value is a string, or a list of strings for a header on several lines — see [repeated headers](#http-repeated-headers).  An integer is taken as its digits; anything else is refused, naming the header |
+| `headers` | `[]` | The header lines, in order, as `[name, value]` pairs; a name may repeat.  An object of name → value (or list of values) is also read — see [header lines](#http-repeated-headers).  A value is a string; an integer is taken as its digits; anything else is refused, naming the header |
 | `body` | `""` | Response body as a hex string, **as it appears on the wire** — see the note below |
 | `raw` | — | The message exactly as sent, hex-encoded; **wins over every other field** — see [`http.raw`](#http-raw) |
 
@@ -1252,33 +1252,40 @@ given, as [`dns.raw`](#dns-top-level-fields) is for DNS.
   line by line — a folded continuation line, a line without a colon — `raw`
   is dropped instead, since a value redacted in `headers` but left in `raw`
   would go back on the wire as it was, and the message is rebuilt from its
-  fields: repeated headers grouped, and every one but `Set-Cookie`
-  combined.
+  header lines, which keep their order and repetition.
 
 `raw` must hold bytes: `{"raw": ""}` is refused rather than read as absent,
 and so is anything that is not hex, naming the key.
 
 (http-repeated-headers)=
-### Repeated headers
+### Header lines
 
-A header's value may be a **list**, which is one line per item, in order,
-under the same name:
+`headers` is the head's lines, **in order**, each a `[name, value]` pair.  A
+name may repeat, and its lines keep their place among the others:
 
 ```json
-"headers": { "Set-Cookie": ["session=abc; Expires=Wed, 21 Oct 2026 07:28:00 GMT", "theme=dark"] }
+"headers": [
+  ["Transfer-Encoding", "gzip"],
+  ["Set-Cookie",        "session=abc; Expires=Wed, 21 Oct 2026 07:28:00 GMT"],
+  ["Transfer-Encoding", "chunked"],
+  ["Set-Cookie",        "theme=dark"]
+]
 ```
 
-`parse` writes one only for a repeated `Set-Cookie`, the one field RFC 7230
-§3.2.2 says cannot be combined: a cookie's `Expires` has a comma in it, so
-folding two into one line is ambiguous.  Any other header repeated on the
-wire, `Transfer-Encoding: gzip` then `Transfer-Encoding: chunked`, is one
-string, `"gzip, chunked"`, which the RFC says means the same, and the two
-lines are in `raw`.  A list may be written for any header by hand.
+`parse` writes every line this way since 0.18.0, each name as it was
+spelt, nothing folded or regrouped (#172).  So a repeated header, and the
+order across names, no longer needs `raw`.
 
-`sanitise` redacts a list item by item, so a message rebuilt from its fields
-keeps its number of `Set-Cookie` lines.  What a list cannot say is order
-*across* names — `A`, `B`, then `A` again — which is
-[#172](https://github.com/adamkjonsson/packeteer/issues/172).
+**The object form is still read**, as every spec before 0.18.0 writes it:
+an object of name → value, where a value may be a list, one line per item.
+It cannot say an order across names, and `parse` no longer writes it:
+
+```json
+"headers": { "Host": "example.com", "Set-Cookie": ["a=1", "b=2"] }
+```
+
+`sanitise` redacts each sensitive line where it stands, so a message
+rebuilt from its lines keeps its shape.
 
 ```{note}
 **A chunked body keeps its framing.**  `body` for a

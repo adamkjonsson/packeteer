@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 
 from packeteer.generate.http import (
+    HTTPHeaders,
     HTTPMessage,
     HTTPRequest,
     HTTPResponse,
@@ -39,17 +40,17 @@ def parse_http(data: bytes) -> HTTPMessage:  # type: ignore[valid-type]
     **A message the fields cannot rebuild keeps its bytes** in
     :attr:`~packeteer.generate.http.HTTPRequest.raw` (#178): a header with no
     space after its colon, a status line with no reason phrase, bare-LF line
-    endings.  A canonical message, which is most of them, gets none.
+    endings.  A canonical message, which is most of them, gets none, and a
+    repeated or reordered header no longer needs it.
 
-    **A repeated header is combined**, its values joined with ``", "`` in the
-    order they came, as RFC 7230 §3.2.2 allows for a field defined as a list.
-    Two ``Transfer-Encoding`` lines, ``gzip`` then ``chunked``, are the one
-    value ``gzip, chunked``, which means the same thing.  It used to keep the
-    last and drop the rest, which changed how the body is framed.  Names match
-    case-insensitively, the first spelling kept.  ``Set-Cookie`` is the one
-    field the RFC says cannot be combined — a cookie's ``Expires`` has a comma
-    in it — so a repeated one is a list, one item per line, which the encoder
-    writes back as separate lines (#181).
+    **Every header line is kept, in order**, as
+    :class:`~packeteer.generate.http.HTTPHeaders`, each name as it was spelt
+    (#172).  Two ``Transfer-Encoding`` lines, ``gzip`` then ``chunked``, stay
+    two lines, and ``headers["Transfer-Encoding"]`` reads them as the one
+    value ``gzip, chunked``, as RFC 7230 §3.2.2 allows.  ``Set-Cookie``,
+    which the RFC says cannot be combined, reads as its first line, and
+    ``get_all`` gives every one.  Before 0.18.0 a repeated header was folded
+    into one line, and the order across names was lost.
 
     It is the same reasoning that put stream-shaped protocols outside
     packeteer in 0.11.0: reassembly and byte-exact reconstruction want
@@ -90,23 +91,16 @@ def parse_http(data: bytes) -> HTTPMessage:  # type: ignore[valid-type]
     if not lines:
         raise ValueError("HTTP message has no start line")
 
-    headers: dict[str, str | list[str]] = {}
-    spelled: dict[str, str] = {}         # lower-case name → first spelling
+    # Every line, in order, with its name as spelt: nothing is folded or
+    # regrouped, so a repeated name and the order across names survive (#172).
+    headers = HTTPHeaders()
     for line in lines[1:]:
         if ":" in line:
             name, _, value = line.partition(":")
-            key = spelled.setdefault(name.strip().lower(), name.strip())
-            value = value.strip()
-            if key not in headers:
-                headers[key] = value
-            elif key.lower() == "set-cookie":
-                seen = headers[key]
-                headers[key] = [*(seen if isinstance(seen, list) else [seen]), value]
-            else:
-                headers[key] = f"{headers[key]}, {value}"
+            headers.add(name.strip(), value.strip())
 
     # Trim body to Content-Length when present, however its name is spelled.
-    cl = headers.get(spelled.get("content-length", ""))
+    cl = headers.get("Content-Length")
     if cl is not None:
         with contextlib.suppress(ValueError):
             body = body[:int(cl)]
@@ -156,7 +150,7 @@ def split_head(data: bytes) -> tuple[bytes, bytes, bytes] | None:
         start = end + 1
 
 
-def _message(start: str, headers: dict[str, str | list[str]],
+def _message(start: str, headers: HTTPHeaders,
              body: bytes) -> HTTPMessage:  # type: ignore[valid-type]
     """Build the request or response *start* names."""
     if start.upper().startswith("HTTP/"):

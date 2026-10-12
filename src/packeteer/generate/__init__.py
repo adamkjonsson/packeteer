@@ -378,7 +378,7 @@ from .gtpu import (
     GTPUExtensionHeader,
     GTPUHeader,
 )
-from .http import HTTP_ALT_PORT, HTTP_PORT, HTTPRequest, HTTPResponse
+from .http import HTTP_ALT_PORT, HTTP_PORT, HTTPHeaders, HTTPRequest, HTTPResponse
 from .icmp import ICMPHeader
 from .icmpv6 import ICMPv6Header
 from .impairments import ImpairmentConfig
@@ -775,6 +775,7 @@ __all__ = [
     "DHCP_OPT_PARAM_REQUEST_LIST",
     "DHCP_OPT_VENDOR_CLASS_ID",
     "DHCP_OPT_CLIENT_ID",
+    "HTTPHeaders",
     "HTTPRequest",
     "HTTPResponse",
     "HTTP_PORT",

@@ -1,4 +1,4 @@
-"""Exact HTTP bytes: `raw`, and a repeated header combined (#178).
+"""Exact HTTP bytes: `raw` (#178), and every header line kept (#172).
 
 #169 sent the messages it was given, but through the structured `http`
 section, which the encoder rebuilds: a repeated header was dropped, spacing
@@ -27,11 +27,14 @@ from packeteer.sanitise import SanitiseOptions
 
 _CORPUS = Path(__file__).resolve().parents[2] / "testcases" / "real"
 
-#: The issue's table, plus a line ending it did not list.
+#: Two Transfer-Encoding lines: the case #178 needed `raw` for, which the
+#: fields rebuild since #172.
+_REPEATED = (b"HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n"
+             b"Transfer-Encoding: chunked\r\n\r\n4\r\nabcd\r\n0\r\n\r\n")
+
+#: The issue's table, plus a line ending it did not list.  A repeated header
+#: was in it until #172 kept every line.
 _NON_CANONICAL = {
-    "a repeated header": (
-        b"HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n"
-        b"Transfer-Encoding: chunked\r\n\r\n4\r\nabcd\r\n0\r\n\r\n"),
     "no space after the colon": b"HTTP/1.1 200 OK\r\nCONTENT-LENGTH:2\r\n\r\nhi",
     "whitespace around a value": (
         b"HTTP/1.1 200 OK\r\nTransfer-Encoding:  Gzip,  Chunked \r\n\r\n0\r\n\r\n"),
@@ -85,16 +88,38 @@ class TestAMessageRoundTripsExactly(unittest.TestCase):
         self.assertEqual(seen, 4)
 
 
-class TestARepeatedHeaderIsCombined(unittest.TestCase):
-    """RFC 7230 §3.2.2: one list, in order, where it used to keep the last."""
+class TestARepeatedHeaderIsKept(unittest.TestCase):
+    """Every line, in order, each name as spelt (#172).
 
-    def test_two_transfer_encodings_are_one_list(self) -> None:
-        msg = parse_http(_NON_CANONICAL["a repeated header"])
-        self.assertEqual(msg.headers, {"Transfer-Encoding": "gzip, chunked"})
+    #178 combined a repeated header into one line, which needed `raw` to
+    send it back as two, and lost the order across names.
+    """
 
-    def test_names_match_whatever_their_case(self) -> None:
+    def test_two_transfer_encodings_are_two_lines(self) -> None:
+        msg = parse_http(_REPEATED)
+        self.assertEqual(msg.headers.items(),
+                         [("Transfer-Encoding", "gzip"), ("Transfer-Encoding", "chunked")])
+        self.assertEqual(msg.headers["Transfer-Encoding"], "gzip, chunked")
+
+    def test_they_rebuild_without_raw(self) -> None:
+        out, section = _round_trip(_REPEATED)
+        self.assertEqual(out, _REPEATED)
+        self.assertNotIn("raw", section)
+        self.assertEqual(section["headers"],
+                         [["Transfer-Encoding", "gzip"], ["Transfer-Encoding", "chunked"]])
+
+    def test_the_order_across_names_survives(self) -> None:
+        """The issue's case: no `raw` could say this before."""
+        wire = b"GET / HTTP/1.1\r\nA: 1\r\nB: 2\r\nA: 3\r\n\r\n"
+        out, section = _round_trip(wire)
+        self.assertEqual(out, wire)
+        self.assertNotIn("raw", section)
+        self.assertEqual(section["headers"], [["A", "1"], ["B", "2"], ["A", "3"]])
+
+    def test_names_keep_their_spelling_and_match_whatever_their_case(self) -> None:
         msg = parse_http(b"GET / HTTP/1.1\r\nAccept: a\r\naccept: b\r\n\r\n")
-        self.assertEqual(msg.headers, {"Accept": "a, b"})
+        self.assertEqual(msg.headers.items(), [("Accept", "a"), ("accept", "b")])
+        self.assertEqual(msg.headers["ACCEPT"], "a, b")
 
     def test_content_length_trims_however_it_is_spelled(self) -> None:
         """`CONTENT-LENGTH` went unread, so the body was not trimmed."""
@@ -231,9 +256,12 @@ class TestSetCookieIsKeptApart(unittest.TestCase):
              b"Set-Cookie: a=1; Expires=Wed, 21 Oct 2026 07:28:00 GMT\r\n"
              b"Set-Cookie: b=2\r\nContent-Length: 0\r\n\r\n")
 
-    def test_a_repeated_set_cookie_is_a_list(self) -> None:
-        self.assertEqual(parse_http(self._WIRE).headers["Set-Cookie"],
+    def test_a_repeated_set_cookie_is_two_lines(self) -> None:
+        headers = parse_http(self._WIRE).headers
+        self.assertEqual(headers.get_all("Set-Cookie"),
                          ["a=1; Expires=Wed, 21 Oct 2026 07:28:00 GMT", "b=2"])
+        self.assertEqual(headers["Set-Cookie"], "a=1; Expires=Wed, 21 Oct 2026 07:28:00 GMT",
+                         "never joined: an Expires has a comma in it")
 
     def test_the_fields_alone_rebuild_it(self) -> None:
         """So it needs no `raw`, and nothing is lost when `raw` goes."""
@@ -282,10 +310,16 @@ class TestAHeaderValueIsAStringOrAListOfThem(unittest.TestCase):
                 self._lines(value)
             self.assertIn(f"http: {expected}", str(ctx.exception))
 
-    def test_headers_must_be_an_object(self) -> None:
-        with self.assertRaises(ValueError) as ctx:
-            http.from_spec({"type": "response", "headers": ["Set-Cookie: a=1"]})
-        self.assertIn("http: headers must be an object, not list", str(ctx.exception))
+    def test_headers_are_pairs_or_an_object(self) -> None:
+        for headers, message in (
+            (["Set-Cookie: a=1"], "headers item 0 must be a [name, value] pair"),
+            ([["", "x"]], "headers item 0 must be a [name, value] pair with a non-empty name"),
+            ([["A", ["x"]]], "header 'A' must be a string, not list"),
+            ("Set-Cookie: a=1", "headers must be an array of [name, value] pairs or an object"),
+        ):
+            with self.subTest(headers=headers), self.assertRaises(ValueError) as ctx:
+                http.from_spec({"type": "response", "headers": headers})
+            self.assertIn(message, str(ctx.exception))
 
     def test_what_always_worked_still_does(self) -> None:
         """A string, an integer as its digits, and a list of those."""
@@ -319,14 +353,19 @@ class TestSanitiseRedactsInsideRaw(unittest.TestCase):
 
     def test_a_redacted_value_is_redacted_in_raw(self) -> None:
         section = self._sanitised(self._SECRET, http_headers=True)
-        self.assertEqual(section["headers"]["Authorization"],
+        self.assertEqual(dict(section["headers"])["Authorization"],
                          _r(b"Bearer s3cret").decode())
         self.assertEqual(self._wire(section),
                          b"GET / HTTP/1.1\r\nAuthorization:" + _r(b"Bearer s3cret")
                          + b"\r\n\r\n")
 
     def test_the_issues_two_shapes_are_kept(self) -> None:
-        """Every byte but the sensitive values, as captured."""
+        """Every byte but the sensitive values, as captured.
+
+        #184 kept them by redacting inside `raw`.  Since #172 neither message
+        needs `raw`: the header lines keep their order and repetition, and a
+        message rebuilt from them after redaction has the same shape.
+        """
         cases = (
             (b"HTTP/1.1 200 OK\r\nSet-Cookie: session=abc; Expires=Wed, 21 Oct 2026"
              b" 07:28:00 GMT\r\nContent-Length: 2\r\nSet-Cookie: theme=dark\r\n\r\nok",
@@ -341,8 +380,9 @@ class TestSanitiseRedactsInsideRaw(unittest.TestCase):
         )
         for wire, expected in cases:
             with self.subTest(wire=wire[:40]):
-                section = self._sanitised(wire, http_headers=True)
-                self.assertIn("raw", section)
+                section = http.to_spec(http.decode(wire))
+                self.assertNotIn("raw", section)
+                http.sanitise(section, None, SanitiseOptions(http_headers=True))
                 self.assertEqual(self._wire(section), expected)
 
     def test_spacing_and_line_endings_are_kept(self) -> None:

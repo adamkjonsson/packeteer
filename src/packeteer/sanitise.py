@@ -641,6 +641,14 @@ def _sanitise_http(http: dict, opts: SanitiseOptions) -> None:
     if not opts.http_headers:
         return
     headers = http.get("headers")
+    if isinstance(headers, list):
+        # [name, value] pairs, as `parse` writes them since 0.18.0 (#172):
+        # each line redacted where it stands, so order and repetition stay.
+        for pair in headers:
+            if (isinstance(pair, list) and len(pair) == 2 and isinstance(pair[0], str)
+                    and pair[0].lower() in _HTTP_SENSITIVE_HEADERS):
+                pair[1] = _redaction(len(str(pair[1])))
+        return
     if not isinstance(headers, dict):
         return
     for key in list(headers):

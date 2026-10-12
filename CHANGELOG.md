@@ -75,6 +75,12 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   Python.  `examples/udp_tunnel/xor_seal.py` is a toy wrapper to start
   from, and a new guide page, *Tunnelling through your own code*, walks
   through it.  packeteer still does no cryptography.  (#197)
+- **`HTTPHeaders`**, an HTTP message's header lines in order, where a name
+  may repeat: `items()` gives the lines, `get_all(name)` every value of a
+  name, `headers[name]` one value (a repeated name's joined with `", "`,
+  except `Set-Cookie`, which gives its first), and `add`, assignment and
+  `del` edit it.  Lookups are case-insensitive.  It is built from a dict, as
+  before, or from `(name, value)` pairs.  (#172)
 - **`stream --start-time SECONDS`**, and the INI key `start_time`: the Unix
   time the stream starts at, on every path (TCP, UDP, SCTP, `--sessions`,
   `--payload http` and `--payload vpn`).  (#202)
@@ -96,6 +102,18 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   name by its `label` prefix must not rely on that any more.  Past 36
   distinct one-character labels, replacements are shared, with a warning.
   (#192)
+- **Breaking:** an `http` section's `headers` is written as an array of
+  `[name, value]` pairs, in order, by `parse` and `stream --json`: a
+  repeated name keeps its lines and their place among the others.  The
+  object form is still read.  A reader of `parse` output that did
+  `section["headers"]["Host"]` reads pairs now; `dict(section["headers"])`
+  gives the old view for a message with no repeated names.  (#172)
+- **Breaking:** `HTTPRequest.headers` and `HTTPResponse.headers` are an
+  `HTTPHeaders`, not a `dict`.  Indexing by name, `in`, iterating names,
+  `dict(headers)`, and building a message with `headers={...}` still work.
+  `isinstance(headers, dict)` does not, and nor does reading a list back
+  from `headers[name]` (the one-line-per-item form #181 gave `Set-Cookie`):
+  use `get_all(name)`.  (#172)
 - **A seeded `stream` run starts at a fixed time**, `1700000000`
   (2023-11-14), when `--start-time` does not say otherwise.  It started at
   the clock.  Every seeded capture's timestamps change, and its packets do
@@ -149,6 +167,12 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   documented: a message whose sender compressed names differently from
   packeteer carries `raw`, which is dropped and rebuilt, and its length can
   still change.  (#192)
+- **`parse` keeps every HTTP header line.**  A repeated header was folded
+  into one line, `gzip, chunked`, and needed `raw` to be sent back as two;
+  the order across names was lost.  Each line is now kept, in order, with
+  its name as spelt, so such a message round-trips without `raw`, and
+  `sanitise` rebuilding a message whose `raw` it dropped no longer regroups
+  its headers.  (#172)
 - **`stream --seed` reproduces the file**, as documented.  Two runs wrote
   the same packets with different timestamps, because the start came from
   the clock and the CLI could not set it.  (#202)

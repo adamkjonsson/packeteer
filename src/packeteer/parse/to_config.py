@@ -878,7 +878,7 @@ def _apply_http(config: dict[str, Any], msg: HTTPMessage) -> None:  # type: igno
             "method":  msg.method,
             "path":    msg.path,
             "version": msg.version,
-            "headers": dict(msg.headers),
+            "headers": [[name, value] for name, value in msg.headers.items()],
             "body":    msg.body.hex(),
         }
     else:
@@ -887,7 +887,7 @@ def _apply_http(config: dict[str, Any], msg: HTTPMessage) -> None:  # type: igno
             "version":     msg.version,
             "status_code": msg.status_code,
             "reason":      msg.reason,
-            "headers":     dict(msg.headers),
+            "headers":     [[name, value] for name, value in msg.headers.items()],
             "body":        msg.body.hex(),
         }
     if msg.raw:
