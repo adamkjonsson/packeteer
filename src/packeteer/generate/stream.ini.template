@@ -398,7 +398,8 @@ no_ethernet = false
 #   1. vlan or qinq   (mutually exclusive)
 #   2. mpls
 #   3. pppoe
-#   4. one tunnel: gre, etherip, ipip, vxlan, geneve, gtpu, ah, or esp
+#   4. one tunnel: gre, etherip, ipip, vxlan, geneve, gtpu, ah, esp, or
+#      udp_tunnel
 #
 # The tag-based layers (vlan, qinq, mpls, pppoe) leave the stream's own
 # transport on the wire; a tunnel carries the whole stream as inner traffic.
@@ -491,3 +492,28 @@ no_ethernet = false
 # ipsec_spi = 256
 #   outer IP TTL for the IPsec tunnel (default 64)
 # ipsec_ttl = 64
+#
+# udp_tunnel  — a UDP tunnel between two endpoints, whose outer payloads are
+#        computed by your own code: the module named by --tunnel-module on
+#        the command line, given --tunnel-arg KEY=VALUE.  The module is code,
+#        and a config file never names code to run, so those two have no key
+#        here.  Each inner packet is wrapped once per time it is sent, in wire
+#        order, after the inner stream's own impairments; tags (vlan, mpls,
+#        ...) go on the outer packet.  duplicate is refused with it, since the
+#        capture point is outside the tunnel: use tunnel_duplicate.
+# udp_tunnel = 198.51.100.7 203.0.113.9
+#   UDP port of the tunnel (required with udp_tunnel)
+# tunnel_port = 51820
+#   UDP port at the first endpoint (default: tunnel_port)
+# tunnel_src_port = 51820
+#   outer IP TTL for the UDP tunnel (default 64)
+# tunnel_ttl = 64
+#   Impairments of the outer datagrams, applied after wrapping, so corruption
+#   lands on the sealed bytes.  The same as packet_loss,
+#   payload_corruption_probability, reorder, reorder_depth and duplicate do
+#   to the inner stream, and independent of them.
+# tunnel_packet_loss = 0.05
+# tunnel_corruption = 0.02
+# tunnel_reorder = 0.1
+# tunnel_reorder_depth = 3
+# tunnel_duplicate = 0.01

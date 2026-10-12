@@ -516,6 +516,63 @@ packeteer stream --client-ip 10.0.0.1 --server-ip 10.1.0.1 \
     --payload vpn --vpn-epochs 4 --packets 20 --seed 42 --pcap vpn.pcap
 ```
 
+## UDP tunnels through your own code
+
+`--udp-tunnel` carries the whole stream through a UDP tunnel, as WireGuard
+or OpenVPN over UDP do.  packeteer does no cryptography, so what goes in each
+outer datagram is computed by **your own code**: a Python module, named by
+`--tunnel-module`, defining
+
+```python
+def make_wrapper(args: dict[str, str]) -> TunnelWrapper: ...
+```
+
+where the wrapper has one method,
+`wrap(inner, direction, timestamp) -> [(direction, payload), ...]`.  `args`
+are the `--tunnel-arg KEY=VALUE` pairs.  **A module is code, and loading it
+runs that code**, as with `--load-protocol`.
+
+```bash
+packeteer stream --protocol udp --payload dns --protocol-messages dns.json \
+    --client-ip 10.0.0.2 --server-ip 10.0.0.1 --server-port 53 --packets 20 \
+    --udp-tunnel 198.51.100.7 203.0.113.9 --tunnel-port 51820 \
+    --tunnel-module examples/udp_tunnel/xor_seal.py \
+    --tunnel-arg key=secret --tunnel-arg rekey_after=8 \
+    --tunnel-packet-loss 0.05 --tunnel-corruption 0.02 --seed 7 --pcap tunnel.pcap
+```
+
+What it promises:
+
+- **The wrapper sees each inner packet once per time it is sent, in wire
+  order**, after the inner stream's own impairments: a retransmitted segment
+  again, a lost one never.  So a counter, a sequence number, or a rekey
+  after *N* packets is correct by construction.  The timestamp lets it
+  rekey after a time, or send a keepalive after an idle period.
+- **Outer impairments apply after wrapping.**  `--tunnel-corruption` lands
+  on the sealed bytes, so it breaks an authentication tag, and a lost outer
+  datagram loses everything it carried.  The inner options (`--packet-loss`
+  and the rest) still impair the inner stream, independently, except
+  `--duplicate`, which is refused: it is the capture point seeing a packet
+  twice, and the capture point is outside the tunnel.  Use
+  `--tunnel-duplicate`.
+- **Direction maps to the endpoints.**  A datagram `wrap` returns as `c2s`
+  goes from the first endpoint to the second, and `s2c` the other way.  It
+  is what `wrap` *returns* that counts, so a handshake reply can come back
+  while a client packet is being sealed.
+- **It is seeded and reproducible.**  The outer impairments draw from an RNG
+  of their own, so adding one never changes what the wrapper is given.
+
+`wrap` may return several datagrams, for a handshake or a rekey before the
+sealed packet, or none, to swallow one.  Each outer datagram is labelled
+`TUNNEL[<inner label>]`, with `+1`, `+2` for further ones from the same
+call.  Layer-2 tags (`--vlan`, `--mpls`, …) go on the outer packet, and
+`--udp-tunnel` cannot be combined with another tunnel.  It works with every
+payload and with `--sessions`: one tunnel carries every session.
+
+`examples/udp_tunnel/xor_seal.py` is a toy wrapper to start from, with a
+handshake, a counter per direction, and a rekey.  It is not cryptography.
+See {doc}`../guide/tunnelling` for the same from Python.
+
 ## Encapsulation flags
 
 Layers are applied in the order VLAN/QinQ → MPLS → PPPoE → tunnel.
@@ -561,6 +618,17 @@ of the two tags they set, so `--vlan-pcp` has no effect alongside `--qinq`.
 | `--esp SRC_IP DST_IP` | IPsec ESP tunnel (RFC 4303); inner stack is **scrambled** into opaque high-entropy ciphertext |
 | `--ipsec-spi N` | 32-bit Security Parameters Index for `--ah` / `--esp` (default 256) |
 | `--ipsec-ttl N` | Outer IP TTL for `--ah` / `--esp` (default 64) |
+| `--udp-tunnel SRC_IP DST_IP` | UDP tunnel whose payloads your own code computes; see [UDP tunnels through your own code](#udp-tunnels-through-your-own-code) |
+| `--tunnel-port PORT` | UDP port of `--udp-tunnel` (required) |
+| `--tunnel-src-port PORT` | UDP port at the tunnel's `SRC_IP` (default: `--tunnel-port`) |
+| `--tunnel-ttl N` | Outer IP TTL for `--udp-tunnel` (default 64) |
+| `--tunnel-module FILE` | The module whose `make_wrapper(args)` computes the outer payloads (required with `--udp-tunnel`; no INI key) |
+| `--tunnel-arg KEY=VALUE` | An argument for `make_wrapper`; repeatable (no INI key) |
+| `--tunnel-packet-loss PROB` | Probability an outer tunnel datagram is lost |
+| `--tunnel-corruption PROB` | Probability an outer tunnel datagram's last byte is flipped |
+| `--tunnel-reorder PROB` | Probability an outer tunnel datagram is held back behind the next *K* going its way |
+| `--tunnel-reorder-depth K` | The most outer datagrams a reordered one is overtaken by (default 3) |
+| `--tunnel-duplicate PROB` | Probability an outer tunnel datagram is captured twice |
 
 ## INI config file
 

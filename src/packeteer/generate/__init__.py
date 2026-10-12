@@ -521,6 +521,7 @@ from .tcp import (
 from .tcp_stream import TCPStream, TCPStreamConfig, TCPStreamPacket, generate_tcp_stream
 from .udp import UDPHeader
 from .udp_stream import UDPStream, UDPStreamConfig, UDPStreamPacket, generate_udp_stream
+from .udp_tunnel import TunnelWrapper, UDPTunnel, load_wrapper, tunnel_stream
 from .vxlan import VXLAN_FLAG_VALID_VNI, VXLAN_PORT, VXLANHeader
 
 __all__ = [
@@ -659,6 +660,10 @@ __all__ = [
     "TCPStreamConfig",
     "TCPStreamPacket",
     "generate_udp_stream",
+    "TunnelWrapper",
+    "UDPTunnel",
+    "load_wrapper",
+    "tunnel_stream",
     "UDPStream",
     "UDPStreamConfig",
     "UDPStreamPacket",

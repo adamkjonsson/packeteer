@@ -58,6 +58,23 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 - **`apply_datagram_impairments` takes `include_ethernet` and `encap`**, with
   the names and defaults the stream generators use, so it can find the IP
   header and corrupt the payload rather than the frame's padding.  (#200)
+- **A UDP tunnel whose payloads your own code computes.**
+  **`tunnel_stream(stream, UDPTunnel(...))`** carries any generated stream
+  through a UDP tunnel between two endpoints. Each inner packet is handed to
+  the caller's **`TunnelWrapper`** — `wrap(inner, direction, timestamp)` —
+  which returns the outer datagrams to send, each with its direction: a
+  sealed packet, or a handshake or rekey before it.  The wrapper sees each
+  packet once per time it is sent, in wire order, after the inner stream's
+  impairments, so a retransmission is sealed again and a lost packet never.
+  Outer impairments apply after wrapping, from an RNG of their own.  From
+  the CLI: `stream --udp-tunnel SRC DST --tunnel-port PORT --tunnel-module
+  FILE [--tunnel-arg KEY=VALUE ...]`, with `--tunnel-src-port`,
+  `--tunnel-ttl`, and outer `--tunnel-packet-loss`, `--tunnel-corruption`,
+  `--tunnel-reorder`, `--tunnel-reorder-depth` and `--tunnel-duplicate`.
+  The module defines `make_wrapper(args)`; **`load_wrapper`** loads one from
+  Python.  `examples/udp_tunnel/xor_seal.py` is a toy wrapper to start
+  from, and a new guide page, *Tunnelling through your own code*, walks
+  through it.  packeteer still does no cryptography.  (#197)
 - **`stream --start-time SECONDS`**, and the INI key `start_time`: the Unix
   time the stream starts at, on every path (TCP, UDP, SCTP, `--sessions`,
   `--payload http` and `--payload vpn`).  (#202)

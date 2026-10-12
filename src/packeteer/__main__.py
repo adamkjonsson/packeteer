@@ -99,6 +99,7 @@ from packeteer.generate.stream_template import stream_config_template
 from packeteer.generate.tcp import TCP_SYN, TCPOptions, default_syn_options
 from packeteer.generate.tcp_stream import TCPStreamConfig, generate_tcp_stream
 from packeteer.generate.udp_stream import UDPStreamConfig, generate_udp_stream
+from packeteer.generate.udp_tunnel import UDPTunnel, load_wrapper, tunnel_stream
 from packeteer.generate.vxlan import VXLAN_FLAG_VALID_VNI, VXLAN_PORT
 from packeteer.parse.core import parse_packet, parse_pcap_file
 from packeteer.parse.info import format_pcap_info, pcap_info
@@ -1478,6 +1479,17 @@ _STREAM_PARAMS: dict[str, tuple[str, object, object]] = {
     "esp":             ("esp",             lambda s: s.split(),                  None),
     "ipsec_spi":       ("ipsec_spi",       int,                                  None),
     "ipsec_ttl":       ("ipsec_ttl",       int,                                  None),
+    # The UDP tunnel.  Its module and arguments are command-line only, as
+    # --load-protocol is: a config file never names code to run.
+    "udp_tunnel":      ("udp_tunnel",      lambda s: s.split(),                  None),
+    "tunnel_port":     ("tunnel_port",     int,                                  None),
+    "tunnel_src_port": ("tunnel_src_port", int,                                  None),
+    "tunnel_ttl":      ("tunnel_ttl",      int,                                  None),
+    "tunnel_packet_loss":   ("tunnel_packet_loss",   float, 0.0),
+    "tunnel_corruption":    ("tunnel_corruption",    float, 0.0),
+    "tunnel_reorder":       ("tunnel_reorder",       float, 0.0),
+    "tunnel_reorder_depth": ("tunnel_reorder_depth", int,   3),
+    "tunnel_duplicate":     ("tunnel_duplicate",     float, 0.0),
 }
 
 
@@ -1603,12 +1615,15 @@ def _parse_stream_encap(args: argparse.Namespace) -> "list[StreamEncap] | None":
         layers.append(PPPoEEncap(session_id=int(args.pppoe)))
 
     # ── Tunnel encap (at most one) ─────────────────────────────────────────────
-    tunnel_names = [n for n in ("gre", "etherip", "ipip", "vxlan", "geneve", "gtpu", "ah", "esp")
+    # --udp-tunnel is one of them, though it adds no layer here: it wraps the
+    # finished stream instead (see _udp_tunnel_from_args).
+    tunnel_names = [n for n in ("gre", "etherip", "ipip", "vxlan", "geneve", "gtpu", "ah", "esp",
+                                "udp_tunnel")
                     if getattr(args, n, None) is not None]
     if len(tunnel_names) > 1:
         print(
             "Error: tunnel encap options are mutually exclusive; got: "
-            + ", ".join(f"--{n}" for n in tunnel_names),
+            + ", ".join(f"--{n.replace('_', '-')}" for n in tunnel_names),
             file=sys.stderr,
         )
         sys.exit(1)
@@ -2121,15 +2136,39 @@ def _cmd_stream(args: argparse.Namespace) -> None:
 
     encap = _parse_stream_encap(args)
     _refuse_unapplied_anomalies(args, protocol)
+    tunnel = _udp_tunnel_from_args(args)
 
+    if tunnel is None:
+        stream = _generate_stream(args, protocol, encap, supplied)
+    else:
+        # The inner packets start at their IP header, and any layer-2 tags
+        # belong to the outer packets, as they do for every other tunnel.
+        inner_args = argparse.Namespace(**{**vars(args), "no_ethernet": True})
+        inner = _generate_stream(inner_args, protocol, None, supplied)
+        try:
+            stream = tunnel_stream(
+                inner, tunnel,
+                include_ethernet=not args.no_ethernet,
+                client_mac=args.client_mac, server_mac=args.server_mac,
+                encap=encap,
+                impairments=_tunnel_impairments(args),
+                seed=args.seed,
+            )
+        except ValueError as e:
+            print(f"Error generating stream: {e}", file=sys.stderr)
+            sys.exit(1)
+    _write_stream_output(args, stream)
+
+
+def _generate_stream(
+    args: argparse.Namespace, protocol: str, encap: "list[StreamEncap] | None",
+    supplied: dict[str, str],
+) -> object:
+    """Generate the stream the CLI args describe, exiting with a message on failure."""
     if args.payload == "http":
-        stream = _generate_http_payload_stream(args, protocol, encap, supplied)
-        _write_stream_output(args, stream)
-        return
+        return _generate_http_payload_stream(args, protocol, encap, supplied)
     if args.payload == "vpn":
-        stream = _generate_vpn_payload_stream(args, encap)
-        _write_stream_output(args, stream)
-        return
+        return _generate_vpn_payload_stream(args, encap)
     # Common keyword arguments shared by all protocol generators
     common = {
         "client_ip": args.client_ip,
@@ -2169,8 +2208,86 @@ def _cmd_stream(args: argparse.Namespace) -> None:
     except (ValueError, OSError) as e:
         print(f"Error generating stream: {e}", file=sys.stderr)
         sys.exit(1)
+    return stream
 
-    _write_stream_output(args, stream)
+
+#: The options that only mean something with --udp-tunnel, by dest.
+_TUNNEL_ONLY_DESTS: tuple[tuple[str, str], ...] = (
+    ("tunnel_port", "--tunnel-port"),
+    ("tunnel_src_port", "--tunnel-src-port"),
+    ("tunnel_ttl", "--tunnel-ttl"),
+    ("tunnel_module", "--tunnel-module"),
+    ("tunnel_arg", "--tunnel-arg"),
+    ("tunnel_packet_loss", "--tunnel-packet-loss"),
+    ("tunnel_corruption", "--tunnel-corruption"),
+    ("tunnel_reorder", "--tunnel-reorder"),
+    ("tunnel_duplicate", "--tunnel-duplicate"),
+)
+
+
+def _udp_tunnel_from_args(args: argparse.Namespace) -> UDPTunnel | None:
+    """Return the ``--udp-tunnel`` the args describe, with its wrapper loaded.
+
+    ``None`` without ``--udp-tunnel``, and then a tunnel option given anyway
+    is refused rather than ignored, as every other option that cannot apply
+    is (#194).
+    """
+    if getattr(args, "udp_tunnel", None) is None:
+        given = [flag for dest, flag in _TUNNEL_ONLY_DESTS if getattr(args, dest, None)]
+        if given:
+            print(f"Error: {', '.join(given)} only apply with --udp-tunnel.",
+                  file=sys.stderr)
+            sys.exit(1)
+        return None
+
+    missing = [flag for dest, flag in (("tunnel_port", "--tunnel-port"),
+                                       ("tunnel_module", "--tunnel-module"))
+               if getattr(args, dest, None) is None]
+    if missing:
+        print(f"Error: --udp-tunnel needs {' and '.join(missing)}.", file=sys.stderr)
+        sys.exit(1)
+    if args.duplicate_probability:
+        # A duplicate is the capture point seeing a packet twice, and the
+        # capture point is outside the tunnel: the wrapper would seal a
+        # packet the sender sent once.
+        print("Error: --duplicate does not apply inside --udp-tunnel, whose "
+              "capture point is outside the tunnel; use --tunnel-duplicate.",
+              file=sys.stderr)
+        sys.exit(1)
+
+    wrapper_args: dict[str, str] = {}
+    for item in getattr(args, "tunnel_arg", None) or []:
+        key, sep, value = item.partition("=")
+        if not sep or not key:
+            print(f"Error: --tunnel-arg must be KEY=VALUE, got {item!r}.", file=sys.stderr)
+            sys.exit(1)
+        wrapper_args[key] = value
+    try:
+        wrapper = load_wrapper(args.tunnel_module, wrapper_args)
+    except ValueError as exc:
+        print(f"Error loading tunnel module: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    src, dst = args.udp_tunnel
+    return UDPTunnel(
+        src_ip=src, dst_ip=dst, port=args.tunnel_port, wrapper=wrapper,
+        src_port=getattr(args, "tunnel_src_port", None),
+        ttl=getattr(args, "tunnel_ttl", None) or 64,
+    )
+
+
+def _tunnel_impairments(args: argparse.Namespace) -> ImpairmentConfig | None:
+    """Return the impairments ``--tunnel-*`` asks for on the outer datagrams, if any."""
+    config = ImpairmentConfig(
+        packet_loss_probability=args.tunnel_packet_loss,
+        payload_corruption_probability=args.tunnel_corruption,
+        reorder_probability=args.tunnel_reorder,
+        reorder_depth=args.tunnel_reorder_depth,
+        duplicate_probability=args.tunnel_duplicate,
+    )
+    asked = (config.packet_loss_probability or config.payload_corruption_probability
+             or config.reorder_probability or config.duplicate_probability)
+    return config if asked else None
 
 
 def _write_stream_output(args: argparse.Namespace, stream: object) -> None:
@@ -3123,6 +3240,64 @@ def main() -> None:
         "--ipsec-ttl", type=int, default=None, metavar="N",
         dest="ipsec_ttl",
         help="Outer IP TTL for the IPsec tunnel (default 64)",
+    )
+    stream_parser.add_argument(
+        "--udp-tunnel", nargs=2, default=None, metavar=("SRC", "DST"),
+        help=(
+            "Carry the stream through a UDP tunnel between these endpoints,"
+            " each outer payload computed by --tunnel-module. The inner"
+            " packets are wrapped in wire order, after their own impairments"
+        ),
+    )
+    stream_parser.add_argument(
+        "--tunnel-port", type=int, default=None, metavar="PORT",
+        help="UDP port of the tunnel (required with --udp-tunnel)",
+    )
+    stream_parser.add_argument(
+        "--tunnel-src-port", type=int, default=None, metavar="PORT",
+        help="UDP port at the tunnel's SRC endpoint (default: --tunnel-port)",
+    )
+    stream_parser.add_argument(
+        "--tunnel-ttl", type=int, default=None, metavar="N",
+        help="Outer IP TTL for the UDP tunnel (default 64)",
+    )
+    stream_parser.add_argument(
+        "--tunnel-module", default=None, metavar="FILE",
+        help=(
+            "Python module defining make_wrapper(args), which returns the"
+            " object that computes each outer payload (required with"
+            " --udp-tunnel). A module is code, and loading it runs that code"
+        ),
+    )
+    stream_parser.add_argument(
+        "--tunnel-arg", action="append", default=None, metavar="KEY=VALUE",
+        help="An argument for --tunnel-module's make_wrapper; repeatable",
+    )
+    stream_parser.add_argument(
+        "--tunnel-packet-loss", type=float, default=None, metavar="PROB",
+        help="Probability (0.0-1.0) that an outer tunnel datagram is lost (default: 0.0)",
+    )
+    stream_parser.add_argument(
+        "--tunnel-corruption", type=float, default=None, metavar="PROB",
+        help=(
+            "Probability (0.0-1.0) that an outer tunnel datagram's last byte is"
+            " flipped, after sealing (default: 0.0)"
+        ),
+    )
+    stream_parser.add_argument(
+        "--tunnel-reorder", type=float, default=None, metavar="PROB",
+        help=(
+            "Probability (0.0-1.0) that an outer tunnel datagram is held back"
+            " behind the next K going the same way (default: 0.0)"
+        ),
+    )
+    stream_parser.add_argument(
+        "--tunnel-reorder-depth", type=int, default=None, metavar="K",
+        help="The most outer datagrams a reordered one is overtaken by (default: 3)",
+    )
+    stream_parser.add_argument(
+        "--tunnel-duplicate", type=float, default=None, metavar="PROB",
+        help="Probability (0.0-1.0) that an outer tunnel datagram is captured twice (default: 0.0)",
     )
     # Output (may also be provided via --config; mutual exclusivity enforced in _cmd_stream)
     stream_parser.add_argument("--pcap", default=None, metavar="FILE",
