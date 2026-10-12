@@ -90,6 +90,12 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   `--payload-corruption` included, because the SCTP stream takes none yet.
   A command line that passed one of these got a clean capture; drop the
   option to get the same capture now.  (#194)
+- **`sanitise` replaces a DNS label with one of the same length**, in
+  base 36: `www.shop.example.com` becomes `000.0000.0000000.001` where it
+  was `label0.label1.label2.label3`.  A tool that recognised a sanitised
+  name by its `label` prefix must not rely on that any more.  Past 36
+  distinct one-character labels, replacements are shared, with a warning.
+  (#192)
 - **A seeded `stream` run starts at a fixed time**, `1700000000`
   (2023-11-14), when `--start-time` does not say otherwise.  It started at
   the clock.  Every seeded capture's timestamps change, and its packets do
@@ -136,6 +142,13 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   and IPv6 payloads under 6, on UDP and TCP alike.  It now flips the last
   byte of the IP datagram, read from the IP header.  A frame that was never
   padded corrupts the same byte as before.  (#200)
+- **`sanitise` keeps a DNS-over-TCP message's length**, so the sequence
+  numbers after it stay true.  Each `labelN` was rarely the length of the
+  label it replaced, so a segment grew or shrank and a reassembler found
+  gaps and overlaps the capture never had.  One case is left, and
+  documented: a message whose sender compressed names differently from
+  packeteer carries `raw`, which is dropped and rebuilt, and its length can
+  still change.  (#192)
 - **`stream --seed` reproduces the file**, as documented.  Two runs wrote
   the same packets with different timestamps, because the start came from
   the clock and the CLI could not set it.  (#202)

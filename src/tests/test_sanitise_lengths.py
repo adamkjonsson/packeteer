@@ -13,10 +13,13 @@ of this kind were found one at a time: `[redacted]` in a header (before
 keeps its size, so a TCP packet built from the sanitised spec is the length
 of the one built from the parsed spec exactly when its payload is.
 
-DNS over TCP is left out of the generated streams: label redaction changes a
-DNS message's length, and that is #192.  A compiled protocol over TCP is in:
-its generated `sanitise` wrote `[redacted]` for a sensitive string whatever
-the string's length, which is #191 again outside HTTP.
+DNS over TCP is in since #192: a redacted label keeps its length.  What
+can still change a DNS message's length is a capture whose sender
+compressed names differently from packeteer, since its `raw` is dropped and
+rebuilt; that is documented, and the generated streams here are compressed
+packeteer's way.  A compiled protocol over TCP is in too: its generated
+`sanitise` wrote `[redacted]` for a sensitive string whatever the string's
+length, which is #191 again outside HTTP.
 """
 from __future__ import annotations
 
@@ -88,6 +91,46 @@ def _http_capture(directory: Path) -> Path:
     return directory
 
 
+def _dns_capture(directory: Path) -> Path:
+    """Write DNS over TCP whose names have labels of many lengths (#192).
+
+    The issue's own name, a one-character label, and every record type whose
+    names `sanitise` rewrites: CNAME, NS, PTR, MX and SOA, beside A and AAAA.
+    """
+    def rr(name: str, rtype: int, rdata: dict) -> dict:
+        return {"name": name, "rtype": rtype, "rclass": 1, "ttl": 60, "rdata": rdata}
+
+    question = {"name": "www.shop.example.com.", "qtype": 1, "qclass": 1}
+    messages = [
+        {"id": 7, "questions": [question]},
+        {"id": 7, "flags": {"qr": True}, "questions": [question], "answers": [
+            rr("www.shop.example.com.", 5, {"name": "x.cdn.example.net."}),
+            rr("x.cdn.example.net.", 1, {"address": "192.0.2.7"}),
+            rr("x.cdn.example.net.", 28, {"address": "2001:db8::7"}),
+        ], "authority": [
+            rr("example.com.", 2, {"name": "ns1.example.com."}),
+            rr("example.com.", 6, {"mname": "ns1.example.com.",
+                                   "rname": "hostmaster.example.com.",
+                                   "serial": 1, "refresh": 2, "retry": 3,
+                                   "expire": 4, "minimum": 5}),
+        ], "additional": [
+            rr("example.com.", 15, {"preference": 10, "exchange": "mail.example.com."}),
+            rr("7.2.0.192.in-addr.arpa.", 12, {"name": "a.b.example.org."}),
+        ]},
+    ]
+    path, out = directory / "dns.json", directory / "dns.pcap"
+    path.write_text(json.dumps(messages))
+    done = subprocess.run(
+        [sys.executable, "-m", "packeteer", "stream", "--protocol", "tcp",
+         "--payload", "dns", "--protocol-messages", str(path), "--packets", "6",
+         "--server-port", "53", "--client-ip", "10.0.0.2",
+         "--server-ip", "10.0.0.1", "--seed", "1", "--pcap", str(out)],
+        capture_output=True, text=True, check=False,
+    )
+    assert done.returncode == 0, done.stderr
+    return out
+
+
 class TestARedactionKeepsTheValuesLength(unittest.TestCase):
 
     def test_padded_cut_and_empty(self) -> None:
@@ -104,6 +147,49 @@ class TestARedactionKeepsTheValuesLength(unittest.TestCase):
 
         msg = parse_http(b"GET / HTTP/1.1\r\nHost: [redacted]      \r\n\r\n")
         self.assertEqual(msg.headers["Host"], "[redacted]")
+
+
+class TestADNSLabelKeepsItsLength(unittest.TestCase):
+    """A redacted label is the same length as the label it replaces (#192)."""
+
+    def setUp(self) -> None:
+        from packeteer.sanitise import _Replacer
+
+        self.replacer = _Replacer()
+
+    def test_every_length_a_label_can_have(self) -> None:
+        for length in range(64):
+            with self.subTest(length=length):
+                self.assertEqual(len(self.replacer.dns_label("a" * length)), length)
+
+    def test_consistent_case_folded_and_distinct(self) -> None:
+        r = self.replacer
+        self.assertEqual(r.dns_label("Shop"), r.dns_label("shop"))
+        self.assertNotEqual(r.dns_label("shop"), r.dns_label("mail"))
+        self.assertEqual([r.dns_label(x) for x in ("www", "com", "net")],
+                         ["000", "001", "002"])
+
+    def test_a_shared_parent_stays_shared(self) -> None:
+        from packeteer.sanitise import _sanitise_dns_name
+
+        a = _sanitise_dns_name("a.example.com.", self.replacer)
+        b = _sanitise_dns_name("bb.example.com.", self.replacer)
+        self.assertEqual(a.split(".", 1)[1], b.split(".", 1)[1])
+        self.assertEqual((len(a), len(b)), (len("a.example.com."), len("bb.example.com.")))
+
+    def test_the_37th_one_character_label_warns_once(self) -> None:
+        import string
+        import warnings
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            spelt = [self.replacer.dns_label(c) for c in string.ascii_lowercase + "0123456789"]
+            self.assertEqual(caught, [])
+            self.assertEqual(len(set(spelt)), 36)
+            self.assertEqual(self.replacer.dns_label("-"), spelt[0])
+            self.replacer.dns_label("_")
+        self.assertEqual(len(caught), 1)
+        self.assertIn("More than 36 distinct DNS labels of 1 character", str(caught[0].message))
 
 
 class _LengthCheck(unittest.TestCase):
@@ -128,6 +214,15 @@ class TestEveryTCPSegmentKeepsItsLength(_LengthCheck):
         self.assertGreater(len(captures), 20)
         for path in captures:
             self._check(path)
+
+    def test_generated_dns_over_tcp(self) -> None:
+        """#192: every label the old `labelN` would have resized."""
+        with tempfile.TemporaryDirectory() as tmp:
+            capture = _dns_capture(Path(tmp))
+            config = json.loads(parse_pcap_file(path=capture))
+            self.assertTrue(any("dns" in p for p in config["packets"]),
+                            "the capture must decode as DNS")
+            self._check(capture)
 
     def test_generated_http(self) -> None:
         """Where the redactions are: headers, cookies, a body, a trailer."""

@@ -23,8 +23,9 @@ Replacement strategy
   MAC       Locally-administered unicast 02:00:00:xx:xx:xx
   Port      10000–59999 (consistent remapping)
   Payload   Zero-filled hex string, same byte length
-  DNS name  label0.label1... — each unique label replaced
-            consistently so shared parents are preserved
+  DNS name  each unique label replaced consistently, at its own
+            length, in base 36: www.shop → 000.0000, so shared
+            parents are preserved and a name keeps its length
   HTTP hdr  ``[redacted]``, at the value's length, for Host, Cookie,
             Set-Cookie, Authorization, Location, Referer, Origin
   ========  =====================================================
@@ -286,6 +287,20 @@ def _ipv6_from_index(n: int) -> str:
     return str(ipaddress.IPv6Address(int(base) + n + 1))
 
 
+#: The characters a synthetic DNS label is spelt in, and how many there are.
+_LABEL_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz"
+_LABEL_RADIX = len(_LABEL_ALPHABET)
+
+
+def _label_from_index(n: int, length: int) -> str:
+    """Return *n* in base 36, zero-padded to *length*, wrapping past ``36**length``."""
+    digits: list[str] = []
+    for _ in range(length):
+        n, digit = divmod(n, _LABEL_RADIX)
+        digits.append(_LABEL_ALPHABET[digit])
+    return "".join(reversed(digits))
+
+
 def _mac_from_index(n: int) -> str:
     """Return a locally-administered unicast MAC for index *n*."""
     # Byte layout: 02:00:00:<b2>:<b1>:<b0>  (up to 16 777 215 addresses)
@@ -372,12 +387,13 @@ class _Replacer:
     _mac_map:        dict[str, str] = field(default_factory=dict)
     _port_map:       dict[int, int] = field(default_factory=dict)
     _dns_label_map:  dict[str, str] = field(default_factory=dict)
+    #: How many distinct DNS labels of each length have been replaced.
+    _dns_label_counts: dict[int, int] = field(default_factory=dict)
 
     _ipv4_counter:      int = 0
     _ipv6_counter:      int = 0
     _mac_counter:       int = 0
     _port_counter:      int = 10000
-    _dns_label_counter: int = 0
 
     def ip(self, addr: str) -> str:
         """Return the consistent synthetic replacement for *addr*."""
@@ -413,11 +429,32 @@ class _Replacer:
         return self._port_map[p]
 
     def dns_label(self, label: str) -> str:
-        """Return the consistent synthetic replacement for a single DNS label."""
+        """Return the consistent synthetic replacement for a single DNS label.
+
+        The replacement has the label's own length (#192), so a name keeps
+        its length and a DNS message carried over TCP keeps the length of
+        the segment it is in.  It is the *k*-th distinct label of that
+        length, case-folded, written in lower-case base 36 and zero-padded:
+        ``www`` → ``000``, ``shop`` → ``0000``, ``example`` → ``0000001``
+        if a different 7-letter label came first.  There are 36 labels of
+        one character, so past the 36th they wrap round and two distinct
+        labels share a replacement, which is warned about once per length.
+        """
         key = label.lower()
         if key not in self._dns_label_map:
-            self._dns_label_map[key] = f"label{self._dns_label_counter}"
-            self._dns_label_counter += 1
+            length = len(label)
+            index = self._dns_label_counts.get(length, 0)
+            self._dns_label_counts[length] = index + 1
+            if length and index == _LABEL_RADIX ** length:
+                warnings.warn(
+                    f"More than {index} distinct DNS labels of {length} "
+                    f"character{'s' if length > 1 else ''} were redacted, and "
+                    f"a same-length replacement has only {index} spellings: "
+                    f"from here on, distinct labels of that length can share "
+                    f"one.",
+                    stacklevel=2,
+                )
+            self._dns_label_map[key] = _label_from_index(index, length)
         return self._dns_label_map[key]
 
 

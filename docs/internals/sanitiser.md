@@ -19,7 +19,7 @@ in a packet spec dict with synthetic but structurally valid equivalents.
   | MAC | Locally-administered unicast: `02:00:00:<b2>:<b1>:<b0>` |
   | Port | 10 000–59 999 (sequential allocation) |
   | Payload | Zero-filled hex string of the same byte length; `"encoding"` key removed (zeroed bytes are not printable text) |
-  | DNS names | Each label replaced with `label0`, `label1`, … (consistent within a call); A/AAAA RDATA addresses replaced via the IP replacer |
+  | DNS names | Each label replaced by the *k*-th synthetic label of its own length, in base 36 (`www` → `000`), consistent and case-folded within a call, so a name keeps its length; A/AAAA RDATA addresses replaced via the IP replacer |
   | DNS id | 16-bit transaction id zeroed (opt-in: `dns_ids=True`) |
   | DHCP XIDs | 32-bit `xid` field zeroed (opt-in: `dhcp_xids=True`); IP fields and IP-valued options replaced via the IP replacer; `chaddr` replaced via the MAC replacer |
   | HTTP headers | Sensitive header values replaced with `"[redacted]"` (opt-in: `http_headers=True`); affected headers: `Host`, `Cookie`, `Set-Cookie`, `Authorization`, `Location`, `Referer`, `Origin` |
