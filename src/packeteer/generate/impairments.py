@@ -62,19 +62,28 @@ class ImpairmentConfig:
     all, which is what lets a capture generated without impairments reproduce
     from its seed exactly as it did before this module existed.
 
+    A TCP connection reads every field but the reorder ones
+    (:func:`apply_impairments`, and loss as it emits).  A UDP flow reads
+    loss, corruption, reordering and duplication
+    (:func:`apply_datagram_impairments`); the rest describe a connection and
+    are ignored there.
+
     Attributes:
         packet_loss_probability: Probability (0.0–1.0) that a packet is lost
             on the wire.  On a connection, a lost segment is never
             acknowledged and does not advance the receiver's acknowledgement
             number, so the segments after it draw duplicate ACKs; the SYNs are
-            exempt.  Nothing retransmits, so the gap is permanent.
+            exempt.  Nothing retransmits unless *retransmit_lost*, so the gap
+            is permanent.  A lost datagram has no further consequence.
         retransmission_probability: Probability (0.0–1.0) that each data
             segment triggers a spurious retransmission.
         retransmission_timeout: Seconds after the original send time at which
             the retransmission timer fires.  Defaults to ``0.2`` (200 ms).
         payload_corruption_probability: Probability (0.0–1.0) that each data
-            segment's payload is corrupted in transit (last byte XOR-flipped)
-            and then retransmitted cleanly.
+            packet's payload is corrupted in transit: the last byte of its IP
+            datagram is XOR-flipped, so its checksum no longer verifies, and
+            never a frame's padding (#200).  On a connection the segment is
+            then retransmitted cleanly; a datagram is not.
         server_rst_probability: Probability (0.0–1.0) that the server
             terminates the connection mid-stream with a TCP RST.
         rst_propagation_delay: Seconds between the server sending the RST and

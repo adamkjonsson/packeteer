@@ -362,9 +362,11 @@ packeteer stream --client-ip 10.0.0.2 --server-ip 10.0.0.1 \
   endings or repeated headers.  A start line beginning `HTTP/` makes it a
   response; `type` beside it, `"request"` or `"response"`, says otherwise.
   See [`http.raw`](http-raw).
-- **A repeated header can also be written as a list**,
-  `"Transfer-Encoding": ["gzip", "chunked"]`, one line per item, without
-  `raw`.
+- **A repeated header needs no `raw`.**  `headers` is the lines in order as
+  `[name, value]` pairs, as `parse` writes them, so
+  `[["Transfer-Encoding", "gzip"], ["Transfer-Encoding", "chunked"]]` is two
+  lines.  The object form, `{"Transfer-Encoding": ["gzip", "chunked"]}`, one
+  line per item, is still read.  See [header lines](http-repeated-headers).
 
 The file may be what `packeteer parse` writes, as for any other protocol.
 Messages that spanned several segments in the capture parse per packet, so
@@ -632,10 +634,15 @@ of the two tags they set, so `--vlan-pcp` has no effect alongside `--qinq`.
 
 ## INI config file
 
-All parameters can be stored in a `[stream]` section.  Key names match long
-flag names with hyphens replaced by underscores.  Two keys differ from their
-flag names: `packet_loss` (flag: `--packet-loss`) and `server_rst` (flag:
-`--server-rst`).
+Parameters can be stored in a `[stream]` section.  Key names match long
+flag names with hyphens replaced by underscores.  Three keys differ from
+their flag names: `payload_corruption_probability` (flag:
+`--payload-corruption`), `server_rst_probability` (flag: `--server-rst`) and
+`stray_packet_count` (flag: `--stray-packets`).
+
+The options that name a file to read or code to run have no key, so a
+config file never makes `stream` load anything: `--protocol-messages`,
+`--load-protocol`, `--tunnel-module` and `--tunnel-arg`.
 
 ```ini
 [stream]

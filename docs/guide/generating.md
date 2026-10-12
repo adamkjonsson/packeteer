@@ -267,12 +267,14 @@ timestamps on `--payload http`'s connections too.
 
 {class}`~packeteer.generate.impairments.ImpairmentConfig` describes damage done
 to a stream after it is assembled — loss, retransmission, payload corruption, a
-RST mid-connection, and forged stray packets.  The same object drives every
-generator: the low-level path reads the fields off
-{class}`~packeteer.generate.tcp_stream.TCPStreamConfig`, and the payload
-generators take one through `HTTPRestConfig.impairments` or
-`VPNConfig.impairments`, where it is applied to **each connection
-independently**.
+RST mid-connection, forged stray packets, duplication, and on UDP
+reordering.  The same object drives every TCP and UDP generator: the
+low-level TCP path reads the fields off
+{class}`~packeteer.generate.tcp_stream.TCPStreamConfig`, the UDP one takes
+one as `UDPStreamConfig.impairments`, and the payload generators take one
+through `HTTPRestConfig.impairments` or `VPNConfig.impairments`, where it is
+applied to **each connection independently**.  The SCTP stream takes none
+yet.
 
 Impaired *application* traffic is the combination worth reaching for, because
 it is what a protocol decoder is actually tested against and it is awkward to
@@ -305,9 +307,38 @@ draw duplicate ACKs.  Nothing retransmits unless you ask —
 retransmission timeout, and the acknowledgement that follows jumps forward over
 everything the receiver had been holding.
 
-On a UDP payload path only `packet_loss_probability` and
-`payload_corruption_probability` are read; the rest describe TCP connection
-behaviour and are ignored rather than approximated.
+On UDP, loss, corruption, reordering and duplication apply; the rest describe
+TCP connection behaviour and are ignored rather than approximated (the CLI
+refuses them).  A UDP stream of given messages sends each in its own
+direction, so a reply leaves from the server, and reordering holds a datagram
+back behind the next few **going the same way**:
+
+```python
+from packeteer import protocols
+from packeteer.app import protocol_conversation
+from packeteer.generate import ImpairmentConfig, UDPStreamConfig, generate_udp_stream
+
+query = {"id": 1, "questions": [{"name": "www.example.com.", "qtype": 1, "qclass": 1}]}
+reply = {"id": 1, "flags": {"qr": True}, "questions": query["questions"]}
+messages = protocol_conversation(
+    protocols.for_section("dns"),
+    [{"dns": query}, {"dns": reply, "direction": "s2c"}], "udp",
+)
+stream = generate_udp_stream(
+    client_ip="10.0.0.2", server_ip="10.0.0.1", server_port=53,
+    num_data_packets=100,
+    config=UDPStreamConfig(
+        messages=messages, seed=7, base_time=1_700_000_000.0,
+        impairments=ImpairmentConfig(
+            packet_loss_probability=0.05, reorder_probability=0.1,
+            reorder_depth=4, duplicate_probability=0.02,
+        ),
+    ),
+)
+```
+
+To carry a stream through a tunnel your own code seals, see
+{doc}`tunnelling`.
 
 ## Simulating a fictive VPN
 
@@ -553,8 +584,8 @@ The session builders cover most synthetic-data use cases.  Reach for
 - **Statistical random payloads** — `payload_distribution="bimodal"` or
   `"fixed"` draws sizes from a model rather than using exact bytes
 - **Statistical anomaly injection** — the impairments above are available on
-  every generator, but `payload_distribution`, `mtu` and `packet_hooks` are
-  not
+  every TCP and UDP generator, but `payload_distribution`, `mtu` and
+  `packet_hooks` are not
 - **Timestamp jitter** — on TCP, `gap_jitter` models capture delay and
   produces genuine out-of-order timestamps; on UDP and SCTP it lengthens
   gaps, and `ImpairmentConfig.reorder_probability` is what reorders
@@ -573,6 +604,7 @@ See {doc}`../api/stream-generators` for the full parameter reference.
 
 ## Next steps
 
+- {doc}`tunnelling` — a UDP tunnel whose payloads your own code computes
 - {doc}`pcap` — reading and writing pcap files directly
 - {doc}`../api/stream-generators` — complete parameter tables for `TCPSession`,
   `UDPSession`, `SCTPSession`, and the stream generators

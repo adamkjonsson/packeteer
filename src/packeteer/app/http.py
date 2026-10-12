@@ -237,8 +237,8 @@ def sanitise(section: dict[str, Any], replacer: Any, options: Any) -> None:
     When the head cannot be read line by line with certainty — a folded
     continuation line above all, which could carry the rest of a secret —
     ``raw`` is dropped instead, as DNS drops its own, and the message is
-    rebuilt from the redacted fields: repeated headers grouped, and every one
-    but ``Set-Cookie`` combined into one line.
+    rebuilt from the redacted fields, whose header lines keep their order and
+    repetition (#172) but not the exact spacing or a continuation line.
 
     With ``--payload``, the body is zeroed too, in ``body`` and in the body
     part of ``raw``, at the same length so ``Content-Length`` stays true.  A

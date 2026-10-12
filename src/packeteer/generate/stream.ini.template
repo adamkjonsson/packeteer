@@ -13,7 +13,11 @@
 # All other keys are optional and fall back to the defaults shown below.
 #
 # Key names use underscores and match the CLI long flags (hyphens → underscores).
-# The one exception is packet_loss (CLI: --packet-loss).
+# Three differ: payload_corruption_probability (CLI: --payload-corruption),
+# server_rst_probability (CLI: --server-rst) and stray_packet_count
+# (CLI: --stray-packets).  The options that name a file or code to load
+# (--protocol-messages, --load-protocol, --tunnel-module, --tunnel-arg) have
+# no key.
 
 [stream]
 

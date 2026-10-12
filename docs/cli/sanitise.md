@@ -98,9 +98,9 @@ packeteer would rebuild — is redacted and zeroed **inside those bytes**, and
 everything else stays as captured: the order and repetition of headers,
 spacing, line endings.  When its head cannot be read line by line, a folded
 continuation line above all, the bytes are dropped instead and the message is
-rebuilt from its sanitised fields.  That rebuild groups a repeated header,
-combines every one but `Set-Cookie` into one line, and can change the
-message's length.
+rebuilt from its sanitised fields.  That rebuild keeps the header lines'
+order and repetition (#172), but not the exact spacing or a continuation
+line, so it can change the message's length.
 
 ## PII scanning
 
