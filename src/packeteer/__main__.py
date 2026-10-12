@@ -1432,6 +1432,9 @@ _STREAM_PARAMS: dict[str, tuple[str, object, object]] = {
     "stray_packet_count": ("stray_packet_count",              int,   0),
     "stray_timing_window":("stray_timing_window",             int,   None),
     "retransmit_lost":    ("retransmit_lost",                  bool,  False),
+    "duplicate":          ("duplicate_probability",           float, 0.0),
+    "reorder":            ("reorder_probability",             float, 0.0),
+    "reorder_depth":      ("reorder_depth",                   int,   3),
     "no_tcp_options":     ("no_tcp_options",                   bool,  False),
     "no_ethernet":        ("no_ethernet",                     bool,  False),
     "seed":               ("seed",                            int,   None),
@@ -1830,6 +1833,8 @@ def _build_stream_config(
             rst_propagation_delay=args.rst_propagation_delay,
             stray_packet_count=args.stray_packet_count,
             stray_timing_window=args.stray_timing_window,
+            duplicate_probability=args.duplicate_probability,
+            retransmit_lost=args.retransmit_lost,
             seed=args.seed,
         )
     if protocol == "udp":
@@ -1850,11 +1855,18 @@ _TCP_ONLY_ANOMALY_FLAGS = (
     ("retransmit_lost", "--retransmit-lost"),
 )
 
-#: Anomaly options that describe what a wire does to a datagram, so they
-#: apply on a UDP flow as well as on a TCP connection.
+#: Anomaly options that describe what a wire or a capture point does to a
+#: packet, so they apply on a UDP flow as well as on a TCP connection.
 _DATAGRAM_ANOMALY_FLAGS = (
     ("packet_loss_probability", "--packet-loss"),
     ("payload_corruption_probability", "--payload-corruption"),
+    ("duplicate_probability", "--duplicate"),
+)
+
+#: Anomaly options for datagrams alone.  On a connection, a reordered
+#: segment changes what the receiver acknowledges, which is not modelled.
+_DATAGRAM_ONLY_ANOMALY_FLAGS = (
+    ("reorder_probability", "--reorder"),
 )
 
 
@@ -1877,20 +1889,29 @@ def _refuse_anomalies(
 def _refuse_unapplied_anomalies(args: argparse.Namespace, protocol: str) -> None:
     """Refuse every anomaly flag the *protocol* stream cannot apply (#194).
 
-    UDP applies loss and corruption, and nothing that describes a
-    connection; SCTP applies none of them yet.  ``--payload vpn`` is UDP
-    whatever ``--protocol`` says.
+    UDP applies loss, corruption, reordering and duplication, and nothing
+    that describes a connection; TCP applies everything but reordering;
+    SCTP applies none of them yet.  ``--payload vpn`` is UDP whatever
+    ``--protocol`` says.
     """
     if protocol == "udp" or args.payload == "vpn":
         _refuse_anomalies(
             args, _TCP_ONLY_ANOMALY_FLAGS,
             "to a UDP stream, which has no connection for it to act on "
-            "(--packet-loss and --payload-corruption do apply)",
+            "(--packet-loss, --payload-corruption, --reorder and --duplicate "
+            "do apply)",
         )
     elif protocol == "sctp":
         _refuse_anomalies(
-            args, _DATAGRAM_ANOMALY_FLAGS + _TCP_ONLY_ANOMALY_FLAGS,
+            args, (_DATAGRAM_ANOMALY_FLAGS + _DATAGRAM_ONLY_ANOMALY_FLAGS
+                   + _TCP_ONLY_ANOMALY_FLAGS),
             "to an SCTP stream, which takes no impairments yet",
+        )
+    else:
+        _refuse_anomalies(
+            args, _DATAGRAM_ONLY_ANOMALY_FLAGS,
+            "to a TCP stream: a reordered segment changes what the receiver "
+            "acknowledges, which is not modelled",
         )
 
 
@@ -1913,8 +1934,13 @@ def _impairments_from_args(args: argparse.Namespace) -> ImpairmentConfig | None:
         stray_timing_window=args.stray_timing_window,
         stray_payload_range=(args.min_payload, args.max_payload),
         retransmit_lost=args.retransmit_lost,
+        duplicate_probability=args.duplicate_probability,
+        reorder_probability=args.reorder_probability,
+        reorder_depth=args.reorder_depth,
     )
-    return config if (config.packet_loss_probability or config.any_post_pass) else None
+    asked = (config.packet_loss_probability or config.reorder_probability
+             or config.any_post_pass)
+    return config if asked else None
 
 
 def _read_protocol_messages(path: str, name: str) -> list | dict:
@@ -2768,8 +2794,10 @@ def main() -> None:
     stream_parser.add_argument(
         "--gap-jitter", type=float, default=None, metavar="SECONDS",
         help=(
-            "Max additional delay per gap; each gap is drawn from [gap, gap+jitter]"
-            " and packets are re-sorted by timestamp (default: 0.0)"
+            "Max random delay in seconds (default: 0.0). On TCP each packet's"
+            " capture time is delayed by up to this, so a packet can overtake"
+            " the one before it. On UDP and SCTP each gap is lengthened by up"
+            " to this, so nothing overtakes anything: use --reorder for that"
         ),
     )
     stream_parser.add_argument(
@@ -2864,6 +2892,31 @@ def main() -> None:
             "Constrain each stray packet timestamp to within N packets of its"
             " reference DATA packet (default: full data-transfer window)"
         ),
+    )
+    stream_parser.add_argument(
+        "--duplicate", type=float, default=None, metavar="PROB",
+        dest="duplicate_probability",
+        help=(
+            "Probability (0.0-1.0) that each packet is captured twice, the copy"
+            " 1 microsecond later with identical bytes (default: 0.0). On TCP"
+            " this is the capture point seeing a packet twice; the sender did"
+            " nothing, so the copy keeps the original's TSval. Applies to TCP"
+            " and UDP; refused on SCTP"
+        ),
+    )
+    stream_parser.add_argument(
+        "--reorder", type=float, default=None, metavar="PROB",
+        dest="reorder_probability",
+        help=(
+            "Probability (0.0-1.0) that a datagram is held back and delivered"
+            " after the next K going the same way, K drawn from"
+            " 1..--reorder-depth (default: 0.0). UDP only: refused on TCP and"
+            " SCTP"
+        ),
+    )
+    stream_parser.add_argument(
+        "--reorder-depth", type=int, default=None, metavar="K",
+        help="The most datagrams a reordered one is overtaken by (default: 3)",
     )
     stream_parser.add_argument(
         "--no-ethernet", action="store_true", default=False,

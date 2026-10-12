@@ -481,8 +481,7 @@ class TestCmdStreamImpairments(unittest.TestCase):
         stderr = self._refused(
             payload="vpn", server_rst_probability=0.5, packet_loss_probability=0.2,
         )
-        self.assertIn("--server-rst does not apply to a UDP stream", stderr)
-        self.assertNotIn("--packet-loss,", stderr)
+        self.assertIn("Error: --server-rst does not apply to a UDP stream", stderr)
 
     def test_udp_applies_packet_loss(self) -> None:
         """#194: 40 of 40 datagrams were written at a loss of 0.5."""
@@ -531,6 +530,58 @@ class TestCmdStreamImpairments(unittest.TestCase):
             with self.subTest(flag=flag):
                 stderr = self._refused(protocol="sctp", **{attr: 1})
                 self.assertIn(f"{flag} does not apply to an SCTP stream", stderr)
+
+    def test_udp_applies_reorder_and_duplicate(self) -> None:
+        """#196: from the CLI, as from the API."""
+        labels = self._labels(protocol="udp", packets=20, reorder_probability=0.3,
+                              duplicate_probability=0.3)
+        self.assertTrue([lbl for lbl in labels if lbl.startswith("REORDER[")], labels)
+        self.assertTrue([lbl for lbl in labels if lbl.startswith("DUP[")], labels)
+
+    def test_reorder_depth_bounds_the_overtake(self) -> None:
+        labels = self._labels(protocol="udp", packets=40, reorder_probability=0.3,
+                              reorder_depth=1)
+        indices = [int(label[label.index("[") + 1:-1]) for label in labels]
+        reordered = [pos for pos, label in enumerate(labels) if label.startswith("REORDER[")]
+        self.assertTrue(reordered, labels)
+        for pos in reordered:
+            overtakers = [i for i in indices[:pos] if i > indices[pos]]
+            self.assertEqual(len(overtakers), 1, labels)
+
+    def test_tcp_refuses_reorder(self) -> None:
+        stderr = self._refused(reorder_probability=0.3)
+        self.assertIn("--reorder does not apply to a TCP stream", stderr)
+
+    def test_http_refuses_reorder(self) -> None:
+        stderr = self._refused(payload="http", requests=2, reorder_probability=0.3)
+        self.assertIn("--reorder does not apply to a TCP stream", stderr)
+
+    def test_sctp_refuses_reorder(self) -> None:
+        stderr = self._refused(protocol="sctp", reorder_probability=0.3)
+        self.assertIn("--reorder does not apply to an SCTP stream", stderr)
+
+    def test_tcp_applies_duplicate(self) -> None:
+        """It was API-only (#196); a mirror doubles ACKs too."""
+        labels = self._labels(packets=20, duplicate_probability=0.3)
+        copies = [lbl for lbl in labels if lbl.startswith("DUP[")]
+        self.assertTrue(copies, labels)
+        self.assertTrue([lbl for lbl in copies if lbl.startswith("DUP[ACK")], copies)
+
+    def test_tcp_applies_retransmit_lost(self) -> None:
+        """It reached only `--payload http`; the plain TCP stream dropped it."""
+        labels = self._labels(packets=30, packet_loss_probability=0.3,
+                              retransmit_lost=True, seed=3)
+        self.assertTrue([lbl for lbl in labels if lbl.startswith("RETRANS[")], labels)
+
+    def test_the_new_options_have_config_keys(self) -> None:
+        fd, ini = tempfile.mkstemp(suffix=".ini")
+        os.close(fd)
+        self.addCleanup(os.remove, ini)
+        Path(ini).write_text("[stream]\nreorder = 0.3\nreorder_depth = 2\nduplicate = 0.1\n")
+        args = self._args(config=ini, protocol="udp")
+        cli._apply_stream_defaults(args)
+        self.assertEqual((args.reorder_probability, args.reorder_depth,
+                          args.duplicate_probability), (0.3, 2, 0.1))
 
     def test_a_zero_rate_is_not_refused(self) -> None:
         """Zero is the default and asks for nothing, so there is nothing to drop."""

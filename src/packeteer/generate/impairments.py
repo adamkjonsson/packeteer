@@ -28,7 +28,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, replace
 from random import Random
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, TypeVar
 
 from ._stream_common import (
     _alloc_usec,
@@ -45,6 +45,10 @@ from .tcp import TCP_ACK, TCP_FIN, TCP_PSH, TCP_RST, TCP_SYN, TCPOptions
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle avoided at runtime
     from .tcp_stream import TCPStreamPacket
+    from .udp_stream import UDPStreamPacket
+
+#: A packet of either stream, for the passes that work on both.
+_Packet = TypeVar("_Packet", "TCPStreamPacket", "UDPStreamPacket")
 
 _WRAP = 2 ** 32
 
@@ -111,6 +115,18 @@ class ImpairmentConfig:
             Distinct from *retransmission_probability*, which duplicates a
             segment that **did** arrive.  One models recovery, the other models
             a spurious retransmission; a capture can contain both.
+        reorder_probability: Probability (0.0–1.0) that a datagram is held
+            back in the network and delivered after the next *K* datagrams
+            **going the same way**, with *K* drawn uniformly from
+            ``1..reorder_depth``.  It overtakes nothing travelling the other
+            way: reordering happens along one path.  It is captured where it
+            arrives, just after the *K*-th, and labelled ``REORDER[…]``.  A
+            datagram with fewer than *K* behind it arrives after the last of
+            them, and one with none behind it is not reordered.  Datagrams
+            only: on a TCP connection a reordered segment changes what the
+            receiver acknowledges, which this does not model.
+        reorder_depth: The most datagrams a reordered one is overtaken by.
+            Defaults to ``3``.  Must be at least 1.
 
     """
 
@@ -125,6 +141,8 @@ class ImpairmentConfig:
     stray_payload_range: tuple[int, int] = (40, 1460)
     duplicate_probability: float = 0.0
     retransmit_lost: bool = False
+    reorder_probability: float = 0.0
+    reorder_depth: int = 3
 
     @property
     def any_post_pass(self) -> bool:
@@ -409,25 +427,91 @@ def _drop_datagrams(
     return [p for p in packets if not drop_packet(rng, probability)]
 
 
+def _reorder_datagrams(
+    packets: list["UDPStreamPacket"], *, rng: Random, config: ImpairmentConfig,
+) -> list["UDPStreamPacket"]:
+    """Hold a share of the datagrams back, each behind the next few its own way.
+
+    Walks the flow in emission order.  A datagram held back waits for *K*
+    later datagrams in its direction to be delivered and is then delivered
+    right after the *K*-th, so it is overtaken by exactly *K* — unless the
+    flow ends first, when it follows the last of them.  One the other way
+    neither counts nor is overtaken.  Delivered datagrams keep their
+    timestamps; a held one takes the next free microsecond after the one it
+    follows.
+    """
+    if config.reorder_depth < 1:
+        raise ValueError(
+            f"reorder_depth must be at least 1, got {config.reorder_depth}"
+        )
+    used_ts = {_pkt_usec(p) for p in packets}
+    # Per direction: [datagram, deliveries still to wait for, overtaken so far].
+    held: dict[str, list[list]] = {}
+    last: dict[str, "UDPStreamPacket"] = {}
+    out: list["UDPStreamPacket"] = []
+
+    def release(after: "UDPStreamPacket", entry: list) -> None:
+        pkt = entry[0]
+        used_ts.discard(_pkt_usec(pkt))
+        sec, frac = divmod(_alloc_usec(_pkt_usec(after) + 1, used_ts), 1_000_000)
+        moved = replace(pkt, ts_sec=sec, ts_usec=frac,
+                        label=_derive_label("REORDER", pkt.label))
+        out.append(moved)
+        last[pkt.direction] = moved
+
+    for pkt in packets:
+        if rng.random() < config.reorder_probability:
+            held.setdefault(pkt.direction, []).append(
+                [pkt, rng.randint(1, config.reorder_depth), 0],
+            )
+            continue
+        out.append(pkt)
+        last[pkt.direction] = pkt
+        waiting = held.get(pkt.direction, [])
+        for entry in waiting:
+            entry[1] -= 1
+            entry[2] += 1
+        # In the order they were held, so two released together keep theirs.
+        for entry in [e for e in waiting if e[1] == 0]:
+            waiting.remove(entry)
+            release(last[pkt.direction], entry)
+    # The flow ended first: what was overtaken at all follows the last
+    # datagram its way, and what was overtaken by nothing stays where it was.
+    for waiting in held.values():
+        for entry in waiting:
+            if entry[2]:
+                release(last[entry[0].direction], entry)
+            else:
+                out.append(entry[0])
+    return out
+
+
 def apply_datagram_impairments(
     packets: list, *, rng: Random, config: ImpairmentConfig,
 ) -> list:
     """Apply the impairments that mean something on a connectionless flow.
 
-    Loss and payload corruption describe what a wire does to a datagram and
-    apply to UDP unchanged.  The rest of :class:`ImpairmentConfig` describes
-    connection behaviour — a retransmission timer, a RST, a hijacked sequence
-    number — and has no UDP equivalent, so it is ignored here rather than
-    approximated.
+    Loss, payload corruption, reordering and duplication describe what a
+    wire or a capture point does to a datagram, and apply to UDP unchanged.
+    They run in that order, so a seeded flow that uses only the first two
+    reproduces as it did before the others existed, and duplication — what
+    the capture point saw — comes last, as it does on TCP.  The rest of
+    :class:`ImpairmentConfig` describes connection behaviour — a
+    retransmission timer, a RST, a hijacked sequence number — and has no UDP
+    equivalent, so it is ignored here rather than approximated.
 
     Args:
         packets: One flow's datagrams, in emission order.
-        rng: Seeded random generator.
-        config: Impairments to apply; only the loss and corruption fields are
-            read.
+        rng: Seeded random generator.  An impairment whose rate is zero
+            draws nothing.
+        config: Impairments to apply; the loss, corruption, reorder and
+            duplicate fields are read.
 
     Returns:
-        The impaired datagram list.
+        The impaired datagram list, in timestamp order.
+
+    Raises:
+        ValueError: If reordering is asked for with a *reorder_depth* below 1.
 
     """
     packets = _drop_datagrams(
@@ -442,6 +526,12 @@ def apply_datagram_impairments(
             packets[i] = replace(
                 pkt, raw=bytes(raw), label=_derive_label("CORRUPT", pkt.label),
             )
+    if config.reorder_probability:
+        packets = _reorder_datagrams(packets, rng=rng, config=config)
+    if config.duplicate_probability:
+        packets = _apply_duplication(packets, rng, config)
+    if config.reorder_probability or config.duplicate_probability:
+        packets.sort(key=_pkt_usec)
     return packets
 
 
@@ -699,10 +789,10 @@ _DUPLICATE_OFFSET_USEC = 1
 
 
 def _apply_duplication(
-    packets: list["TCPStreamPacket"],
+    packets: list[_Packet],
     rng: Random,
     config: ImpairmentConfig,
-) -> list["TCPStreamPacket"]:
+) -> list[_Packet]:
     """Emit a share of the packets twice, as a capture point that saw them twice.
 
     The copy is ``raw`` **verbatim** — same TSval, same TSecr, same checksum,
@@ -714,9 +804,13 @@ def _apply_duplication(
 
     Every packet is a candidate, not just the data segments the other passes
     work over, because a mirror doubles acknowledgements too.
+
+    UDP datagrams go through the same pass.  There a copy the network made
+    and a copy the capture point made look the same — no TSval tells them
+    apart — so one pass serves both.
     """
     used_ts = {_pkt_usec(p) for p in packets}
-    copies: list["TCPStreamPacket"] = []
+    copies: list[_Packet] = []
     for pkt in packets:
         if rng.random() >= config.duplicate_probability:
             continue

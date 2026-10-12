@@ -44,6 +44,17 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   ports, or else the first sender in the flow; a `"direction"` key beside
   a section wrapped under the protocol's name; or `c2s` for a bare
   section.  (#195)
+- **`stream --reorder PROB` and `--reorder-depth K`**, and
+  **`ImpairmentConfig.reorder_probability` / `reorder_depth`**: a datagram is
+  held back and delivered after the next *K* going the same way, *K* drawn
+  from `1..K` (default 3), labelled `REORDER[i]`.  It is a real overtake,
+  where `--gap-jitter` on UDP only lengthens gaps.  UDP only: refused on
+  TCP and SCTP, by #194's rule.  (#196)
+- **`stream --duplicate PROB`** sets `ImpairmentConfig.duplicate_probability`,
+  which had no flag, and `apply_datagram_impairments` now reads it: each
+  packet is captured twice, the copy with identical bytes 1 µs later,
+  labelled `DUP[i]`.  TCP and UDP; refused on SCTP.  New INI keys
+  `reorder`, `reorder_depth` and `duplicate`.  (#196)
 
 ### Changed
 
@@ -82,6 +93,13 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 - **A UDP stream's replies travel server to client.**  A DNS stream built
   from queries and responses sent the responses from the client's port to
   the server's.  (#195)
+- **`stream --retransmit-lost` applies to a plain TCP stream.**  It reached
+  only `--payload http`; on `--protocol tcp` a lost segment stayed lost.
+  (#196)
+- **`--gap-jitter`'s help said packets are re-sorted**, implying a reorder
+  that cannot happen on UDP or SCTP.  It now says what it does on each
+  protocol: on TCP a capture delay that can overtake, on UDP and SCTP a
+  longer gap that cannot.  (#196)
 
 ### Documentation
 
@@ -89,6 +107,9 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   silently ignored on UDP and SCTP while a later example used
   `--packet-loss` on UDP, splits into the TCP-only header options and an
   *Impairments* table saying where each option applies.  (#194)
+- The `stream --write-config` template said the same thing, and that
+  `--payload vpn` warned.  It now marks where each impairment applies.
+  (#196)
 
 ---
 

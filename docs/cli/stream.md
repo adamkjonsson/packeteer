@@ -54,7 +54,7 @@ Exactly one output flag is required; they are mutually exclusive.
 | `--distribution` | `uniform` | `uniform`, `bimodal`, or `fixed` |
 | `--ttl N` | `64` | IP TTL / hop limit |
 | `--gap SECONDS` | `0.001` | Base inter-packet gap |
-| `--gap-jitter SECONDS` | `0.0` | Maximum extra delay per packet; output is re-sorted |
+| `--gap-jitter SECONDS` | `0.0` | Maximum random delay.  On TCP each packet's capture time is delayed by up to this, so a packet can overtake the one before it.  On UDP and SCTP each gap is lengthened by up to this, so nothing overtakes anything; use `--reorder` for that |
 | `--seed N` | off | Integer RNG seed; two runs with the same seed produce byte-identical captures |
 | `--mtu BYTES` | off | Fragment packets exceeding this IP-layer size |
 
@@ -89,6 +89,9 @@ none yet.
 | `--rst-propagation-delay SECONDS` | `0.0` | yes | — | Seconds for the RST to reach the client |
 | `--stray-packets N` | `0` | yes | refused | Number of forged TCP hijack packets to inject |
 | `--stray-timing-window N` | off | yes | — | Constrain stray timestamps to within N packets of target |
+| `--duplicate PROB` | `0.0` | yes | yes | Probability a packet is captured twice: identical bytes, 1 µs later, labelled `DUP[…]` |
+| `--reorder PROB` | `0.0` | refused | yes | Probability a datagram is held back and delivered after the next *K* going the same way, labelled `REORDER[…]` (see below) |
+| `--reorder-depth K` | `3` | — | — | The most datagrams a reordered one is overtaken by: *K* is drawn from `1..K` |
 
 A **—** is a setting of the option above it.  It changes nothing on its own,
 so it is not refused.
@@ -97,6 +100,41 @@ On UDP, a lost datagram has no further consequence: there is no
 acknowledgement to withhold, and the datagrams around it are unchanged.
 With `--mtu`, a lost datagram is never fragmented, and a corrupted one is
 fragmented with its corruption.
+
+### Reordering and duplication
+
+Reordering and duplication are what a datagram protocol is built to survive:
+a replay window, a sequence number carried in the message, a nonce derived
+from a counter.  They are also what a decoder that keeps no state between
+messages should be shown not to care about.
+
+`--reorder` holds a datagram back in the network.  It is delivered after the
+next *K* datagrams **going the same way**, with *K* drawn from
+`1..--reorder-depth`, and is captured where it arrives, labelled
+`REORDER[i]`.  It is a real overtake, independent of timing:
+`--gap-jitter` on UDP only lengthens gaps.  Datagrams going the other way
+neither count towards *K* nor are held up, because reordering happens along
+one path.  A datagram with fewer than *K* behind it arrives after the last of
+them, and one with none behind it is not reordered.  On TCP, `--reorder` is
+refused: a reordered segment changes what the receiver acknowledges, and that
+is not modelled.
+
+`--duplicate` captures a packet twice: the copy has identical bytes, is
+1 µs later, and is labelled `DUP[i]`.  On TCP it is the capture point seeing
+the packet twice, such as a mirror port or two interfaces.  The sender did
+nothing, so the copy keeps the original's TSval, which is how an analyser
+tells it from a retransmission.  On UDP a duplicate made by the network
+looks the same.
+
+The four datagram impairments run in the order loss, corruption,
+reordering, duplication, so a copy of a corrupted datagram is corrupted too.
+
+```bash
+packeteer stream --protocol udp --payload dns --protocol-messages dns.json \
+    --client-ip 10.0.0.2 --server-ip 10.0.0.1 --server-port 53 \
+    --packets 100 --reorder 0.1 --reorder-depth 4 --duplicate 0.05 \
+    --seed 7 --pcap shuffled.pcap
+```
 
 ## Multiple sessions
 
@@ -463,8 +501,9 @@ makes the capture reproducible.  In `--json` output, labels read e.g.
 `KEY-INIT[epoch=0]`, `KEY-RESPONSE[epoch=0]`, `DATA c2s ctr=3 epoch=0`.
 
 `--payload vpn` is UDP, which splits the anomaly options in two.
-`--packet-loss` and `--payload-corruption` describe what a wire does to a
-datagram and apply here unchanged, per channel.
+`--packet-loss`, `--payload-corruption`, `--reorder` and `--duplicate`
+describe what a wire does to a datagram and apply here unchanged, per
+channel.
 `--retransmission-probability`, `--retransmit-lost`, `--server-rst` and
 `--stray-packets` describe TCP connection behaviour — a retransmission timer,
 a connection reset, a hijacked sequence number — none of which exists in UDP;

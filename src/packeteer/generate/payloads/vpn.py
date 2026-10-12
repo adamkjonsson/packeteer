@@ -195,9 +195,11 @@ class VPNConfig:
             key-exchange message.
         impairments: Wire impairments
             (:class:`~packeteer.generate.impairments.ImpairmentConfig`) applied
-            to each channel independently.  This is UDP, so only the two fields
-            that describe what a wire does to a datagram are read —
-            ``packet_loss_probability`` and ``payload_corruption_probability``.
+            to each channel independently.  This is UDP, so only the fields
+            that describe what a wire or a capture point does to a datagram
+            are read — ``packet_loss_probability``,
+            ``payload_corruption_probability``, ``reorder_probability`` with
+            ``reorder_depth``, and ``duplicate_probability``.
             Retransmission, server RST and stray injection describe TCP
             connection behaviour and are ignored rather than approximated.
             ``None`` (the default) leaves the traffic clean and draws no

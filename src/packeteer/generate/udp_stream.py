@@ -8,8 +8,8 @@ leaves from the server.
 
 Unlike TCP, UDP has no connection state: there is no handshake, no
 acknowledgement, and no teardown.  The stream is simply *num_data_packets*
-datagrams with realistic inter-packet timestamps, optionally thinned out and
-corrupted on the wire (:attr:`UDPStreamConfig.impairments`).
+datagrams with realistic inter-packet timestamps, optionally lost, corrupted,
+reordered or duplicated on the way (:attr:`UDPStreamConfig.impairments`).
 
 The payload is drawn from the same continuous ``default_payload.txt`` source
 as the TCP stream generator: the file is tiled once across the total required
@@ -143,17 +143,22 @@ class UDPStreamConfig:
             ``time.time()`` when ``None``.
         gap_jitter: Maximum additional random delay per inter-packet gap in
             seconds.  Each gap is drawn from
-            ``[inter_packet_gap, inter_packet_gap + gap_jitter]`` and packets
-            are re-sorted by timestamp.  Defaults to ``0.0`` (no jitter).
+            ``[inter_packet_gap, inter_packet_gap + gap_jitter]``, so gaps
+            vary but timestamps only ever increase: nothing overtakes
+            anything.  To reorder datagrams, use
+            :attr:`ImpairmentConfig.reorder_probability
+            <packeteer.generate.impairments.ImpairmentConfig.reorder_probability>`
+            in *impairments*.  Defaults to ``0.0`` (no jitter).
         seed: Integer seed for the random number generator.  When set, two
             calls with identical arguments produce byte-identical output.
             Defaults to ``None`` (non-deterministic).
         impairments: Wire impairments
             (:class:`~packeteer.generate.impairments.ImpairmentConfig`) applied
             to the datagrams before any middlebox fragmentation.  This is UDP,
-            so only the two fields that describe what a wire does to a
-            datagram are read — ``packet_loss_probability`` and
-            ``payload_corruption_probability`` — as for
+            so only the fields that describe what a wire or a capture point
+            does to a datagram are read — ``packet_loss_probability``,
+            ``payload_corruption_probability``, ``reorder_probability`` with
+            ``reorder_depth``, and ``duplicate_probability`` — as for
             :attr:`~packeteer.generate.payloads.vpn.VPNConfig.impairments`.
             ``None`` (the default) leaves the stream clean and draws no
             randomness, so a seeded stream reproduces exactly as it did
