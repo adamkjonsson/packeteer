@@ -35,12 +35,13 @@ and can be reordered and duplicated.  Any stream can be carried through a
 sent and in wire order.  A **seeded run reproduces as a file**, timestamps
 included.  Two fixes left over from 0.17.0 keep lengths and shapes:
 `sanitise` redacts a **DNS label at its own length**, and **HTTP header
-lines** keep their order and repetition.  Six changes are breaking, all
+lines** keep their order and repetition.  Seven changes are breaking, all
 under `Changed`: impairment flags a stream cannot apply are refused; a reply
 is refused where only the client can send; a key beside a wrapped
 `--protocol-messages` section is refused; an `http` section's `headers` is
-written as pairs; the message classes' `headers` is not a `dict`; and a
-sanitised DNS label no longer reads `labelN`.
+written as pairs; the message classes' `headers` is not a `dict`; a
+sanitised DNS label no longer reads `labelN`; and the pcap writers need
+exactly one destination.
 
 ### Added
 
@@ -148,6 +149,17 @@ sanitised DNS label no longer reads `labelN`.
   that recognised a sanitised name by its `label` prefix cannot any more.
   Past 36 distinct one-character labels, replacements are shared, with a
   warning.  (#192)
+- **Breaking:** `write_pcap` and `write_pcapng` raise `ValueError` unless
+  given exactly one of `path` and `file_object`, as the readers do.  Given
+  both, they wrote twice, drawing the records twice, so a generator's second
+  copy was an empty capture.  Given neither, they wrote nothing and said
+  nothing.  Pass one destination; to write two files, call the writer
+  twice.  (#204)
+- **`write_pcap` and `write_pcapng` take any iterable of records**,
+  consumed once and in order, written as drawn: a generator works, so a
+  capture larger than memory can be written one record at a time.  They
+  always did this, but were annotated and documented as taking a list; it
+  is a contract now.  (#204)
 - **A seeded `stream` run starts at a fixed time**, `1700000000`
   (2023-11-14), unless `--start-time` says otherwise; it started at the
   clock.  Every seeded capture's timestamps change, and its packets do not.

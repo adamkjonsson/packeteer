@@ -6,7 +6,7 @@ timestamp variants detected automatically on read.
 
 ## Writing a pcap file
 
-{func}`packeteer.pcap.write_pcap` takes a sequence of `(raw_bytes, ts_sec,
+{func}`packeteer.pcap.write_pcap` takes an iterable of `(raw_bytes, ts_sec,
 ts_usec)` tuples and writes them to a libpcap file.  The `to_pcap_tuples()`
 method on any stream object produces this format:
 
@@ -77,6 +77,27 @@ write_pcap(
     path="out.pcap", nanoseconds=True,
 )
 ```
+
+### Writing a capture larger than memory
+
+Both writers take **any iterable** of records, consumed once and in order,
+so a generator works: each record is written as it is drawn, and only one is
+held at a time.  An export can then read its source one record at a time,
+however large it is:
+
+```python
+from packeteer.pcap import LINKTYPE_RAW, write_pcap
+
+def records(source):
+    for raw, ts_sec, ts_usec in source:      # read one at a time
+        yield raw, ts_sec, ts_usec
+
+write_pcap(records(source), path="decrypted.pcap", link_type=LINKTYPE_RAW)
+```
+
+Give exactly one of `path` and `file_object`, as for the readers; both, or
+neither, is a `ValueError`.  If the source fails partway, the records before
+the failure have been written.
 
 ## Reading a pcap file
 
