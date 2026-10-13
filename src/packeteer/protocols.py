@@ -306,6 +306,24 @@ def unregister(name: str) -> None:
 _loaded: dict[str, tuple[str, ...]] = {}
 
 
+def _importable_beside(resolved: str) -> None:
+    """Let the module at *resolved* import the modules beside it (#203).
+
+    A file executed by path does not have its directory on :data:`sys.path`,
+    where a script run by ``python`` would, so ``from helper import x``
+    beside it fails — a cipher shared by a tunnel wrapper and its decoder,
+    a protocol split across files.  The directory is **appended**, never
+    inserted first, so nothing beside the module can stand in for the
+    standard library or an installed package: a ``json.py`` there is not
+    the ``json`` anyone imports.  The rule kober applies to its own
+    ``--load-transforms``, so the two tools treat a user's module the same
+    way.
+    """
+    directory = os.path.dirname(resolved)
+    if directory not in sys.path:
+        sys.path.append(directory)
+
+
 def load_module(path: str | os.PathLike) -> tuple[AppProtocol, ...]:
     """Import a Python file so the protocols it defines register themselves.
 
@@ -323,7 +341,9 @@ def load_module(path: str | os.PathLike) -> tuple[AppProtocol, ...]:
     The module is executed under a name derived from its file name, prefixed
     so it cannot collide with or shadow a real installed module, and is left
     in :data:`sys.modules` so a second call is a no-op rather than a second
-    execution.
+    execution.  Its directory is appended to :data:`sys.path`, so it can
+    import the modules beside it, and only after everything else, so none of
+    them can stand in for the standard library (#203).
 
     Args:
         path: Path to a ``.py`` file.  A compiled protocol module, or any
@@ -367,6 +387,7 @@ def load_module(path: str | os.PathLike) -> tuple[AppProtocol, ...]:
         del sys.modules[module_name]
 
     before = {proto.name for proto in registered()}
+    _importable_beside(resolved)
     spec = importlib.util.spec_from_file_location(module_name, resolved)
     if spec is None or spec.loader is None:
         raise ProtocolError(f"cannot load a Python module from {resolved!r}")

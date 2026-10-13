@@ -88,6 +88,13 @@ sanitised DNS label no longer reads `labelN`.
   file never names code to run.  `examples/udp_tunnel/xor_seal.py` is a toy
   wrapper to start from, and a new guide page, *Tunnelling through your own
   code*, walks through it.  packeteer still does no cryptography.  (#197)
+- **A module loaded by path can import the modules beside it**: a tunnel
+  module (`--tunnel-module`, `load_wrapper`) and a protocol module
+  (`--load-protocol`, `protocols.load_module`).  Its directory is appended to
+  `sys.path`, so a cipher shared by a tunnel's wrapper and its decoder can be
+  one file beside both, as kober's `--load-transforms` now allows too.
+  Appended, not put first, so a file beside it named like a standard-library
+  module is never imported in its place.  (#203)
 - **`stream --start-time SECONDS`**, and the INI key `start_time`: the Unix
   time the stream starts at, on every path (TCP, UDP, SCTP, `--sessions`,
   `--payload http` and `--payload vpn`).  (#202)

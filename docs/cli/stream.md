@@ -534,6 +534,12 @@ where the wrapper has one method,
 are the `--tunnel-arg KEY=VALUE` pairs.  **A module is code, and loading it
 runs that code**, as with `--load-protocol`.
 
+The module can import the modules beside it: its directory is added to the
+end of Python's search path, so a cipher shared by the wrapper and the
+decoder that opens its traffic can live in one file next to both.  At the
+end, not the start, so a file beside it named like a standard-library
+module is never imported in that module's place (#203).
+
 ```bash
 packeteer stream --protocol udp --payload dns --protocol-messages dns.json \
     --client-ip 10.0.0.2 --server-ip 10.0.0.1 --server-port 53 --packets 20 \

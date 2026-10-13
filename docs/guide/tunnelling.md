@@ -114,3 +114,13 @@ Python.  `examples/udp_tunnel/xor_seal.py` is a complete wrapper to start
 from: a handshake each way on the first call, a counter per direction, a
 rekey every *N* packets, and an `open_datagram` that reverses it, for a test
 to check a decoder against.  **It is not cryptography**, and says so.
+
+**Keep the cipher in a file of its own.**  The wrapper that seals traffic
+and the decoder that opens it share one cipher, and one file of it, checked
+once against its specification's test vectors, is the point: a copy per
+tool can drift, and a fault in a shared one shows in its own tests rather
+than cancelling out in a round trip.  A tunnel module can import a module
+beside it, `from my_cipher import seal`, because its directory is appended
+to `sys.path` when it loads — appended, so nothing beside it can stand in
+for the standard library.  kober's `--load-transforms` follows the same
+rule, so the decoder's module can import the same file.

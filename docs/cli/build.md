@@ -38,6 +38,11 @@ Two other routes exist:
 | `"protocols": ["./sensor.py"]` in a packet spec | A spec that describes what it needs, resolved against the spec file's directory |
 | `PACKETEER_PROTOCOLS`, `:`-separated | A shell that always wants the same ones |
 
+A protocol module can import the modules beside it, for a protocol split
+across files: its directory is appended to Python's search path when it
+loads, after the standard library and installed packages, so nothing beside
+it can stand in for them.
+
 ```{warning}
 **A protocol module is code, and loading it runs it.**  That is no worse than
 `import` — you name the file — but it is no better either: treat a module

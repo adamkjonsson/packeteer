@@ -58,6 +58,8 @@ from dataclasses import dataclass
 from random import Random
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from packeteer.protocols import _importable_beside
+
 from ._stream_common import _pkt_usec
 from .impairments import ImpairmentConfig, apply_datagram_impairments
 from .stream_encap import (  # noqa: F401  (StreamEncap needed for Sphinx type resolution)
@@ -271,6 +273,12 @@ def load_wrapper(
     never from data packeteer parsed.  The module is executed afresh on each
     call, so each wrapper starts with the module's state new.
 
+    The module can import the modules beside it — a cipher it shares with
+    the decoder that opens what it seals, say — because its directory is
+    appended to :data:`sys.path`.  Appended, not put first, so a file beside
+    it named like a standard-library module is never imported in its place
+    (#203).
+
     Args:
         path: Path to a ``.py`` file.
         args: The factory's arguments.  ``None`` is an empty mapping.
@@ -289,6 +297,7 @@ def load_wrapper(
     if not os.path.isfile(resolved):
         raise ValueError(f"no tunnel module at {shown!r}")
     name = "packeteer._tunnel." + os.path.splitext(os.path.basename(resolved))[0]
+    _importable_beside(resolved)
     spec = importlib.util.spec_from_file_location(name, resolved)
     if spec is None or spec.loader is None:
         raise ValueError(f"cannot load a Python module from {shown!r}")
