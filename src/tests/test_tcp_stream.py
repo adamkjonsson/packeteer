@@ -798,6 +798,21 @@ class TestPayloadCorruption(unittest.TestCase):
             corrupt = next(p for p in stream.packets if p.label == f"CORRUPT[{i}]")
             self.assertEqual(corrupt.seq, retrans.seq)
 
+    def test_short_payload_corruption_changes_payload_not_ethernet_padding(self):
+        stream = _stream(
+            num_data_packets=1,
+            payload_sizes=[5],
+            payload_corruption_probability=1.0,
+            retransmission_probability=0.0,
+            include_ethernet=True,
+        )
+        corrupt = next(p for p in stream.packets if p.label == "CORRUPT[0]")
+        retrans = next(p for p in stream.packets if p.label == "RETRANS[0]")
+        self.assertNotEqual(corrupt.raw, retrans.raw)
+        self.assertEqual(len(corrupt.raw), len(retrans.raw))
+        self.assertEqual(corrupt.payload_len, retrans.payload_len)
+        self.assertEqual(corrupt.payload_len, 5)
+
     def test_corrupt_raw_differs_from_retransmit_raw(self):
         stream = _stream(
             num_data_packets=2,

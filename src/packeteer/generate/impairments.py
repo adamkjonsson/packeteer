@@ -861,10 +861,15 @@ def _apply_corruption(
         if rng.random() >= config.payload_corruption_probability:
             continue
         pkt = packets[i]
-        corrupted.add(i)
-
+        payload = _tcp_payload(pkt.raw, flow.include_ethernet)
+        if not payload:
+            continue
+        payload_start = pkt.raw.rfind(payload)
+        if payload_start < 0:
+            continue
         raw_corrupt = bytearray(pkt.raw)
-        raw_corrupt[-1] ^= 0xFF
+        raw_corrupt[payload_start + len(payload) - 1] ^= 0xFF
+        corrupted.add(i)
         packets[i] = replace(
             pkt, raw=bytes(raw_corrupt), label=_derive_label("CORRUPT", pkt.label),
         )

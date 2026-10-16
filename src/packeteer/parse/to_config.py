@@ -92,7 +92,7 @@ from packeteer.generate.dns import (
 from packeteer.generate.etherip import IPPROTO_ETHERIP, EtherIPHeader
 from packeteer.generate.ethernet import ETHERTYPE_IPV4, EthernetHeader
 from packeteer.generate.geneve import GeneveHeader
-from packeteer.generate.gre import GREHeader
+from packeteer.generate.gre import IPPROTO_GRE, GREHeader
 from packeteer.generate.gtpu import GTPU_MSG_G_PDU, GTPUHeader
 from packeteer.generate.http import HTTPMessage, HTTPRequest
 from packeteer.generate.icmp import ICMPHeader
@@ -106,6 +106,9 @@ from packeteer.generate.ipv6 import (
     RouterAlertOption,
 )
 from packeteer.generate.loopback import AF_INET, AF_INET6_DEFAULT, LoopbackHeader
+
+IPPROTO_IPIP = 4
+IPPROTO_IPV6 = 41
 from packeteer.generate.mpls import MPLSLabel
 from packeteer.generate.pppoe import PPPOE_CODE_SESSION, PPPoEHeader
 from packeteer.generate.pseudowire import PseudowireHeader
@@ -137,10 +140,10 @@ _PROTO_TO_STR: dict[int, str] = {
     socket.IPPROTO_ICMP:     "icmp",      # 1
     socket.IPPROTO_ICMPV6:   "icmpv6",    # 58
     IPPROTO_ETHERIP:         "etherip",   # 97
-    socket.IPPROTO_GRE:      "gre",       # 47
+    IPPROTO_GRE:             "gre",       # 47
     socket.IPPROTO_SCTP:     "sctp",      # 132
-    socket.IPPROTO_IPIP:     "ipip",      # 4  — IPv4-in-IP (RFC 2003)
-    socket.IPPROTO_IPV6:     "ipip",      # 41 — IPv6-in-IP (RFC 4213)
+    IPPROTO_IPIP:             "ipip",      # 4  — IPv4-in-IP (RFC 2003)
+    IPPROTO_IPV6:             "ipip",      # 41 — IPv6-in-IP (RFC 4213)
     IPPROTO_AH:              "ah",        # 51 — IPsec AH (RFC 4302)
     IPPROTO_ESP:             "esp",       # 50 — IPsec ESP (RFC 4303)
 }
