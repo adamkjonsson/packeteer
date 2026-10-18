@@ -209,6 +209,30 @@ def _tcp_payload(raw: bytes, include_ethernet: bool) -> bytes:
     return pkt.payload
 
 
+def _payload_last_byte_offset(raw: bytes, include_ethernet: bool) -> int | None:
+    """Return the index of the transport payload's last byte within *raw*.
+
+    Offsets come back through the parser (:attr:`payload_offset` is rebased to
+    the outermost frame, encapsulations included), so the locate is structural
+    rather than positional: a frame below the 60-byte Ethernet minimum is
+    padded after the payload, and the last byte of *raw* is a padding byte,
+    not a payload byte (#200).  ``None`` means there is nothing to corrupt —
+    either the datagram carries no payload or one level failed to parse.
+    """
+    from packeteer.parse import parse_packet
+    from packeteer.pcap import LINKTYPE_ETHERNET, LINKTYPE_RAW
+
+    pkt = parse_packet(
+        raw, link_type=LINKTYPE_ETHERNET if include_ethernet else LINKTYPE_RAW,
+        decode_app=False,
+    )
+    while pkt.tunneled is not None:
+        pkt = pkt.tunneled
+    if not pkt.payload or pkt.payload_offset is None:
+        return None
+    return pkt.payload_offset + len(pkt.payload) - 1
+
+
 def _build_packet(
     src: _TCPEndpoint,
     dst: _TCPEndpoint,

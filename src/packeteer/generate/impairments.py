@@ -34,6 +34,7 @@ from ._stream_common import (
     _alloc_usec,
     _build_packet,
     _clocks_from,
+    _payload_last_byte_offset,
     _pkt_usec,
     _tcp_payload,
     _TCPEndpoint,
@@ -69,8 +70,10 @@ class ImpairmentConfig:
         retransmission_timeout: Seconds after the original send time at which
             the retransmission timer fires.  Defaults to ``0.2`` (200 ms).
         payload_corruption_probability: Probability (0.0–1.0) that each data
-            segment's payload is corrupted in transit (last byte XOR-flipped)
-            and then retransmitted cleanly.
+            segment's payload is corrupted in transit — its transport
+            payload's last byte XOR-flipped, never the Ethernet padding a
+            sub-minimum frame carries after it (#200) — and then
+            retransmitted cleanly.
         server_rst_probability: Probability (0.0–1.0) that the server
             terminates the connection mid-stream with a TCP RST.
         rst_propagation_delay: Seconds between the server sending the RST and
@@ -411,6 +414,7 @@ def _drop_datagrams(
 
 def apply_datagram_impairments(
     packets: list, *, rng: Random, config: ImpairmentConfig,
+    include_ethernet: bool = True,
 ) -> list:
     """Apply the impairments that mean something on a connectionless flow.
 
@@ -425,6 +429,11 @@ def apply_datagram_impairments(
         rng: Seeded random generator.
         config: Impairments to apply; only the loss and corruption fields are
             read.
+        include_ethernet: Whether the datagrams carry an Ethernet header —
+            matching what generated them.  A datagram can then also be
+            corrupted *correctly*: a frame below the 60-byte Ethernet
+            minimum is padded after its payload, and the flip must land in
+            the payload, not the padding (#200).
 
     Returns:
         The impaired datagram list.
@@ -437,8 +446,11 @@ def apply_datagram_impairments(
         for i, pkt in enumerate(packets):
             if not _is_data(pkt) or rng.random() >= config.payload_corruption_probability:
                 continue
+            target = _payload_last_byte_offset(pkt.raw, include_ethernet)
+            if target is None:
+                continue
             raw = bytearray(pkt.raw)
-            raw[-1] ^= 0xFF
+            raw[target] ^= 0xFF
             packets[i] = replace(
                 pkt, raw=bytes(raw), label=_derive_label("CORRUPT", pkt.label),
             )
@@ -861,10 +873,17 @@ def _apply_corruption(
         if rng.random() >= config.payload_corruption_probability:
             continue
         pkt = packets[i]
+        # Flip a byte inside the transport payload, located structurally: the
+        # frame's last byte is Ethernet padding on a sub-minimum frame, and
+        # no checksum covers padding, so flipping it would leave a packet
+        # that looks and validates as uncorrupted (#200).
+        target = _payload_last_byte_offset(pkt.raw, flow.include_ethernet)
+        if target is None:
+            continue
         corrupted.add(i)
 
         raw_corrupt = bytearray(pkt.raw)
-        raw_corrupt[-1] ^= 0xFF
+        raw_corrupt[target] ^= 0xFF
         packets[i] = replace(
             pkt, raw=bytes(raw_corrupt), label=_derive_label("CORRUPT", pkt.label),
         )

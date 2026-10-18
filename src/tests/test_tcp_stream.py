@@ -13,6 +13,7 @@ from packeteer.generate.tcp_stream import (
     _pkt_usec,
     generate_tcp_stream,
 )
+from packeteer.parse import parse_packet
 from packeteer.pcap import LINKTYPE_ETHERNET, write_pcap
 
 _WRAP = 2 ** 32
@@ -829,6 +830,67 @@ class TestPayloadCorruption(unittest.TestCase):
         retrans = next(p for p in stream.packets if p.label == "RETRANS[0]")
         diffs = sum(a != b for a, b in zip(corrupt.raw, retrans.raw, strict=False))
         self.assertEqual(diffs, 1)
+
+    def test_corruption_flips_payload_not_ethernet_padding(self):
+        """#200: the flip lands in the transport payload, not the padding.
+
+        A 4-byte segment with no options is a 58-byte IP datagram; Ethernet
+        pads the frame to 60 bytes after it.  Padding lies outside every
+        checksum, so a flip there left a packet labelled CORRUPT whose
+        payload was byte-identical to its clean retransmission's, and whose
+        checksums still verified — a capture asking for corruption
+        containing none of it.
+        """
+        clean = _stream(
+            num_data_packets=1,
+            payload_sizes=[4],
+            client_options=TCPOptions(),
+            server_options=TCPOptions(),
+            seed=1,
+            base_time=0.0,
+        )
+        data = next(p for p in clean.packets if p.label == "DATA[0]")
+        corrupt = _stream(
+            num_data_packets=1,
+            payload_sizes=[4],
+            payload_corruption_probability=1.0,
+            client_options=TCPOptions(),
+            server_options=TCPOptions(),
+            seed=1,
+            base_time=0.0,
+        )
+        corrupted = next(p for p in corrupt.packets if p.label == "CORRUPT[0]")
+
+        self.assertEqual(len(corrupted.raw), len(data.raw))
+        # A 58-byte IP datagram in an Ethernet frame is padded to 60 bytes.
+        self.assertEqual(len(data.raw), 60)
+        wire = parse_packet(data.raw, link_type=LINKTYPE_ETHERNET, decode_app=False)
+        payload_end = wire.payload_offset + len(wire.payload)
+        self.assertLess(payload_end, len(data.raw))  # padding exists
+
+        diffs = [i for i, (a, b) in enumerate(
+            zip(corrupted.raw, data.raw, strict=False)) if a != b]
+        # Exactly one byte differs, and it is the payload's last byte.
+        self.assertEqual(len(diffs), 1)
+        self.assertEqual(diffs[0], payload_end - 1)
+        # Everything after the IP datagram — the padding — is untouched.
+        self.assertEqual(corrupted.raw[payload_end:], data.raw[payload_end:])
+        # The corrupted copy's payload really does differ from the clean one's.
+        self.assertNotEqual(
+            parse_packet(
+                corrupted.raw, link_type=LINKTYPE_ETHERNET, decode_app=False,
+            ).payload,
+            wire.payload,
+        )
+
+        # And the retransmission the receiver acts on carries the clean payload.
+        retrans = next(p for p in corrupt.packets if p.label == "RETRANS[0]")
+        self.assertEqual(
+            parse_packet(
+                retrans.raw, link_type=LINKTYPE_ETHERNET, decode_app=False,
+            ).payload,
+            wire.payload,
+        )
 
     def test_with_timestamps_the_retransmission_is_freshly_stamped(self):
         """#90: one flipped payload byte, and a fresh TSval on the retransmission.

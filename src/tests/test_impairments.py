@@ -28,6 +28,8 @@ from packeteer.generate.tcp_stream import (
     TCPStreamPacket,
     generate_tcp_stream,
 )
+from packeteer.parse import parse_packet
+from packeteer.pcap import LINKTYPE_ETHERNET
 
 _BASE_TIME = 1_700_000_000.0
 
@@ -416,6 +418,50 @@ class TestVPNImpairments(unittest.TestCase):
     def test_corruption_applies(self) -> None:
         stream = self._vpn(payload_corruption_probability=1.0)
         self.assertTrue(any(lbl.startswith("CORRUPT[") for lbl in _labels(stream)))
+
+    def test_corruption_flips_payload_not_padding(self) -> None:
+        """#200: the flip lands in the datagram's payload, not Ethernet padding.
+
+        A 16-byte message is a 58-byte IP datagram; Ethernet pads the frame to
+        60 bytes after it.  Padding lies outside every checksum, so a flip
+        there left a packet labelled CORRUPT whose payload was unchanged and
+        whose checksum still verified.
+        """
+        def _mini(**over: object) -> CombinedStream:
+            impairments = ImpairmentConfig(**over) if over else None
+            return generate_vpn_stream(
+                client_ip="10.0.0.1", server_ip="10.1.0.1", epochs=1,
+                packets_per_epoch=4, min_payload=0, max_payload=0, seed=3,
+                base_time=_BASE_TIME, config=VPNConfig(impairments=impairments),
+            )
+
+        clean = _mini()
+        corrupt = _mini(payload_corruption_probability=1.0)
+        corrupted = [p for p in corrupt.packets if p.label.startswith("CORRUPT[")]
+        self.assertTrue(corrupted)
+        padded = [
+            (pkt, next(p for p in clean.packets if p.label == pkt.label[len("CORRUPT["):-1]))
+            for pkt in corrupted
+            if len(pkt.raw) == 60
+        ]
+        # A 16-byte message yields a 58-byte datagram — one of these frames.
+        self.assertTrue(padded)
+        for pkt, clean_pkt in padded:
+            wire = parse_packet(
+                clean_pkt.raw, link_type=LINKTYPE_ETHERNET, decode_app=False,
+            )
+            while wire.tunneled is not None:
+                wire = wire.tunneled
+            payload_end = wire.payload_offset + len(wire.payload)
+            self.assertLess(payload_end, len(clean_pkt.raw))  # pad after payload
+
+            diffs = [i for i, (a, b) in enumerate(
+                zip(pkt.raw, clean_pkt.raw, strict=False)) if a != b]
+            # Exactly one byte differs, and it is the payload's last byte.
+            self.assertEqual(len(diffs), 1, pkt.label)
+            self.assertEqual(diffs[0], payload_end - 1)
+            # The padding after the IP datagram is untouched.
+            self.assertEqual(pkt.raw[payload_end:], clean_pkt.raw[payload_end:])
 
     def test_tcp_only_impairments_are_ignored(self) -> None:
         """Retransmission, RST and hijacking have no meaning on a datagram."""

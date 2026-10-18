@@ -264,12 +264,14 @@ def _data_messages(
 
 def _impair(
     stream: UDPStream, config: VPNConfig, rng: random.Random,
+    include_ethernet: bool,
 ) -> UDPStream:
     """Apply *config*'s impairments to one channel's datagrams."""
     if config.impairments is None:
         return stream
     return UDPStream(packets=apply_datagram_impairments(
         stream.packets, rng=rng, config=config.impairments,
+        include_ethernet=include_ethernet,
     ))
 
 
@@ -369,7 +371,7 @@ def generate_vpn_stream(
             handshake = _handshake_messages(rng, epoch, config)
             streams.append(_impair(render_udp_session(
                 handshake, server_port=config.key_port, base_time=cursor, **common,
-            ), config, rng))
+            ), config, rng, include_ethernet))
             cursor += len(handshake) * gap
 
             data = _data_messages(
@@ -377,6 +379,6 @@ def generate_vpn_stream(
             )
             streams.append(_impair(render_udp_session(
                 data, server_port=config.data_port, base_time=cursor, **common,
-            ), config, rng))
+            ), config, rng, include_ethernet))
             cursor += len(data) * gap
     return merge_streams(streams)
