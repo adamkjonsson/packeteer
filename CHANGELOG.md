@@ -25,6 +25,10 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
+---
+
+## [0.18.0] - 2026-10-18
+
 **UDP as a conversation, and a tunnel the caller seals.**  Most of this
 release came from one downstream need: zipline-kober's worked example of
 decoding WireGuard under impairments.  A generated **UDP stream** now
@@ -3915,7 +3919,8 @@ the exhaustive API reference.
      tagged with names that predate this convention, so only the entries below
      carry compare links. -->
 
-[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/adamkjonsson/packeteer/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/adamkjonsson/packeteer/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/adamkjonsson/packeteer/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/adamkjonsson/packeteer/compare/v0.14.0...v0.15.0
