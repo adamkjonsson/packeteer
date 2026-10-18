@@ -124,3 +124,10 @@ beside it, `from my_cipher import seal`, because its directory is appended
 to `sys.path` when it loads — appended, so nothing beside it can stand in
 for the standard library.  kober's `--load-transforms` follows the same
 rule, so the decoder's module can import the same file.
+
+**Give that file a name of your own**, such as `wg_crypto.py`, not
+`crypto.py`.  Python imports a module once per process, by name, so two
+tunnel modules from different folders that each import a `crypto.py` beside
+them both get the first one loaded.  One `packeteer stream` loads one
+tunnel module and never meets this; a pipeline that loads several in one
+process does, and so does kober's.

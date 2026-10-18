@@ -538,7 +538,10 @@ The module can import the modules beside it: its directory is added to the
 end of Python's search path, so a cipher shared by the wrapper and the
 decoder that opens its traffic can live in one file next to both.  At the
 end, not the start, so a file beside it named like a standard-library
-module is never imported in that module's place (#203).
+module is never imported in that module's place (#203).  Give a shared
+module a name of your own (`wg_crypto.py`, not `crypto.py`): Python imports
+a module once per process, by name, so a second tunnel module elsewhere
+that imports its own `crypto.py` would get the first one's.
 
 ```bash
 packeteer stream --protocol udp --payload dns --protocol-messages dns.json \

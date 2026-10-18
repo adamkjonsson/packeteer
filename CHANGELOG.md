@@ -95,7 +95,10 @@ exactly one destination.
   `sys.path`, so a cipher shared by a tunnel's wrapper and its decoder can be
   one file beside both, as kober's `--load-transforms` now allows too.
   Appended, not put first, so a file beside it named like a standard-library
-  module is never imported in its place.  (#203)
+  module is never imported in its place.  Python imports a module once per
+  process, by name, so give a shared module a name of your own: two modules
+  from different folders that each import a `crypto.py` beside them both
+  get the first one loaded.  (#203)
 - **`stream --start-time SECONDS`**, and the INI key `start_time`: the Unix
   time the stream starts at, on every path (TCP, UDP, SCTP, `--sessions`,
   `--payload http` and `--payload vpn`).  (#202)
