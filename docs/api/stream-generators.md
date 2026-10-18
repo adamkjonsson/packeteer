@@ -138,6 +138,23 @@ onto one or more TCP connections — returning a
    :no-index:
 ```
 
+The messages it sends, and their header lines:
+
+```{eval-rst}
+.. autoclass:: packeteer.generate.http.HTTPRequest
+   :no-index:
+```
+
+```{eval-rst}
+.. autoclass:: packeteer.generate.http.HTTPResponse
+   :no-index:
+```
+
+```{eval-rst}
+.. autoclass:: packeteer.generate.http.HTTPHeaders
+   :members:
+```
+
 ```{eval-rst}
 .. autofunction:: packeteer.generate.payloads.http.generate_http_conversation
    :no-index:

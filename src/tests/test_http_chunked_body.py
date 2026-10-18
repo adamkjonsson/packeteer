@@ -114,7 +114,7 @@ class TestRealChunkedTraffic(unittest.TestCase):
                      if p.get("http", {}).get("type") == "response"]
         self.assertTrue(responses)
         body = responses[0]
-        self.assertEqual(body["headers"].get("Transfer-Encoding"), "chunked")
+        self.assertEqual(dict(body["headers"]).get("Transfer-Encoding"), "chunked")
         decoded = bytes.fromhex(body["body"])
         self.assertRegex(decoded.decode("latin-1"), r"^[0-9a-fA-F]+\r\n",
                          "the body should still start with a chunk header")

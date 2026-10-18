@@ -10,6 +10,7 @@ from typing import Any
 from packeteer.generate.http import (
     HTTP_ALT_PORT,
     HTTP_PORT,
+    HTTPHeaders,
     HTTPRequest,
     HTTPResponse,
     _build_http_message,
@@ -139,23 +140,59 @@ def from_spec(section: dict[str, Any]) -> HTTPRequest | HTTPResponse:
     )
 
 
-def _headers(value: Any) -> dict[str, str | list[str]]:
-    """Return a section's headers, each value a string or a list of strings.
+def _headers(value: Any) -> HTTPHeaders:
+    """Return a section's headers as lines, from either of its two shapes.
 
-    An integer is taken as its digits, which is what it always meant.
+    An array of ``[name, value]`` pairs is the lines in order, as ``parse``
+    writes them since 0.18.0 (#172).  An object maps each name to a value or
+    a list of values, one line per item, as every spec before 0.18.0 does;
+    it stays accepted, and cannot say an order across names.
+
+    An integer value is taken as its digits, which is what it always meant.
     Anything else is refused naming the header, and the item in a list: it
     went on the wire as Python spells it — ``['a=1']``, ``True`` — which is
     bytes the section did not say (#182).
     """
-    if not isinstance(value, dict):
-        raise ValueError(
-            f"http: headers must be an object, not {type(value).__name__}"
-        )
-    return {
-        name: ([_header_line(name, item, index) for index, item in enumerate(line)]
-               if isinstance(line, list) else _header_line(name, line, None))
-        for name, line in value.items()
-    }
+    headers = HTTPHeaders()
+    if isinstance(value, dict):
+        for name, line in value.items():
+            if isinstance(line, list):
+                for index, item in enumerate(line):
+                    headers.add(name, _header_line(name, item, index))
+            else:
+                headers.add(name, _header_line(name, line, None))
+        return headers
+    if isinstance(value, list):
+        for index, pair in enumerate(value):
+            if not (isinstance(pair, list) and len(pair) == 2
+                    and isinstance(pair[0], str) and pair[0]):
+                raise ValueError(
+                    f"http: headers item {index} must be a [name, value] pair "
+                    f"with a non-empty name, not {pair!r}"
+                )
+            headers.add(pair[0], _header_line(pair[0], pair[1], None))
+        return headers
+    raise ValueError(
+        f"http: headers must be an array of [name, value] pairs or an "
+        f"object, not {type(value).__name__}"
+    )
+
+
+def _header_lines(headers: Any) -> list[tuple[str, Any]]:
+    """Return a section's or a message's header lines, in either shape.
+
+    For a reader that wants the lines and must not refuse a malformed
+    section, as ``sanitise`` must not: what is not a line is passed over.
+    """
+    if isinstance(headers, HTTPHeaders):
+        return headers.items()
+    if isinstance(headers, dict):
+        return [(name, line) for name, value in headers.items()
+                for line in (value if isinstance(value, list) else [value])]
+    if isinstance(headers, list):
+        return [(pair[0], pair[1]) for pair in headers
+                if isinstance(pair, list) and len(pair) == 2]
+    return []
 
 
 def _header_line(name: str, value: Any, index: int | None) -> str:
@@ -200,8 +237,8 @@ def sanitise(section: dict[str, Any], replacer: Any, options: Any) -> None:
     When the head cannot be read line by line with certainty — a folded
     continuation line above all, which could carry the rest of a secret —
     ``raw`` is dropped instead, as DNS drops its own, and the message is
-    rebuilt from the redacted fields: repeated headers grouped, and every one
-    but ``Set-Cookie`` combined into one line.
+    rebuilt from the redacted fields, whose header lines keep their order and
+    repetition (#172) but not the exact spacing or a continuation line.
 
     With ``--payload``, the body is zeroed too, in ``body`` and in the body
     part of ``raw``, at the same length so ``Content-Length`` stays true.  A
@@ -279,15 +316,16 @@ def _split_head(raw: bytes) -> tuple[bytes, bytes, bytes] | None:
 
 
 def _is_chunked(headers: Any) -> bool:
-    """Whether *headers* frame the body in chunks: ``chunked`` coded last."""
-    if not isinstance(headers, dict):
-        return False
-    for name, value in headers.items():
-        if str(name).lower() == "transfer-encoding":
-            lines = value if isinstance(value, list) else [value]
-            codings = ",".join(str(line) for line in lines).split(",")
-            return codings[-1].strip().lower() == "chunked"
-    return False
+    """Whether *headers* frame the body in chunks: ``chunked`` coded last.
+
+    Every ``Transfer-Encoding`` line counts, in order, as one list (RFC 7230
+    §3.3.1), in either shape of a section's headers or in a message's.
+    """
+    codings = ",".join(
+        str(value) for name, value in _header_lines(headers)
+        if str(name).lower() == "transfer-encoding"
+    ).split(",")
+    return codings[-1].strip().lower() == "chunked"
 
 
 def _raw_is_chunked(raw: bytes) -> bool:

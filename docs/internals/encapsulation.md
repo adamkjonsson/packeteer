@@ -31,6 +31,20 @@ Tunnel encapsulations wrap the entire inner IP datagram: the stream's
 `client_ip` / `server_ip` become the inner IP endpoints, and the outer IP
 header carries the tunnel `src_ip` / `dst_ip`.
 
+### Not an encap: the UDP tunnel
+
+`UDPTunnel` (`stream --udp-tunnel`, #197) is deliberately absent from the
+table.  Every class above is applied by `_apply_encap` as each packet is
+built, inside the generator's emit loop and before any impairment pass has
+run.  A tunnel whose payload the caller's code computes has to see the
+packets that were actually *sent* — a retransmission again, a lost packet
+never — in wire order, so a stateful sealer counts correctly.  So
+`tunnel_stream` in `generate/udp_tunnel.py` runs on the finished, impaired
+stream instead, and builds each outer datagram with `_build_udp_packet`.
+The inner stream is generated with no Ethernet and no encap; layer-2 tags
+given with `--udp-tunnel` go on the outer packets, through the same
+`_apply_encap`.  See {doc}`../guide/tunnelling`.
+
 ## `_apply_encap` — inserting layers into PacketBuilder
 
 `_apply_encap(b, encap, src_mac, dst_mac)` iterates the normalised encap list

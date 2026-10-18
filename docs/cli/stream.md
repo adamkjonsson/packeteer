@@ -36,7 +36,7 @@ Exactly one output flag is required; they are mutually exclusive.
 | `--sessions N` | `1` | Number of independent sessions (IP pairs) to generate (see below) |
 | `--session-stagger SECONDS` | `1.0` | Window over which session start times are spread when `--sessions > 1` |
 | `--payload NAME` | off | Application-layer payload to generate instead of random bytes: `http`, `vpn`, or any registered protocol's name (see below) |
-| `--protocol-messages FILE` | — | JSON array of packet-spec sections for `--payload <protocol>`, sent in order and cycled; the packets `packeteer parse` writes are accepted as they are.  With `--payload http`, the messages to send instead of generated ones (see [Given messages](#given-messages)) |
+| `--protocol-messages FILE` | — | JSON array of packet-spec sections for `--payload <protocol>`, sent in order and cycled; the packets `packeteer parse` writes are accepted as they are.  On UDP each is sent in its own direction (see [Payloads from your own protocol](#payloads-from-your-own-protocol)).  With `--payload http`, the messages to send instead of generated ones (see [Given messages](#given-messages)) |
 | `--requests N` | `10` | HTTP only: total request/response transactions |
 | `--requests-per-connection K` | all | HTTP only: transactions per connection (`1` = a new connection per request) |
 | `--error-rate P` | `0.1` | HTTP only: probability a response is a 4xx/5xx error |
@@ -54,28 +54,88 @@ Exactly one output flag is required; they are mutually exclusive.
 | `--distribution` | `uniform` | `uniform`, `bimodal`, or `fixed` |
 | `--ttl N` | `64` | IP TTL / hop limit |
 | `--gap SECONDS` | `0.001` | Base inter-packet gap |
-| `--gap-jitter SECONDS` | `0.0` | Maximum extra delay per packet; output is re-sorted |
-| `--seed N` | off | Integer RNG seed; two runs with the same seed produce byte-identical captures |
+| `--gap-jitter SECONDS` | `0.0` | Maximum random delay.  On TCP each packet's capture time is delayed by up to this, so a packet can overtake the one before it.  On UDP and SCTP each gap is lengthened by up to this, so nothing overtakes anything; use `--reorder` for that |
+| `--seed N` | off | Integer RNG seed; two runs with the same seed produce byte-identical captures: the same packets, and timestamps from the same start |
+| `--start-time SECONDS` | see description | Unix time at which the stream starts.  Defaults to `1700000000` (2023-11-14) with `--seed`, so that a seeded capture reproduces as a file, and to the current time without it |
 | `--mtu BYTES` | off | Fragment packets exceeding this IP-layer size |
 
 ## TCP-only arguments
 
-Silently ignored for `--protocol udp` and `--protocol sctp`.
+They shape the TCP header and handshake, so they have no effect on
+`--protocol udp` or `--protocol sctp`, which have no TCP header.
 
 | Argument | Default | Description |
 |----------|---------|-------------|
 | `--window BYTES` | `65535` | TCP receive window size |
 | `--psh-probability PROB` | `0.5` | Probability (0–1) PSH is set on each data segment |
-| `--packet-loss PROB` | `0.0` | Probability a packet is lost on the wire (see below) |
-| `--retransmit-lost` | off | Retransmit a lost segment so the connection recovers |
 | `--no-tcp-options` | off | Send a bare handshake with no TCP options, and therefore no timestamps on any segment (see below) |
-| `--retransmission-probability PROB` | `0.0` | Probability each data segment is retransmitted |
-| `--retransmission-timeout SECONDS` | `0.2` | RTO — seconds after send that the retransmit fires |
-| `--payload-corruption PROB` | `0.0` | Probability a segment payload is corrupted |
-| `--server-rst PROB` | `0.0` | Probability the server terminates mid-stream with RST |
-| `--rst-propagation-delay SECONDS` | `0.0` | Seconds for the RST to reach the client |
-| `--stray-packets N` | `0` | Number of forged TCP hijack packets to inject |
-| `--stray-timing-window N` | off | Constrain stray timestamps to within N packets of target |
+
+## Impairments
+
+What a wire or a misbehaving peer does to the stream.  The **UDP** column
+covers `--protocol udp` and `--payload vpn`, which is UDP.  An option is
+**refused**, naming it, on a stream it cannot apply to: a flag accepted and
+then ignored makes a clean capture look like an impaired one.  On
+`--protocol sctp` every impairment is refused, because the SCTP stream takes
+none yet.
+
+| Argument | Default | TCP | UDP | Description |
+|----------|---------|-----|-----|-------------|
+| `--packet-loss PROB` | `0.0` | yes | yes | Probability a packet is lost on the wire (see below) |
+| `--payload-corruption PROB` | `0.0` | yes | yes | Probability a data packet's payload is corrupted (last byte flipped).  On TCP the segment is then retransmitted cleanly |
+| `--retransmit-lost` | off | yes | refused | Retransmit a lost segment so the connection recovers |
+| `--retransmission-probability PROB` | `0.0` | yes | refused | Probability each data segment is retransmitted |
+| `--retransmission-timeout SECONDS` | `0.2` | yes | — | RTO: seconds after send that the retransmit fires |
+| `--server-rst PROB` | `0.0` | yes | refused | Probability the server terminates mid-stream with RST |
+| `--rst-propagation-delay SECONDS` | `0.0` | yes | — | Seconds for the RST to reach the client |
+| `--stray-packets N` | `0` | yes | refused | Number of forged TCP hijack packets to inject |
+| `--stray-timing-window N` | off | yes | — | Constrain stray timestamps to within N packets of target |
+| `--duplicate PROB` | `0.0` | yes | yes | Probability a packet is captured twice: identical bytes, 1 µs later, labelled `DUP[…]` |
+| `--reorder PROB` | `0.0` | refused | yes | Probability a datagram is held back and delivered after the next *K* going the same way, labelled `REORDER[…]` (see below) |
+| `--reorder-depth K` | `3` | — | — | The most datagrams a reordered one is overtaken by: *K* is drawn from `1..K` |
+
+A **—** is a setting of the option above it.  It changes nothing on its own,
+so it is not refused.
+
+On UDP, a lost datagram has no further consequence: there is no
+acknowledgement to withhold, and the datagrams around it are unchanged.
+With `--mtu`, a lost datagram is never fragmented, and a corrupted one is
+fragmented with its corruption.
+
+### Reordering and duplication
+
+Reordering and duplication are what a datagram protocol is built to survive:
+a replay window, a sequence number carried in the message, a nonce derived
+from a counter.  They are also what a decoder that keeps no state between
+messages should be shown not to care about.
+
+`--reorder` holds a datagram back in the network.  It is delivered after the
+next *K* datagrams **going the same way**, with *K* drawn from
+`1..--reorder-depth`, and is captured where it arrives, labelled
+`REORDER[i]`.  It is a real overtake, independent of timing:
+`--gap-jitter` on UDP only lengthens gaps.  Datagrams going the other way
+neither count towards *K* nor are held up, because reordering happens along
+one path.  A datagram with fewer than *K* behind it arrives after the last of
+them, and one with none behind it is not reordered.  On TCP, `--reorder` is
+refused: a reordered segment changes what the receiver acknowledges, and that
+is not modelled.
+
+`--duplicate` captures a packet twice: the copy has identical bytes, is
+1 µs later, and is labelled `DUP[i]`.  On TCP it is the capture point seeing
+the packet twice, such as a mirror port or two interfaces.  The sender did
+nothing, so the copy keeps the original's TSval, which is how an analyser
+tells it from a retransmission.  On UDP a duplicate made by the network
+looks the same.
+
+The four datagram impairments run in the order loss, corruption,
+reordering, duplication, so a copy of a corrupted datagram is corrupted too.
+
+```bash
+packeteer stream --protocol udp --payload dns --protocol-messages dns.json \
+    --client-ip 10.0.0.2 --server-ip 10.0.0.1 --server-port 53 \
+    --packets 100 --reorder 0.1 --reorder-depth 4 --duplicate 0.05 \
+    --seed 7 --pcap shuffled.pcap
+```
 
 ## Multiple sessions
 
@@ -148,15 +208,50 @@ packeteer stream --load-protocol ./sensor.py \
     --packets 100 --packet-loss 0.05 --seed 5 --pcap impaired.pcap
 ```
 
+**Each message travels its own way on UDP.**  A request/response protocol
+needs its replies to leave from the server, so on `--protocol udp` each
+message is sent in its own direction (#195).  An `s2c` message goes from the
+server's address, port and MAC to the client's.  The direction is:
+
+- a packet's `packet_metadata.direction`, as `stream --json` writes it;
+- for a packet without one, as `packeteer parse` writes it, read from its
+  addresses.  The side on one of the protocol's ports, such as 53 for DNS,
+  is the server.  When neither side is, or both are, the first sender in the
+  flow is the client;
+- for a section wrapped under the protocol's name, a `"direction"` key
+  beside it.  Nothing else may be beside it, so a misspelt key is refused
+  rather than ignored;
+- `c2s` for a bare section.
+
+```json
+[
+  { "dns": { "id": 1,
+             "questions": [{ "name": "www.example.com.", "qtype": 1, "qclass": 1 }] } },
+  { "dns": { "id": 1, "flags": { "qr": true },
+             "questions": [{ "name": "www.example.com.", "qtype": 1, "qclass": 1 }],
+             "answers": [{ "name": "www.example.com.", "rtype": 1, "rclass": 1,
+                           "ttl": 60, "rdata": { "address": "192.0.2.7" } }] },
+    "direction": "s2c" }
+]
+```
+
+On `--protocol tcp`, every message is still sent from the client, and a
+message that travels `s2c` is **refused**: sending a reply from the client
+would be wrong in silence.  A TCP stream that carries data both ways is
+[#198](https://github.com/adamkjonsson/packeteer/issues/198).
+
 An element that is none of these — an object with no key the protocol reads
 — is refused, naming its index and the keys a section has.  It used to build
 a default message in silence, which for DNS is a bare 12-byte header: a
 stream of those converts cleanly and a decoder run over it reports every
 message decoded, so the failure was indistinguishable from success (#137).
 The same is available from Python as
+{func}`packeteer.app.protocol_conversation`, which returns each message
+encoded with its direction for `UDPStreamConfig.messages`;
 {func}`packeteer.app.protocol_payload_fn`, which returns the `payload_fn` the
-stream generators take, and {func}`packeteer.app.protocol_messages`, which
-returns the messages themselves.
+stream generators take, and sends everything from the client; and
+{func}`packeteer.app.protocol_messages`, which returns the messages
+themselves.
 
 **Every anomaly option applies**, because this is the ordinary stream
 generator with the payloads fed in rather than a path of its own: the packet
@@ -267,9 +362,11 @@ packeteer stream --client-ip 10.0.0.2 --server-ip 10.0.0.1 \
   endings or repeated headers.  A start line beginning `HTTP/` makes it a
   response; `type` beside it, `"request"` or `"response"`, says otherwise.
   See [`http.raw`](http-raw).
-- **A repeated header can also be written as a list**,
-  `"Transfer-Encoding": ["gzip", "chunked"]`, one line per item, without
-  `raw`.
+- **A repeated header needs no `raw`.**  `headers` is the lines in order as
+  `[name, value]` pairs, as `parse` writes them, so
+  `[["Transfer-Encoding", "gzip"], ["Transfer-Encoding", "chunked"]]` is two
+  lines.  The object form, `{"Transfer-Encoding": ["gzip", "chunked"]}`, one
+  line per item, is still read.  See [header lines](http-repeated-headers).
 
 The file may be what `packeteer parse` writes, as for any other protocol.
 Messages that spanned several segments in the capture parse per packet, so
@@ -313,7 +410,7 @@ a timestamp either.
 ### What packet loss means
 
 `--packet-loss` loses a packet **on the wire**: neither the capture point nor
-the far end sees it.  So a lost segment is never acknowledged, and the
+the far end sees it.  On UDP that is all it does.  On TCP, a lost segment is never acknowledged, and the
 receiver's acknowledgement number stops advancing at the gap — the segments
 after it are answered with **duplicate ACKs**, which is the signal an analyser
 looks for around a loss event.  A sender's own sequence numbers are unaffected,
@@ -407,18 +504,85 @@ makes the capture reproducible.  In `--json` output, labels read e.g.
 `KEY-INIT[epoch=0]`, `KEY-RESPONSE[epoch=0]`, `DATA c2s ctr=3 epoch=0`.
 
 `--payload vpn` is UDP, which splits the anomaly options in two.
-`--packet-loss` and `--payload-corruption` describe what a wire does to a
-datagram and apply here unchanged, per channel.
-`--retransmission-probability`, `--server-rst` and `--stray-packets` describe
-TCP connection behaviour — a retransmission timer, a connection reset, a
-hijacked sequence number — none of which exists in UDP; they are ignored with a
-warning naming them, rather than approximated.
+`--packet-loss`, `--payload-corruption`, `--reorder` and `--duplicate`
+describe what a wire does to a datagram and apply here unchanged, per
+channel.
+`--retransmission-probability`, `--retransmit-lost`, `--server-rst` and
+`--stray-packets` describe TCP connection behaviour — a retransmission timer,
+a connection reset, a hijacked sequence number — none of which exists in UDP;
+they are refused, naming them, rather than approximated.
 
 ```bash
 # 4 key epochs, 20 data packets each, on the default UDP ports
 packeteer stream --client-ip 10.0.0.1 --server-ip 10.1.0.1 \
     --payload vpn --vpn-epochs 4 --packets 20 --seed 42 --pcap vpn.pcap
 ```
+
+## UDP tunnels through your own code
+
+`--udp-tunnel` carries the whole stream through a UDP tunnel, as WireGuard
+or OpenVPN over UDP do.  packeteer does no cryptography, so what goes in each
+outer datagram is computed by **your own code**: a Python module, named by
+`--tunnel-module`, defining
+
+```python
+def make_wrapper(args: dict[str, str]) -> TunnelWrapper: ...
+```
+
+where the wrapper has one method,
+`wrap(inner, direction, timestamp) -> [(direction, payload), ...]`.  `args`
+are the `--tunnel-arg KEY=VALUE` pairs.  **A module is code, and loading it
+runs that code**, as with `--load-protocol`.
+
+The module can import the modules beside it: its directory is added to the
+end of Python's search path, so a cipher shared by the wrapper and the
+decoder that opens its traffic can live in one file next to both.  At the
+end, not the start, so a file beside it named like a standard-library
+module is never imported in that module's place (#203).  Give a shared
+module a name of your own (`wg_crypto.py`, not `crypto.py`): Python imports
+a module once per process, by name, so a second tunnel module elsewhere
+that imports its own `crypto.py` would get the first one's.
+
+```bash
+packeteer stream --protocol udp --payload dns --protocol-messages dns.json \
+    --client-ip 10.0.0.2 --server-ip 10.0.0.1 --server-port 53 --packets 20 \
+    --udp-tunnel 198.51.100.7 203.0.113.9 --tunnel-port 51820 \
+    --tunnel-module examples/udp_tunnel/xor_seal.py \
+    --tunnel-arg key=secret --tunnel-arg rekey_after=8 \
+    --tunnel-packet-loss 0.05 --tunnel-corruption 0.02 --seed 7 --pcap tunnel.pcap
+```
+
+What it promises:
+
+- **The wrapper sees each inner packet once per time it is sent, in wire
+  order**, after the inner stream's own impairments: a retransmitted segment
+  again, a lost one never.  So a counter, a sequence number, or a rekey
+  after *N* packets is correct by construction.  The timestamp lets it
+  rekey after a time, or send a keepalive after an idle period.
+- **Outer impairments apply after wrapping.**  `--tunnel-corruption` lands
+  on the sealed bytes, so it breaks an authentication tag, and a lost outer
+  datagram loses everything it carried.  The inner options (`--packet-loss`
+  and the rest) still impair the inner stream, independently, except
+  `--duplicate`, which is refused: it is the capture point seeing a packet
+  twice, and the capture point is outside the tunnel.  Use
+  `--tunnel-duplicate`.
+- **Direction maps to the endpoints.**  A datagram `wrap` returns as `c2s`
+  goes from the first endpoint to the second, and `s2c` the other way.  It
+  is what `wrap` *returns* that counts, so a handshake reply can come back
+  while a client packet is being sealed.
+- **It is seeded and reproducible.**  The outer impairments draw from an RNG
+  of their own, so adding one never changes what the wrapper is given.
+
+`wrap` may return several datagrams, for a handshake or a rekey before the
+sealed packet, or none, to swallow one.  Each outer datagram is labelled
+`TUNNEL[<inner label>]`, with `+1`, `+2` for further ones from the same
+call.  Layer-2 tags (`--vlan`, `--mpls`, …) go on the outer packet, and
+`--udp-tunnel` cannot be combined with another tunnel.  It works with every
+payload and with `--sessions`: one tunnel carries every session.
+
+`examples/udp_tunnel/xor_seal.py` is a toy wrapper to start from, with a
+handshake, a counter per direction, and a rekey.  It is not cryptography.
+See {doc}`../guide/tunnelling` for the same from Python.
 
 ## Encapsulation flags
 
@@ -465,13 +629,29 @@ of the two tags they set, so `--vlan-pcp` has no effect alongside `--qinq`.
 | `--esp SRC_IP DST_IP` | IPsec ESP tunnel (RFC 4303); inner stack is **scrambled** into opaque high-entropy ciphertext |
 | `--ipsec-spi N` | 32-bit Security Parameters Index for `--ah` / `--esp` (default 256) |
 | `--ipsec-ttl N` | Outer IP TTL for `--ah` / `--esp` (default 64) |
+| `--udp-tunnel SRC_IP DST_IP` | UDP tunnel whose payloads your own code computes; see [UDP tunnels through your own code](#udp-tunnels-through-your-own-code) |
+| `--tunnel-port PORT` | UDP port of `--udp-tunnel` (required) |
+| `--tunnel-src-port PORT` | UDP port at the tunnel's `SRC_IP` (default: `--tunnel-port`) |
+| `--tunnel-ttl N` | Outer IP TTL for `--udp-tunnel` (default 64) |
+| `--tunnel-module FILE` | The module whose `make_wrapper(args)` computes the outer payloads (required with `--udp-tunnel`; no INI key) |
+| `--tunnel-arg KEY=VALUE` | An argument for `make_wrapper`; repeatable (no INI key) |
+| `--tunnel-packet-loss PROB` | Probability an outer tunnel datagram is lost |
+| `--tunnel-corruption PROB` | Probability an outer tunnel datagram's last byte is flipped |
+| `--tunnel-reorder PROB` | Probability an outer tunnel datagram is held back behind the next *K* going its way |
+| `--tunnel-reorder-depth K` | The most outer datagrams a reordered one is overtaken by (default 3) |
+| `--tunnel-duplicate PROB` | Probability an outer tunnel datagram is captured twice |
 
 ## INI config file
 
-All parameters can be stored in a `[stream]` section.  Key names match long
-flag names with hyphens replaced by underscores.  Two keys differ from their
-flag names: `packet_loss` (flag: `--packet-loss`) and `server_rst` (flag:
-`--server-rst`).
+Parameters can be stored in a `[stream]` section.  Key names match long
+flag names with hyphens replaced by underscores.  Three keys differ from
+their flag names: `payload_corruption_probability` (flag:
+`--payload-corruption`), `server_rst_probability` (flag: `--server-rst`) and
+`stray_packet_count` (flag: `--stray-packets`).
+
+The options that name a file to read or code to run have no key, so a
+config file never makes `stream` load anything: `--protocol-messages`,
+`--load-protocol`, `--tunnel-module` and `--tunnel-arg`.
 
 ```ini
 [stream]

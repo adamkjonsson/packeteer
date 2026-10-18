@@ -2,8 +2,14 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import struct
 
+import pytest
+
+from packeteer.generate.impairments import ImpairmentConfig
+from packeteer.generate.payloads.base import AppMessage
+from packeteer.generate.session_mix import generate_session_mix
 from packeteer.generate.udp_stream import (
     UDPStream,
     UDPStreamConfig,
@@ -223,3 +229,190 @@ class TestSeed:
     def test_different_seed_different_output(self):
         a, b = self._seeded(7), self._seeded(8)
         assert [p.raw for p in a.packets] != [p.raw for p in b.packets]
+
+
+# ── Wire impairments (#194) ───────────────────────────────────────────────────
+
+def _impaired(
+    impairments: ImpairmentConfig | None,
+    messages: list[AppMessage] | None = None,
+    **kw: object,
+) -> UDPStream:
+    defaults: dict[str, object] = {
+        "client_ip": "10.0.0.2",
+        "server_ip": "10.0.0.1",
+        "num_data_packets": 40,
+    }
+    defaults.update(kw)
+    return generate_udp_stream(**defaults, config=UDPStreamConfig(
+        base_time=1_700_000_000.0, seed=5, impairments=impairments,
+        messages=messages,
+    ))
+
+
+class TestImpairments:
+    def test_loss_drops_datagrams(self):
+        s = _impaired(ImpairmentConfig(packet_loss_probability=0.5))
+        assert 0 < len(s.packets) < 40
+
+    def test_survivors_are_unchanged(self):
+        """A lost datagram has no consequence for the ones around it."""
+        clean = {p.label: p for p in _impaired(None).packets}
+        for pkt in _impaired(ImpairmentConfig(packet_loss_probability=0.5)).packets:
+            assert pkt.raw == clean[pkt.label].raw
+            assert (pkt.ts_sec, pkt.ts_usec) == (clean[pkt.label].ts_sec, clean[pkt.label].ts_usec)
+
+    def test_corruption_flips_the_last_byte_only(self):
+        clean = _impaired(None).packets
+        corrupt = _impaired(ImpairmentConfig(payload_corruption_probability=1.0)).packets
+        assert len(corrupt) == len(clean)
+        for before, after in zip(clean, corrupt, strict=True):
+            assert after.raw[:-1] == before.raw[:-1]
+            assert after.raw[-1] == before.raw[-1] ^ 0xFF
+            assert after.label == before.label.replace("DATA", "CORRUPT")
+
+    def test_no_impairments_draw_nothing(self):
+        """None and an all-zero config give the stream they always gave."""
+        none = [p.raw for p in _impaired(None).packets]
+        zero = [p.raw for p in _impaired(ImpairmentConfig()).packets]
+        assert none == zero
+
+    def test_a_seeded_clean_stream_is_unchanged(self):
+        """Pinned against 0.17.0's output for the same call, before #194."""
+        s = generate_udp_stream(
+            client_ip="10.0.0.2", server_ip="10.0.0.1", num_data_packets=20,
+            config=UDPStreamConfig(base_time=1_700_000_000.0, gap_jitter=0.002, seed=5),
+        )
+        h = hashlib.sha256()
+        for raw, sec, usec in s.to_pcap_tuples():
+            h.update(raw)
+            h.update(sec.to_bytes(8, "big"))
+            h.update(usec.to_bytes(4, "big"))
+        assert h.hexdigest() == (
+            "1a59cc09a581512e0803b47a54f79793aa71497a8656df4134cf4807fed31a58"
+        )
+
+    def test_a_lost_datagram_is_never_fragmented(self):
+        s = _impaired(ImpairmentConfig(packet_loss_probability=1.0),
+                      min_payload=1400, max_payload=1400, mtu=576)
+        assert s.packets == []
+
+    def test_a_corrupted_datagram_is_fragmented_with_its_corruption(self):
+        s = _impaired(ImpairmentConfig(payload_corruption_probability=1.0),
+                      num_data_packets=1, min_payload=1400, max_payload=1400,
+                      payload_distribution="fixed", mtu=576)
+        assert len(s.packets) > 1
+        assert all(p.label.startswith("FRAG[CORRUPT[") for p in s.packets)
+
+    def test_tcp_only_fields_are_ignored(self):
+        """The API reads only loss and corruption; the CLI refuses the rest."""
+        clean = [p.raw for p in _impaired(None).packets]
+        tcp_only = ImpairmentConfig(
+            retransmission_probability=1.0, server_rst_probability=1.0,
+            stray_packet_count=3,
+        )
+        assert [p.raw for p in _impaired(tcp_only).packets] == clean
+
+    def test_every_session_is_impaired(self):
+        mix = generate_session_mix(
+            client_ip="10.0.0.2", server_ip="10.1.0.1", num_data_packets=40,
+            sessions=3,
+            config=UDPStreamConfig(
+                base_time=1_700_000_000.0, seed=5,
+                impairments=ImpairmentConfig(packet_loss_probability=0.5),
+            ),
+        )
+        per_client: dict[bytes, int] = {}
+        for pkt in mix.packets:
+            src = pkt.raw[14 + 12:14 + 16]
+            per_client[src] = per_client.get(src, 0) + 1
+        assert len(per_client) == 3
+        assert all(0 < n < 40 for n in per_client.values())
+
+
+# ── Reordering and duplication (#196) ─────────────────────────────────────────
+
+def _payload_order(s: UDPStream) -> list[bytes]:
+    return [p.raw[14 + 20 + 8:] for p in s.packets]
+
+
+def _index(label: str) -> int:
+    """Return the datagram index in a ``DATA[i]`` or ``REORDER[i]`` label."""
+    return int(label[label.index("[") + 1:-1])
+
+
+class TestReorder:
+    def test_a_real_overtake_of_the_same_messages(self):
+        """The issue's test: a non-identity permutation, the same multiset."""
+        clean = _payload_order(_impaired(None))
+        reordered = _payload_order(_impaired(ImpairmentConfig(reorder_probability=0.3)))
+        assert reordered != clean
+        assert sorted(reordered) == sorted(clean)
+
+    def test_timestamps_increase_in_capture_order(self):
+        s = _impaired(ImpairmentConfig(reorder_probability=0.3))
+        stamps = [(p.ts_sec, p.ts_usec) for p in s.packets]
+        assert stamps == sorted(stamps)
+        assert len(set(stamps)) == len(stamps)
+
+    def test_each_is_overtaken_by_one_to_depth_of_its_own_way(self):
+        """Counted among datagrams going the same way, which are all that count."""
+        messages = [AppMessage("c2s" if i % 3 else "s2c", bytes([i]), "") for i in range(40)]
+        for depth in (1, 3, 5):
+            s = _impaired(ImpairmentConfig(reorder_probability=0.3, reorder_depth=depth),
+                          messages=messages)
+            assert any(p.label.startswith("REORDER[") for p in s.packets)
+            for direction in ("c2s", "s2c"):
+                order = [(_index(p.label), p.label.startswith("REORDER["))
+                         for p in s.packets if p.direction == direction]
+                for pos, (index, moved) in enumerate(order):
+                    if moved:
+                        overtakers = sum(1 for later, _ in order[:pos] if later > index)
+                        assert 1 <= overtakers <= depth, (depth, direction, index)
+
+    def test_a_datagram_not_held_keeps_its_time(self):
+        """A held datagram moves; nothing else does, in either direction."""
+        messages = [AppMessage("c2s" if i % 2 else "s2c", bytes([i]), "") for i in range(40)]
+        clean = {p.label: (p.ts_sec, p.ts_usec) for p in _impaired(None, messages).packets}
+        reordered = _impaired(ImpairmentConfig(reorder_probability=0.3), messages)
+        kept = [p for p in reordered.packets if p.label.startswith("DATA[")]
+        assert len(kept) < len(clean)
+        for p in kept:
+            assert (p.ts_sec, p.ts_usec) == clean[p.label]
+
+    def test_one_with_nothing_behind_it_stays_put(self):
+        """At 1.0 every datagram is held, nothing is delivered past any of them."""
+        clean = _impaired(None)
+        held = _impaired(ImpairmentConfig(reorder_probability=1.0))
+        assert [p.raw for p in held.packets] == [p.raw for p in clean.packets]
+        assert [p.label for p in held.packets] == [p.label for p in clean.packets]
+
+    def test_a_depth_below_one_is_refused(self):
+        with pytest.raises(ValueError, match="reorder_depth must be at least 1"):
+            _impaired(ImpairmentConfig(reorder_probability=0.3, reorder_depth=0))
+
+
+class TestDuplicate:
+    def test_some_appear_twice_and_none_is_missing(self):
+        """The issue's test."""
+        clean = _payload_order(_impaired(None))
+        doubled = _payload_order(_impaired(ImpairmentConfig(duplicate_probability=0.3)))
+        assert len(doubled) > len(clean)
+        assert set(doubled) == set(clean)
+
+    def test_a_copy_is_the_same_bytes_a_microsecond_later(self):
+        s = _impaired(ImpairmentConfig(duplicate_probability=0.3))
+        by_label = {p.label: p for p in s.packets}
+        copies = [p for p in s.packets if p.label.startswith("DUP[")]
+        assert copies
+        for copy in copies:
+            original = by_label[copy.label.replace("DUP", "DATA")]
+            assert copy.raw == original.raw
+            assert (copy.ts_sec * 1_000_000 + copy.ts_usec) > (
+                original.ts_sec * 1_000_000 + original.ts_usec)
+
+    def test_reorder_and_duplicate_together_keep_the_multiset(self):
+        clean = _payload_order(_impaired(None))
+        both = _payload_order(_impaired(ImpairmentConfig(
+            reorder_probability=0.3, duplicate_probability=0.3)))
+        assert set(both) == set(clean)

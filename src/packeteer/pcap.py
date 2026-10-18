@@ -84,7 +84,7 @@ import io
 import itertools
 import os
 import struct
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import ExitStack
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -771,7 +771,7 @@ def _pcapng_opt(code: int, value: bytes) -> bytes:
 
 def _write_pcap(
     file_obj: io.IOBase,
-    packets: list[PacketTuple],
+    packets: Iterable[PacketTuple],
     link_type: int,
     nanoseconds: bool,
     snaplen: int,
@@ -798,7 +798,7 @@ def _write_pcap(
 
 def _write_pcapng(
     file_obj: io.IOBase,
-    packets: list[PacketTuple],
+    packets: Iterable[PacketTuple],
     link_type: int,
     nanoseconds: bool,
     snaplen: int,
@@ -1023,7 +1023,7 @@ def pcap_ts_to_datetime(
 
 
 def write_pcap(
-    packets: list[PacketTuple],
+    packets: Iterable[PacketTuple],
     *,
     path: str | os.PathLike | None = None,
     file_object: io.IOBase | None = None,
@@ -1034,16 +1034,24 @@ def write_pcap(
     """Write raw packet bytes to a libpcap (``.pcap``) file.
 
     Args:
-        packets: Ordered list of ``(raw_bytes, ts_sec, ts_frac)`` — one per
-            pcap record — or ``(raw_bytes, ts_sec, ts_frac, orig_len)``, where
-            *orig_len* is the packet's length on the wire.  The two forms may
-            be mixed; without a fourth field the record is written as a whole
-            packet.  *ts_frac* is microseconds when *nanoseconds* is
-            ``False`` (default) or nanoseconds when *nanoseconds* is ``True``.
-            For :class:`~datetime.datetime` timestamps, build the pair with
-            :func:`datetime_to_pcap_ts`, e.g.
+        packets: The records, in order: ``(raw_bytes, ts_sec, ts_frac)`` — one
+            per pcap record — or ``(raw_bytes, ts_sec, ts_frac, orig_len)``,
+            where *orig_len* is the packet's length on the wire.  The two
+            forms may be mixed; without a fourth field the record is written
+            as a whole packet.  *ts_frac* is microseconds when *nanoseconds*
+            is ``False`` (default) or nanoseconds when *nanoseconds* is
+            ``True``.  For :class:`~datetime.datetime` timestamps, build the
+            pair with :func:`datetime_to_pcap_ts`, e.g.
             ``(raw, *datetime_to_pcap_ts(dt, nanoseconds=nanoseconds))``.
-        path: Destination file path.  Created or overwritten.
+            *packets* is **consumed once, in order**, and may be a generator:
+            each record is written as it is drawn, and only one is held at a
+            time, so a capture larger than memory can be written from records
+            read one by one (#204).  If drawing a record fails partway, the
+            records before it have been written.
+        path: Destination file path.  Created or overwritten.  Exactly one
+            of *path* and *file_object* is given: writing to both would draw
+            *packets* twice, and a generator has nothing left the second time
+            (#204).
         file_object: Destination file-like object.
         link_type: pcap link-layer type.  Use :data:`LINKTYPE_ETHERNET`
             (``1``, default) for packets with an Ethernet header, or
@@ -1058,6 +1066,8 @@ def write_pcap(
             it was cut short in the same way the original did.
 
     Raises:
+        ValueError: If neither or both of *path* / *file_object* are given,
+            as for the readers.
         OSError: If *path* cannot be opened for writing.
 
     Example::
@@ -1075,15 +1085,17 @@ def write_pcap(
         write_pcap(pkts, path="out.pcap", nanoseconds=True)
 
     """
+    if (path is None) == (file_object is None):
+        raise ValueError("Provide exactly one of 'path' or 'file_object'.")
     if path is not None:
         with open(path, "wb") as f:
             _write_pcap(f, packets, link_type, nanoseconds, snaplen)
-    if file_object is not None:
+    else:
         _write_pcap(file_object, packets, link_type, nanoseconds, snaplen)
 
 
 def write_pcapng(
-    packets: list[PacketTuple],
+    packets: Iterable[PacketTuple],
     *,
     path: str | os.PathLike | None = None,
     file_object: io.IOBase | None = None,
@@ -1097,16 +1109,24 @@ def write_pcapng(
     Description Block, and one Enhanced Packet Block per packet.
 
     Args:
-        packets: Ordered list of ``(raw_bytes, ts_sec, ts_frac)`` — one per
-            packet — or ``(raw_bytes, ts_sec, ts_frac, orig_len)``, where
+        packets: The records, in order: ``(raw_bytes, ts_sec, ts_frac)`` — one
+            per packet — or ``(raw_bytes, ts_sec, ts_frac, orig_len)``, where
             *orig_len* is the packet's length on the wire.  The two forms may
             be mixed; without a fourth field the record is written as a whole
-            packet.  *ts_frac* is microseconds when *nanoseconds* is ``False``
-            (default) or nanoseconds when *nanoseconds* is ``True``.
-            For :class:`~datetime.datetime` timestamps, build the pair with
-            :func:`datetime_to_pcap_ts`, e.g.
+            packet.  *ts_frac* is microseconds when *nanoseconds* is
+            ``False`` (default) or nanoseconds when *nanoseconds* is
+            ``True``.  For :class:`~datetime.datetime` timestamps, build the
+            pair with :func:`datetime_to_pcap_ts`, e.g.
             ``(raw, *datetime_to_pcap_ts(dt, nanoseconds=nanoseconds))``.
-        path: Destination file path.  Created or overwritten.
+            *packets* is **consumed once, in order**, and may be a generator:
+            each record is written as it is drawn, and only one is held at a
+            time, so a capture larger than memory can be written from records
+            read one by one (#204).  If drawing a record fails partway, the
+            records before it have been written.
+        path: Destination file path.  Created or overwritten.  Exactly one
+            of *path* and *file_object* is given: writing to both would draw
+            *packets* twice, and a generator has nothing left the second time
+            (#204).
         file_object: Destination file-like object.
         link_type: Link-layer type written into the Interface Description
             Block.  Use :data:`LINKTYPE_ETHERNET` (``1``, default) or
@@ -1121,6 +1141,8 @@ def write_pcapng(
             it was cut short in the same way the original did.
 
     Raises:
+        ValueError: If neither or both of *path* / *file_object* are given,
+            as for the readers.
         OSError: If *path* cannot be opened for writing.
 
     Example::
@@ -1132,8 +1154,10 @@ def write_pcapng(
         write_pcapng([(pkt, 1700000000, 500000)], path="out.pcapng")
 
     """
+    if (path is None) == (file_object is None):
+        raise ValueError("Provide exactly one of 'path' or 'file_object'.")
     if path is not None:
         with open(path, "wb") as f:
             _write_pcapng(f, packets, link_type, nanoseconds, snaplen)
-    if file_object is not None:
+    else:
         _write_pcapng(file_object, packets, link_type, nanoseconds, snaplen)

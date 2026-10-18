@@ -317,7 +317,7 @@ class TestRealTrafficCoversWhatSyntheticCannot(unittest.TestCase):
                      if p.get("http", {}).get("type") == "response"]
         self.assertTrue(responses, "the capture should hold an HTTP response")
         body = responses[0]
-        self.assertEqual(body["headers"].get("Transfer-Encoding"), "chunked")
+        self.assertEqual(dict(body["headers"]).get("Transfer-Encoding"), "chunked")
         # A chunk header is "<hex size>\r\n"; de-chunked, the body would start
         # with the document itself.
         self.assertRegex(bytes.fromhex(body["body"]).decode("latin-1"),

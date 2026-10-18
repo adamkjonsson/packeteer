@@ -27,6 +27,215 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ---
 
+## [0.18.0] - 2026-10-18
+
+**UDP as a conversation, and a tunnel the caller seals.**  Most of this
+release came from one downstream need: zipline-kober's worked example of
+decoding WireGuard under impairments.  A generated **UDP stream** now
+applies its impairment flags, which it accepted and ignored, sends each
+message in its own direction so a protocol's replies leave from the server,
+and can be reordered and duplicated.  Any stream can be carried through a
+**UDP tunnel whose payloads your own code computes**, called once per packet
+sent and in wire order.  A **seeded run reproduces as a file**, timestamps
+included.  Two fixes left over from 0.17.0 keep lengths and shapes:
+`sanitise` redacts a **DNS label at its own length**, and **HTTP header
+lines** keep their order and repetition.  Seven changes are breaking, all
+under `Changed`: impairment flags a stream cannot apply are refused; a reply
+is refused where only the client can send; a key beside a wrapped
+`--protocol-messages` section is refused; an `http` section's `headers` is
+written as pairs; the message classes' `headers` is not a `dict`; a
+sanitised DNS label no longer reads `labelN`; and the pcap writers need
+exactly one destination.
+
+### Added
+
+- **A UDP stream takes impairments**: **`UDPStreamConfig.impairments`**, an
+  `ImpairmentConfig`, as for `VPNConfig.impairments`.  A UDP flow reads
+  loss, corruption, reordering and duplication; the other fields describe a
+  TCP connection and are not read.  They apply before `mtu` fragmentation,
+  so a lost datagram is never fragmented.  With `None`, the default, a
+  seeded stream is byte-identical to 0.17.0's.  (#194)
+- **Reordering and duplication.**  **`stream --reorder PROB`** and
+  **`--reorder-depth K`** (`ImpairmentConfig.reorder_probability` and
+  `reorder_depth`) hold a datagram back until the next *K* going the same
+  way have been delivered, *K* drawn from `1..K` (default 3), and capture it
+  there as `REORDER[i]`: a real overtake, where `--gap-jitter` on UDP only
+  lengthens gaps.  UDP only.  **`stream --duplicate PROB`** sets
+  `ImpairmentConfig.duplicate_probability`, which had no flag, and the
+  datagram pass now reads it: a copy with identical bytes 1 µs later,
+  `DUP[i]`.  TCP and UDP.  INI keys `reorder`, `reorder_depth` and
+  `duplicate`.  (#196)
+- **A UDP stream sends each message in its own direction.**
+  **`UDPStreamConfig.messages`** takes a list of `AppMessage`, sent in order
+  and cycled, an `s2c` one from the server's address, port and MAC.
+  **`packeteer.app.protocol_conversation`** builds the list from
+  packet-spec sections in every shape `protocol_payload_fn` accepts, and
+  `stream --protocol udp --payload <protocol>` uses it.  The direction is a
+  packet's `packet_metadata.direction`; for a packet without one, as `parse`
+  writes it, the side on one of the protocol's ports, or else the first
+  sender in the flow; a `"direction"` key beside a section wrapped under the
+  protocol's name; or `c2s` for a bare section.  (#195)
+- **A UDP tunnel whose payloads your own code computes.**
+  **`tunnel_stream(stream, UDPTunnel(...))`** carries any generated stream
+  through a UDP tunnel between two endpoints.  Each inner packet is handed to
+  the caller's **`TunnelWrapper`** — `wrap(inner, direction, timestamp)` —
+  which returns the outer datagrams to send, each with its direction: a
+  sealed packet, or a handshake or rekey before it.  The wrapper sees each
+  packet once per time it is sent, in wire order, after the inner stream's
+  impairments, so a retransmission is sealed again and a lost packet never.
+  Outer impairments apply after wrapping, from an RNG of their own.  From
+  the CLI: `stream --udp-tunnel SRC DST --tunnel-port PORT --tunnel-module
+  FILE [--tunnel-arg KEY=VALUE ...]`, with `--tunnel-src-port`,
+  `--tunnel-ttl`, and outer `--tunnel-packet-loss`, `--tunnel-corruption`,
+  `--tunnel-reorder`, `--tunnel-reorder-depth` and `--tunnel-duplicate`.
+  The module defines `make_wrapper(args)`, and **`load_wrapper`** loads one
+  from Python; the module and its arguments have no INI key, so a config
+  file never names code to run.  `examples/udp_tunnel/xor_seal.py` is a toy
+  wrapper to start from, and a new guide page, *Tunnelling through your own
+  code*, walks through it.  packeteer still does no cryptography.  (#197)
+- **A module loaded by path can import the modules beside it**: a tunnel
+  module (`--tunnel-module`, `load_wrapper`) and a protocol module
+  (`--load-protocol`, `protocols.load_module`).  Its directory is appended to
+  `sys.path`, so a cipher shared by a tunnel's wrapper and its decoder can be
+  one file beside both, as kober's `--load-transforms` now allows too.
+  Appended, not put first, so a file beside it named like a standard-library
+  module is never imported in its place.  Python imports a module once per
+  process, by name, so give a shared module a name of your own: two modules
+  from different folders that each import a `crypto.py` beside them both
+  get the first one loaded.  (#203)
+- **`stream --start-time SECONDS`**, and the INI key `start_time`: the Unix
+  time the stream starts at, on every path (TCP, UDP, SCTP, `--sessions`,
+  `--payload http` and `--payload vpn`).  (#202)
+- **`HTTPHeaders`**, an HTTP message's header lines in order, where a name
+  may repeat: `items()` gives the lines, `get_all(name)` every value of a
+  name, `headers[name]` one value (a repeated name's joined with `", "`,
+  except `Set-Cookie`, which gives its first), and `add`, assignment and
+  `del` edit it.  Lookups are case-insensitive.  It is built from a dict, as
+  before, or from `(name, value)` pairs.  (#172)
+- **`apply_datagram_impairments` takes `include_ethernet` and `encap`**, with
+  the names and defaults the stream generators use, so it finds the IP
+  header and corrupts the payload rather than a frame's padding.  (#200)
+
+### Changed
+
+- **Breaking:** an impairment option that a stream cannot apply is
+  **refused** instead of being ignored.  On `--protocol udp`, and with
+  `--payload vpn`, that is `--retransmission-probability`,
+  `--retransmit-lost`, `--server-rst` and `--stray-packets`, which describe a
+  TCP connection; `--payload vpn` warned about the first three and went on.
+  On `--protocol sctp`, it is every impairment option, `--packet-loss` and
+  `--payload-corruption` included, because the SCTP stream takes none yet.
+  A command line that passed one of these got a clean capture: drop the
+  option to get the same capture now.  The new `--reorder` is refused on TCP
+  and SCTP, and `--duplicate` on SCTP, by the same rule.  (#194, #196)
+- **Breaking:** a message that travels server to client is refused by
+  `protocol_payload_fn`, and so by `stream --protocol tcp --payload
+  <protocol>`, instead of being sent from the client.  That includes the
+  replies in a parsed capture.  Over UDP, use `protocol_conversation` and
+  `UDPStreamConfig.messages`, as the CLI now does; a TCP stream with data
+  both ways is #198.  (#195)
+- **Breaking:** a section wrapped under the protocol's name in
+  `--protocol-messages` may have nothing beside it but `"direction"`.  Any
+  other key, such as a misspelling, was ignored and is now refused: remove
+  it.  With `--payload http`, where a message's type gives its direction, a
+  `"direction"` key is refused too.  (#195)
+- **Breaking:** an `http` section's `headers` is written as an array of
+  `[name, value]` pairs, in order, by `parse` and `stream --json`.  The
+  object form is still read.  A reader of `parse` output that did
+  `section["headers"]["Host"]` reads pairs now; `dict(section["headers"])`
+  gives the old view for a message with no repeated names.  (#172)
+- **Breaking:** `HTTPRequest.headers` and `HTTPResponse.headers` are an
+  `HTTPHeaders`, not a `dict`.  Indexing by name, `in`, iterating names,
+  `dict(headers)`, and building a message with `headers={...}` still work.
+  `isinstance(headers, dict)` does not, and nor does reading a list back
+  from `headers[name]`, the one-line-per-item form 0.17.0 gave `Set-Cookie`:
+  use `get_all(name)`.  (#172)
+- **Breaking:** `sanitise` replaces a DNS label with one of **the same
+  length**, in base 36: `www.shop.example.com` becomes
+  `000.0000.0000000.001` where it was `label0.label1.label2.label3`.  A tool
+  that recognised a sanitised name by its `label` prefix cannot any more.
+  Past 36 distinct one-character labels, replacements are shared, with a
+  warning.  (#192)
+- **Breaking:** `write_pcap` and `write_pcapng` raise `ValueError` unless
+  given exactly one of `path` and `file_object`, as the readers do.  Given
+  both, they wrote twice, drawing the records twice, so a generator's second
+  copy was an empty capture.  Given neither, they wrote nothing and said
+  nothing.  Pass one destination; to write two files, call the writer
+  twice.  (#204)
+- **`write_pcap` and `write_pcapng` take any iterable of records**,
+  consumed once and in order, written as drawn: a generator works, so a
+  capture larger than memory can be written one record at a time.  They
+  always did this, but were annotated and documented as taking a list; it
+  is a contract now.  (#204)
+- **A seeded `stream` run starts at a fixed time**, `1700000000`
+  (2023-11-14), unless `--start-time` says otherwise; it started at the
+  clock.  Every seeded capture's timestamps change, and its packets do not.
+  An unseeded run still starts at the current time.  From the API, `seed`
+  without `base_time` still starts at the clock.  (#202)
+
+### Fixed
+
+- **`stream --protocol udp` applies `--packet-loss` and
+  `--payload-corruption`.**  They were accepted and then ignored, so every
+  datagram was written unchanged, for random payloads, built-in protocols
+  such as `--payload dns`, compiled protocols, and `--sessions`.  A "lossy"
+  UDP stream generated before this release was not lossy.  (#194)
+- **A UDP stream's replies travel server to client.**  A DNS stream built
+  from queries and responses, or replayed from a parsed capture, sent every
+  datagram from the client's port to the server's.  The same command line
+  now gives a different capture, with the replies leaving from the
+  server.  (#195)
+- **`--payload-corruption` corrupts the payload in a short frame.**  It
+  flipped the frame's last byte, which in an Ethernet frame under 60 bytes
+  is padding outside every checksum: the packet was labelled `CORRUPT[i]`
+  and was valid, its payload unchanged.  That covered IPv4 UDP payloads
+  under 18 bytes, IPv4 TCP segments without options under 6, and IPv6
+  payloads under 6.  It now flips the last byte of the IP datagram, read
+  from the IP header; a frame that was never padded corrupts the same byte
+  as before.  (#200)
+- **`stream --retransmit-lost` applies to a plain TCP stream.**  It reached
+  only `--payload http`; on `--protocol tcp` a lost segment stayed lost.
+  (#196)
+- **`stream --seed` reproduces the file**, as documented.  Two runs wrote
+  the same packets with different timestamps, because the start came from
+  the clock and the CLI could not set it.  (#202)
+- **`sanitise` keeps a DNS-over-TCP message's length**, so the sequence
+  numbers after it stay true.  Each `labelN` was rarely the length of the
+  label it replaced, so a segment grew or shrank and a reassembler found
+  gaps and overlaps the capture never had.  One case is left, and
+  documented: a message whose sender compressed names differently from
+  packeteer carries `raw`, which is dropped and rebuilt, and its length can
+  still change.  (#192)
+- **`parse` keeps every HTTP header line.**  A repeated header was folded
+  into one line, `gzip, chunked`, and needed `raw` to be sent back as two,
+  and the order across names was lost.  Each line is now kept, in order,
+  with its name as spelt, so such a message round-trips without `raw`, and
+  `sanitise` rebuilding a message whose `raw` it dropped no longer regroups
+  its headers.  (#172)
+
+### Documentation
+
+- **Where each impairment applies.**  `stream.md`'s *TCP-only arguments*
+  said the impairment options were silently ignored on UDP and SCTP, while a
+  later example used `--packet-loss` on UDP; it splits into the TCP header
+  options and an *Impairments* table with a column per protocol.  The
+  `--write-config` template said the same, and that `--payload vpn` warned;
+  it marks each key now.  `--gap-jitter`'s help and the guide said it
+  reorders, which is true on TCP only.  (#194, #196)
+- **The INI keys whose names differ from their flags** were given as
+  `packet_loss` and `server_rst`.  `packet_loss` matches its flag and there
+  is no `server_rst` key; the three that differ are
+  `payload_corruption_probability`, `server_rst_probability` and
+  `stray_packet_count`, in `stream.md` and in the template.
+- **Reproducibility from the API.**  The guide and the generator internals
+  said a `seed` alone gives byte-identical output; it gives identical
+  packets, and the timestamps also need `base_time`.  (#202)
+- The guide's impairment section covers UDP: two-way messages, reordering
+  and duplication, with an example.  The README describes the UDP stream
+  and the tunnel.
+
+---
+
 ## [0.17.0] - 2026-10-07
 
 **Kober 0.5.0, and HTTP on the wire.**  Two strands, most of the work found
@@ -3710,7 +3919,8 @@ the exhaustive API reference.
      tagged with names that predate this convention, so only the entries below
      carry compare links. -->
 
-[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/adamkjonsson/packeteer/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/adamkjonsson/packeteer/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/adamkjonsson/packeteer/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/adamkjonsson/packeteer/compare/v0.14.0...v0.15.0

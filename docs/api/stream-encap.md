@@ -103,6 +103,33 @@ See {doc}`../guide/generating` for usage examples and combination rules.
 
 ---
 
+## UDP tunnel through your own code
+
+Not an encapsulation layer, and not accepted by `encap=`: a tunnel whose
+payloads the caller computes has to see the *finished* stream, after its
+impairments, so {func}`~packeteer.generate.udp_tunnel.tunnel_stream` runs on
+one.  See {doc}`../guide/tunnelling`.
+
+```{eval-rst}
+.. autoclass:: packeteer.generate.udp_tunnel.UDPTunnel
+   :members:
+```
+
+```{eval-rst}
+.. autoclass:: packeteer.generate.udp_tunnel.TunnelWrapper
+   :members:
+```
+
+```{eval-rst}
+.. autofunction:: packeteer.generate.udp_tunnel.tunnel_stream
+```
+
+```{eval-rst}
+.. autofunction:: packeteer.generate.udp_tunnel.load_wrapper
+```
+
+---
+
 ## Type aliases
 
 ```{eval-rst}

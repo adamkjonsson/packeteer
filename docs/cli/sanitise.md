@@ -51,7 +51,9 @@ levels.
 ## Application-layer sanitisation
 
 **DNS** — applied automatically when a `dns` section is present.  Domain name
-labels are replaced consistently (`label0`, `label1`, …); A/AAAA RDATA
+labels are each replaced consistently by a synthetic label **of its own length**, in
+base 36: `www.shop.example.com` becomes `000.0000.0000000.001`.  There are 36 one-character labels, and past
+the 36th distinct one they share replacements, with a warning.  A/AAAA RDATA
 addresses use the same replacement pool as IP headers.
 
 **DHCP** — applied automatically when a `dhcp` section is present.  IP fields
@@ -96,9 +98,9 @@ packeteer would rebuild — is redacted and zeroed **inside those bytes**, and
 everything else stays as captured: the order and repetition of headers,
 spacing, line endings.  When its head cannot be read line by line, a folded
 continuation line above all, the bytes are dropped instead and the message is
-rebuilt from its sanitised fields.  That rebuild groups a repeated header,
-combines every one but `Set-Cookie` into one line, and can change the
-message's length.
+rebuilt from its sanitised fields.  That rebuild keeps the header lines'
+order and repetition (#172), but not the exact spacing or a continuation
+line, so it can change the message's length.
 
 ## PII scanning
 
@@ -156,9 +158,11 @@ IDs, MPLS labels, GRE keys, packet count and order.
 Nor is a TCP segment's length, so the sequence numbers stay true: every
 redaction and every zeroing keeps the length of what it replaces.  Two
 exceptions are known.  An HTTP message rebuilt from its fields because its
-head could not be read line by line, above.  And a DNS message over TCP,
-whose names are replaced by `labelN` labels of other lengths — that is
-[#192](https://github.com/adamkjonsson/packeteer/issues/192).
+head could not be read line by line, above.  And a DNS message that carried
+`raw` because its sender compressed names differently from packeteer: a
+redacted name cannot stay in `raw`, so the message is rebuilt from its
+fields with packeteer's compression, and its length can change, though every
+label keeps its own (#192).
 
 ## Unsupported IP protocol numbers
 

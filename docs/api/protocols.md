@@ -111,6 +111,11 @@ and a message object.
 ```
 
 ```{eval-rst}
+.. autofunction:: packeteer.app.protocol_conversation
+   :no-index:
+```
+
+```{eval-rst}
 .. autofunction:: packeteer.app.protocol_payload_fn
    :no-index:
 ```

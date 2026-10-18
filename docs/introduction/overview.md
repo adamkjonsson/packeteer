@@ -64,7 +64,7 @@ protocols:
 | Layer | Protocols |
 |-------|-----------|
 | Data link | Ethernet, VLAN (802.1Q), QinQ (stacked VLANs), PPPoE, ARP, Linux cooked (SLL/SLL2), BSD loopback (`DLT_NULL` / `DLT_LOOP`) |
-| Tunnelling / encapsulation | MPLS, GRE, EtherIP, IP-in-IP, pseudowire, VXLAN, GENEVE, GTP-U, IPsec AH/ESP |
+| Tunnelling / encapsulation | MPLS, GRE, EtherIP, IP-in-IP, pseudowire, VXLAN, GENEVE, GTP-U, IPsec AH/ESP; a UDP tunnel whose payloads your own code computes (generation only) |
 | Network | IPv4, IPv6 |
 | Transport | TCP, UDP, SCTP, ICMP, ICMPv6 |
 | Application | HTTP, DNS, DHCP — and any protocol compiled from a [spec](../protocols/index), reached by its own name |
@@ -147,11 +147,17 @@ packeteer stream --protocol udp --client-ip 10.0.0.1 --server-ip 10.0.0.2 \
 ```
 
 Optional features let you inject realistic impairments — packet loss,
-retransmissions, payload corruption, server RST — and wrap every packet in
-one or more encapsulation layers (VLAN, QinQ, MPLS, PPPoE, GRE, EtherIP,
-IP-in-IP, pseudowire, VXLAN, GENEVE, GTP-U, IPsec AH/ESP) to match the encapsulation stack of the network under test.  The
-`--mtu` flag causes packets that exceed the limit to be fragmented as they
-would be by a real low-MTU middlebox.
+retransmissions, payload corruption, server RST, duplication, and on UDP
+reordering — and wrap every packet in one or more encapsulation layers
+(VLAN, QinQ, MPLS, PPPoE, GRE, EtherIP, IP-in-IP, pseudowire, VXLAN, GENEVE,
+GTP-U, IPsec AH/ESP) to match the encapsulation stack of the network under
+test.  The `--mtu` flag causes packets that exceed the limit to be
+fragmented as they would be by a real low-MTU middlebox.
+
+`--udp-tunnel` carries a whole stream through a UDP tunnel whose payloads
+**your own code** computes — sealing it as WireGuard or OpenVPN would — with
+each packet handed over once per time it is sent, in wire order, and the
+outer datagrams impaired separately.  See {doc}`../guide/tunnelling`.
 
 Streams can be written directly to pcap or pcapng, or exported as a JSON
 config so they can be edited and rebuilt with `packeteer build`, or sanitised

@@ -107,7 +107,9 @@ packeteer sanitise capture.pcap --pcap clean.pcap
 ## Application-layer sanitisation
 
 **DNS** — sanitised automatically when a `dns` section is present.  Domain
-name labels are replaced consistently (`label0`, `label1`, …), and A/AAAA
+name labels are each replaced consistently by a synthetic label **of its own length**, in
+base 36: `www.shop.example.com` becomes `000.0000.0000000.001`, so a name keeps its length and so does
+a DNS message over TCP.  A/AAAA
 RDATA addresses share the same replacement pool as network-layer IPs.
 Transaction IDs are kept by default; set `dns_ids=True` to zero them.
 

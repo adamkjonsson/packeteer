@@ -84,9 +84,12 @@ class TestTheMessagesAreSent(unittest.TestCase):
         parsed = [parse_packet(p.raw) for p in packets]
         out = [http.to_spec(pkt.http) for pkt in parsed if pkt.http is not None]
         # The encoder adds the Content-Length a body needs, so it is on the
-        # wire and in what is parsed back; everything else is as given.
+        # wire and in what is parsed back; everything else is as given.  The
+        # sections were given in the object form and `parse` writes pairs
+        # (#172), which these, one line per name, read back into.
         for section in out:
-            section["headers"].pop("Content-Length")
+            section["headers"] = {name: value for name, value in section["headers"]
+                                  if name != "Content-Length"}
         self.assertEqual(out, [s["http"] for s in sections])
 
     def test_both_directions(self) -> None:

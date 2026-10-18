@@ -195,9 +195,11 @@ class VPNConfig:
             key-exchange message.
         impairments: Wire impairments
             (:class:`~packeteer.generate.impairments.ImpairmentConfig`) applied
-            to each channel independently.  This is UDP, so only the two fields
-            that describe what a wire does to a datagram are read —
-            ``packet_loss_probability`` and ``payload_corruption_probability``.
+            to each channel independently.  This is UDP, so only the fields
+            that describe what a wire or a capture point does to a datagram
+            are read — ``packet_loss_probability``,
+            ``payload_corruption_probability``, ``reorder_probability`` with
+            ``reorder_depth``, and ``duplicate_probability``.
             Retransmission, server RST and stray injection describe TCP
             connection behaviour and are ignored rather than approximated.
             ``None`` (the default) leaves the traffic clean and draws no
@@ -264,12 +266,14 @@ def _data_messages(
 
 def _impair(
     stream: UDPStream, config: VPNConfig, rng: random.Random,
+    *, include_ethernet: bool, encap: EncapSpec,
 ) -> UDPStream:
     """Apply *config*'s impairments to one channel's datagrams."""
     if config.impairments is None:
         return stream
     return UDPStream(packets=apply_datagram_impairments(
         stream.packets, rng=rng, config=config.impairments,
+        include_ethernet=include_ethernet, encap=encap,
     ))
 
 
@@ -369,7 +373,7 @@ def generate_vpn_stream(
             handshake = _handshake_messages(rng, epoch, config)
             streams.append(_impair(render_udp_session(
                 handshake, server_port=config.key_port, base_time=cursor, **common,
-            ), config, rng))
+            ), config, rng, include_ethernet=include_ethernet, encap=encap))
             cursor += len(handshake) * gap
 
             data = _data_messages(
@@ -377,6 +381,6 @@ def generate_vpn_stream(
             )
             streams.append(_impair(render_udp_session(
                 data, server_port=config.data_port, base_time=cursor, **common,
-            ), config, rng))
+            ), config, rng, include_ethernet=include_ethernet, encap=encap))
             cursor += len(data) * gap
     return merge_streams(streams)

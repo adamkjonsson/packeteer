@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import struct
 from collections.abc import Callable, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from packeteer import protocols
 from packeteer.protocols import AppProtocol
@@ -38,10 +38,11 @@ from . import dhcp, dns, http
 
 if TYPE_CHECKING:
     from packeteer.generate.builder import PacketBuilder
+    from packeteer.generate.payloads.base import AppMessage, Direction
 
 __all__ = [
-    "dns", "dhcp", "http", "apply_app_section", "protocol_messages",
-    "protocol_payload_fn", "register_builtins",
+    "dns", "dhcp", "http", "apply_app_section", "protocol_conversation",
+    "protocol_messages", "protocol_payload_fn", "register_builtins",
 ]
 
 
@@ -130,16 +131,82 @@ def _is_packet(element: dict[str, Any]) -> bool:
     return bool(element.keys() & _PACKET_KEYS)
 
 
-def _sections_in(
+#: The ways a message can travel.  ``s2c`` is a reply, from the server.
+_DIRECTIONS: tuple[str, ...] = ("c2s", "s2c")
+
+#: The key beside a wrapped section that says which way it travels (#195).
+_DIRECTION_KEY = "direction"
+
+#: Where #198 is tracked, for the refusal of a reply that only a UDP stream
+#: can send the right way today.
+_TCP_DIRECTIONS_ISSUE = "https://github.com/adamkjonsson/packeteer/issues/198"
+
+
+def _checked_direction(value: object, index: int, where: str) -> str:
+    """Return *value* if it is a direction, or refuse it naming *where*."""
+    if value not in _DIRECTIONS:
+        raise ValueError(
+            f"message {index}: {where} must be 'c2s' or 's2c', not {value!r}"
+        )
+    return str(value)
+
+
+def _endpoints(packet: dict[str, Any]) -> tuple[tuple[Any, Any], tuple[Any, Any]] | None:
+    """Return a packet's ``(source, destination)`` address and port, if it has them."""
+    network, transport = packet.get("network"), packet.get("transport")
+    if not isinstance(network, dict) or not isinstance(transport, dict):
+        return None
+    src = (network.get("src"), transport.get("src_port"))
+    dst = (network.get("dst"), transport.get("dst_port"))
+    if None in src or None in dst:
+        return None
+    return src, dst
+
+
+def _inferred_direction(
+    proto: AppProtocol, packet: dict[str, Any],
+    clients: dict[frozenset[tuple[Any, Any]], tuple[Any, Any]],
+) -> str:
+    """Return which way *packet* travels when it does not say.
+
+    ``packeteer parse`` writes no direction, so a parsed capture has to be
+    read for it.  The side on one of the protocol's ports is the server.
+    When neither side is, or both are, the first endpoint seen sending in
+    the flow is the client, which for TCP is whoever sent the SYN.  A packet
+    with no addresses goes client to server, as every message did before
+    #195.
+    """
+    ends = _endpoints(packet)
+    if ends is None:
+        return "c2s"
+    src, dst = ends
+    if dst[1] in proto.ports and src[1] not in proto.ports:
+        return "c2s"
+    if src[1] in proto.ports and dst[1] not in proto.ports:
+        return "s2c"
+    return "c2s" if clients.get(frozenset(ends)) == src else "s2c"
+
+
+def _directed_sections_in(
     proto: AppProtocol, messages: Sequence[dict[str, Any]] | dict[str, Any],
-) -> list[dict[str, Any]]:
-    """Return the *proto* sections in *messages*, whatever shape they came in.
+    *, directed: bool = True,
+) -> list[tuple[dict[str, Any], str]]:
+    """Return the *proto* sections in *messages*, each with the way it travels.
 
     Accepts a list of bare sections, the same wrapped under the protocol's
     name, whole packet specs, or a ``packeteer parse`` document (an object
     with a ``"packets"`` list).  A packet that carries no *proto* section —
     an ACK, the handshake — is not a message and is skipped; anything else
     is handed on as a section for the protocol to accept or refuse.
+
+    The direction is a packet's ``packet_metadata.direction``, or inferred
+    from its addresses when it has none (:func:`_inferred_direction`); a
+    wrapped section's ``"direction"`` key; and ``c2s`` for a bare section.
+    A wrapped section may carry nothing else beside it, since a key that is
+    read by nothing is a misspelling accepted in silence (#137).  With
+    *directed* false the caller takes each message's direction from the
+    message itself, so a ``"direction"`` key, which would be ignored, is
+    refused instead.
     """
     if isinstance(messages, dict):
         packets = messages.get("packets")
@@ -150,7 +217,17 @@ def _sections_in(
                 f"object with keys {', '.join(repr(k) for k in messages)}"
             )
         messages = packets
-    out: list[dict[str, Any]] = []
+
+    # The first sender in each flow, over every packet and not only those
+    # carrying a message: for TCP that is the SYN's sender.
+    clients: dict[frozenset[tuple[Any, Any]], tuple[Any, Any]] = {}
+    for element in messages:
+        if isinstance(element, dict) and _is_packet(element):
+            ends = _endpoints(element)
+            if ends is not None:
+                clients.setdefault(frozenset(ends), ends[0])
+
+    out: list[tuple[dict[str, Any], str]] = []
     for index, element in enumerate(messages):
         if not isinstance(element, dict):
             raise ValueError(
@@ -158,13 +235,74 @@ def _sections_in(
                 f"object), got {type(element).__name__}"
             )
         inner = element.get(proto.name)
-        if isinstance(inner, dict):
-            out.append(inner)
-        elif _is_packet(element):
-            continue
+        if _is_packet(element):
+            if not isinstance(inner, dict):
+                continue
+            meta = element.get("packet_metadata")
+            stated = meta.get(_DIRECTION_KEY) if isinstance(meta, dict) else None
+            direction = (
+                _inferred_direction(proto, element, clients) if stated is None
+                else _checked_direction(stated, index, "packet_metadata.direction")
+            )
+            out.append((inner, direction))
+        elif isinstance(inner, dict):
+            allowed = {proto.name, _DIRECTION_KEY} if directed else {proto.name}
+            extra = sorted(set(element) - allowed)
+            if extra:
+                beside = ("only 'direction' may be beside it" if directed else
+                          f"nothing may be beside it; a {proto.name} message's "
+                          f"direction is part of the message")
+                raise ValueError(
+                    f"message {index}: unknown key "
+                    f"{', '.join(repr(k) for k in extra)} beside the "
+                    f"{proto.name!r} section; {beside}"
+                )
+            direction = _checked_direction(
+                element.get(_DIRECTION_KEY, "c2s"), index, "'direction'",
+            )
+            out.append((inner, direction))
         else:
-            out.append(element)
+            out.append((element, "c2s"))
     return out
+
+
+def _built(
+    proto: AppProtocol, sections: Sequence[dict[str, Any]], transport: str,
+) -> list[object]:
+    """Build each of *sections* as a *proto* message, naming the one that fails."""
+    if not proto.carries(transport):
+        raise ValueError(
+            f"{proto.name!r} is carried over {proto.over}, not {transport}"
+        )
+    if not sections:
+        raise ValueError(
+            f"no {proto.name} messages: nothing carries a {proto.name!r} "
+            f"section, so there is nothing to send"
+        )
+    built: list[object] = []
+    for index, section in enumerate(sections):
+        try:
+            built.append(proto.from_spec(section))
+        except _SECTION_ERRORS as exc:
+            raise ValueError(
+                f"message {index}: {type(exc).__name__}: {exc}"
+            ) from exc
+    return built
+
+
+def _encoded(
+    proto: AppProtocol, built: Sequence[object], transport: str,
+) -> list[bytes]:
+    """Encode each of *built* for *transport*, naming the one that fails."""
+    encoded: list[bytes] = []
+    for index, message in enumerate(built):
+        try:
+            encoded.append(proto.encode(message, transport))
+        except _SECTION_ERRORS as exc:
+            raise ValueError(
+                f"message {index}: {type(exc).__name__}: {exc}"
+            ) from exc
+    return encoded
 
 
 def protocol_messages(
@@ -211,25 +349,75 @@ def protocol_messages(
         )
 
     """
-    if not proto.carries(transport):
-        raise ValueError(
-            f"{proto.name!r} is carried over {proto.over}, not {transport}"
+    sections = _directed_sections_in(proto, messages, directed=False)
+    return _built(proto, [section for section, _ in sections], transport)
+
+
+def protocol_conversation(
+    proto: AppProtocol,
+    messages: Sequence[dict[str, Any]] | dict[str, Any],
+    transport: str,
+) -> list[AppMessage]:
+    """Return *messages* encoded by *proto*, each with the way it travels.
+
+    The API behind ``packeteer stream --protocol udp --payload <protocol>
+    --protocol-messages FILE``, whose result goes to
+    :attr:`UDPStreamConfig.messages
+    <packeteer.generate.udp_stream.UDPStreamConfig.messages>` so that a
+    reply leaves from the server (#195).  It takes every shape
+    :func:`protocol_payload_fn` does.  The direction of each message comes
+    from, in order:
+
+    - a whole packet's ``packet_metadata.direction``, as ``stream --json``
+      writes it;
+    - for a packet without one, such as ``packeteer parse`` writes, its
+      addresses: the side on one of the protocol's
+      :attr:`~packeteer.protocols.AppProtocol.ports` is the server, and
+      otherwise the first sender in the flow is the client;
+    - a wrapped section's ``"direction"`` key beside it:
+      ``{"dns": {...}, "direction": "s2c"}``;
+    - ``"c2s"`` for a bare section.
+
+    Args:
+        proto: The protocol to encode with.
+        messages: Its messages, in the order to send them, in any of the
+            accepted shapes.  At least one must carry a section.
+        transport: ``"tcp"`` or ``"udp"`` — what will carry them.
+
+    Returns:
+        One :class:`~packeteer.generate.payloads.base.AppMessage` per
+        section, labelled with the protocol's name and the message's index,
+        such as ``dns[3]``.  :func:`~packeteer.generate.payloads.base.
+        render_udp_session` renders the list as it is.
+
+    Raises:
+        ValueError: As :func:`protocol_messages`, and if a direction is not
+            ``"c2s"`` or ``"s2c"``, or a wrapped section has a key beside it
+            other than ``"direction"``.
+
+    Example::
+
+        from packeteer import protocols
+        from packeteer.app import protocol_conversation
+        from packeteer.generate import UDPStreamConfig, generate_udp_stream
+
+        msgs = protocol_conversation(protocols.for_section("dns"), parsed, "udp")
+        stream = generate_udp_stream(
+            client_ip="10.0.0.2", server_ip="10.0.0.1", server_port=53,
+            num_data_packets=len(msgs), config=UDPStreamConfig(messages=msgs),
         )
-    sections = _sections_in(proto, messages)
-    if not sections:
-        raise ValueError(
-            f"no {proto.name} messages: nothing carries a {proto.name!r} "
-            f"section, so there is nothing to send"
+
+    """
+    from packeteer.generate.payloads.base import AppMessage
+
+    directed = _directed_sections_in(proto, messages)
+    built = _built(proto, [section for section, _ in directed], transport)
+    return [
+        AppMessage(cast("Direction", direction), data, f"{proto.name}[{index}]")
+        for index, ((_, direction), data) in enumerate(
+            zip(directed, _encoded(proto, built, transport), strict=True),
         )
-    built: list[object] = []
-    for index, section in enumerate(sections):
-        try:
-            built.append(proto.from_spec(section))
-        except _SECTION_ERRORS as exc:
-            raise ValueError(
-                f"message {index}: {type(exc).__name__}: {exc}"
-            ) from exc
-    return built
+    ]
 
 
 def protocol_payload_fn(
@@ -271,7 +459,11 @@ def protocol_payload_fn(
         ValueError: If no element carries a section, if an element is not an
             object, if the protocol does not run over *transport*, or if a
             section is not one of *proto* — with the element's index and the
-            protocol's own reason.
+            protocol's own reason.  Also if a message travels server to
+            client, as :func:`protocol_conversation` reads directions: a
+            ``payload_fn`` sends every message from the client, and sending
+            a reply that way would be wrong in silence.  Over UDP,
+            :func:`protocol_conversation` sends it the right way.
 
     Example::
 
@@ -283,14 +475,17 @@ def protocol_payload_fn(
         stream = generate_tcp_stream(config=TCPStreamConfig(payload_fn=fn))
 
     """
-    encoded: list[bytes] = []
-    for index, message in enumerate(protocol_messages(proto, messages, transport)):
-        try:
-            encoded.append(proto.encode(message, transport))
-        except _SECTION_ERRORS as exc:
+    conversation = protocol_conversation(proto, messages, transport)
+    for index, message in enumerate(conversation):
+        if message.direction != "c2s":
             raise ValueError(
-                f"message {index}: {type(exc).__name__}: {exc}"
-            ) from exc
+                f"message {index} travels server to client, and a payload_fn "
+                f"sends every message from the client.  Over UDP, "
+                f"protocol_conversation and UDPStreamConfig.messages send it "
+                f"the right way (stream --protocol udp does); over TCP that "
+                f"is not supported yet: {_TCP_DIRECTIONS_ISSUE}"
+            )
+    encoded = [message.data for message in conversation]
 
     def payload_fn(index: int, _direction: str) -> bytes:
         return encoded[index % len(encoded)]
