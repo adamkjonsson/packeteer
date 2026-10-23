@@ -262,13 +262,33 @@ units:
 | `endian` | *(the document's)* | Byte order for this unit's integers — see [`endian`](#endian) |
 | `doc` | — | Free-text description |
 
+(names-compile-refuses)=
+### Names `compile` refuses
+
+A unit compiles to a class, `reading` to `Reading`, and a field to an
+attribute of it, so [`packeteer protocol compile`](../cli/protocol.md#compile)
+refuses three kinds of name that `check` accepts, because the generated
+module needs them itself:
+
+- **A unit or field name beginning with `_`.**  The module's own helpers and
+  locals all do, as do the methods a dataclass defines (`__init__`,
+  `__eq__`): a field `__init__` would replace the class's constructor.
+  kober's compiler keeps the same prefix for the same reason.
+- **A unit whose class is a Python builtin**: `value_error` → `ValueError`
+  would replace the exception the module raises on a bad `const`.
+- **A unit whose class is a keyword**: `none` → `None`.
+
+Each is refused with the name and where it is, before any code is written.
+`check` accepts them, as kober's `check` does, since only compiling turns a
+name into Python.
+
 ---
 
 ## Fields
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `name` | *(required)* | Field name.  Must be a Python identifier, since it becomes an attribute.  `null` makes the field anonymous — decoded and re-encoded, but not named |
+| `name` | *(required)* | Field name.  Must be a Python identifier, since it becomes an attribute, and to compile may not begin with `_` — see [Names `compile` refuses](#names-compile-refuses).  `null` makes the field anonymous — decoded and re-encoded, but not named |
 | *a type kind* | *(required)* | What it holds, written on the field — see [How a field is written](#shorthands) |
 | `type` | — | The long form of a type kind — see [Types](#types) |
 | *a repeat kind* | — | How many times it occurs, written on the field |

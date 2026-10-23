@@ -64,9 +64,29 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   and so are a keyword argument and a wrong number of arguments, as kober
   refuses them when a spec loads.  Each was already an error; it is now the
   real one.
+- **Breaking:** `protocol compile` and `compile_spec` refuse a unit or field
+  name beginning with `_`, and a unit whose class would be a Python builtin
+  or keyword (`value_error` → `ValueError`, `none` → `None`), each with its
+  name and location (#206).  The generated module keeps `_` for its own
+  names, as kober's compiler does.  A spec that used one must rename it;
+  `check` still accepts it, as kober's `check` does.  Until now such a name
+  compiled unless it happened to collide, and a collision broke the module
+  in ways reported as something else.  None of packeteer's or kober's
+  shipped specs is affected.
 
 ### Fixed
 
+- **A unit named like a builtin broke its compiled module** (#206).
+  `value_error` compiled to `class ValueError`, so a bad `const` raised
+  *exceptions must derive from BaseException* in place of its own
+  `ValueError`; `none` produced source that did not parse, reported as a bug
+  in packeteer's compiler; a field `__init__` replaced the class's
+  constructor.  All are now refused before any code is written.
+- **A field named `field` or `list` broke its compiled module.**  A repeated
+  field's default, `field(default_factory=list)`, ran in the class body,
+  where either name was already bound to the field's default.  The class
+  body now calls `_field(default_factory=lambda: [])`, which no spec name
+  can reach.  Found checking #206.
 - **A map entry was refused as indexing** — *indexing is not allowed in an
   expression* — so a spec kober 0.6.0 accepts read as a wrong one rather
   than as using a construct packeteer lacks (#208).

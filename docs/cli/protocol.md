@@ -99,6 +99,11 @@ same output as `check`, and exit `1`.  The generated module is also *imported*
 before it is written, so one that cannot load is caught here rather than by
 whoever runs it next.
 
+A few names pass `check` and are refused here, because the module needs them
+itself: a unit or field name beginning with `_`, and a unit whose class would
+be a Python builtin or keyword (`value_error` → `ValueError`).  See
+[Names `compile` refuses](../protocols/format.md#names-compile-refuses).
+
 The module is a plain Python file with no packeteer-specific loader:
 
 ```python

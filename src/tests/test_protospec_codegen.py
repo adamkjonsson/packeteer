@@ -843,3 +843,94 @@ class TestFillDecoding(_CompileTestCase):
         proto = protocols.for_section("fillrest")
         msg = proto.decode(bytes([1]) + b"tail", "udp")
         self.assertEqual(msg.d, b"tail")
+
+
+class TestNamesTheModuleKeeps(_CompileTestCase):
+    """A spec name cannot take a name the generated module needs (#206).
+
+    Refused rather than renamed, as `_RESERVED` already was: a unit whose
+    class would hide a Python builtin or be a keyword, and any unit or field
+    name beginning with `_`, which is the module's own namespace — its
+    helpers and locals, `_field`, and the dunders a dataclass defines.
+    """
+
+    _UNIT = """
+        name: t
+        version: "1"
+        entry: msg
+        units:
+          msg:
+            fields:
+              - {{name: magic, bits: 8, const: 0x5A}}
+              - {{name: inner, unit: {name}}}
+          {name}:
+            fields:
+              - {{name: value, bits: 16}}
+    """
+
+    _FIELD = """
+        name: t
+        version: "1"
+        entry: m
+        over: udp
+        ports: [9101]
+        units:
+          m:
+            fields:
+              - {{name: magic, bits: 8, const: 0x5A}}
+              - {{name: {name}, bits: 8}}
+              - {{name: n, bits: 8}}
+              - {{name: xs, bits: 8, count: "n"}}
+              - {{name: sub, unit: s}}
+          s:
+            fields:
+              - {{name: v, bits: 8}}
+    """
+
+    def test_a_unit_named_like_a_builtin_or_keyword_is_refused(self) -> None:
+        cases = {"value_error": ("ValueError", "builtin"),
+                 "exception": ("Exception", "builtin"),
+                 "none": ("None", "keyword")}
+        for name, (cls, kind) in cases.items():
+            with self.subTest(name), self.assertRaises(SpecError) as ctx:
+                _source(self._UNIT.format(name=name))
+            message = str(ctx.exception)
+            self.assertIn(f"units.{name}", message)
+            self.assertIn(f"unit {name!r} compiles to class {cls!r}, which is a "
+                          f"Python {kind}", message)
+            self.assertNotIn("bug in packeteer", message)
+
+    def test_a_name_beginning_with_an_underscore_is_refused(self) -> None:
+        for name in ("__init__", "__class__", "_obj", "_field"):
+            with self.subTest(field=name), self.assertRaises(SpecError) as ctx:
+                _source(self._FIELD.format(name=name))
+            self.assertIn("units.m.fields[1]", str(ctx.exception))
+            self.assertIn(f"a field name {name!r} begins with '_'", str(ctx.exception))
+        with self.assertRaises(SpecError) as ctx:
+            _source(self._UNIT.format(name="_inner"))
+        self.assertIn("units._inner", str(ctx.exception))
+        self.assertIn("a unit name '_inner' begins with '_'", str(ctx.exception))
+
+    def test_a_field_named_like_what_the_class_body_calls_compiles(self) -> None:
+        """`field` and `list` were bound in the class body when it called them.
+
+        Found while checking #206: the default of a repeated field was
+        `field(default_factory=list)`, evaluated in the class's namespace,
+        where a field of either name had just been bound to `0`.
+        """
+        for name in ("field", "list", "int", "len", "lambda"):
+            with self.subTest(field=name):
+                mod = self.compile(self._FIELD.format(name=name))
+                wire = b"\x5a\x07\x02\x08\x09\x01"
+                obj = mod.decode(wire)
+                self.assertEqual(mod.encode(obj), wire)
+                with self.assertRaises(ValueError):
+                    mod.decode(b"\x00\x07\x00\x01")
+                protocols.unregister("t")
+
+    def test_a_unit_named_like_nothing_the_module_uses_still_compiles(self) -> None:
+        mod = self.compile(self._UNIT.format(name="reading").replace(
+            'entry: msg', 'entry: msg\n        over: udp\n        ports: [9102]'))
+        with self.assertRaises(ValueError) as ctx:
+            mod.decode(b"\x00\x01\x02")
+        self.assertIn("expected 90", str(ctx.exception))

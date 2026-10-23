@@ -26,6 +26,7 @@ same shape of call and the result stays readable.
 from __future__ import annotations
 
 import ast
+import builtins
 import keyword
 import re
 from collections.abc import Callable
@@ -72,13 +73,22 @@ __all__ = ["compile_spec"]
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
-# Names the generated module uses itself.  A field or unit that wants one of
-# these is refused rather than renamed around.
+# Names the generated module defines or imports itself.  A unit whose class
+# would take one is refused rather than renamed around.  The rest of the
+# module's names cannot clash by construction (#206): its own helpers and
+# locals begin with `_`, which no spec name may, and a unit is refused when
+# its class would hide a Python builtin or be a keyword (`_BUILTINS`).
 _RESERVED: frozenset[str] = frozenset({
     "AppProtocol", "Any", "Reader", "Writer", "PROTOCOL", "annotations",
-    "check_section", "dataclass", "decode", "encode", "field", "from_spec",
+    "check_section", "dataclass", "decode", "encode", "from_spec",
     "register", "to_spec", "frame_length",
 })
+
+#: The running interpreter's builtins.  A unit compiles to a module-level
+#: class, so one named like a builtin (`value_error` -> `ValueError`) would
+#: replace it for the whole module.  Read from the interpreter rather than
+#: listed, so nothing has to know which builtins the generated code calls.
+_BUILTINS: frozenset[str] = frozenset(dir(builtins))
 
 _SCOPE_VARS: dict[str, str] = {"this": "_obj", "parent": "_parent", "root": "_root"}
 
@@ -224,6 +234,13 @@ class _Generator:
         taken: dict[str, str] = {}
         for unit_name, unit in self.spec.units.items():
             cls = _class_name(unit_name, unit.loc)
+            if keyword.iskeyword(cls) or cls in _BUILTINS:
+                kind = "a Python keyword" if keyword.iskeyword(cls) else "a Python builtin"
+                raise SpecError(
+                    f"unit {unit_name!r} compiles to class {cls!r}, which is "
+                    f"{kind}; the generated module would lose its own "
+                    f"{cls!r}, so rename the unit in the spec", unit.loc,
+                )
             if cls in _RESERVED:
                 raise SpecError(
                     f"unit {unit_name!r} compiles to {cls!r}, which the "
@@ -265,7 +282,8 @@ class _Generator:
         self._emit(_docstring(doc, indent=""))
         self._emit("from __future__ import annotations")
         self._emit()
-        self._emit("from dataclasses import dataclass, field")
+        self._emit("from dataclasses import dataclass")
+        self._emit("from dataclasses import field as _field")
         self._emit("from typing import Any")
         self._emit()
         self._emit("from packeteer.protocols import AppProtocol, check_section, "
@@ -321,7 +339,10 @@ class _Generator:
         if fld.condition is not None:
             return "None"
         if fld.repeat is not None:
-            return "field(default_factory=list)"
+            # The class body runs in the class's own namespace, where a field
+            # named `field` or `list` would already be bound: `_field` and a
+            # literal are names no spec can take (#206).
+            return "_field(default_factory=lambda: [])"
         if fld.derive is not None:
             return "None"
         if fld.const is not None:
@@ -337,7 +358,7 @@ class _Generator:
             # when the class body runs, and a unit may reference one defined
             # later in the spec — or reference it mutually (#132).
             cls = self.names.unit(fld.type.unit)
-            return f"field(default_factory=lambda: {cls}())"
+            return f"_field(default_factory=lambda: {cls}())"
         return "None"
 
     # ── decoding ──────────────────────────────────────────────────────────────
@@ -946,6 +967,13 @@ def _require_identifier(name: str, what: str, loc: Location) -> None:
             f"{what} must be a Python identifier to compile, and {name!r} is "
             f"not; rename it in the spec rather than have the generated code "
             f"disagree with it",
+            loc,
+        )
+    if name.startswith("_"):
+        raise SpecError(
+            f"{what} {name!r} begins with '_', which the generated module "
+            f"keeps for its own names (_obj, _r, _field, and a class's "
+            f"__init__); rename it in the spec",
             loc,
         )
 
