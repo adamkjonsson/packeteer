@@ -210,6 +210,31 @@ TCP, because a TCP DNS message declares its own length and a UDP one does not.
    :no-index:
 ```
 
+### Document parameters
+
+kober's `params:`, which this version declines.  They are read all the same:
+their shape is checked as kober checks it, and
+{attr}`Spec.params <packeteer.protospec.spec.Spec.params>` keeps them so that
+an expression naming one is typed rather than reported as an unknown field.
+
+```{eval-rst}
+.. autoclass:: packeteer.protospec.spec.Param
+   :members:
+   :no-index:
+```
+
+```{eval-rst}
+.. autoclass:: packeteer.protospec.spec.MapType
+   :members:
+   :no-index:
+```
+
+```{eval-rst}
+.. autoclass:: packeteer.protospec.expr.ExprType
+   :members:
+   :no-index:
+```
+
 ### Field types
 
 A field names exactly one of these.  See

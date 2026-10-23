@@ -37,7 +37,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Mapping, Union
+from typing import TYPE_CHECKING, Mapping, Union
+
+if TYPE_CHECKING:
+    from packeteer.protospec.expr import ExprType
 
 __all__ = [
     "BytesType",
@@ -56,6 +59,8 @@ __all__ = [
     "InputShape",
     "IntType",
     "Location",
+    "MapType",
+    "Param",
     "Remaining",
     "Size",
     "SizeOf",
@@ -470,6 +475,46 @@ class Unsupported:
 
 
 @dataclass(frozen=True)
+class MapType:
+    """The type of a document parameter that is a table: one value per key.
+
+    kober's, since 0.6.0.  No expression is a map; one is only ever read an
+    entry at a time, ``keys[receiver]``, which is how a spec chooses a key per
+    message.  packeteer declines both the parameter and the entry.
+
+    Attributes:
+        key: What it is indexed by: ``int`` or ``str``.
+        item: What one entry is.
+
+    """
+
+    key: ExprType
+    item: ExprType
+
+
+@dataclass(frozen=True)
+class Param:
+    """A document parameter: a value supplied when a decode is set up.
+
+    kober's construct, which this version declines (#209).  It is read all
+    the same, so that its shape is checked as kober checks it and an
+    expression naming it is typed rather than reported as an unknown field.
+
+    Attributes:
+        name: The name an expression reads it by.
+        type: One of the four expression types, or a :class:`MapType`.
+        loc: Where it is declared.
+        secret: Whether kober must never write its value anywhere.
+
+    """
+
+    name: str
+    type: ExprType | MapType
+    loc: Location
+    secret: bool = False
+
+
+@dataclass(frozen=True)
 class Spec:
     """A complete protocol description.
 
@@ -488,6 +533,9 @@ class Spec:
         unsupported: Constructs present in the source that this version reads
             but does not implement.
         loc: Where the spec came from.
+        params: The document's parameters, by name.  kober's construct, which
+            this version declines; kept so the checker can type a reference
+            to one.
 
     """
 
@@ -502,3 +550,4 @@ class Spec:
     doc: str | None = None
     unsupported: tuple[Unsupported, ...] = ()
     loc: Location = Location(path="")
+    params: Mapping[str, Param] = field(default_factory=dict)

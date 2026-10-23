@@ -52,6 +52,8 @@ from packeteer.protospec.spec import (
     InputShape,
     IntType,
     Location,
+    MapType,
+    Param,
     Remaining,
     Size,
     SizeOf,
@@ -177,6 +179,7 @@ class _Checker:
         self._check_name()
         self._check_ports()
         self._check_entry()
+        self._check_params()
         self._build_reference_map()
         self._check_units()
         self._check_reachability()
@@ -222,6 +225,24 @@ class _Checker:
             protocols.check_name(self.spec.name)
         except protocols.ProtocolError as exc:
             self._error(str(exc), self.spec.loc.child("name"))
+
+    def _check_params(self) -> None:
+        """Refuse a document parameter named like a field, as kober does.
+
+        A document parameter is in scope in every unit, so a field of the
+        same name anywhere would make a reference to either ambiguous.  The
+        parameters themselves are declined; this keeps the reference
+        resolution that types them honest (#209).
+        """
+        fields = {fld.name for unit in self.spec.units.values()
+                  for fld in unit.fields if fld.name is not None}
+        for param in self.spec.params.values():
+            if param.name in fields:
+                self._error(
+                    f"parameter {param.name!r} has the name of a field, and a "
+                    f"document parameter is in scope in every unit",
+                    param.loc,
+                )
 
     def _check_ports(self) -> None:
         """Refuse a port another registered protocol already claims (#169).
@@ -776,6 +797,8 @@ class _Checker:
                     )
                 found = fld
                 break
+            if found is None and depth == 0 and name in self.spec.params:
+                return _type_of_param(self.spec.params[name], ref, loc)
             if found is None:
                 raise SpecError(
                     f"unit {current.name!r} has no field {name!r}", loc,
@@ -1053,6 +1076,25 @@ def _field_named(unit: Unit, name: str) -> Field | None:
         if fld.name == name:
             return fld
     return None
+
+
+def _type_of_param(param: Param, ref: Ref, loc: Location) -> ExprType:
+    """Type a reference to a document parameter, which has no fields.
+
+    The parameter is kober's and declined, but its type is declared, so the
+    expression around it is checked as kober checks it rather than reported
+    as naming a field that does not exist (#209).
+    """
+    if len(ref.path) > 1:
+        raise SpecError(
+            f"parameter {param.name!r} has no fields to reference", loc,
+        )
+    if isinstance(param.type, MapType):
+        raise SpecError(
+            f"{param.name!r} is a map; an expression reads one entry of it, "
+            f"{param.name}[key]", loc,
+        )
+    return param.type
 
 
 def _type_of_field(field_type: FieldType, name: str, loc: Location) -> ExprType:

@@ -25,6 +25,39 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
+### Added
+
+- **`Spec.params`, a spec's document parameters** — kober's `params:`, which
+  this version still declines.  Each is a new `protospec.spec.Param` (`name`,
+  `type`, `loc`, `secret`), whose type is one of the four expression types
+  or, since kober 0.6.0, a `protospec.spec.MapType`.  They are kept so the checker
+  can type an expression that names one (#209).
+
+### Changed
+
+- **A document's `params:` and `transforms:` are read before they are
+  declined** (#209).  Both are still *not supported yet*, but a mistake inside
+  one is now refused as kober 0.6.0 refuses it, where it used to hide behind
+  the decline: an unknown key in a transform's declaration (such as a
+  misspelt `fails_as`), a parameter type that is not one of the four, a map
+  keyed by anything but `int` or `str` or not written `{map: [key, value]}`,
+  a `secret` that is not a bool, and a `fails_as` not spelled as a reason
+  (lower-case words joined by hyphens).  Every spec this newly refuses was
+  already an error.
+- A document parameter named like a field is refused, as kober refuses it:
+  a document parameter is in scope in every unit.
+
+### Fixed
+
+- **An expression naming a document parameter** read as naming a field that
+  does not exist: *unit 'm' has no field 'mode'*.  It is now typed by the
+  parameter's declared type, so `mode == 1` reports only the declined
+  `params:`, and a parameter read whole when it is a map, or descended into,
+  is refused in kober's words (#209).
+- A loader message naming a YAML mapping's type said `_LinedDict`, the
+  loader's own class, where the same mapping from JSON said `dict`.  Both
+  say `dict`.
+
 ---
 
 ## [0.18.0] - 2026-10-18

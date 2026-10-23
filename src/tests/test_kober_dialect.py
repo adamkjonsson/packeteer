@@ -434,3 +434,154 @@ units:
       - {name: magic, bits: 16, conditon: "magic == 1"}
 """)
         self.assertIn("'conditon'", str(ctx.exception))
+
+
+class TestDeclarationsAreRead(unittest.TestCase):
+    """A document's `params:` and `transforms:` are read, then declined (#209).
+
+    Each refusal here is one kober 0.6.0's loader makes too, checked against
+    `kober check` when written.  Before #209 every one of them was hidden
+    behind the block's *not supported yet*.
+    """
+
+    _UNITS = """
+units:
+  m:
+    fields:
+      - {name: kind, bits: 8}
+      - {name: x, bits: 8, condition: "mode == 1"}
+"""
+
+    def _load(self, declarations: str) -> object:
+        from packeteer.protospec import loads
+        return loads('name: t\nversion: "1"\nentry: m\n' + declarations + self._UNITS,
+                     fmt="yaml")
+
+    def _findings(self, spec: object) -> list[str]:
+        """Return what `check` says beyond the blocks' own declines."""
+        return [d.message for d in check(spec).diagnostics
+                if not d.message.startswith("not supported yet")]
+
+    def test_kober_06_declarations_load_and_are_only_declined(self) -> None:
+        from packeteer.protospec.expr import ExprType
+        from packeteer.protospec.spec import MapType
+        spec = self._load("""
+params:
+  mode: int
+  keys: {type: {map: [int, bytes]}, secret: true, doc: "Per session."}
+transforms:
+  br: {}
+  gz:
+  c: {params: {key: bytes, counter: int}, fails_as: decrypt-failed, doc: "A cipher."}
+  d: {fails_as: null}
+""")
+        self.assertEqual(_constructs(spec), {"params", "transforms"})
+        self.assertEqual(self._findings(spec), [])
+        self.assertEqual(spec.params["mode"].type, ExprType.INT)
+        self.assertFalse(spec.params["mode"].secret)
+        self.assertEqual(spec.params["keys"].type,
+                         MapType(key=ExprType.INT, item=ExprType.BYTES))
+        self.assertTrue(spec.params["keys"].secret)
+        self.assertEqual(spec.params["keys"].loc.path, "params.keys")
+
+    def test_a_spec_without_params_has_none(self) -> None:
+        from packeteer.protospec import loads
+        spec = loads('name: t\nversion: "1"\nentry: m\n'
+                     'units: {m: {fields: [{name: a, bits: 8}]}}\n', fmt="yaml")
+        self.assertEqual(dict(spec.params), {})
+
+    def test_mistakes_inside_the_blocks_are_refused(self) -> None:
+        cases = {
+            "a misspelt declaration key":
+                ("params: {mode: int}\ntransforms:\n  pb: {fails_az: unpack-failed}\n",
+                 "transform 'pb' has no key 'fails_az'"),
+            "a map keyed by bool":
+                ("params:\n  mode: int\n  keys: {type: {map: [bool, bytes]}}\n",
+                 "a map is keyed by int or str, not bool"),
+            "a map of one type":
+                ("params:\n  mode: int\n  keys: {type: {map: [int]}}\n",
+                 "this lists 1 type(s)"),
+            "a map that is not a list":
+                ("params:\n  mode: int\n  keys: {type: {map: {int: bytes}}}\n",
+                 "a map is [key type, value type], not dict"),
+            "a map type misspelt":
+                ("params:\n  mode: int\n  keys: {type: {mop: [int, int]}}\n",
+                 "{map: [key type, value type]}"),
+            "a map value that is no type":
+                ("params:\n  mode: int\n  keys: {type: {map: [int, blob]}}\n",
+                 "a map's value type must be one of"),
+            "a type that is not one of the four":
+                ("params: {mode: float}\n", "not 'float'"),
+            "unknown, the checker's own":
+                ("params: {mode: unknown}\n", "not 'unknown'"),
+            "a parameter with no type":
+                ("params:\n  mode: {secret: true}\n", "missing required key 'type'"),
+            "a parameter key misspelt":
+                ("params:\n  mode: {type: int, secrit: true}\n", "has no key 'secrit'"),
+            "a secret that is not a bool":
+                ("params:\n  mode: {type: int, secret: 'yes'}\n", "true or false"),
+            "a transform parameter that is no type":
+                ("params: {mode: int}\ntransforms:\n  c: {params: {key: blob}}\n",
+                 "parameter 'key' of transform 'c' must be one of"),
+            "fails_as not spelled as a reason":
+                ("params: {mode: int}\ntransforms:\n  c: {fails_as: Decrypt_Failed}\n",
+                 "lower-case words joined by hyphens"),
+            "fails_as not a string":
+                ("params: {mode: int}\ntransforms:\n  c: {fails_as: 3}\n",
+                 "must be a string"),
+            "a declaration that is not a mapping":
+                ("params: {mode: int}\ntransforms:\n  c: [key]\n", "must be a mapping"),
+        }
+        for label, (declarations, expected) in cases.items():
+            with self.subTest(label), self.assertRaises(SpecError) as ctx:
+                self._load(declarations)
+            self.assertIn(expected, str(ctx.exception), label)
+
+    def test_a_reference_to_a_parameter_is_typed(self) -> None:
+        """Before #209 it read as a field that does not exist."""
+        self.assertEqual(self._findings(self._load("params: {mode: int}\n")), [])
+        self.assertEqual(self._findings(self._load("params: {mode: bool}\n")),
+                         ["'==' compares bool with int; both sides must be the "
+                          "same type, and there is no coercion"])
+
+    def test_a_parameter_is_in_scope_from_root_too(self) -> None:
+        from packeteer.protospec import loads
+        spec = loads("""
+name: t
+version: "1"
+entry: m
+params: {mode: int}
+units:
+  m:
+    fields:
+      - {name: inner, unit: n}
+  n:
+    fields:
+      - {name: x, bits: 8, condition: "root.mode == 1"}
+""", fmt="yaml")
+        self.assertEqual(self._findings(spec), [])
+
+    def test_a_map_parameter_is_never_read_whole(self) -> None:
+        findings = self._findings(self._load("params:\n  mode: {type: {map: [int, int]}}\n"))
+        self.assertEqual(findings, ["'mode' is a map; an expression reads one entry "
+                                    "of it, mode[key]"])
+
+    def test_a_parameter_has_no_fields(self) -> None:
+        from packeteer.protospec import loads
+        spec = loads("""
+name: t
+version: "1"
+entry: m
+params: {mode: int}
+units:
+  m:
+    fields:
+      - {name: x, bits: 8, condition: "mode.a == 1"}
+""", fmt="yaml")
+        self.assertEqual(self._findings(spec),
+                         ["parameter 'mode' has no fields to reference"])
+
+    def test_a_parameter_named_like_a_field_is_refused(self) -> None:
+        findings = self._findings(self._load("params: {mode: int, kind: int}\n"))
+        self.assertEqual(findings, ["parameter 'kind' has the name of a field, and a "
+                                    "document parameter is in scope in every unit"])

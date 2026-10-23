@@ -18,10 +18,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, replace
 from typing import Any
 
 from packeteer.protospec.errors import SpecError
+from packeteer.protospec.expr import ExprType
 from packeteer.protospec.spec import (
     BytesType,
     Const,
@@ -39,6 +41,8 @@ from packeteer.protospec.spec import (
     InputShape,
     IntType,
     Location,
+    MapType,
+    Param,
     Remaining,
     Size,
     SizeOf,
@@ -71,6 +75,25 @@ _TRANSFORM_KEYS: frozenset[str] = frozenset({
     "from", "with", "limit", "args", "type", "content_type",
 })
 _TRANSFORM_REQUIRED: tuple[str, ...] = ("from", "with", "limit")
+#: kober's keys for a transform's declaration under the document's
+#: ``transforms:``, and for a document parameter written out.  Both blocks
+#: are declined, but read first, so a mistake inside one is not hidden
+#: behind the decline (#209).
+_TRANSFORM_DECL_KEYS: frozenset[str] = frozenset({"params", "fails_as", "doc"})
+_DOC_PARAM_KEYS: frozenset[str] = frozenset({"type", "secret", "doc"})
+#: The types a parameter may be declared as, by name.  ``unknown`` is the
+#: checker's, not a type a spec can write.
+_PARAM_TYPES: dict[str, ExprType] = {
+    kind.value: kind
+    for kind in (ExprType.INT, ExprType.STR, ExprType.BYTES, ExprType.BOOL)
+}
+#: What a map parameter may be keyed by: what a wire field naming a session,
+#: a peer or a security association reads as.  kober's rule.
+_MAP_KEY_TYPES: tuple[ExprType, ...] = (ExprType.INT, ExprType.STR)
+#: How the format spells a reason a region was not decoded, which is what a
+#: transform's ``fails_as`` names: lower-case words joined by hyphens, as
+#: ``undecodable`` and ``decrypt-failed`` are.  kober's rule.
+_REASON = re.compile(r"[a-z]+(-[a-z0-9]+)*")
 _UNSUPPORTED_SIZES: dict[str, str] = {
     "terminated": "a size ending at a delimiter rather than a declared length",
 }
@@ -254,6 +277,15 @@ def _at(loc: Location, value: Any) -> Location:
     return loc.at_line(line) if line is not None else loc
 
 
+def _type_name(value: Any) -> str:
+    """Name *value*'s type for a message, as the spec's author would know it.
+
+    A YAML mapping is read as a :class:`_LinedDict`, which is this module's
+    business, not the author's: it is a ``dict``.
+    """
+    return "dict" if isinstance(value, dict) else type(value).__name__
+
+
 def _yaml_hint(value: Any) -> str:
     """Explain a value YAML's implicit typing has probably mangled.
 
@@ -324,7 +356,7 @@ def _as_mapping(value: Any, loc: Location, what: str) -> dict[str, Any]:
     """Return *value* as a mapping, or raise naming what it should have been."""
     if not isinstance(value, dict):
         raise SpecError(
-            f"{what} must be a mapping, not {type(value).__name__}"
+            f"{what} must be a mapping, not {_type_name(value)}"
             f"{_yaml_hint(value)}", loc,
         )
     return value
@@ -334,7 +366,7 @@ def _as_str(value: Any, loc: Location, what: str) -> str:
     """Return *value* as a string, or raise naming what it should have been."""
     if not isinstance(value, str):
         raise SpecError(
-            f"{what} must be a string, not {type(value).__name__}"
+            f"{what} must be a string, not {_type_name(value)}"
             f"{_yaml_hint(value)}", loc,
         )
     return value
@@ -356,7 +388,7 @@ def _expr_source(value: Any, loc: Location, what: str) -> str:
         return str(value)
     raise SpecError(
         f"{what} must be an integer or an expression, not "
-        f"{type(value).__name__}{_yaml_hint(value)}", loc,
+        f"{_type_name(value)}{_yaml_hint(value)}", loc,
     )
 
 
@@ -364,7 +396,7 @@ def _as_int(value: Any, loc: Location, what: str) -> int:
     """Return *value* as an integer, or raise naming what it should have been."""
     if isinstance(value, bool) or not isinstance(value, int):
         raise SpecError(
-            f"{what} must be an integer, not {type(value).__name__}"
+            f"{what} must be an integer, not {_type_name(value)}"
             f"{_yaml_hint(value)}", loc,
         )
     return value
@@ -440,6 +472,11 @@ def from_mapping(data: Any, *, source: str | None = None) -> Spec:
     # spelling was used.
     ctx = _Ctx(unsupported=[]).inherit(data, root)
 
+    params = (_doc_params(data["params"], _at(root.child("params"), data["params"]))
+              if "params" in data else {})
+    if "transforms" in data:
+        _transform_decls(data["transforms"],
+                         _at(root.child("transforms"), data["transforms"]))
     for key, note in _UNSUPPORTED_DOC_KEYS.items():
         if key in data:
             ctx.record(key, _at(root.child(key), data[key]), note)
@@ -481,7 +518,114 @@ def from_mapping(data: Any, *, source: str | None = None) -> Spec:
         doc=data.get("doc"),
         unsupported=tuple(ctx.unsupported),
         loc=root,
+        params=params,
     )
+
+
+# ── kober's document declarations, read before they are declined ─────────────
+
+def _doc_params(data: Any, loc: Location) -> dict[str, Param]:
+    """Read the document's ``params:``, kober's, which this version declines.
+
+    ``name: type`` is the short form and ``name: {type, secret, doc}`` the
+    long one; a type is one of the four, or ``{map: [key, value]}`` since
+    kober 0.6.0.  Each is refused as kober's loader refuses it (#209), and
+    kept, so the checker can type an expression that names one.
+    """
+    params: dict[str, Param] = {}
+    for key, body in _as_mapping(data, loc, "params").items():
+        name = _as_str(key, loc, "a parameter name")
+        at = _at(loc, body).child(name)
+        secret = False
+        if isinstance(body, dict):
+            _reject_unknown(body, _DOC_PARAM_KEYS, f"parameter {name!r}", at)
+            kind = _param_type(_require(body, "type", at), at.child("type"), name)
+            secret = body.get("secret", False)
+            if not isinstance(secret, bool):
+                raise SpecError(
+                    f"the secret of parameter {name!r} must be true or false, "
+                    f"not {secret!r}", at.child("secret"),
+                )
+        else:
+            kind = _expr_type(body, at, f"the type of parameter {name!r}")
+        params[name] = Param(name=name, type=kind, loc=at, secret=secret)
+    return params
+
+
+def _param_type(value: Any, loc: Location, name: str) -> ExprType | MapType:
+    """Read a document parameter's type: one of the four, or a map.
+
+    A map is only ever written out, ``{map: [key type, value type]}``, under
+    the long form's ``type``.
+    """
+    if not isinstance(value, dict):
+        return _expr_type(value, loc, f"the type of parameter {name!r}")
+    if set(value) != {"map"}:
+        raise SpecError(
+            f"the type of parameter {name!r}, written as a mapping, is "
+            f"{{map: [key type, value type]}}", loc,
+        )
+    pair = value["map"]
+    at = loc.child("map")
+    if not isinstance(pair, list):
+        raise SpecError(
+            f"a map is [key type, value type], not {_type_name(pair)}", at,
+        )
+    if len(pair) != 2:
+        raise SpecError(
+            f"a map is [key type, value type], and this lists {len(pair)} "
+            f"type(s)", at,
+        )
+    key = _expr_type(pair[0], at.child("[0]"), "a map's key type")
+    if key not in _MAP_KEY_TYPES:
+        raise SpecError(
+            f"a map is keyed by int or str, not {key.value}", at.child("[0]"),
+        )
+    return MapType(key=key, item=_expr_type(pair[1], at.child("[1]"),
+                                            "a map's value type"))
+
+
+def _expr_type(value: Any, loc: Location, what: str) -> ExprType:
+    """Return the expression type *value* names, or raise listing the four."""
+    text = _as_str(value, loc, what)
+    if text not in _PARAM_TYPES:
+        allowed = ", ".join(repr(name) for name in sorted(_PARAM_TYPES))
+        raise SpecError(f"{what} must be one of {allowed}, not {text!r}", loc)
+    return _PARAM_TYPES[text]
+
+
+def _transform_decls(data: Any, loc: Location) -> None:
+    """Read the document's ``transforms:``, kober's, which this version declines.
+
+    Each declaration is empty, or has ``params`` (each one of the four
+    types), ``fails_as`` (since kober 0.6.0) and ``doc``.  Refused as kober
+    refuses them (#209).  Nothing is kept: no expression reads a declaration,
+    and the transform that uses one is declined where it stands.
+    """
+    for key, body in _as_mapping(data, loc, "transforms").items():
+        name = _as_str(key, loc, "a transform name")
+        at = _at(loc, body).child(name)
+        if body is None:
+            continue
+        what = f"the declaration of transform {name!r}"
+        decl = _as_mapping(body, at, what)
+        _reject_unknown(decl, _TRANSFORM_DECL_KEYS, what, at)
+        if "params" in decl:
+            ploc = at.child("params")
+            for pkey, kind in _as_mapping(decl["params"], ploc,
+                                          f"the params of transform {name!r}").items():
+                pname = _as_str(pkey, ploc, "a parameter name")
+                _expr_type(kind, ploc.child(pname),
+                           f"the type of parameter {pname!r} of transform {name!r}")
+        if decl.get("fails_as") is not None:
+            reason = _as_str(decl["fails_as"], at.child("fails_as"),
+                             f"the fails_as of transform {name!r}")
+            if not _REASON.fullmatch(reason):
+                raise SpecError(
+                    f"transform {name!r}: fails_as {reason!r} is not a reason as "
+                    f"the format spells one: lower-case words joined by hyphens, "
+                    f"such as 'decrypt-failed'", at.child("fails_as"),
+                )
 
 
 #: The long enum form's keys.  kober's: without ``members`` the whole body is
@@ -868,7 +1012,7 @@ def _int_key(value: Any, loc: Location, what: str) -> int:
         except ValueError as exc:
             raise SpecError(f"{what} must be an integer, not {value!r}", loc) from exc
     raise SpecError(
-            f"{what} must be an integer, not {type(value).__name__}"
+            f"{what} must be an integer, not {_type_name(value)}"
             f"{_yaml_hint(value)}", loc,
         )
 

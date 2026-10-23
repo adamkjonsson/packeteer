@@ -1082,3 +1082,22 @@ class TestInheritedEndian(unittest.TestCase):
                       - {name: f, bits: 32}
             """)
         self.assertIn("sideways", str(ctx.exception))
+
+
+class TestTypeNamesInMessages(unittest.TestCase):
+    """A message names a YAML mapping as a dict, not as the loader's own class.
+
+    Found in #209: every "must be a string, not …" said ``_LinedDict`` for a
+    mapping read from YAML, and ``dict`` for the same mapping from JSON.
+    """
+
+    def test_yaml_and_json_name_a_mapping_alike(self) -> None:
+        yaml_body = ('name: {a: 1}\nversion: "1"\nentry: m\n'
+                     'units: {m: {fields: [{name: a, bits: 8}]}}\n')
+        json_body = json.dumps({"name": {"a": 1}, "version": "1", "entry": "m",
+                                "units": {"m": {"fields": [{"name": "a", "bits": 8}]}}})
+        for fmt, body in (("yaml", yaml_body), ("json", json_body)):
+            with self.subTest(fmt), self.assertRaises(SpecError) as ctx:
+                loads(body, fmt=fmt)
+            self.assertIn("name must be a string, not dict", str(ctx.exception))
+            self.assertNotIn("_LinedDict", str(ctx.exception))
