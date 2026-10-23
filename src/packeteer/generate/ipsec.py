@@ -59,7 +59,6 @@ Example — ESP with an opaque (encrypted) payload::
 from __future__ import annotations
 
 import hashlib
-import os
 import random
 import struct
 from dataclasses import dataclass
@@ -87,9 +86,10 @@ class AHHeader:
     Attributes:
         spi: 32-bit Security Parameters Index.
         sequence: 32-bit anti-replay sequence number.
-        icv: Integrity Check Value bytes.  When empty, *icv_len* random bytes are
-            generated at build time.  Padded so the whole AH is a multiple of 4
-            bytes.
+        icv: Integrity Check Value bytes.  When empty, *icv_len* bytes standing
+            in for one are derived at build time from the header and what AH
+            protects, so the same packet always gets the same ICV.  Padded so
+            the whole AH is a multiple of 4 bytes.
         next_header: IP protocol number of the protected content.  Set
             automatically at build time from the layer that follows.
         icv_len: ICV length used when *icv* is empty.  Defaults to
@@ -134,23 +134,25 @@ class ESPHeader:
     opaque_random: bool = False
 
 
-def _build_ah_header(hdr: AHHeader, next_header: int) -> bytes:
+def _build_ah_header(hdr: AHHeader, next_header: int, protected: bytes = b"") -> bytes:
     """Build an Authentication Header carrying IP protocol *next_header*.
 
-    The ICV is *hdr.icv* (or ``os.urandom(hdr.icv_len)`` when empty), zero-padded
-    so the whole AH is a multiple of 4 bytes.  ``Payload Len`` is set to the AH
-    length in 32-bit words minus 2.
+    The ICV is *hdr.icv*, or when that is empty a stand-in of ``hdr.icv_len``
+    bytes derived from the header and *protected*, the bytes AH covers (see
+    :func:`_icv_stand_in`).  It is zero-padded so the whole AH is a multiple of
+    4 bytes.  ``Payload Len`` is set to the AH length in 32-bit words minus 2.
     """
-    icv = hdr.icv if hdr.icv else os.urandom(hdr.icv_len)
-    total = _AH_FIXED.size + len(icv)
+    length = len(hdr.icv) if hdr.icv else hdr.icv_len
+    total = _AH_FIXED.size + length
     pad = (-total) % 4
-    icv = icv + b"\x00" * pad
     total += pad
     payload_len = total // 4 - 2
-    return _AH_FIXED.pack(
+    fixed = _AH_FIXED.pack(
         next_header & 0xFF, payload_len & 0xFF, 0,
         hdr.spi & 0xFFFFFFFF, hdr.sequence & 0xFFFFFFFF,
-    ) + icv
+    )
+    icv = hdr.icv if hdr.icv else _icv_stand_in(fixed + protected, length)
+    return fixed + icv + b"\x00" * pad
 
 
 def _scramble(data: bytes) -> bytes:
@@ -169,13 +171,32 @@ def _scramble(data: bytes) -> bytes:
     return random.Random(seed).randbytes(len(data))
 
 
+def _icv_stand_in(covered: bytes, length: int) -> bytes:
+    """Return *length* bytes standing in for an ICV over *covered*.
+
+    packeteer computes no real ICV, since it holds no keys, so this is
+    high-entropy bytes derived deterministically from what a real ICV would
+    authenticate, as :func:`_scramble` derives ESP's ciphertext.  A pure
+    function of the packet, so a seeded stream and a ``parse`` → ``build``
+    round trip are byte-identical, and two packets with different content
+    still get different ICVs (#201).  Keyed apart from :func:`_scramble`, so
+    an ICV is never a prefix of the scrambled bytes beside it.
+    """
+    if not length:
+        return b""
+    digest = hashlib.blake2b(covered, digest_size=8, person=b"packeteer-icv")
+    return random.Random(int.from_bytes(digest.digest(), "big")).randbytes(length)
+
+
 def _build_esp_header(hdr: ESPHeader) -> bytes:
     """Build the ESP SPI + Sequence prefix followed by the opaque payload.
 
     When *hdr.opaque_random* is set the payload is scrambled (see
     :func:`_scramble`) so a generated packet looks encrypted.  The opaque tail is
-    that payload plus ``os.urandom(hdr.icv_len)`` (a stand-in for the ICV).
+    that payload plus ``hdr.icv_len`` bytes standing in for the ICV, derived
+    from the SPI, sequence and payload that a real ICV covers (see
+    :func:`_icv_stand_in`).
     """
     payload = _scramble(hdr.payload) if hdr.opaque_random else hdr.payload
-    tail = payload + (os.urandom(hdr.icv_len) if hdr.icv_len else b"")
-    return _ESP_FIXED.pack(hdr.spi & 0xFFFFFFFF, hdr.sequence & 0xFFFFFFFF) + tail
+    fixed = _ESP_FIXED.pack(hdr.spi & 0xFFFFFFFF, hdr.sequence & 0xFFFFFFFF)
+    return fixed + payload + _icv_stand_in(fixed + payload, hdr.icv_len)

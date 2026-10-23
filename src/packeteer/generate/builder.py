@@ -415,7 +415,7 @@ def _build_encap_layer(layer: object, next_layer: object, data: bytes) -> bytes:
 
     elif isinstance(layer, AHHeader):
         # AH is transparent: Next Header is the protocol it protects.
-        data = _build_ah_header(layer, _ip_proto_for(next_layer)) + data
+        data = _build_ah_header(layer, _ip_proto_for(next_layer), data) + data
 
     elif isinstance(layer, ESPHeader):
         # ESP: SPI + sequence, then the (opaque) inner bytes / explicit payload.
@@ -1068,8 +1068,10 @@ class PacketBuilder:
         Args:
             spi: 32-bit Security Parameters Index.
             sequence: 32-bit sequence number.  Defaults to ``0``.
-            icv: Integrity Check Value bytes.  When ``None``, *icv_len* random
-                bytes are used (packeteer computes no real ICV).
+            icv: Integrity Check Value bytes.  When ``None``, *icv_len* bytes
+                standing in for one are derived from the packet, since
+                packeteer computes no real ICV: the same packet always gets the
+                same ICV.
             icv_len: ICV length when *icv* is ``None``.  Defaults to
                 ``12`` (HMAC-SHA1-96).
 

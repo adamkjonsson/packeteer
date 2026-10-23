@@ -89,6 +89,15 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ### Fixed
 
+- **A seeded stream with AH, or with an ESP ICV, was not reproducible**
+  (#201): the ICV stand-in came from `os.urandom`, so `stream --ah … --seed N`
+  wrote different bytes on every run, breaking `--seed`'s promise of
+  byte-identical captures.  The stand-in is now derived from what a real ICV
+  would cover — AH's header and the bytes it protects, ESP's SPI, sequence
+  and payload — so the same packet always gets the same ICV, and different
+  packets different ones.  An explicit `icv` is used unchanged.  An AH or
+  ESP stream's bytes differ from 0.18.0's for the same seed, which were never
+  stable.
 - **`stream --json` dropped every decoded application section** (#199), so
   `stream --json` → `build` rebuilt each DNS, HTTP, DHCP and compiled-protocol
   packet with an empty payload, and said nothing.  Its conversion was a copy

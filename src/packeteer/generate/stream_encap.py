@@ -306,8 +306,9 @@ class AHEncap:
         dst_ip: Outer IP destination address (tunnel egress).
         sequence: AH sequence number applied to every packet.  Defaults to ``0``.
         ttl: Outer IP TTL.  Defaults to ``64``.
-        icv_len: ICV length in bytes (random auth data, since packeteer computes
-            no real ICV).  Defaults to ``12`` (HMAC-SHA1-96).
+        icv_len: ICV length in bytes: a stand-in derived from each packet,
+            since packeteer computes no real ICV, so a seeded stream is
+            reproducible.  Defaults to ``12`` (HMAC-SHA1-96).
 
     """
 
