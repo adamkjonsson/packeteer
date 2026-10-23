@@ -217,6 +217,20 @@ These functions convert {class}`~packeteer.parse.core.ParsedPacket` objects
 (or individual header dataclasses) into the packet spec dict format consumed
 by `packeteer build`.
 
+{func}`~packeteer.parse.to_config.packet_to_config` is the whole of it for one
+packet, and what `packeteer parse` and `packeteer stream --json` both call:
+
+```python
+from packeteer.parse import packet_to_config, parse_packet, to_packet_spec
+
+packets = [packet_to_config(parse_packet(raw)) for raw in frames]
+spec = to_packet_spec(packets)       # replays with `packeteer build`
+```
+
+```{eval-rst}
+.. autofunction:: packeteer.parse.to_config.packet_to_config
+```
+
 ```{eval-rst}
 .. autofunction:: packeteer.parse.to_config.update_config
 ```

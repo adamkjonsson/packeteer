@@ -73,7 +73,9 @@ as unknown keys:
 | `{size: {terminated: …}}`, `{string: {delimiter: …}}` | Delimiter framing, in either spelling |
 | `repeat: {until: …}`, `repeat: {to_end: true}` | Repeat by condition, or to the end of the run |
 | unit `params:` / `{unit: {args: …}}` | Unit parameters — see [kober's dialect](#protocols-kober) |
-| document `params:`, `transforms:` | Document parameters and transform declarations, which kober 0.5.0 added for its byte transforms — see [kober's dialect](#protocols-kober) |
+| document `params:`, `transforms:` | Document parameters and transform declarations, which kober 0.5.0 added for its byte transforms, and to which kober 0.6.0 added map parameters and `fails_as`.  Each block is read and checked as kober checks it before it is declined — see [kober's dialect](#protocols-kober) |
+| an entry of a map parameter, `keys[receiver]` | kober 0.6.0's way of choosing a value per message, such as a key, from a table supplied when a decode is set up.  Typed as kober types it, then declined — see [Expressions](#expressions) |
+| a call to one of kober's functions | `len(sealed)`, `to_int(v)` and the rest of kober's six.  Typed as kober types it, then declined; a call to anything else is refused — see [Expressions](#expressions) |
 | unit `confirm:` / `reject:` | A guard spanning several fields, evaluated once the unit is decoded.  [`const`](#const) covers the single-field case, and [`condition`](#condition) guards one field rather than abandoning a unit |
 | recursion | A recursive unit has no statically known size, which both the encoder and the framing checks need |
 
@@ -113,8 +115,8 @@ typos:
 | `confirm`, `reject` | unit | Guards evaluated once a unit is decoded.  A condition spanning more than one field, which [`const`](#const) cannot express — **not supported yet** |
 | `emit` | unit, field | kober's output granularity.  packeteer writes a packet spec, which has no such axis.  kober has no document-level `emit`, so one there is an unknown key in both dialects |
 | `params`, `{unit: {args: …}}` | unit | Unit parameters — **not supported yet** |
-| `params` | document | Document parameters: values supplied when a decode is set up, such as a key, declared `{name: {type, secret}}`.  Not the unit parameters the same word means one level down — **not supported yet** |
-| `transforms` | document | Declarations of the transforms a spec uses that are not core, and their parameters' types — **not supported yet** |
+| `params` | document | Document parameters: values supplied when a decode is set up, such as a key, declared `name: type` or `{name: {type, secret, doc}}`, where a type is one of the four or, since kober 0.6.0, `{map: [key, value]}` keyed by `int` or `str`.  Not the unit parameters the same word means one level down.  Read and checked, and kept as `Spec.params` so an expression naming one is typed; a parameter may not share a field's name — **not supported yet** |
+| `transforms` | document | Declarations of the transforms a spec uses that are not core: their parameters' types, and since kober 0.6.0 a `fails_as`, the reason a failure is written with, spelled as lower-case words joined by hyphens.  Read and checked — **not supported yet** |
 
 An unknown key is still an error.  These simply stopped being unknown, which is
 strictly more informative than either accepting them silently or rejecting them
@@ -262,13 +264,33 @@ units:
 | `endian` | *(the document's)* | Byte order for this unit's integers — see [`endian`](#endian) |
 | `doc` | — | Free-text description |
 
+(names-compile-refuses)=
+### Names `compile` refuses
+
+A unit compiles to a class, `reading` to `Reading`, and a field to an
+attribute of it, so [`packeteer protocol compile`](../cli/protocol.md#compile)
+refuses three kinds of name that `check` accepts, because the generated
+module needs them itself:
+
+- **A unit or field name beginning with `_`.**  The module's own helpers and
+  locals all do, as do the methods a dataclass defines (`__init__`,
+  `__eq__`): a field `__init__` would replace the class's constructor.
+  kober's compiler keeps the same prefix for the same reason.
+- **A unit whose class is a Python builtin**: `value_error` → `ValueError`
+  would replace the exception the module raises on a bad `const`.
+- **A unit whose class is a keyword**: `none` → `None`.
+
+Each is refused with the name and where it is, before any code is written.
+`check` accepts them, as kober's `check` does, since only compiling turns a
+name into Python.
+
 ---
 
 ## Fields
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `name` | *(required)* | Field name.  Must be a Python identifier, since it becomes an attribute.  `null` makes the field anonymous — decoded and re-encoded, but not named |
+| `name` | *(required)* | Field name.  Must be a Python identifier, since it becomes an attribute, and to compile may not begin with `_` — see [Names `compile` refuses](#names-compile-refuses).  `null` makes the field anonymous — decoded and re-encoded, but not named |
 | *a type kind* | *(required)* | What it holds, written on the field — see [How a field is written](#shorthands) |
 | `type` | — | The long form of a type kind — see [Types](#types) |
 | *a repeat kind* | — | How many times it occurs, written on the field |
@@ -731,11 +753,14 @@ and `count: 1.5` are not what they look like.
 | Comparison | `==` `!=` `<` `<=` `>` `>=` |
 | Boolean | `and` `or` `not` |
 | Literals | `42`, `0x2a`, `0b101010`, `'text'`, `true`, `false` |
+| Map entry | `keys[receiver]` — kober's, **not supported yet** |
+| Call | `len(sealed)` — one of kober's six functions, **not supported yet** |
 
 Precedence is Python's, because the parser is Python's — `ast.parse` in
-expression mode against a whitelist.  That is why there are no calls, no
-indexing and no comprehensions: they are absent from the whitelist and refused
-by name.
+expression mode against a whitelist.  That is why there are no loops,
+conditional expressions or comprehensions: they are absent from the whitelist
+and refused by name.  The one index is an entry of a map parameter, and the
+only calls are kober's functions; both are read, then declined (below).
 
 **Four types and no coercion**: `int`, `str`, `bytes`, `bool`.  Arithmetic and
 ordering are integer-only, equality needs both sides to be the same type, and
@@ -756,6 +781,24 @@ rather than truncated.
 A dotted path descends into a nested unit: `header.length` reads the `length`
 field of the `header` field's unit.
 
-kober's five functions — `to_int`, `lower`, `trim`, and since kober 0.5.0
-`startswith` and `endswith` — are **not supported yet**, and a call is
-reported as such rather than as a syntax error.
+A bare name that is no field of the unit may be a [document
+parameter](#protocols-kober), which is in scope in every unit and has the type
+it is declared with.  It has no fields, and a map parameter is never read
+whole.
+
+kober's six functions — `to_int`, `lower`, `trim`, since kober 0.5.0
+`startswith` and `endswith`, and since kober 0.6.0 `len` — are **not supported
+yet**, and a call to one is reported as such rather than as a syntax error.  It
+is typed first, as kober types it: each argument must have its parameter's
+type — `len` takes `bytes`, `to_int` `str` and an optional `int` base, the
+rest `str` — and the call has its function's result type, so `len(tag)` on a
+string, or `lower(tag)` used as a size, is refused beside the decline.  A
+call to anything else is refused, naming the six, and so are a keyword
+argument and a wrong number of arguments, as kober refuses them.
+
+An **entry of a map parameter**, `keys[receiver]`, is kober 0.6.0's way of
+choosing a value per message from a table supplied when a decode is set up.
+It is typed as kober types it — the key must have the map's key type and read
+only fields decoded before it, and the entry has the map's value type — and
+then declined.  Indexing anything but a map parameter is refused, as are a
+slice and an index of several parts.

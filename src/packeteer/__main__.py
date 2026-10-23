@@ -104,10 +104,9 @@ from packeteer.generate.vxlan import VXLAN_FLAG_VALID_VNI, VXLAN_PORT
 from packeteer.parse.core import parse_packet, parse_pcap_file
 from packeteer.parse.info import format_pcap_info, pcap_info
 from packeteer.parse.to_config import (
-    apply_tunneled,
+    packet_to_config,
     to_json_string,
     to_packet_spec,
-    update_config,
 )
 from packeteer.pcap import (
     LINKTYPE_ETHERNET,
@@ -1136,17 +1135,17 @@ def _positive_int(value: str) -> int:
     return n
 
 
-def _spec_protocol_paths(args: argparse.Namespace) -> list[str]:
-    """Return the paths `parse` should record in the spec it writes.
+def _spec_protocol_paths(args: argparse.Namespace, output: str | None) -> list[str]:
+    """Return the paths a written spec should record, for `parse` or `stream`.
 
     Only what the user named on this invocation — the flag and the
-    environment variable — and written relative to the spec file so the two
-    move together.  Nothing here comes from the capture.
+    environment variable — and written relative to *output*, the spec file,
+    so the two move together; absolute when the spec goes to stdout.
+    Nothing here comes from the capture.
     """
     paths = _protocol_paths_from_args(args)
     if not paths:
         return []
-    output = getattr(args, "output", None)
     if not output:
         return [os.path.abspath(p) for p in paths]
     base = os.path.dirname(os.path.abspath(output))
@@ -1166,7 +1165,7 @@ def _cmd_parse(args: argparse.Namespace) -> None:
             link_type=getattr(args, "link_type", None),
             decode_app=not getattr(args, "no_decode_app", False),
             defragment=getattr(args, "defragment", False),
-            protocol_modules=_spec_protocol_paths(args),
+            protocol_modules=_spec_protocol_paths(args, getattr(args, "output", None)),
         )
     except (OSError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -1682,12 +1681,16 @@ def _parse_stream_encap(args: argparse.Namespace) -> "list[StreamEncap] | None":
     return layers if layers else None
 
 
-def _stream_to_json(packets: list, include_ethernet: bool) -> str:
+def _stream_to_json(packets: list, include_ethernet: bool,
+                    protocols: list[str]) -> str:
     """Serialise *packets* (from any stream generator) as a packet spec string.
 
-    Each packet's raw bytes are parsed with :func:`parse_packet` and converted
-    to the same JSON format produced by ``packeteer parse``, so the output can
-    be replayed with ``packeteer build``.
+    Each packet's raw bytes are parsed and converted by
+    :func:`~packeteer.parse.packet_to_config`, the conversion ``packeteer
+    parse`` uses, so the output is ``parse``'s format by construction and
+    replays with ``packeteer build`` (#199).  *protocols* are recorded in the
+    spec's ``protocols`` key, so a user protocol's sections rebuild without
+    ``--load-protocol`` again.
 
     The per-packet ``metadata`` block contains ``timestamp_s``,
     ``timestamp_us``, ``direction`` (``"c2s"`` / ``"s2c"``), and ``label``
@@ -1696,27 +1699,7 @@ def _stream_to_json(packets: list, include_ethernet: bool) -> str:
     link_type = LINKTYPE_ETHERNET if include_ethernet else LINKTYPE_RAW
     packet_configs: list[dict] = []
     for pkt_obj in packets:
-        pkt = parse_packet(pkt_obj.raw, link_type=link_type)
-        cfg: dict = {}
-        if pkt.ethernet is not None:
-            update_config(cfg, pkt.ethernet)
-        if pkt.arp is not None:
-            update_config(cfg, pkt.arp)
-        for mpls_label in pkt.mpls:
-            update_config(cfg, mpls_label)
-        if pkt.pppoe is not None:
-            update_config(cfg, pkt.pppoe)
-        if pkt.ip is not None:
-            update_config(cfg, pkt.ip)
-        if (pkt.ah is not None or pkt.esp is not None
-                or pkt.ipip or pkt.gre is not None or pkt.etherip is not None
-                or pkt.pseudowire is not None or pkt.vxlan is not None
-                or pkt.geneve is not None or pkt.gtpu is not None):
-            apply_tunneled(cfg, pkt)
-        elif pkt.transport is not None:
-            update_config(cfg, pkt.transport)
-            if pkt.payload:
-                update_config(cfg, pkt.payload)
+        cfg = packet_to_config(parse_packet(pkt_obj.raw, link_type=link_type))
         cfg["packet_metadata"] = {
             "timestamp_s":  pkt_obj.ts_sec,
             "timestamp_us": pkt_obj.ts_usec,
@@ -1724,7 +1707,7 @@ def _stream_to_json(packets: list, include_ethernet: bool) -> str:
             "label":        pkt_obj.label,
         }
         packet_configs.append(cfg)
-    return to_json_string(to_packet_spec(packet_configs))
+    return to_json_string(to_packet_spec(packet_configs, protocols=protocols))
 
 
 def _validate_stream_args(args: argparse.Namespace) -> str:
@@ -2297,7 +2280,8 @@ def _write_stream_output(args: argparse.Namespace, stream: object) -> None:
     sessions_note = f", {args.sessions} sessions" if args.sessions > 1 else ""
 
     if args.json:
-        json_str = _stream_to_json(stream.packets, include_ethernet)
+        json_str = _stream_to_json(stream.packets, include_ethernet,
+                                   _spec_protocol_paths(args, args.json))
         try:
             with open(args.json, "w") as f:
                 f.write(json_str)

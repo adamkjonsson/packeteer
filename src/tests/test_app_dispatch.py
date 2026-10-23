@@ -184,16 +184,16 @@ class TestRegisteredProtocolsReachTheSpec(unittest.TestCase):
         self.assertEqual(update_config({}, Reading(258)), {"sensor": {"value": 258}})
 
     def test_a_parsed_packet_carries_the_section(self) -> None:
-        from packeteer.parse.core import _packet_to_spec
+        from packeteer.parse import packet_to_config
 
-        spec = _packet_to_spec(parse_packet(_udp(b"\x01\x02")))
+        spec = packet_to_config(parse_packet(_udp(b"\x01\x02")))
         self.assertEqual(spec["sensor"], {"value": 258})
         self.assertNotIn("payload", spec)
 
     def test_an_undecoded_payload_still_becomes_a_payload_section(self) -> None:
-        from packeteer.parse.core import _packet_to_spec
+        from packeteer.parse import packet_to_config
 
-        spec = _packet_to_spec(parse_packet(_udp(b"three")))
+        spec = packet_to_config(parse_packet(_udp(b"three")))
         self.assertNotIn("sensor", spec)
         self.assertIn("payload", spec)
 
@@ -294,10 +294,10 @@ class TestBuildFromSpec(unittest.TestCase):
 
     def test_round_trip_through_the_spec(self) -> None:
         import packeteer.__main__ as cli
-        from packeteer.parse.core import _packet_to_spec
+        from packeteer.parse import packet_to_config
 
         original = _udp(b"\x01\x02")
-        spec = _packet_to_spec(parse_packet(original))
+        spec = packet_to_config(parse_packet(original))
         b, _ = cli._apply_spec_to_builder(PacketBuilder(), spec, 1)
         self.assertEqual(b.build(), original)
 

@@ -1,10 +1,23 @@
 # Vendored kober specs
 
-`dns.yaml` and `http.yaml`, copied verbatim from
-[kober](https://github.com/adamkjonsson/zipline-kober) **0.5.0**
-(`40680a9`), and read by `src/tests/test_kober_dialect.py`.  Refreshed from
-0.2.0 in packeteer 0.17.0; `dns.yaml` had not changed, and `http.yaml` gained
-the four constructs the test names.
+`dns.yaml`, `http.yaml`, `wireguard.yaml` and `packbits.yaml`, copied
+verbatim from [kober](https://github.com/adamkjonsson/zipline-kober)
+**0.6.0** (`57d34ec`, the `v0.6.0` tag), and read by
+`src/tests/test_kober_dialect.py`.  `wireguard.yaml` is kober's
+`examples/wireguard/wireguard.yaml` and `packbits.yaml` its
+`examples/packbits/packbits.yaml`; the other two sit at the top of
+`examples/`.
+
+`expressions.md` is kober's `docs/format/expressions.md`, from the same tag,
+for one table: its *Functions* list, which `test_kober_dialect.py` holds
+`packeteer.protospec.expr.KOBER_FUNCTIONS` to (#211).  It is a copy of a
+document rather than of code for the same reason the specs are: the test
+cannot import kober.
+
+Refreshed from 0.2.0 in packeteer 0.17.0, when `http.yaml` gained the four
+constructs the test names, and from 0.5.0 in 0.19.0, when the two tunnel
+examples were added.  `dns.yaml` and `http.yaml` did not change in kober
+0.6.0.
 
 ## Why copies
 
@@ -27,9 +40,11 @@ reported as *not supported yet*, rather than merely that they load.  A test
 that asserts why `http.yaml` is refused fails when the reason changes, which is
 the drift detector the copies would otherwise lack.
 
-To refresh, copy both files again, run the suite, and read whatever it says has
-changed before adjusting the expectations — a diff here is a dialect change in
-one project or the other, and worth understanding rather than absorbing.
+To refresh, copy every file again from the tag (`git show vX.Y.Z:examples/…`,
+and `git show vX.Y.Z:docs/format/expressions.md`), run the suite, and read
+whatever it says has changed before adjusting the expectations — a diff here
+is a dialect change in one project or the other, and worth understanding
+rather than absorbing.
 
 ## Do not edit
 

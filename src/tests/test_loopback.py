@@ -20,8 +20,7 @@ from packeteer.generate.loopback import (
     AF_INET6_VALUES,
     LoopbackHeader,
 )
-from packeteer.parse import iter_packets, parse_packet
-from packeteer.parse.core import _packet_to_spec
+from packeteer.parse import iter_packets, packet_to_config, parse_packet
 from packeteer.parse.loopback import packet_parser
 from packeteer.pcap import LINKTYPE_LOOP, LINKTYPE_NULL, write_pcap
 
@@ -119,7 +118,7 @@ class TestTheSpecSection(unittest.TestCase):
     def _section(self, **kwargs: object) -> dict:
         link = LINKTYPE_LOOP if kwargs.get("big_endian") else LINKTYPE_NULL
         pkt = parse_packet(_frame(**kwargs), link_type=link, decode_app=False)
-        return _packet_to_spec(pkt)["loopback"]
+        return packet_to_config(pkt)["loopback"]
 
     def test_a_derivable_family_is_omitted(self) -> None:
         self.assertEqual(self._section(), {})
@@ -146,23 +145,23 @@ class TestRoundTrip(unittest.TestCase):
             with self.subTest(case=label):
                 link = LINKTYPE_LOOP if kwargs.get("big_endian") else LINKTYPE_NULL
                 original = _frame(**kwargs)
-                spec = _packet_to_spec(parse_packet(original, link_type=link,
+                spec = packet_to_config(parse_packet(original, link_type=link,
                                                     decode_app=False))
                 rebuilt, _ = cli._apply_spec_to_builder(PacketBuilder(), spec, 1)
                 self.assertEqual(rebuilt.build(), original)
 
     def test_no_ethernet_header_is_invented(self) -> None:
         """The link layers are alternatives; a packet has exactly one."""
-        spec = _packet_to_spec(parse_packet(_frame(), link_type=LINKTYPE_NULL,
+        spec = packet_to_config(parse_packet(_frame(), link_type=LINKTYPE_NULL,
                                             decode_app=False))
         self.assertNotIn("ethernet", spec)
         rebuilt, _ = cli._apply_spec_to_builder(PacketBuilder(), spec, 1)
         self.assertEqual(rebuilt.build()[4:6].hex(), "4500")   # IPv4 straight after
 
     def test_the_link_type_is_inferred_for_the_output_file(self) -> None:
-        null_spec = _packet_to_spec(parse_packet(_frame(), link_type=LINKTYPE_NULL,
+        null_spec = packet_to_config(parse_packet(_frame(), link_type=LINKTYPE_NULL,
                                                  decode_app=False))
-        loop_spec = _packet_to_spec(parse_packet(_frame(big_endian=True),
+        loop_spec = packet_to_config(parse_packet(_frame(big_endian=True),
                                                  link_type=LINKTYPE_LOOP,
                                                  decode_app=False))
         self.assertEqual(cli._infer_link_type([null_spec]), LINKTYPE_NULL)

@@ -1039,6 +1039,75 @@ def apply_tunneled(config: dict[str, Any], pkt: "ParsedPacket") -> None:
         _apply_gtpu(config, pkt.gtpu, pkt.tunneled)
 
 
+def packet_to_config(pkt: ParsedPacket) -> dict[str, Any]:
+    """Convert every parsed layer of *pkt* into one packet of a packet spec.
+
+    The one conversion from a parsed packet to the packet-spec format:
+    ``packeteer parse`` and ``packeteer stream --json`` both call it, so the
+    two write the same format by construction rather than by copy (#199).
+    Wrap a list of the results with :func:`to_packet_spec`.
+
+    Args:
+        pkt: A parsed packet.
+
+    Returns:
+        A dict holding one section per layer present, in the order
+        ``packeteer build`` expects: a decoded application protocol's
+        section, or the payload bytes when nothing decoded them.  The
+        ``packet_metadata`` section is the caller's to add.
+
+    Example:
+        >>> from packeteer.parse import packet_to_config, parse_packet
+        >>> pkt = parse_packet(raw)  # doctest: +SKIP
+        >>> sorted(packet_to_config(pkt))  # doctest: +SKIP
+        ['ethernet', 'network', 'payload', 'transport']
+
+    """
+    cfg: dict[str, Any] = {}
+    if pkt.ethernet is not None:
+        update_config(cfg, pkt.ethernet)
+    if pkt.loopback is not None:
+        update_config(cfg, pkt.loopback)
+    if pkt.sll is not None:
+        update_config(cfg, pkt.sll)
+    if pkt.arp is not None:
+        update_config(cfg, pkt.arp)
+    for mpls_label in pkt.mpls:
+        update_config(cfg, mpls_label)
+    if pkt.pppoe is not None:
+        update_config(cfg, pkt.pppoe)
+    if pkt.ip is not None:
+        update_config(cfg, pkt.ip)
+    if pkt.datagram_truncated and pkt.ip is not None:
+        # The header says more than the bytes present, which a rebuild cannot
+        # work out — so it is recorded, the same rule `transport.length`
+        # follows.  Without it a truncated capture rebuilds as a smaller whole
+        # packet that never existed.
+        declared = (pkt.ip.total_length if isinstance(pkt.ip, IPHeader)
+                    else pkt.ip.payload_length)
+        if declared is not None:
+            cfg.setdefault("network", {})["declared_length"] = declared
+
+    if (pkt.ah is not None or pkt.esp is not None
+            or pkt.ipip or pkt.gre is not None
+            or pkt.etherip is not None or pkt.pseudowire is not None
+            or pkt.vxlan is not None or pkt.geneve is not None
+            or pkt.gtpu is not None):
+        apply_tunneled(cfg, pkt)
+    elif pkt.transport is not None:
+        update_config(cfg, pkt.transport)
+        if pkt.app is not None:
+            update_config(cfg, pkt.app)
+        elif pkt.payload:
+            update_config(cfg, pkt.payload)
+    elif pkt.payload:
+        # No transport header, but bytes to record: a later fragment, or an IP
+        # protocol the parser does not decode.  Without this the spec would
+        # silently drop them.
+        update_config(cfg, pkt.payload)
+    return cfg
+
+
 def to_packet_spec(
     packets: list[dict[str, Any]],
     *,

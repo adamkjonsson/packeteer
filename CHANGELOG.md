@@ -27,6 +27,146 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ---
 
+## [0.19.0] - 2026-10-23
+
+**kober 0.6.0's dialect, and three left from 0.18.0.**  kober 0.6.0 added map
+parameters and their entries (`keys[receiver]`), `fails_as` on a transform,
+`len()` and `net:` labels for its WireGuard example.  packeteer declines all
+of them, and now reads and checks the first three as kober does before it
+declines them, so a mistake beside or inside one is still reported and a spec
+kober accepts never reads as a wrong one: a map entry is declined where it
+used to be refused as
+indexing, a call to one of kober's six functions is typed before it is
+declined, and a document's `params:` and `transforms:` are checked before
+they are declined.  kober 0.6.0's examples are vendored and pinned, and
+kober's function table is drift-checked against its documentation.  Beside
+that: `stream --json` writes decoded application sections, which it dropped
+(#199), with a public `packet_to_config` behind it; a seeded AH or ESP-ICV
+stream is reproducible (#201); and `protocol compile` refuses names its
+generated module needs itself (#206).  **Breaking:** one, under *Changed*:
+a `_`-prefixed name, or a unit whose class would be a builtin or keyword, is
+refused by `compile`.
+
+### Added
+
+- **`Spec.params`, a spec's document parameters** — kober's `params:`, which
+  this version still declines.  Each is a new `protospec.spec.Param` (`name`,
+  `type`, `loc`, `secret`), whose type is one of the four expression types
+  or, since kober 0.6.0, a `protospec.spec.MapType`.  They are kept so the checker
+  can type an expression that names one (#209).
+- **kober 0.6.0's map entries, `keys[receiver]`, are recognised and
+  declined** (#208), wherever an expression goes: *not supported yet: an
+  entry of map parameter 'keys', keys[receiver]*.  The entry is typed first,
+  as kober types it: the key must be the map's key type and may only read
+  fields decoded before it, and the entry has the map's value type.  An
+  index on anything but a map parameter is refused in kober's words — a
+  field (`kind[0]`), a scalar parameter, or an unknown name — as are a
+  slice, an index of several parts, and an index on anything but a bare
+  name.  In `packeteer.protospec.expr`, a new `Index` node and `indexes()`,
+  and `type_of()` takes an optional `resolve_map`.
+- **A call to one of kober's functions is typed before it is declined**
+  (#211), by kober's table: each argument must have its parameter's type,
+  and the call has its function's result type.  `len(tag)` on a string,
+  `lower(kind)` on an integer, `lower(tag)` used as a size or `to_int(tag)` as
+  a condition are refused beside the decline, as kober refuses them, where
+  each used to read as no more than *not supported yet*.  In
+  `packeteer.protospec.expr`, a `Call` node and `calls()`, and
+  `KOBER_FUNCTIONS` maps each name to a `KoberFunction` (`params`,
+  `required`, `returns`) in place of an argument count.
+- **`packeteer.parse.packet_to_config(pkt)`**: one parsed packet as one
+  packet of a packet spec — a decoded application section, or the payload
+  bytes when nothing decoded them.  It is what `parse` and `stream --json`
+  both call (#199); wrap a list of results with `to_packet_spec`.
+
+### Changed
+
+- **A document's `params:` and `transforms:` are read before they are
+  declined** (#209).  Both are still *not supported yet*, but a mistake inside
+  one is now refused as kober 0.6.0 refuses it, where it used to hide behind
+  the decline: an unknown key in a transform's declaration (such as a
+  misspelt `fails_as`), a parameter type that is not one of the four, a map
+  keyed by anything but `int` or `str` or not written `{map: [key, value]}`,
+  a `secret` that is not a bool, and a `fails_as` not spelled as a reason
+  (lower-case words joined by hyphens).  Every spec this newly refuses was
+  already an error.
+- A document parameter named like a field is refused, as kober refuses it:
+  a document parameter is in scope in every unit.
+- **A call outside kober's six functions is refused, not declined** (#210).
+  `endswith`, `len` (new in kober 0.6.0), `lower`, `startswith`, `to_int`
+  and `trim` are still *not supported yet*, now named as kober's: *not
+  supported yet: kober's function len()*.  Anything else — an unknown name,
+  a call on a dotted path or on a call's result — is refused naming the six,
+  and so are a keyword argument and a wrong number of arguments, as kober
+  refuses them when a spec loads.  Each was already an error; it is now the
+  real one.
+- **Breaking:** `protocol compile` and `compile_spec` refuse a unit or field
+  name beginning with `_`, and a unit whose class would be a Python builtin
+  or keyword (`value_error` → `ValueError`, `none` → `None`), each with its
+  name and location (#206).  The generated module keeps `_` for its own
+  names, as kober's compiler does.  A spec that used one must rename it;
+  `check` still accepts it, as kober's `check` does.  Until now such a name
+  compiled unless it happened to collide, and a collision broke the module
+  in ways reported as something else.  None of packeteer's or kober's
+  shipped specs is affected.
+
+### Fixed
+
+- **A seeded stream with AH, or with an ESP ICV, was not reproducible**
+  (#201): the ICV stand-in came from `os.urandom`, so `stream --ah … --seed N`
+  wrote different bytes on every run, breaking `--seed`'s promise of
+  byte-identical captures.  The stand-in is now derived from what a real ICV
+  would cover — AH's header and the bytes it protects, ESP's SPI, sequence
+  and payload — so the same packet always gets the same ICV, and different
+  packets different ones.  An explicit `icv` is used unchanged.  An AH or
+  ESP stream's bytes differ from 0.18.0's for the same seed, which were never
+  stable.
+- **`stream --json` dropped every decoded application section** (#199), so
+  `stream --json` → `build` rebuilt each DNS, HTTP, DHCP and compiled-protocol
+  packet with an empty payload, and said nothing.  Its conversion was a copy
+  of `parse`'s that had drifted; both now call `packet_to_config`, so the
+  loopback and SLL link layers, `network.declared_length` and a payload with
+  no transport header are written too.  A `--load-protocol` module is
+  recorded in the spec's `protocols` key, relative to the `--json` file, as
+  `parse --output` records it, so `build` rebuilds a compiled protocol's
+  packets without the flag.
+- **A unit named like a builtin broke its compiled module** (#206).
+  `value_error` compiled to `class ValueError`, so a bad `const` raised
+  *exceptions must derive from BaseException* in place of its own
+  `ValueError`; `none` produced source that did not parse, reported as a bug
+  in packeteer's compiler; a field `__init__` replaced the class's
+  constructor.  All are now refused before any code is written.
+- **A field named `field` or `list` broke its compiled module.**  A repeated
+  field's default, `field(default_factory=list)`, ran in the class body,
+  where either name was already bound to the field's default.  The class
+  body now calls `_field(default_factory=lambda: [])`, which no spec name
+  can reach.  Found checking #206.
+- **A map entry was refused as indexing** — *indexing is not allowed in an
+  expression* — so a spec kober 0.6.0 accepts read as a wrong one rather
+  than as using a construct packeteer lacks (#208).
+- **An expression naming a document parameter** read as naming a field that
+  does not exist: *unit 'm' has no field 'mode'*.  It is now typed by the
+  parameter's declared type, so `mode == 1` reports only the declined
+  `params:`, and a parameter read whole when it is a map, or descended into,
+  is refused in kober's words (#209).
+- A loader message naming a YAML mapping's type said `_LinedDict`, the
+  loader's own class, where the same mapping from JSON said `dict`.  Both
+  say `dict`.
+
+### Documentation
+
+- **The protocol format reference follows kober 0.6.0**
+  (`docs/protocols/format.md`): the *not supported yet* table gains map
+  entries and kober's function calls, and says a document's `params:` and
+  `transforms:` are read and checked before they are declined; *Relationship
+  to kober's dialect* describes map parameters and `fails_as`; and
+  *Expressions* has kober's six functions (`len` new), the map entry, which
+  calls and indexes are refused, and how a document parameter is in scope.
+- kober 0.6.0's `wireguard.yaml` and `packbits.yaml` join `dns.yaml` and
+  `http.yaml` in `src/tests/kober/`, pinned at the `v0.6.0` tag, and the
+  dialect test holds each one's outcome exactly.
+
+---
+
 ## [0.18.0] - 2026-10-18
 
 **UDP as a conversation, and a tunnel the caller seals.**  Most of this
@@ -3919,7 +4059,8 @@ the exhaustive API reference.
      tagged with names that predate this convention, so only the entries below
      carry compare links. -->
 
-[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/adamkjonsson/packeteer/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/adamkjonsson/packeteer/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/adamkjonsson/packeteer/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/adamkjonsson/packeteer/compare/v0.15.0...v0.16.0

@@ -14,8 +14,7 @@ import unittest
 import warnings
 
 from packeteer.generate import PacketBuilder
-from packeteer.parse import parse_packet
-from packeteer.parse.core import _packet_to_spec
+from packeteer.parse import packet_to_config, parse_packet
 from packeteer.sanitise import PersonalDataWarning, SanitiseOptions, sanitise
 
 _SRC_MAC = "1c:0b:8b:3c:e7:a3"
@@ -43,7 +42,7 @@ def _spec(payload: bytes, *, icmp_type: int, v6: bool = True,
         builder = builder.ip(src="192.0.2.1", dst="192.0.2.9").icmp(
             type=icmp_type, code=0, identifier=identifier, sequence=sequence)
     frame = builder.payload(data=payload).build()
-    return _packet_to_spec(parse_packet(frame, decode_app=False))
+    return packet_to_config(parse_packet(frame, decode_app=False))
 
 
 def _clean(spec: dict, **options: bool) -> dict:

@@ -372,3 +372,70 @@ class TestESPStreamOpaqueRandom(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheICVStandInIsReproducible(unittest.TestCase):
+    """An ICV packeteer makes up is a function of the packet, not of os.urandom (#201).
+
+    `--seed` promises byte-identical captures, and AH's default 12-byte ICV,
+    or an `ESPEncap(icv_len=N)` trailer, broke it on every packet.
+    """
+
+    @staticmethod
+    def _udp(encap: object) -> list[bytes]:
+        from packeteer.generate.udp_stream import UDPStreamConfig, generate_udp_stream
+        return [p.raw for p in generate_udp_stream(
+            client_ip="10.0.0.2", server_ip="10.0.0.1", num_data_packets=3,
+            encap=encap, config=UDPStreamConfig(seed=3)).packets]
+
+    def test_the_same_header_and_content_give_the_same_icv(self):
+        hdr = AHHeader(spi=0x99, sequence=3)
+        self.assertEqual(_build_ah_header(hdr, 6, b"inner"),
+                         _build_ah_header(hdr, 6, b"inner"))
+        esp = ESPHeader(spi=1, payload=b"abcd", icv_len=12)
+        self.assertEqual(_build_esp_header(esp), _build_esp_header(esp))
+
+    def test_different_content_gives_a_different_icv(self):
+        hdr = AHHeader(spi=0x99, sequence=3)
+        self.assertNotEqual(_build_ah_header(hdr, 6, b"one")[12:],
+                            _build_ah_header(hdr, 6, b"two")[12:])
+        self.assertNotEqual(_build_ah_header(AHHeader(spi=1, sequence=1), 6, b"x")[12:],
+                            _build_ah_header(AHHeader(spi=1, sequence=2), 6, b"x")[12:])
+        self.assertNotEqual(
+            _build_esp_header(ESPHeader(spi=1, payload=b"one", icv_len=12))[-12:],
+            _build_esp_header(ESPHeader(spi=1, payload=b"two", icv_len=12))[-12:])
+
+    def test_an_explicit_icv_is_used_unchanged(self):
+        icv = bytes(range(12))
+        self.assertEqual(_build_ah_header(AHHeader(spi=1, icv=icv), 6, b"inner")[12:], icv)
+
+    def test_the_icv_is_not_the_scramble_of_the_same_bytes(self):
+        """Keyed apart, so the stand-in never repeats the ciphertext beside it."""
+        esp = _build_esp_header(ESPHeader(spi=1, payload=b"abcd" * 8, icv_len=12))
+        self.assertNotEqual(esp[-12:], _scramble(esp[:-12])[:12])
+
+    def test_a_seeded_ah_or_esp_stream_is_byte_identical(self):
+        from packeteer.generate.stream_encap import AHEncap, ESPEncap
+        for encap in (AHEncap(spi=1, src_ip="192.0.2.1", dst_ip="192.0.2.2"),
+                      ESPEncap(spi=2, src_ip="192.0.2.1", dst_ip="192.0.2.2", icv_len=12)):
+            with self.subTest(type(encap).__name__):
+                self.assertEqual(self._udp(encap), self._udp(encap))
+
+    def test_the_issues_command_is_byte_identical(self):
+        import subprocess
+        import sys
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            outputs = []
+            for n in (1, 2):
+                out = Path(tmp) / f"ah{n}.pcap"
+                done = subprocess.run(
+                    [sys.executable, "-m", "packeteer", "stream",
+                     "--client-ip", "10.0.0.2", "--server-ip", "10.0.0.1",
+                     "--ah", "192.0.2.1", "192.0.2.2", "--seed", "7",
+                     "--packets", "2", "--pcap", str(out)],
+                    capture_output=True, text=True, check=False)
+                self.assertEqual(done.returncode, 0, done.stderr)
+                outputs.append(out.read_bytes())
+            self.assertEqual(outputs[0], outputs[1])

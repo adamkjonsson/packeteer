@@ -35,6 +35,8 @@ from packeteer.protospec.errors import SpecError
 from packeteer.protospec.expr import (
     ExprType,
     Ref,
+    calls,
+    indexes,
     parse,
     references,
     type_of,
@@ -52,6 +54,8 @@ from packeteer.protospec.spec import (
     InputShape,
     IntType,
     Location,
+    MapType,
+    Param,
     Remaining,
     Size,
     SizeOf,
@@ -177,6 +181,7 @@ class _Checker:
         self._check_name()
         self._check_ports()
         self._check_entry()
+        self._check_params()
         self._build_reference_map()
         self._check_units()
         self._check_reachability()
@@ -222,6 +227,24 @@ class _Checker:
             protocols.check_name(self.spec.name)
         except protocols.ProtocolError as exc:
             self._error(str(exc), self.spec.loc.child("name"))
+
+    def _check_params(self) -> None:
+        """Refuse a document parameter named like a field, as kober does.
+
+        A document parameter is in scope in every unit, so a field of the
+        same name anywhere would make a reference to either ambiguous.  The
+        parameters themselves are declined; this keeps the reference
+        resolution that types them honest (#209).
+        """
+        fields = {fld.name for unit in self.spec.units.values()
+                  for fld in unit.fields if fld.name is not None}
+        for param in self.spec.params.values():
+            if param.name in fields:
+                self._error(
+                    f"parameter {param.name!r} has the name of a field, and a "
+                    f"document parameter is in scope in every unit",
+                    param.loc,
+                )
 
     def _check_ports(self) -> None:
         """Refuse a port another registered protocol already claims (#169).
@@ -580,6 +603,8 @@ class _Checker:
             expr = parse(size.expr, fld.loc)
         except SpecError:
             return                      # already reported by _check_expr
+        if any(indexes(expr)) or any(calls(expr)):
+            return                      # declined; no derive can answer it
         refs = list(references(expr))
         if len(refs) != 1 or refs[0].scope != "this" or len(refs[0].path) != 1:
             return
@@ -703,10 +728,57 @@ class _Checker:
             self._error(exc.message, exc.location or loc)
             return None
         try:
-            return type_of(expr, self._resolver(unit, index, loc), loc)
+            kind = type_of(expr, self._resolver(unit, index, loc), loc,
+                           lambda name: self._resolve_map(name, unit, loc))
         except SpecError as exc:
             self._error(exc.message, exc.location or loc)
             return None
+        for entry in indexes(expr):
+            # Typed, so the key is checked as kober checks it, and then
+            # declined: an entry is chosen from a table packeteer never has.
+            self._error(
+                f"not supported yet: an entry of map parameter {entry.table!r}, "
+                f"{unparse(entry)} — a value chosen per message from a table "
+                f"supplied when a decode is set up",
+                loc,
+            )
+        for call in calls(expr):
+            # Typed by kober's table first, so a wrong argument or a misused
+            # result is reported beside the decline, not hidden by it (#211).
+            self._error(
+                f"not supported yet: kober's function {call.name}() — this "
+                f"version has no functions in expressions",
+                loc,
+            )
+        return kind
+
+    def _resolve_map(self, name: str, unit: Unit, loc: Location) -> MapType:
+        """Return the type of the map parameter *name*, or refuse the index.
+
+        Only a document parameter may be a map, so that is the only place
+        looked.  Anything else of the name is named in the refusal, as kober
+        names it: a field called ``keys`` indexed by mistake deserves better
+        than *unknown* (#208).
+        """
+        param = self.spec.params.get(name)
+        if param is not None:
+            if isinstance(param.type, MapType):
+                return param.type
+            raise SpecError(
+                f"{name!r} is {param.type.value}, and only a map parameter can "
+                f"be indexed", loc,
+            )
+        if _field_named(unit, name) is not None:
+            raise SpecError(
+                f"{name!r} is not a map parameter, and only a map parameter can "
+                f"be indexed", loc,
+            )
+        maps = sorted(p.name for p in self.spec.params.values()
+                      if isinstance(p.type, MapType))
+        raise SpecError(
+            f"unknown map parameter {name!r}; the spec's maps: "
+            f"{', '.join(maps) or 'none'}", loc,
+        )
 
     def _resolver(self, unit: Unit, index: int,
                   loc: Location) -> Callable[[Ref], ExprType]:
@@ -776,6 +848,8 @@ class _Checker:
                     )
                 found = fld
                 break
+            if found is None and depth == 0 and name in self.spec.params:
+                return _type_of_param(self.spec.params[name], ref, loc)
             if found is None:
                 raise SpecError(
                     f"unit {current.name!r} has no field {name!r}", loc,
@@ -1053,6 +1127,25 @@ def _field_named(unit: Unit, name: str) -> Field | None:
         if fld.name == name:
             return fld
     return None
+
+
+def _type_of_param(param: Param, ref: Ref, loc: Location) -> ExprType:
+    """Type a reference to a document parameter, which has no fields.
+
+    The parameter is kober's and declined, but its type is declared, so the
+    expression around it is checked as kober checks it rather than reported
+    as naming a field that does not exist (#209).
+    """
+    if len(ref.path) > 1:
+        raise SpecError(
+            f"parameter {param.name!r} has no fields to reference", loc,
+        )
+    if isinstance(param.type, MapType):
+        raise SpecError(
+            f"{param.name!r} is a map; an expression reads one entry of it, "
+            f"{param.name}[key]", loc,
+        )
+    return param.type
 
 
 def _type_of_field(field_type: FieldType, name: str, loc: Location) -> ExprType:

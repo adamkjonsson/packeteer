@@ -19,8 +19,7 @@ import warnings
 from pathlib import Path
 
 from packeteer.generate import PacketBuilder
-from packeteer.parse import parse_packet
-from packeteer.parse.core import _packet_to_spec
+from packeteer.parse import packet_to_config, parse_packet
 from packeteer.sanitise import _NESTING_TUNNEL_KEYS, _STRUCTURAL_KEYS, sanitise
 
 #: Outer addresses — the capture point's own, and redacted before this bug.
@@ -52,7 +51,7 @@ def _build(kind: str) -> bytes:
 def _sanitised(kind: str) -> str:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        spec = _packet_to_spec(parse_packet(_build(kind), decode_app=False))
+        spec = packet_to_config(parse_packet(_build(kind), decode_app=False))
         return json.dumps(sanitise({"packets": [spec]}))
 
 

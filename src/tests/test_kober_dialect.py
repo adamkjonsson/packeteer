@@ -3,7 +3,7 @@
 `docs/protocols/format.md` calls this dialect a superset of
 [kober](https://github.com/adamkjonsson/zipline-kober)'s.  This is what makes
 that a property of two loaders rather than a sentence in two references: the
-specs under `kober/` are kober 0.5.0's shipped examples, and each assertion
+specs under `kober/` are kober 0.6.0's shipped examples, and each assertion
 here is about the *outcome*, not merely that a file parses.
 
 kober vendors packeteer's specs the same way and asserts the same kind of
@@ -12,6 +12,7 @@ thing, so the two projects notice each other moving.
 from __future__ import annotations
 
 import pathlib
+import re
 import unittest
 
 from packeteer.protospec import SpecError, check, load
@@ -129,6 +130,184 @@ class TestKoberHTTP(unittest.TestCase):
         findings = [str(d) for d in check(self.spec).diagnostics
                     if "not supported yet" not in d.message]
         self.assertEqual(findings, [])
+
+
+class TestKoberWireGuard(unittest.TestCase):
+    """`wireguard.yaml`, kober 0.6.0's worked example of bringing your own code.
+
+    A tunnel: the handshake decoded as structure, each transport message
+    opened by a cipher the caller registers, chosen per message from a map
+    parameter.  Everything that makes it kober's is declined here, by name.
+    """
+
+    def setUp(self) -> None:
+        self.spec = load(_SPECS / "wireguard.yaml")
+
+    def test_it_reports_exactly_the_constructs_packeteer_lacks(self) -> None:
+        """Pinned deliberately: a new one appearing is a dialect change.
+
+        Read before accepted: the `keys` map and the `wg-transport`
+        declaration with its `fails_as`, the `reserved == 0` guard, the two
+        header fields kober does not `emit`, and the transform in each arm
+        of the switch on `len(sealed)`.
+        """
+        self.assertEqual(_constructs(self.spec),
+                         {"params", "transforms", "unit.confirm", "emit", "transform"})
+
+    def test_its_map_parameter_is_read(self) -> None:
+        """The first `{map: …}` kober shipped, read rather than skipped (#209)."""
+        from packeteer.protospec.expr import ExprType
+        from packeteer.protospec.spec import MapType
+        keys = self.spec.params["keys"]
+        self.assertEqual(keys.type, MapType(key=ExprType.INT, item=ExprType.BYTES))
+        self.assertTrue(keys.secret)
+
+    def test_its_len_is_declined_as_one_of_kobers_functions(self) -> None:
+        """The switch dispatches on `len(sealed)`, kober 0.6.0's sixth (#210)."""
+        errors = [d.message for d in check(self.spec).errors]
+        self.assertIn("not supported yet: kober's function len() — this version "
+                      "has no functions in expressions", errors)
+
+    def test_it_reports_eight_errors_and_one_warning(self) -> None:
+        result = check(self.spec)
+        self.assertEqual((len(result.errors), len(result.warnings)), (8, 1))
+
+    def test_every_error_is_not_supported_yet(self) -> None:
+        for diagnostic in check(self.spec).errors:
+            self.assertIn("not supported yet", diagnostic.message, str(diagnostic))
+
+    def test_its_one_warning_is_one_kober_gives_too(self) -> None:
+        """The message switch has no default, deliberately, and kober says so."""
+        warnings = check(self.spec).warnings
+        self.assertEqual([w.location.path for w in warnings], ["units.message.fields[2]"])
+        self.assertIn("this switch has no default", warnings[0].message)
+
+
+class TestKoberPackBits(unittest.TestCase):
+    """`packbits.yaml`, the shape with no keys and no parameters."""
+
+    def setUp(self) -> None:
+        self.spec = load(_SPECS / "packbits.yaml")
+
+    def test_it_reports_exactly_the_constructs_packeteer_lacks(self) -> None:
+        """Pinned deliberately: a new one appearing is a dialect change.
+
+        Read before accepted: the `packbits` declaration with its `fails_as`,
+        the `version == 1` guard, two fields kober does not `emit`, and the
+        transform labelled `net:ip`.
+        """
+        self.assertEqual(_constructs(self.spec),
+                         {"transforms", "unit.confirm", "emit", "transform"})
+        self.assertEqual(dict(self.spec.params), {})
+
+    def test_every_finding_is_not_supported_yet(self) -> None:
+        result = check(self.spec)
+        self.assertEqual(len(result.errors), 5)
+        findings = [str(d) for d in result.diagnostics
+                    if "not supported yet" not in d.message]
+        self.assertEqual(findings, [])
+
+
+class TestKobersFunctionTable(unittest.TestCase):
+    """`expr.KOBER_FUNCTIONS` is held to kober's documented table (#211).
+
+    The table is copied from kober's `BUILTINS` and drifts when kober adds a
+    function, so the copy of kober's `docs/format/expressions.md` under
+    `kober/` is the drift detector: its *Functions* table names each
+    function, every argument count it takes and its result type.  Parameter
+    types are not in kober's table, and are pinned by `TestCallsAreTyped`.
+    """
+
+    _ROW = re.compile(r"^\| `(?P<name>[a-z_]+)\((?P<args>[^)]*)\)` \| (?P<result>[a-z]+) \|")
+
+    def _documented(self) -> dict[str, tuple[set[int], set[str]]]:
+        text = (_SPECS / "expressions.md").read_text(encoding="utf-8")
+        table = text.split("## Functions", 1)[1].split("\n## ", 1)[0]
+        found: dict[str, tuple[set[int], set[str]]] = {}
+        for line in table.splitlines():
+            row = self._ROW.match(line)
+            if row is None:
+                continue
+            arities, results = found.setdefault(row["name"], (set(), set()))
+            arities.add(len([a for a in row["args"].split(",") if a.strip()]))
+            results.add(row["result"])
+        return found
+
+    def test_the_same_functions(self) -> None:
+        from packeteer.protospec.expr import KOBER_FUNCTIONS
+        self.assertEqual(set(self._documented()), set(KOBER_FUNCTIONS))
+
+    def test_each_takes_the_documented_arguments_and_gives_the_documented_type(
+            self) -> None:
+        from packeteer.protospec.expr import KOBER_FUNCTIONS
+        for name, (arities, results) in self._documented().items():
+            function = KOBER_FUNCTIONS[name]
+            with self.subTest(name):
+                self.assertEqual(arities, set(range(function.required,
+                                                    len(function.params) + 1)))
+                self.assertEqual(results, {function.returns.value})
+
+
+class TestCallsAreTypedThenDeclined(unittest.TestCase):
+    """A call to one of kober's functions is typed, then declined (#211).
+
+    kober's review of 0.19.0.dev1: an untyped call let a wrong argument or a
+    misused result read as a construct packeteer lacks, where kober refuses
+    it.  Each case is the issue's, checked against `kober check`.
+    """
+
+    def _check(self, field: str) -> list[str]:
+        from packeteer.protospec import loads
+        spec = loads('name: t\nversion: "1"\nentry: m\nunits:\n  m:\n    fields:\n'
+                     "      - {name: kind, bits: 8}\n"
+                     "      - {name: tag, string: {size: 3}}\n"
+                     "      - {name: body, bytes: 4}\n"
+                     f"      - {field}\n", fmt="yaml")
+        return [d.message for d in check(spec).diagnostics]
+
+    def test_a_correct_call_is_only_declined(self) -> None:
+        self.assertEqual(self._check('{name: x, bits: 8, condition: "len(body) == 4"}'),
+                         ["not supported yet: kober's function len() — this version "
+                          "has no functions in expressions"])
+
+    def test_a_wrong_argument_or_a_misused_result_is_refused(self) -> None:
+        cases = {
+            '{name: x, bits: 8, condition: "len(tag) == 3"}':
+                "argument 1 of len() is str, expected bytes",
+            '{name: x, bits: 8, condition: "len(kind) == 1"}':
+                "argument 1 of len() is int, expected bytes",
+            "{name: x, bits: 8, condition: \"lower(kind) == 'a'\"}":
+                "argument 1 of lower() is int, expected str",
+            "{name: x, bits: 8, condition: \"len(body) == 'x'\"}":
+                "'==' compares int with str",
+            "{name: x, bits: 8, condition: \"startswith(tag, 'a') + 1 == 2\"}":
+                "the left operand of '+' is bool, expected int",
+            '{name: x, bytes: {size: {expr: "lower(tag)"}}}':
+                "a size is str, expected int: lower(tag)",
+            '{name: x, bits: 8, condition: "to_int(tag)"}':
+                "a condition is int, expected bool: to_int(tag)",
+        }
+        for field, expected in cases.items():
+            with self.subTest(field):
+                findings = [m for m in self._check(field)
+                            if not m.startswith("not supported yet")]
+                self.assertEqual(len(findings), 1, findings)
+                self.assertIn(expected, findings[0])
+
+    def test_no_derive_is_asked_of_a_converted_length(self) -> None:
+        """`to_int(tag)` is HTTP's Content-Length; no `size_of` can answer it."""
+        messages = self._check('{name: x, bytes: {size: {expr: "to_int(tag)"}}}')
+        self.assertEqual(len(messages), 1, messages)
+        self.assertTrue(messages[0].startswith("not supported yet: kober's function"))
+
+    def test_compile_spec_refuses_one_unchecked(self) -> None:
+        from packeteer.protospec import compile_spec, loads
+        spec = loads('name: t\nversion: "1"\nentry: m\nunits:\n  m:\n    fields:\n'
+                     "      - {name: body, bytes: 4}\n"
+                     '      - {name: x, bits: 8, condition: "len(body) == 4"}\n', fmt="yaml")
+        with self.assertRaises(SpecError) as ctx:
+            compile_spec(spec)
+        self.assertIn("not supported yet: kober's function len()", str(ctx.exception))
 
 
 class TestTransformAndConcat(unittest.TestCase):
@@ -434,3 +613,266 @@ units:
       - {name: magic, bits: 16, conditon: "magic == 1"}
 """)
         self.assertIn("'conditon'", str(ctx.exception))
+
+
+class TestDeclarationsAreRead(unittest.TestCase):
+    """A document's `params:` and `transforms:` are read, then declined (#209).
+
+    Each refusal here is one kober 0.6.0's loader makes too, checked against
+    `kober check` when written.  Before #209 every one of them was hidden
+    behind the block's *not supported yet*.
+    """
+
+    _UNITS = """
+units:
+  m:
+    fields:
+      - {name: kind, bits: 8}
+      - {name: x, bits: 8, condition: "mode == 1"}
+"""
+
+    def _load(self, declarations: str) -> object:
+        from packeteer.protospec import loads
+        return loads('name: t\nversion: "1"\nentry: m\n' + declarations + self._UNITS,
+                     fmt="yaml")
+
+    def _findings(self, spec: object) -> list[str]:
+        """Return what `check` says beyond the blocks' own declines."""
+        return [d.message for d in check(spec).diagnostics
+                if not d.message.startswith("not supported yet")]
+
+    def test_kober_06_declarations_load_and_are_only_declined(self) -> None:
+        from packeteer.protospec.expr import ExprType
+        from packeteer.protospec.spec import MapType
+        spec = self._load("""
+params:
+  mode: int
+  keys: {type: {map: [int, bytes]}, secret: true, doc: "Per session."}
+transforms:
+  br: {}
+  gz:
+  c: {params: {key: bytes, counter: int}, fails_as: decrypt-failed, doc: "A cipher."}
+  d: {fails_as: null}
+""")
+        self.assertEqual(_constructs(spec), {"params", "transforms"})
+        self.assertEqual(self._findings(spec), [])
+        self.assertEqual(spec.params["mode"].type, ExprType.INT)
+        self.assertFalse(spec.params["mode"].secret)
+        self.assertEqual(spec.params["keys"].type,
+                         MapType(key=ExprType.INT, item=ExprType.BYTES))
+        self.assertTrue(spec.params["keys"].secret)
+        self.assertEqual(spec.params["keys"].loc.path, "params.keys")
+
+    def test_a_spec_without_params_has_none(self) -> None:
+        from packeteer.protospec import loads
+        spec = loads('name: t\nversion: "1"\nentry: m\n'
+                     'units: {m: {fields: [{name: a, bits: 8}]}}\n', fmt="yaml")
+        self.assertEqual(dict(spec.params), {})
+
+    def test_mistakes_inside_the_blocks_are_refused(self) -> None:
+        cases = {
+            "a misspelt declaration key":
+                ("params: {mode: int}\ntransforms:\n  pb: {fails_az: unpack-failed}\n",
+                 "transform 'pb' has no key 'fails_az'"),
+            "a map keyed by bool":
+                ("params:\n  mode: int\n  keys: {type: {map: [bool, bytes]}}\n",
+                 "a map is keyed by int or str, not bool"),
+            "a map of one type":
+                ("params:\n  mode: int\n  keys: {type: {map: [int]}}\n",
+                 "this lists 1 type(s)"),
+            "a map that is not a list":
+                ("params:\n  mode: int\n  keys: {type: {map: {int: bytes}}}\n",
+                 "a map is [key type, value type], not dict"),
+            "a map type misspelt":
+                ("params:\n  mode: int\n  keys: {type: {mop: [int, int]}}\n",
+                 "{map: [key type, value type]}"),
+            "a map value that is no type":
+                ("params:\n  mode: int\n  keys: {type: {map: [int, blob]}}\n",
+                 "a map's value type must be one of"),
+            "a type that is not one of the four":
+                ("params: {mode: float}\n", "not 'float'"),
+            "unknown, the checker's own":
+                ("params: {mode: unknown}\n", "not 'unknown'"),
+            "a parameter with no type":
+                ("params:\n  mode: {secret: true}\n", "missing required key 'type'"),
+            "a parameter key misspelt":
+                ("params:\n  mode: {type: int, secrit: true}\n", "has no key 'secrit'"),
+            "a secret that is not a bool":
+                ("params:\n  mode: {type: int, secret: 'yes'}\n", "true or false"),
+            "a transform parameter that is no type":
+                ("params: {mode: int}\ntransforms:\n  c: {params: {key: blob}}\n",
+                 "parameter 'key' of transform 'c' must be one of"),
+            "fails_as not spelled as a reason":
+                ("params: {mode: int}\ntransforms:\n  c: {fails_as: Decrypt_Failed}\n",
+                 "lower-case words joined by hyphens"),
+            "fails_as not a string":
+                ("params: {mode: int}\ntransforms:\n  c: {fails_as: 3}\n",
+                 "must be a string"),
+            "a declaration that is not a mapping":
+                ("params: {mode: int}\ntransforms:\n  c: [key]\n", "must be a mapping"),
+        }
+        for label, (declarations, expected) in cases.items():
+            with self.subTest(label), self.assertRaises(SpecError) as ctx:
+                self._load(declarations)
+            self.assertIn(expected, str(ctx.exception), label)
+
+    def test_a_reference_to_a_parameter_is_typed(self) -> None:
+        """Before #209 it read as a field that does not exist."""
+        self.assertEqual(self._findings(self._load("params: {mode: int}\n")), [])
+        self.assertEqual(self._findings(self._load("params: {mode: bool}\n")),
+                         ["'==' compares bool with int; both sides must be the "
+                          "same type, and there is no coercion"])
+
+    def test_a_parameter_is_in_scope_from_root_too(self) -> None:
+        from packeteer.protospec import loads
+        spec = loads("""
+name: t
+version: "1"
+entry: m
+params: {mode: int}
+units:
+  m:
+    fields:
+      - {name: inner, unit: n}
+  n:
+    fields:
+      - {name: x, bits: 8, condition: "root.mode == 1"}
+""", fmt="yaml")
+        self.assertEqual(self._findings(spec), [])
+
+    def test_a_map_parameter_is_never_read_whole(self) -> None:
+        findings = self._findings(self._load("params:\n  mode: {type: {map: [int, int]}}\n"))
+        self.assertEqual(findings, ["'mode' is a map; an expression reads one entry "
+                                    "of it, mode[key]"])
+
+    def test_a_parameter_has_no_fields(self) -> None:
+        from packeteer.protospec import loads
+        spec = loads("""
+name: t
+version: "1"
+entry: m
+params: {mode: int}
+units:
+  m:
+    fields:
+      - {name: x, bits: 8, condition: "mode.a == 1"}
+""", fmt="yaml")
+        self.assertEqual(self._findings(spec),
+                         ["parameter 'mode' has no fields to reference"])
+
+    def test_a_parameter_named_like_a_field_is_refused(self) -> None:
+        findings = self._findings(self._load("params: {mode: int, kind: int}\n"))
+        self.assertEqual(findings, ["parameter 'kind' has the name of a field, and a "
+                                    "document parameter is in scope in every unit"])
+
+
+class TestMapEntries(unittest.TestCase):
+    """kober 0.6.0's `keys[receiver]` is declined by name, not refused (#208).
+
+    Before #208 any subscript was *indexing is not allowed*, so a spec kober
+    accepts read as a wrong one.  `wireguard.yaml` escaped only because its
+    one entry is in a declined transform's `args`, which are never parsed.
+    Each refusal here is kober's own, checked against `kober check`.
+    """
+
+    def _load(self, params: str, fields: str) -> object:
+        from packeteer.protospec import loads
+        return loads(f'name: t\nversion: "1"\nentry: m\n{params}units:\n  m:\n'
+                     f'    fields:\n{fields}', fmt="yaml")
+
+    def _messages(self, spec: object) -> list[str]:
+        return [d.message for d in check(spec).diagnostics]
+
+    def _findings(self, spec: object) -> list[str]:
+        """Return what `check` says beyond the declines."""
+        return [m for m in self._messages(spec) if not m.startswith("not supported yet")]
+
+    def test_the_issues_spec_is_declined_twice_and_nothing_else(self) -> None:
+        spec = self._load(
+            "params:\n  sizes: {type: {map: [int, int]}}\n",
+            "      - {name: kind, bits: 8}\n"
+            "      - {name: body, bytes: {size: {expr: \"sizes[kind]\"}}}\n")
+        messages = self._messages(spec)
+        self.assertEqual(len(messages), 2, messages)
+        self.assertIn("not supported yet: params", messages[0])
+        self.assertTrue(messages[1].startswith(
+            "not supported yet: an entry of map parameter 'sizes', sizes[kind]"),
+            messages[1])
+
+    def test_it_is_declined_wherever_an_expression_goes(self) -> None:
+        spec = self._load(
+            "params:\n  n: {type: {map: [int, int]}}\n  flag: {type: {map: [str, bool]}}\n",
+            "      - {name: kind, bits: 8}\n"
+            "      - {name: tag, string: {size: 2}}\n"
+            "      - {name: a, bits: 8, condition: \"flag[tag]\"}\n"
+            "      - {name: b, bits: 8, count: \"n[kind]\"}\n"
+            "      - name: c\n"
+            "        switch: {dispatch: \"n[kind]\", cases: {1: {bits: 8}}, "
+            "default: {bits: 16}}\n")
+        declined = [m for m in self._messages(spec) if "an entry of map parameter" in m]
+        self.assertEqual(len(declined), 3, declined)
+        self.assertEqual(self._findings(spec), [])
+
+    def test_what_is_not_a_map_parameter_is_refused(self) -> None:
+        """Q1: refused, as kober refuses it, rather than declined."""
+        cases = {
+            "a field": ("", "kind[0]",
+                        "'kind' is not a map parameter, and only a map parameter "
+                        "can be indexed"),
+            "a scalar parameter": ("params: {mode: int}\n", "mode[kind]",
+                                   "'mode' is int, and only a map parameter can be "
+                                   "indexed"),
+            "an unknown name": ("params:\n  keys: {type: {map: [int, int]}}\n",
+                                "kays[kind]",
+                                "unknown map parameter 'kays'; the spec's maps: keys"),
+            "an unknown name, no maps": ("", "keys[kind]",
+                                         "unknown map parameter 'keys'; the spec's "
+                                         "maps: none"),
+        }
+        for label, (params, expr, expected) in cases.items():
+            with self.subTest(label):
+                body = f"{{name: body, bytes: {{size: {{expr: \"{expr}\"}}}}}}"
+                spec = self._load(params, "      - {name: kind, bits: 8}\n"
+                                  f"      - {body}\n")
+                self.assertEqual(self._findings(spec), [expected])
+                self.assertFalse(any("an entry of" in m for m in self._messages(spec)))
+
+    def test_its_key_and_value_are_typed(self) -> None:
+        key = self._load("params:\n  sizes: {type: {map: [str, int]}}\n",
+                         "      - {name: kind, bits: 8}\n"
+                         "      - {name: body, bytes: {size: {expr: \"sizes[kind]\"}}}\n")
+        self.assertEqual(self._findings(key), ["the key of 'sizes' is int, expected str"])
+        value = self._load("params:\n  sizes: {type: {map: [int, bytes]}}\n",
+                           "      - {name: kind, bits: 8}\n"
+                           "      - {name: body, bytes: {size: {expr: \"sizes[kind]\"}}}\n")
+        self.assertEqual(self._findings(value), ["a size is bytes, expected int: sizes[kind]"])
+
+    def test_its_key_reads_only_fields_decoded_before_it(self) -> None:
+        spec = self._load("params:\n  sizes: {type: {map: [int, int]}}\n",
+                          "      - {name: body, bytes: {size: {expr: \"sizes[kind]\"}}}\n"
+                          "      - {name: kind, bits: 8}\n")
+        self.assertEqual(self._findings(spec),
+                         ["'kind' is declared later in unit 'm'; a field may only "
+                          "reference fields decoded before it"])
+
+    def test_no_derive_is_asked_of_its_key(self) -> None:
+        """`kind` keys the size; it is not the size, so no `size_of` fits."""
+        spec = self._load("params:\n  sizes: {type: {map: [int, int]}}\n",
+                          "      - {name: kind, bits: 8}\n"
+                          "      - {name: body, bytes: {size: {expr: \"sizes[kind]\"}}}\n")
+        self.assertEqual([d for d in check(spec).diagnostics if d.severity == "warning"], [])
+
+    def test_show_prints_it_as_written(self) -> None:
+        from packeteer.protospec import render
+        spec = self._load("params:\n  sizes: {type: {map: [int, int]}}\n",
+                          "      - {name: kind, bits: 8}\n"
+                          "      - {name: body, bytes: {size: {expr: \"sizes[kind + 1]\"}}}\n")
+        self.assertIn("sizes[kind + 1]", render(spec))
+
+    def test_compile_spec_refuses_it_unchecked(self) -> None:
+        from packeteer.protospec import compile_spec
+        spec = self._load("", "      - {name: kind, bits: 8}\n"
+                          "      - {name: body, bytes: {size: {expr: \"kind[0]\"}}}\n")
+        with self.assertRaises(SpecError) as ctx:
+            compile_spec(spec)
+        self.assertIn("not supported yet: an entry of map parameter", str(ctx.exception))
