@@ -25,6 +25,28 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
+---
+
+## [0.19.0] - 2026-10-23
+
+**kober 0.6.0's dialect, and three left from 0.18.0.**  kober 0.6.0 added map
+parameters and their entries (`keys[receiver]`), `fails_as` on a transform,
+`len()` and `net:` labels for its WireGuard example.  packeteer declines all
+of them, and now reads and checks the first three as kober does before it
+declines them, so a mistake beside or inside one is still reported and a spec
+kober accepts never reads as a wrong one: a map entry is declined where it
+used to be refused as
+indexing, a call to one of kober's six functions is typed before it is
+declined, and a document's `params:` and `transforms:` are checked before
+they are declined.  kober 0.6.0's examples are vendored and pinned, and
+kober's function table is drift-checked against its documentation.  Beside
+that: `stream --json` writes decoded application sections, which it dropped
+(#199), with a public `packet_to_config` behind it; a seeded AH or ESP-ICV
+stream is reproducible (#201); and `protocol compile` refuses names its
+generated module needs itself (#206).  **Breaking:** one, under *Changed*:
+a `_`-prefixed name, or a unit whose class would be a builtin or keyword, is
+refused by `compile`.
+
 ### Added
 
 - **`Spec.params`, a spec's document parameters** — kober's `params:`, which
@@ -4037,7 +4059,8 @@ the exhaustive API reference.
      tagged with names that predate this convention, so only the entries below
      carry compare links. -->
 
-[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/adamkjonsson/packeteer/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/adamkjonsson/packeteer/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/adamkjonsson/packeteer/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/adamkjonsson/packeteer/compare/v0.15.0...v0.16.0
