@@ -144,11 +144,10 @@ class TestItWorksThroughPacketeer(_CompileTestCase):
     def test_parse_build_is_byte_identical(self) -> None:
         import packeteer.__main__ as cli
         from packeteer.generate import PacketBuilder
-        from packeteer.parse import parse_packet
-        from packeteer.parse.core import _packet_to_spec
+        from packeteer.parse import packet_to_config, parse_packet
 
         original = self._frame()
-        spec = _packet_to_spec(parse_packet(original))
+        spec = packet_to_config(parse_packet(original))
         spec["ethernet"] = {"src_mac": "00:00:00:00:00:01",
                             "dst_mac": "00:00:00:00:00:02"}
         rebuilt, _ = cli._apply_spec_to_builder(PacketBuilder(), spec, 1)

@@ -15,8 +15,7 @@ from dataclasses import fields
 
 from packeteer.generate import PacketBuilder
 from packeteer.generate.dns import DNSMessage, DNSQuestion
-from packeteer.parse import ParsedPacket, parse_packet
-from packeteer.parse.core import _packet_to_spec
+from packeteer.parse import ParsedPacket, packet_to_config, parse_packet
 from packeteer.pcap import LINKTYPE_LINUX_SLL, LINKTYPE_LOOP, LINKTYPE_RAW
 
 _MACS = {"src_mac": "00:00:00:00:00:01", "dst_mac": "00:00:00:00:00:02"}
@@ -229,7 +228,7 @@ class TestTheShape(unittest.TestCase):
                 pkt = pkt.tunneled
 
     def test_not_in_the_spec(self) -> None:
-        self.assertNotIn("offsets", _packet_to_spec(parse_packet(_tcp())))
+        self.assertNotIn("offsets", packet_to_config(parse_packet(_tcp())))
 
     def test_empty_on_a_bare_packet(self) -> None:
         self.assertEqual(ParsedPacket().offsets, {})

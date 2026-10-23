@@ -18,7 +18,7 @@ Exactly one output flag is required; they are mutually exclusive.
 |------|--------|
 | `--pcap FILE` | libpcap (`.pcap`) file |
 | `--pcapng FILE` | pcapng (`.pcapng`) file |
-| `--json FILE` | Packet spec — same format as `packeteer parse` output, replayable with `packeteer build`.  Each `packet_metadata` block gains `direction` (`"c2s"` / `"s2c"`) and `label` (e.g. `"SYN"`, `"DATA[3]"`) fields. |
+| `--json FILE` | Packet spec — same format as `packeteer parse` output, replayable with `packeteer build`: a decoded protocol's section is written as `parse` writes it, and a `--load-protocol` module is recorded in the spec's `protocols` key, so `build` needs no flag to rebuild it.  Each `packet_metadata` block gains `direction` (`"c2s"` / `"s2c"`) and `label` (e.g. `"SYN"`, `"DATA[3]"`) fields. |
 
 ## General arguments
 

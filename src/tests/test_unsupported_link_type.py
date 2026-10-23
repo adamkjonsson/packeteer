@@ -17,10 +17,10 @@ import packeteer.__main__ as cli
 from packeteer.generate import PacketBuilder
 from packeteer.parse import (
     UnsupportedLinkTypeWarning,
+    packet_to_config,
     parse_packet,
     parse_pcap_file,
 )
-from packeteer.parse.core import _packet_to_spec
 from packeteer.pcap import LINKTYPE_ETHERNET, LINKTYPE_NULL, write_pcap
 from packeteer.sanitise import PersonalDataWarning, sanitise
 
@@ -95,7 +95,7 @@ class TestSanitiseWarns(unittest.TestCase):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             pkt = parse_packet(b"\x00\x04" + _inner(), link_type=_UNKNOWN)
-        return {"packets": [_packet_to_spec(pkt)]}
+        return {"packets": [packet_to_config(pkt)]}
 
     def test_it_warns(self) -> None:
         caught = _warnings(lambda: sanitise(self._undecoded_spec()))
@@ -114,7 +114,7 @@ class TestSanitiseWarns(unittest.TestCase):
     def test_a_decoded_packet_does_not_warn(self) -> None:
         frame = (PacketBuilder().ethernet().ip(src="192.0.2.1", dst="192.0.2.9")
                  .udp(dst_port=53).payload(data=b"x").build())
-        spec = {"packets": [_packet_to_spec(parse_packet(frame))]}
+        spec = {"packets": [packet_to_config(parse_packet(frame))]}
         caught = _warnings(lambda: sanitise(spec))
         self.assertEqual([w for w in caught
                           if issubclass(w.category, PersonalDataWarning)], [])
@@ -164,7 +164,7 @@ class TestTheCLISaysWhy(unittest.TestCase):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             pkt = parse_packet(b"\x00\x04" + _inner(), link_type=_UNKNOWN)
-        spec = _packet_to_spec(pkt)
+        spec = packet_to_config(pkt)
         with self.assertRaises(SystemExit):
             cli._apply_spec_to_builder(PacketBuilder(), spec, 1)
 

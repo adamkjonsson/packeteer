@@ -40,7 +40,13 @@ from .mpls import packet_parser as mpls_packet_parser
 from .pppoe import packet_parser as pppoe_packet_parser
 from .sll import sll2_packet_parser, sll_packet_parser
 from .tcp import packet_parser as tcp_packet_parser
-from .to_config import apply_tunneled, to_json_string, to_packet_spec, update_config
+from .to_config import (
+    apply_tunneled,
+    packet_to_config,
+    to_json_string,
+    to_packet_spec,
+    update_config,
+)
 from .udp import packet_parser as udp_packet_parser
 from .vlan import packet_parser as vlan_packet_parser
 from .vxlan import packet_parser as vxlan_packet_parser
@@ -74,6 +80,7 @@ __all__ = [
     "IncompleteDatagram",
     "update_config",
     "apply_tunneled",
+    "packet_to_config",
     "to_packet_spec",
     "to_json_string",
     "arp_packet_parser",

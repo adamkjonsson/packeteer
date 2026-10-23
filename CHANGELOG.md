@@ -51,6 +51,10 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   `packeteer.protospec.expr`, a `Call` node and `calls()`, and
   `KOBER_FUNCTIONS` maps each name to a `KoberFunction` (`params`,
   `required`, `returns`) in place of an argument count.
+- **`packeteer.parse.packet_to_config(pkt)`**: one parsed packet as one
+  packet of a packet spec — a decoded application section, or the payload
+  bytes when nothing decoded them.  It is what `parse` and `stream --json`
+  both call (#199); wrap a list of results with `to_packet_spec`.
 
 ### Changed
 
@@ -85,6 +89,15 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ### Fixed
 
+- **`stream --json` dropped every decoded application section** (#199), so
+  `stream --json` → `build` rebuilt each DNS, HTTP, DHCP and compiled-protocol
+  packet with an empty payload, and said nothing.  Its conversion was a copy
+  of `parse`'s that had drifted; both now call `packet_to_config`, so the
+  loopback and SLL link layers, `network.declared_length` and a payload with
+  no transport header are written too.  A `--load-protocol` module is
+  recorded in the spec's `protocols` key, relative to the `--json` file, as
+  `parse --output` records it, so `build` rebuilds a compiled protocol's
+  packets without the flag.
 - **A unit named like a builtin broke its compiled module** (#206).
   `value_error` compiled to `class ValueError`, so a bad `const` raised
   *exceptions must derive from BaseException* in place of its own
