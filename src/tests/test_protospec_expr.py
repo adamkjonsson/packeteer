@@ -11,15 +11,17 @@ from packeteer.protospec.expr import (
     BytesLiteral,
     Compare,
     ExprType,
+    Index,
     IntLiteral,
     Ref,
     StrLiteral,
+    indexes,
     parse,
     references,
     type_of,
     unparse,
 )
-from packeteer.protospec.spec import Location
+from packeteer.protospec.spec import Location, MapType
 
 _LOC = Location(path="units.m.fields[0]", source="test.yaml")
 
@@ -140,7 +142,7 @@ class TestRefusedConstructs(unittest.TestCase):
     def test_each_construct_is_named(self) -> None:
         cases = {
             "f(x)": "call",
-            "xs[0]": "indexing",
+            "xs[1:2]": "a slice",
             "[1, 2]": "a list",
             "(1, 2)": "a tuple",
             "{1: 2}": "a dict",
@@ -305,3 +307,86 @@ class TestParsedShapes(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestMapEntries(unittest.TestCase):
+    """kober 0.6.0's one index, an entry of a map parameter (#208).
+
+    Parsed and typed here; whether the name is a map parameter, and the
+    decline, are the checker's.
+    """
+
+    _KEYS = MapType(key=ExprType.INT, item=ExprType.BYTES)
+
+    def _typed(self, source: str, **types: str) -> ExprType:
+        table = {name: ExprType(value) for name, value in types.items()}
+
+        def resolve(ref: Ref) -> ExprType:
+            return table[".".join(ref.path)]
+
+        def resolve_map(name: str) -> MapType:
+            if name != "keys":
+                raise SpecError(f"{name!r} is not a map parameter", _LOC)
+            return self._KEYS
+
+        return type_of(_parse(source), resolve, _LOC, resolve_map)
+
+    def test_it_parses_as_an_index(self) -> None:
+        self.assertEqual(_parse("keys[receiver]"),
+                         Index(table="keys", key=Ref(scope="this", path=("receiver",))))
+        self.assertEqual(_parse("keys[hdr.rx + 1]").key,
+                         BinOp(op="+", left=Ref(scope="this", path=("hdr", "rx")),
+                               right=IntLiteral(value=1)))
+
+    def test_what_kober_refuses_at_load_is_refused(self) -> None:
+        cases = {
+            "keys[1:2]": "a slice is not allowed",
+            "keys[1, 2]": "an index is one expression, not several",
+            "hdr.keys[0]": "only a map parameter can be indexed, by its name",
+            "this[0]": "only a map parameter can be indexed, by its name",
+            "true[0]": "only a map parameter can be indexed, by its name",
+            "keys[0][1]": "only a map parameter can be indexed, by its name",
+        }
+        for source, expected in cases.items():
+            with self.subTest(expr=source), self.assertRaises(SpecError) as ctx:
+                _parse(source)
+            self.assertIn(expected, str(ctx.exception))
+
+    def test_it_has_the_maps_value_type(self) -> None:
+        self.assertEqual(self._typed("keys[rx]", rx="int"), ExprType.BYTES)
+        self.assertEqual(self._typed("keys[rx] == keys[tx]", rx="int", tx="int"),
+                         ExprType.BOOL)
+
+    def test_its_key_has_the_maps_key_type(self) -> None:
+        with self.assertRaises(SpecError) as ctx:
+            self._typed("keys[name]", name="str")
+        self.assertIn("the key of 'keys' is str, expected int", str(ctx.exception))
+
+    def test_its_value_is_typed_where_it_is_used(self) -> None:
+        with self.assertRaises(SpecError) as ctx:
+            self._typed("keys[rx] + 1", rx="int")
+        self.assertIn("is bytes, expected int", str(ctx.exception))
+
+    def test_a_name_that_is_not_a_map_is_refused_by_the_resolver(self) -> None:
+        with self.assertRaises(SpecError) as ctx:
+            self._typed("kind[0]", kind="int")
+        self.assertIn("'kind' is not a map parameter", str(ctx.exception))
+
+    def test_with_no_maps_every_index_is_refused(self) -> None:
+        with self.assertRaises(SpecError) as ctx:
+            _typed("kind[0]", kind="int")
+        self.assertIn("only a map parameter can be indexed", str(ctx.exception))
+
+    def test_its_key_is_a_reference_and_its_table_is_not(self) -> None:
+        refs = list(references(_parse("keys[rx] == 1")))
+        self.assertEqual(refs, [Ref(scope="this", path=("rx",))])
+
+    def test_every_entry_is_found(self) -> None:
+        found = [i.table for i in indexes(_parse("keys[a] == keys[ids[b]] or c"))]
+        self.assertEqual(found, ["keys", "keys", "ids"])
+
+    def test_it_unparses_as_written(self) -> None:
+        for source in ("keys[receiver]", "keys[rx + 1] == x", "-keys[a]",
+                       "keys[a or b]", "root.n + keys[parent.rx] * 2"):
+            with self.subTest(expr=source):
+                self.assertEqual(unparse(_parse(source)), source)

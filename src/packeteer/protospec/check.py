@@ -35,6 +35,7 @@ from packeteer.protospec.errors import SpecError
 from packeteer.protospec.expr import (
     ExprType,
     Ref,
+    indexes,
     parse,
     references,
     type_of,
@@ -601,6 +602,8 @@ class _Checker:
             expr = parse(size.expr, fld.loc)
         except SpecError:
             return                      # already reported by _check_expr
+        if any(indexes(expr)):
+            return                      # declined; no derive can answer it
         refs = list(references(expr))
         if len(refs) != 1 or refs[0].scope != "this" or len(refs[0].path) != 1:
             return
@@ -724,10 +727,49 @@ class _Checker:
             self._error(exc.message, exc.location or loc)
             return None
         try:
-            return type_of(expr, self._resolver(unit, index, loc), loc)
+            kind = type_of(expr, self._resolver(unit, index, loc), loc,
+                           lambda name: self._resolve_map(name, unit, loc))
         except SpecError as exc:
             self._error(exc.message, exc.location or loc)
             return None
+        for entry in indexes(expr):
+            # Typed, so the key is checked as kober checks it, and then
+            # declined: an entry is chosen from a table packeteer never has.
+            self._error(
+                f"not supported yet: an entry of map parameter {entry.table!r}, "
+                f"{unparse(entry)} — a value chosen per message from a table "
+                f"supplied when a decode is set up",
+                loc,
+            )
+        return kind
+
+    def _resolve_map(self, name: str, unit: Unit, loc: Location) -> MapType:
+        """Return the type of the map parameter *name*, or refuse the index.
+
+        Only a document parameter may be a map, so that is the only place
+        looked.  Anything else of the name is named in the refusal, as kober
+        names it: a field called ``keys`` indexed by mistake deserves better
+        than *unknown* (#208).
+        """
+        param = self.spec.params.get(name)
+        if param is not None:
+            if isinstance(param.type, MapType):
+                return param.type
+            raise SpecError(
+                f"{name!r} is {param.type.value}, and only a map parameter can "
+                f"be indexed", loc,
+            )
+        if _field_named(unit, name) is not None:
+            raise SpecError(
+                f"{name!r} is not a map parameter, and only a map parameter can "
+                f"be indexed", loc,
+            )
+        maps = sorted(p.name for p in self.spec.params.values()
+                      if isinstance(p.type, MapType))
+        raise SpecError(
+            f"unknown map parameter {name!r}; the spec's maps: "
+            f"{', '.join(maps) or 'none'}", loc,
+        )
 
     def _resolver(self, unit: Unit, index: int,
                   loc: Location) -> Callable[[Ref], ExprType]:

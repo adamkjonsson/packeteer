@@ -41,6 +41,7 @@ from packeteer.protospec.expr import (
     BoolOp,
     BytesLiteral,
     Expr,
+    Index,
     IntLiteral,
     Ref,
     StrLiteral,
@@ -874,6 +875,11 @@ class _Generator:
             return repr(expr.value)
         if isinstance(expr, Ref):
             return self._render_ref(expr, unit, loc)
+        if isinstance(expr, Index):
+            # `check` declines every one; a spec compiled unchecked meets it here.
+            raise SpecError(
+                f"not supported yet: an entry of map parameter {expr.table!r}", loc,
+            )
         if isinstance(expr, UnaryOp):
             op = "not " if expr.op == "not" else expr.op
             return f"({op}{self._render(expr.operand, unit, loc)})"

@@ -585,3 +585,115 @@ units:
         findings = self._findings(self._load("params: {mode: int, kind: int}\n"))
         self.assertEqual(findings, ["parameter 'kind' has the name of a field, and a "
                                     "document parameter is in scope in every unit"])
+
+
+class TestMapEntries(unittest.TestCase):
+    """kober 0.6.0's `keys[receiver]` is declined by name, not refused (#208).
+
+    Before #208 any subscript was *indexing is not allowed*, so a spec kober
+    accepts read as a wrong one.  `wireguard.yaml` escaped only because its
+    one entry is in a declined transform's `args`, which are never parsed.
+    Each refusal here is kober's own, checked against `kober check`.
+    """
+
+    def _load(self, params: str, fields: str) -> object:
+        from packeteer.protospec import loads
+        return loads(f'name: t\nversion: "1"\nentry: m\n{params}units:\n  m:\n'
+                     f'    fields:\n{fields}', fmt="yaml")
+
+    def _messages(self, spec: object) -> list[str]:
+        return [d.message for d in check(spec).diagnostics]
+
+    def _findings(self, spec: object) -> list[str]:
+        """Return what `check` says beyond the declines."""
+        return [m for m in self._messages(spec) if not m.startswith("not supported yet")]
+
+    def test_the_issues_spec_is_declined_twice_and_nothing_else(self) -> None:
+        spec = self._load(
+            "params:\n  sizes: {type: {map: [int, int]}}\n",
+            "      - {name: kind, bits: 8}\n"
+            "      - {name: body, bytes: {size: {expr: \"sizes[kind]\"}}}\n")
+        messages = self._messages(spec)
+        self.assertEqual(len(messages), 2, messages)
+        self.assertIn("not supported yet: params", messages[0])
+        self.assertTrue(messages[1].startswith(
+            "not supported yet: an entry of map parameter 'sizes', sizes[kind]"),
+            messages[1])
+
+    def test_it_is_declined_wherever_an_expression_goes(self) -> None:
+        spec = self._load(
+            "params:\n  n: {type: {map: [int, int]}}\n  flag: {type: {map: [str, bool]}}\n",
+            "      - {name: kind, bits: 8}\n"
+            "      - {name: tag, string: {size: 2}}\n"
+            "      - {name: a, bits: 8, condition: \"flag[tag]\"}\n"
+            "      - {name: b, bits: 8, count: \"n[kind]\"}\n"
+            "      - name: c\n"
+            "        switch: {dispatch: \"n[kind]\", cases: {1: {bits: 8}}, "
+            "default: {bits: 16}}\n")
+        declined = [m for m in self._messages(spec) if "an entry of map parameter" in m]
+        self.assertEqual(len(declined), 3, declined)
+        self.assertEqual(self._findings(spec), [])
+
+    def test_what_is_not_a_map_parameter_is_refused(self) -> None:
+        """Q1: refused, as kober refuses it, rather than declined."""
+        cases = {
+            "a field": ("", "kind[0]",
+                        "'kind' is not a map parameter, and only a map parameter "
+                        "can be indexed"),
+            "a scalar parameter": ("params: {mode: int}\n", "mode[kind]",
+                                   "'mode' is int, and only a map parameter can be "
+                                   "indexed"),
+            "an unknown name": ("params:\n  keys: {type: {map: [int, int]}}\n",
+                                "kays[kind]",
+                                "unknown map parameter 'kays'; the spec's maps: keys"),
+            "an unknown name, no maps": ("", "keys[kind]",
+                                         "unknown map parameter 'keys'; the spec's "
+                                         "maps: none"),
+        }
+        for label, (params, expr, expected) in cases.items():
+            with self.subTest(label):
+                body = f"{{name: body, bytes: {{size: {{expr: \"{expr}\"}}}}}}"
+                spec = self._load(params, "      - {name: kind, bits: 8}\n"
+                                  f"      - {body}\n")
+                self.assertEqual(self._findings(spec), [expected])
+                self.assertFalse(any("an entry of" in m for m in self._messages(spec)))
+
+    def test_its_key_and_value_are_typed(self) -> None:
+        key = self._load("params:\n  sizes: {type: {map: [str, int]}}\n",
+                         "      - {name: kind, bits: 8}\n"
+                         "      - {name: body, bytes: {size: {expr: \"sizes[kind]\"}}}\n")
+        self.assertEqual(self._findings(key), ["the key of 'sizes' is int, expected str"])
+        value = self._load("params:\n  sizes: {type: {map: [int, bytes]}}\n",
+                           "      - {name: kind, bits: 8}\n"
+                           "      - {name: body, bytes: {size: {expr: \"sizes[kind]\"}}}\n")
+        self.assertEqual(self._findings(value), ["a size is bytes, expected int: sizes[kind]"])
+
+    def test_its_key_reads_only_fields_decoded_before_it(self) -> None:
+        spec = self._load("params:\n  sizes: {type: {map: [int, int]}}\n",
+                          "      - {name: body, bytes: {size: {expr: \"sizes[kind]\"}}}\n"
+                          "      - {name: kind, bits: 8}\n")
+        self.assertEqual(self._findings(spec),
+                         ["'kind' is declared later in unit 'm'; a field may only "
+                          "reference fields decoded before it"])
+
+    def test_no_derive_is_asked_of_its_key(self) -> None:
+        """`kind` keys the size; it is not the size, so no `size_of` fits."""
+        spec = self._load("params:\n  sizes: {type: {map: [int, int]}}\n",
+                          "      - {name: kind, bits: 8}\n"
+                          "      - {name: body, bytes: {size: {expr: \"sizes[kind]\"}}}\n")
+        self.assertEqual([d for d in check(spec).diagnostics if d.severity == "warning"], [])
+
+    def test_show_prints_it_as_written(self) -> None:
+        from packeteer.protospec import render
+        spec = self._load("params:\n  sizes: {type: {map: [int, int]}}\n",
+                          "      - {name: kind, bits: 8}\n"
+                          "      - {name: body, bytes: {size: {expr: \"sizes[kind + 1]\"}}}\n")
+        self.assertIn("sizes[kind + 1]", render(spec))
+
+    def test_compile_spec_refuses_it_unchecked(self) -> None:
+        from packeteer.protospec import compile_spec
+        spec = self._load("", "      - {name: kind, bits: 8}\n"
+                          "      - {name: body, bytes: {size: {expr: \"kind[0]\"}}}\n")
+        with self.assertRaises(SpecError) as ctx:
+            compile_spec(spec)
+        self.assertIn("not supported yet: an entry of map parameter", str(ctx.exception))

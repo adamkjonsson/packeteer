@@ -32,6 +32,16 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   `type`, `loc`, `secret`), whose type is one of the four expression types
   or, since kober 0.6.0, a `protospec.spec.MapType`.  They are kept so the checker
   can type an expression that names one (#209).
+- **kober 0.6.0's map entries, `keys[receiver]`, are recognised and
+  declined** (#208), wherever an expression goes: *not supported yet: an
+  entry of map parameter 'keys', keys[receiver]*.  The entry is typed first,
+  as kober types it: the key must be the map's key type and may only read
+  fields decoded before it, and the entry has the map's value type.  An
+  index on anything but a map parameter is refused in kober's words — a
+  field (`kind[0]`), a scalar parameter, or an unknown name — as are a
+  slice, an index of several parts, and an index on anything but a bare
+  name.  In `packeteer.protospec.expr`, a new `Index` node and `indexes()`,
+  and `type_of()` takes an optional `resolve_map`.
 
 ### Changed
 
@@ -49,6 +59,9 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ### Fixed
 
+- **A map entry was refused as indexing** — *indexing is not allowed in an
+  expression* — so a spec kober 0.6.0 accepts read as a wrong one rather
+  than as using a construct packeteer lacks (#208).
 - **An expression naming a document parameter** read as naming a field that
   does not exist: *unit 'm' has no field 'mode'*.  It is now typed by the
   parameter's declared type, so `mode == 1` reports only the declined

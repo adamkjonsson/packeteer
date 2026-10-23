@@ -12,11 +12,14 @@ is what lets a spec be validated rather than merely tried.
 
 **The parser is Python's.**  :func:`ast.parse` in expression mode does the
 tokenising and precedence, and this module walks the result against a
-whitelist.  That is why "no calls, no loops, no indexing" holds by
-construction rather than by vigilance: a construct is refused because it is
-absent from the whitelist, and refused **by name** — *a function call is not
-allowed in an expression* — rather than by leaking an AST class name at a spec
-author.
+whitelist.  That is why "no calls, no loops" holds by construction rather
+than by vigilance: a construct is refused because it is absent from the
+whitelist, and refused **by name** — *a comprehension is not allowed in an
+expression* — rather than by leaking an AST class name at a spec author.
+
+The one index is kober's, since 0.6.0: an entry of a map parameter,
+``keys[receiver]``, read as an :class:`Index` and declined by the checker
+(#208).  Any other subscript is refused.
 
 Four types, and no coercion: ``int``, ``str``, ``bytes``, ``bool``.  Arithmetic
 and ordering are integer-only, equality needs both sides to be the same type,
@@ -37,7 +40,7 @@ from enum import Enum
 from typing import Callable, Union
 
 from packeteer.protospec.errors import SpecError
-from packeteer.protospec.spec import Location
+from packeteer.protospec.spec import Location, MapType
 
 __all__ = [
     "BinOp",
@@ -47,10 +50,12 @@ __all__ = [
     "Compare",
     "Expr",
     "ExprType",
+    "Index",
     "IntLiteral",
     "Ref",
     "StrLiteral",
     "UnaryOp",
+    "indexes",
     "parse",
     "references",
     "type_of",
@@ -216,9 +221,27 @@ class Compare:
     right: Expr
 
 
+@dataclass(frozen=True)
+class Index:
+    """One entry of a map parameter: ``keys[receiver]``.
+
+    kober's, since 0.6.0, and declined here (#208).  The table is always a
+    document parameter declared as a map, named bare, which the checker
+    proves; only the key is an expression.
+
+    Attributes:
+        table: The map parameter's name.
+        key: Which entry.
+
+    """
+
+    table: str
+    key: Expr
+
+
 Expr = Union[
     IntLiteral, StrLiteral, BytesLiteral, BoolLiteral,
-    Ref, UnaryOp, BinOp, BoolOp, Compare,
+    Ref, UnaryOp, BinOp, BoolOp, Compare, Index,
 ]
 
 
@@ -249,7 +272,6 @@ _REFUSED: dict[type[ast.AST], str] = {
     ast.GeneratorExp: "a comprehension",
     ast.Await: "await",
     ast.Yield: "yield",
-    ast.Subscript: "indexing",
     ast.Starred: "unpacking",
     ast.List: "a list",
     ast.Tuple: "a tuple",
@@ -316,6 +338,8 @@ def _convert(node: ast.expr, loc: Location) -> Expr:
         )
     if isinstance(node, ast.Compare):
         return _compare(node, loc)
+    if isinstance(node, ast.Subscript):
+        return _index(node, loc)
     if isinstance(node, ast.Call):
         raise SpecError(
             f"not supported yet: {_call_name(node)} — this version has no "
@@ -371,6 +395,27 @@ def _reference(node: ast.expr, loc: Location) -> Ref:
         if not parts:
             raise SpecError(f"{scope!r} on its own is not a reference", loc)
     return Ref(scope=scope, path=tuple(parts))
+
+
+def _index(node: ast.Subscript, loc: Location) -> Index:
+    """Convert ``name[key]``, an entry of a map parameter, and nothing else.
+
+    What is indexed must be a bare name, since a map is only ever a document
+    parameter, and the key one expression.  A slice, or a key of several
+    parts, is refused here, as kober refuses it when a spec loads; whether
+    the name is a map at all is the checker's question.
+    """
+    if isinstance(node.slice, ast.Slice):
+        raise SpecError("a slice is not allowed in an expression", loc)
+    if isinstance(node.slice, ast.Tuple):
+        raise SpecError("an index is one expression, not several", loc)
+    table = node.value
+    if (not isinstance(table, ast.Name) or table.id in SCOPE_WORDS
+            or table.id in _BOOL_WORDS):
+        raise SpecError(
+            "only a map parameter can be indexed, by its name: keys[receiver]", loc,
+        )
+    return Index(table=table.id, key=_convert(node.slice, loc))
 
 
 def _binop(node: ast.BinOp, loc: Location) -> BinOp:
@@ -465,6 +510,35 @@ def references(expr: Expr) -> Iterator[Ref]:
     elif isinstance(expr, BoolOp):
         for operand in expr.operands:
             yield from references(operand)
+    elif isinstance(expr, Index):
+        # The table is a parameter, not a reference; the key is what the
+        # entry is chosen by, and reads fields like any other expression.
+        yield from references(expr.key)
+
+
+def indexes(expr: Expr) -> Iterator[Index]:
+    """Yield every map entry in *expr*, in source order.
+
+    What the checker walks to decline each one by name (#208).
+
+    Args:
+        expr: The expression to walk.
+
+    Yields:
+        Each :class:`Index`, outermost first.
+
+    """
+    if isinstance(expr, Index):
+        yield expr
+        yield from indexes(expr.key)
+    elif isinstance(expr, UnaryOp):
+        yield from indexes(expr.operand)
+    elif isinstance(expr, (BinOp, Compare)):
+        yield from indexes(expr.left)
+        yield from indexes(expr.right)
+    elif isinstance(expr, BoolOp):
+        for operand in expr.operands:
+            yield from indexes(operand)
 
 
 # ── typing ────────────────────────────────────────────────────────────────────
@@ -474,12 +548,13 @@ _ARITHMETIC: frozenset[str] = frozenset({"+", "-", "*", "/", "%",
 _ORDERING: frozenset[str] = frozenset({"<", "<=", ">", ">="})
 
 
-def type_of(expr: Expr, resolve: Callable[[Ref], ExprType], loc: Location) -> ExprType:
+def type_of(expr: Expr, resolve: Callable[[Ref], ExprType], loc: Location,
+            resolve_map: Callable[[str], MapType] | None = None) -> ExprType:
     """Return the type of *expr*, or raise saying why it has none.
 
     The spec is not consulted here: *resolve* supplies the type of a
-    reference, which is what keeps this module independent of the spec tree
-    and testable on its own.
+    reference, and *resolve_map* the type of a map parameter, which is what
+    keeps this module independent of the spec tree and testable on its own.
 
     Args:
         expr: The expression to type.
@@ -487,6 +562,10 @@ def type_of(expr: Expr, resolve: Callable[[Ref], ExprType], loc: Location) -> Ex
             raise :class:`~packeteer.protospec.errors.SpecError` for a
             reference that does not resolve.
         loc: Where in the spec the expression is, for error messages.
+        resolve_map: Called with the name an :class:`Index` reads to get the
+            map's type, raising like *resolve* when it is not a map
+            parameter.  ``None`` means there are no maps, so any index is
+            refused.
 
     Returns:
         The expression's type.
@@ -506,22 +585,40 @@ def type_of(expr: Expr, resolve: Callable[[Ref], ExprType], loc: Location) -> Ex
         return ExprType.BOOL
     if isinstance(expr, Ref):
         return resolve(expr)
+
+    def sub(operand: Expr) -> ExprType:
+        return type_of(operand, resolve, loc, resolve_map)
+
+    if isinstance(expr, Index):
+        return _type_index(expr, sub, loc, resolve_map)
     if isinstance(expr, UnaryOp):
-        return _type_unary(expr, resolve, loc)
+        return _type_unary(expr, sub, loc)
     if isinstance(expr, BinOp):
-        return _type_binop(expr, resolve, loc)
+        return _type_binop(expr, sub, loc)
     if isinstance(expr, BoolOp):
         for operand in expr.operands:
-            _want(type_of(operand, resolve, loc), ExprType.BOOL,
-                  f"an operand of {expr.op!r}", loc)
+            _want(sub(operand), ExprType.BOOL, f"an operand of {expr.op!r}", loc)
         return ExprType.BOOL
-    return _type_compare(expr, resolve, loc)
+    return _type_compare(expr, sub, loc)
 
 
-def _type_unary(expr: UnaryOp, resolve: Callable[[Ref], ExprType],
+def _type_index(expr: Index, sub: Callable[[Expr], ExprType], loc: Location,
+                resolve_map: Callable[[str], MapType] | None) -> ExprType:
+    """Type a map entry: the key must be the map's key type, and it is a value."""
+    if resolve_map is None:
+        raise SpecError(
+            f"{expr.table!r} is not a map parameter, and only a map parameter "
+            f"can be indexed", loc,
+        )
+    table = resolve_map(expr.table)
+    _want(sub(expr.key), table.key, f"the key of {expr.table!r}", loc)
+    return table.item
+
+
+def _type_unary(expr: UnaryOp, sub: Callable[[Expr], ExprType],
                 loc: Location) -> ExprType:
     """Type a unary operation."""
-    operand = type_of(expr.operand, resolve, loc)
+    operand = sub(expr.operand)
     if expr.op == "not":
         _want(operand, ExprType.BOOL, "the operand of 'not'", loc)
         return ExprType.BOOL
@@ -529,20 +626,20 @@ def _type_unary(expr: UnaryOp, resolve: Callable[[Ref], ExprType],
     return ExprType.INT
 
 
-def _type_binop(expr: BinOp, resolve: Callable[[Ref], ExprType],
+def _type_binop(expr: BinOp, sub: Callable[[Expr], ExprType],
                 loc: Location) -> ExprType:
     """Type an arithmetic or bitwise operation."""
     for side, operand in (("left", expr.left), ("right", expr.right)):
-        _want(type_of(operand, resolve, loc), ExprType.INT,
+        _want(sub(operand), ExprType.INT,
               f"the {side} operand of {expr.op!r}", loc)
     return ExprType.INT
 
 
-def _type_compare(expr: Compare, resolve: Callable[[Ref], ExprType],
+def _type_compare(expr: Compare, sub: Callable[[Expr], ExprType],
                   loc: Location) -> ExprType:
     """Type a comparison.  Ordering is integer-only; equality needs one type."""
-    left = type_of(expr.left, resolve, loc)
-    right = type_of(expr.right, resolve, loc)
+    left = sub(expr.left)
+    right = sub(expr.right)
     if expr.op in _ORDERING:
         _want(left, ExprType.INT, f"the left operand of {expr.op!r}", loc)
         _want(right, ExprType.INT, f"the right operand of {expr.op!r}", loc)
@@ -609,6 +706,9 @@ def _render(expr: Expr, outer: int) -> str:
     if isinstance(expr, Ref):
         prefix = "" if expr.scope == "this" else f"{expr.scope}."
         return prefix + ".".join(expr.path)
+    if isinstance(expr, Index):
+        # An atom: the brackets bind tighter than any operator.
+        return f"{expr.table}[{_render(expr.key, 0)}]"
     if isinstance(expr, UnaryOp):
         space = " " if expr.op == "not" else ""
         rendered = f"{expr.op}{space}{_render(expr.operand, _UNARY_PRECEDENCE)}"
