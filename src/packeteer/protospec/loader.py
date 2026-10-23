@@ -111,7 +111,7 @@ _UNSUPPORTED_REPEATS: dict[str, str] = {
     "until":  "repeat until a condition holds after each element",
     "to_end": "repeat to the end of the enclosing run",
 }
-#: kober's document-level keys this version lacks, as of kober 0.5.0.  One
+#: kober's document-level keys this version lacks, as of kober 0.6.0.  One
 #: table per level, because the same word means different things at each:
 #: a document's ``params`` are values supplied when a decode is set up, a
 #: unit's are arguments passed where it is referenced.  A key spread into a
@@ -815,7 +815,7 @@ def _check_declined_shape(kind: str, body: Any, loc: Location, ctx: _Ctx) -> Non
 
     Declining a construct must not loosen it: a typo inside one is still a
     typo, and an author writing for kober should hear about it from either
-    loader.  The rules are kober 0.5.0's.  What the names refer to — an
+    loader.  The rules are kober 0.6.0's.  What the names refer to — an
     earlier field, a declared transform — is not checked, since nothing here
     reads them.
     """

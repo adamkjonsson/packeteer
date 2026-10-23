@@ -3,7 +3,7 @@
 `docs/protocols/format.md` calls this dialect a superset of
 [kober](https://github.com/adamkjonsson/zipline-kober)'s.  This is what makes
 that a property of two loaders rather than a sentence in two references: the
-specs under `kober/` are kober 0.5.0's shipped examples, and each assertion
+specs under `kober/` are kober 0.6.0's shipped examples, and each assertion
 here is about the *outcome*, not merely that a file parses.
 
 kober vendors packeteer's specs the same way and asserts the same kind of
@@ -127,6 +127,82 @@ class TestKoberHTTP(unittest.TestCase):
         as were six type errors on expressions that kober types correctly.
         """
         findings = [str(d) for d in check(self.spec).diagnostics
+                    if "not supported yet" not in d.message]
+        self.assertEqual(findings, [])
+
+
+class TestKoberWireGuard(unittest.TestCase):
+    """`wireguard.yaml`, kober 0.6.0's worked example of bringing your own code.
+
+    A tunnel: the handshake decoded as structure, each transport message
+    opened by a cipher the caller registers, chosen per message from a map
+    parameter.  Everything that makes it kober's is declined here, by name.
+    """
+
+    def setUp(self) -> None:
+        self.spec = load(_SPECS / "wireguard.yaml")
+
+    def test_it_reports_exactly_the_constructs_packeteer_lacks(self) -> None:
+        """Pinned deliberately: a new one appearing is a dialect change.
+
+        Read before accepted: the `keys` map and the `wg-transport`
+        declaration with its `fails_as`, the `reserved == 0` guard, the two
+        header fields kober does not `emit`, and the transform in each arm
+        of the switch on `len(sealed)`.
+        """
+        self.assertEqual(_constructs(self.spec),
+                         {"params", "transforms", "unit.confirm", "emit", "transform"})
+
+    def test_its_map_parameter_is_read(self) -> None:
+        """The first `{map: …}` kober shipped, read rather than skipped (#209)."""
+        from packeteer.protospec.expr import ExprType
+        from packeteer.protospec.spec import MapType
+        keys = self.spec.params["keys"]
+        self.assertEqual(keys.type, MapType(key=ExprType.INT, item=ExprType.BYTES))
+        self.assertTrue(keys.secret)
+
+    def test_its_len_is_declined_as_one_of_kobers_functions(self) -> None:
+        """The switch dispatches on `len(sealed)`, kober 0.6.0's sixth (#210)."""
+        errors = [d.message for d in check(self.spec).errors]
+        self.assertIn("not supported yet: kober's function len() — this version "
+                      "has no functions in expressions", errors)
+
+    def test_it_reports_eight_errors_and_one_warning(self) -> None:
+        result = check(self.spec)
+        self.assertEqual((len(result.errors), len(result.warnings)), (8, 1))
+
+    def test_every_error_is_not_supported_yet(self) -> None:
+        for diagnostic in check(self.spec).errors:
+            self.assertIn("not supported yet", diagnostic.message, str(diagnostic))
+
+    def test_its_one_warning_is_one_kober_gives_too(self) -> None:
+        """The message switch has no default, deliberately, and kober says so."""
+        warnings = check(self.spec).warnings
+        self.assertEqual([w.location.path for w in warnings], ["units.message.fields[2]"])
+        self.assertIn("this switch has no default", warnings[0].message)
+
+
+class TestKoberPackBits(unittest.TestCase):
+    """`packbits.yaml`, the shape with no keys and no parameters."""
+
+    def setUp(self) -> None:
+        self.spec = load(_SPECS / "packbits.yaml")
+
+    def test_it_reports_exactly_the_constructs_packeteer_lacks(self) -> None:
+        """Pinned deliberately: a new one appearing is a dialect change.
+
+        Read before accepted: the `packbits` declaration with its `fails_as`,
+        the `version == 1` guard, two fields kober does not `emit`, and the
+        transform labelled `net:ip`.
+        """
+        self.assertEqual(_constructs(self.spec),
+                         {"transforms", "unit.confirm", "emit", "transform"})
+        self.assertEqual(dict(self.spec.params), {})
+
+    def test_every_finding_is_not_supported_yet(self) -> None:
+        result = check(self.spec)
+        self.assertEqual(len(result.errors), 5)
+        findings = [str(d) for d in result.diagnostics
                     if "not supported yet" not in d.message]
         self.assertEqual(findings, [])
 

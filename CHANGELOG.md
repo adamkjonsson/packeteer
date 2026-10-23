@@ -99,6 +99,19 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   loader's own class, where the same mapping from JSON said `dict`.  Both
   say `dict`.
 
+### Documentation
+
+- **The protocol format reference follows kober 0.6.0**
+  (`docs/protocols/format.md`): the *not supported yet* table gains map
+  entries and kober's function calls, and says a document's `params:` and
+  `transforms:` are read and checked before they are declined; *Relationship
+  to kober's dialect* describes map parameters and `fails_as`; and
+  *Expressions* has kober's six functions (`len` new), the map entry, which
+  calls and indexes are refused, and how a document parameter is in scope.
+- kober 0.6.0's `wireguard.yaml` and `packbits.yaml` join `dns.yaml` and
+  `http.yaml` in `src/tests/kober/`, pinned at the `v0.6.0` tag, and the
+  dialect test holds each one's outcome exactly.
+
 ---
 
 ## [0.18.0] - 2026-10-18
