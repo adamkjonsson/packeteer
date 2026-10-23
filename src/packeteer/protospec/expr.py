@@ -27,9 +27,10 @@ and ``and`` / ``or`` / ``not`` need booleans — ``qdcount and ...`` is an error
 rather than a test for non-zero.  ``/`` floors, because there is no
 floating-point type, and a float literal is refused rather than truncated.
 
-This is kober's language, less its closed table of five functions.  A call is
-therefore reported as *not supported yet* rather than as a syntax error, since
-a spec written for kober may well contain one.
+This is kober's language, less its closed table of six functions.  A call to
+one of them is therefore reported as *not supported yet* rather than as a
+syntax error, since a spec written for kober may well contain one; a call to
+anything else is refused, as kober refuses it (#210).
 """
 from __future__ import annotations
 
@@ -67,6 +68,19 @@ SCOPE_WORDS: frozenset[str] = frozenset({"this", "parent", "root"})
 
 #: How this language spells booleans — YAML's way, not Python's.
 _BOOL_WORDS: dict[str, bool] = {"true": True, "false": False}
+
+#: kober's functions, and how many arguments each takes, fewest and most.
+#: Copied from kober 0.6.0's ``kober.expr.BUILTINS``; it is the one table here
+#: that drifts when kober adds a function.  A call to one is declined, and a
+#: call to anything else refused, as kober refuses it (#210).
+KOBER_FUNCTIONS: dict[str, tuple[int, int]] = {
+    "endswith": (2, 2),
+    "len": (1, 1),
+    "lower": (1, 1),
+    "startswith": (2, 2),
+    "to_int": (1, 2),
+    "trim": (1, 1),
+}
 
 #: Largest shift a spec may ask for.  A shift is the one arithmetic operator
 #: that turns a small expression into an arbitrarily large integer, so a
@@ -341,11 +355,7 @@ def _convert(node: ast.expr, loc: Location) -> Expr:
     if isinstance(node, ast.Subscript):
         return _index(node, loc)
     if isinstance(node, ast.Call):
-        raise SpecError(
-            f"not supported yet: {_call_name(node)} — this version has no "
-            "functions in expressions",
-            loc,
-        )
+        _call(node, loc)
     raise SpecError(
         f"{type(node).__name__} is not allowed in an expression", loc,
     )
@@ -476,13 +486,36 @@ def _op_name(op: ast.AST) -> str:
     }.get(type(op).__name__, f"'{type(op).__name__}'")
 
 
-def _call_name(node: ast.Call) -> str:
-    """Name a called function, for the not-supported-yet message."""
-    if isinstance(node.func, ast.Name):
-        return f"a call to {node.func.id!r}"
-    if isinstance(node.func, ast.Attribute):
-        return f"a call to {node.func.attr!r}"
-    return "a function call"
+def _call(node: ast.Call, loc: Location) -> None:
+    """Decline a call to one of kober's functions, and refuse any other.
+
+    A call never returns: this version has no functions, so the best it can
+    say about kober's is *not supported yet*.  What kober refuses when a spec
+    loads is refused here first — a name outside its table, a keyword
+    argument, a wrong number of arguments — so a call reported as declined is
+    one kober would accept.
+    """
+    known = ", ".join(f"{name}()" for name in sorted(KOBER_FUNCTIONS))
+    if not isinstance(node.func, ast.Name) or node.func.id not in KOBER_FUNCTIONS:
+        raise SpecError(
+            f"{ast.unparse(node.func)!r} is not one of kober's functions; "
+            f"there are only {known}",
+            loc,
+        )
+    name = node.func.id
+    if node.keywords:
+        raise SpecError(f"{name}() takes positional arguments only", loc)
+    fewest, most = KOBER_FUNCTIONS[name]
+    if not fewest <= len(node.args) <= most:
+        wanted = str(fewest) if fewest == most else f"{fewest} or {most}"
+        raise SpecError(
+            f"{name}() takes {wanted} argument(s), got {len(node.args)}", loc,
+        )
+    raise SpecError(
+        f"not supported yet: kober's function {name}() — this version has no "
+        f"functions in expressions",
+        loc,
+    )
 
 
 # ── walking ───────────────────────────────────────────────────────────────────

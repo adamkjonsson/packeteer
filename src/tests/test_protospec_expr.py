@@ -141,7 +141,7 @@ class TestRefusedConstructs(unittest.TestCase):
 
     def test_each_construct_is_named(self) -> None:
         cases = {
-            "f(x)": "call",
+            "f(x)": "'f' is not one of kober's functions",
             "xs[1:2]": "a slice",
             "[1, 2]": "a list",
             "(1, 2)": "a tuple",
@@ -161,15 +161,42 @@ class TestRefusedConstructs(unittest.TestCase):
                 self.assertIn(expected, str(ctx.exception))
 
     def test_a_call_is_not_supported_yet_rather_than_invalid(self) -> None:
-        """A spec written for kober may use one of its three functions."""
-        for source, name in (("to_int(v)", "to_int"), ("trim(v)", "trim"),
-                             ("lower(v)", "lower")):
+        """A spec written for kober may use one of its six functions (#210)."""
+        for source, name in (("to_int(v)", "to_int"), ("to_int(v, 16)", "to_int"),
+                             ("trim(v)", "trim"), ("lower(v)", "lower"),
+                             ("startswith(v, 'GET')", "startswith"),
+                             ("endswith(v, 'chunked')", "endswith"),
+                             ("len(sealed) == 16", "len")):
             with self.subTest(expr=source):
                 with self.assertRaises(SpecError) as ctx:
                     _parse(source)
-                message = str(ctx.exception)
-                self.assertIn("not supported yet", message)
-                self.assertIn(name, message)
+                self.assertIn(f"not supported yet: kober's function {name}()",
+                              str(ctx.exception))
+
+    def test_a_call_kober_refuses_is_refused(self) -> None:
+        """Only a call kober would accept is declined (#210).
+
+        kober refuses these when a spec loads, so declining them would say a
+        spec is kober's when it is not.
+        """
+        known = "endswith(), len(), lower(), startswith(), to_int(), trim()"
+        cases = {
+            "frob(body) == 4": f"'frob' is not one of kober's functions; there are "
+                               f"only {known}",
+            "LEN(body)": "'LEN' is not one of kober's functions",
+            "a.len(b)": "'a.len' is not one of kober's functions",
+            "len(a)(b)": "'len(a)' is not one of kober's functions",
+            "len(b, base=1)": "len() takes positional arguments only",
+            "len()": "len() takes 1 argument(s), got 0",
+            "startswith(v)": "startswith() takes 2 argument(s), got 1",
+            "to_int(v, 10, 2)": "to_int() takes 1 or 2 argument(s), got 3",
+        }
+        for source, expected in cases.items():
+            with self.subTest(expr=source), self.assertRaises(SpecError) as ctx:
+                _parse(source)
+            message = str(ctx.exception)
+            self.assertIn(expected, message)
+            self.assertNotIn("not supported yet", message)
 
     def test_a_chained_comparison_says_how_to_write_it(self) -> None:
         with self.assertRaises(SpecError) as ctx:

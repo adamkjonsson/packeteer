@@ -56,6 +56,14 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   already an error.
 - A document parameter named like a field is refused, as kober refuses it:
   a document parameter is in scope in every unit.
+- **A call outside kober's six functions is refused, not declined** (#210).
+  `endswith`, `len` (new in kober 0.6.0), `lower`, `startswith`, `to_int`
+  and `trim` are still *not supported yet*, now named as kober's: *not
+  supported yet: kober's function len()*.  Anything else — an unknown name,
+  a call on a dotted path or on a call's result — is refused naming the six,
+  and so are a keyword argument and a wrong number of arguments, as kober
+  refuses them when a spec loads.  Each was already an error; it is now the
+  real one.
 
 ### Fixed
 
