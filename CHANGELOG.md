@@ -42,6 +42,15 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   slice, an index of several parts, and an index on anything but a bare
   name.  In `packeteer.protospec.expr`, a new `Index` node and `indexes()`,
   and `type_of()` takes an optional `resolve_map`.
+- **A call to one of kober's functions is typed before it is declined**
+  (#211), by kober's table: each argument must have its parameter's type,
+  and the call has its function's result type.  `len(tag)` on a string,
+  `lower(kind)` on an integer, `lower(tag)` used as a size or `to_int(tag)` as
+  a condition are refused beside the decline, as kober refuses them, where
+  each used to read as no more than *not supported yet*.  In
+  `packeteer.protospec.expr`, a `Call` node and `calls()`, and
+  `KOBER_FUNCTIONS` maps each name to a `KoberFunction` (`params`,
+  `required`, `returns`) in place of an argument count.
 
 ### Changed
 

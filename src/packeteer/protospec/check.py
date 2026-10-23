@@ -35,6 +35,7 @@ from packeteer.protospec.errors import SpecError
 from packeteer.protospec.expr import (
     ExprType,
     Ref,
+    calls,
     indexes,
     parse,
     references,
@@ -602,7 +603,7 @@ class _Checker:
             expr = parse(size.expr, fld.loc)
         except SpecError:
             return                      # already reported by _check_expr
-        if any(indexes(expr)):
+        if any(indexes(expr)) or any(calls(expr)):
             return                      # declined; no derive can answer it
         refs = list(references(expr))
         if len(refs) != 1 or refs[0].scope != "this" or len(refs[0].path) != 1:
@@ -739,6 +740,14 @@ class _Checker:
                 f"not supported yet: an entry of map parameter {entry.table!r}, "
                 f"{unparse(entry)} — a value chosen per message from a table "
                 f"supplied when a decode is set up",
+                loc,
+            )
+        for call in calls(expr):
+            # Typed by kober's table first, so a wrong argument or a misused
+            # result is reported beside the decline, not hidden by it (#211).
+            self._error(
+                f"not supported yet: kober's function {call.name}() — this "
+                f"version has no functions in expressions",
                 loc,
             )
         return kind

@@ -75,7 +75,7 @@ as unknown keys:
 | unit `params:` / `{unit: {args: …}}` | Unit parameters — see [kober's dialect](#protocols-kober) |
 | document `params:`, `transforms:` | Document parameters and transform declarations, which kober 0.5.0 added for its byte transforms, and to which kober 0.6.0 added map parameters and `fails_as`.  Each block is read and checked as kober checks it before it is declined — see [kober's dialect](#protocols-kober) |
 | an entry of a map parameter, `keys[receiver]` | kober 0.6.0's way of choosing a value per message, such as a key, from a table supplied when a decode is set up.  Typed as kober types it, then declined — see [Expressions](#expressions) |
-| a call to one of kober's functions | `len(sealed)`, `to_int(v)` and the rest of kober's six.  A call to anything else is refused — see [Expressions](#expressions) |
+| a call to one of kober's functions | `len(sealed)`, `to_int(v)` and the rest of kober's six.  Typed as kober types it, then declined; a call to anything else is refused — see [Expressions](#expressions) |
 | unit `confirm:` / `reject:` | A guard spanning several fields, evaluated once the unit is decoded.  [`const`](#const) covers the single-field case, and [`condition`](#condition) guards one field rather than abandoning a unit |
 | recursion | A recursive unit has no statically known size, which both the encoder and the framing checks need |
 
@@ -788,7 +788,11 @@ whole.
 
 kober's six functions — `to_int`, `lower`, `trim`, since kober 0.5.0
 `startswith` and `endswith`, and since kober 0.6.0 `len` — are **not supported
-yet**, and a call to one is reported as such rather than as a syntax error.  A
+yet**, and a call to one is reported as such rather than as a syntax error.  It
+is typed first, as kober types it: each argument must have its parameter's
+type — `len` takes `bytes`, `to_int` `str` and an optional `int` base, the
+rest `str` — and the call has its function's result type, so `len(tag)` on a
+string, or `lower(tag)` used as a size, is refused beside the decline.  A
 call to anything else is refused, naming the six, and so are a keyword
 argument and a wrong number of arguments, as kober refuses them.
 

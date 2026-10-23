@@ -12,6 +12,7 @@ thing, so the two projects notice each other moving.
 from __future__ import annotations
 
 import pathlib
+import re
 import unittest
 
 from packeteer.protospec import SpecError, check, load
@@ -205,6 +206,108 @@ class TestKoberPackBits(unittest.TestCase):
         findings = [str(d) for d in result.diagnostics
                     if "not supported yet" not in d.message]
         self.assertEqual(findings, [])
+
+
+class TestKobersFunctionTable(unittest.TestCase):
+    """`expr.KOBER_FUNCTIONS` is held to kober's documented table (#211).
+
+    The table is copied from kober's `BUILTINS` and drifts when kober adds a
+    function, so the copy of kober's `docs/format/expressions.md` under
+    `kober/` is the drift detector: its *Functions* table names each
+    function, every argument count it takes and its result type.  Parameter
+    types are not in kober's table, and are pinned by `TestCallsAreTyped`.
+    """
+
+    _ROW = re.compile(r"^\| `(?P<name>[a-z_]+)\((?P<args>[^)]*)\)` \| (?P<result>[a-z]+) \|")
+
+    def _documented(self) -> dict[str, tuple[set[int], set[str]]]:
+        text = (_SPECS / "expressions.md").read_text(encoding="utf-8")
+        table = text.split("## Functions", 1)[1].split("\n## ", 1)[0]
+        found: dict[str, tuple[set[int], set[str]]] = {}
+        for line in table.splitlines():
+            row = self._ROW.match(line)
+            if row is None:
+                continue
+            arities, results = found.setdefault(row["name"], (set(), set()))
+            arities.add(len([a for a in row["args"].split(",") if a.strip()]))
+            results.add(row["result"])
+        return found
+
+    def test_the_same_functions(self) -> None:
+        from packeteer.protospec.expr import KOBER_FUNCTIONS
+        self.assertEqual(set(self._documented()), set(KOBER_FUNCTIONS))
+
+    def test_each_takes_the_documented_arguments_and_gives_the_documented_type(
+            self) -> None:
+        from packeteer.protospec.expr import KOBER_FUNCTIONS
+        for name, (arities, results) in self._documented().items():
+            function = KOBER_FUNCTIONS[name]
+            with self.subTest(name):
+                self.assertEqual(arities, set(range(function.required,
+                                                    len(function.params) + 1)))
+                self.assertEqual(results, {function.returns.value})
+
+
+class TestCallsAreTypedThenDeclined(unittest.TestCase):
+    """A call to one of kober's functions is typed, then declined (#211).
+
+    kober's review of 0.19.0.dev1: an untyped call let a wrong argument or a
+    misused result read as a construct packeteer lacks, where kober refuses
+    it.  Each case is the issue's, checked against `kober check`.
+    """
+
+    def _check(self, field: str) -> list[str]:
+        from packeteer.protospec import loads
+        spec = loads('name: t\nversion: "1"\nentry: m\nunits:\n  m:\n    fields:\n'
+                     "      - {name: kind, bits: 8}\n"
+                     "      - {name: tag, string: {size: 3}}\n"
+                     "      - {name: body, bytes: 4}\n"
+                     f"      - {field}\n", fmt="yaml")
+        return [d.message for d in check(spec).diagnostics]
+
+    def test_a_correct_call_is_only_declined(self) -> None:
+        self.assertEqual(self._check('{name: x, bits: 8, condition: "len(body) == 4"}'),
+                         ["not supported yet: kober's function len() — this version "
+                          "has no functions in expressions"])
+
+    def test_a_wrong_argument_or_a_misused_result_is_refused(self) -> None:
+        cases = {
+            '{name: x, bits: 8, condition: "len(tag) == 3"}':
+                "argument 1 of len() is str, expected bytes",
+            '{name: x, bits: 8, condition: "len(kind) == 1"}':
+                "argument 1 of len() is int, expected bytes",
+            "{name: x, bits: 8, condition: \"lower(kind) == 'a'\"}":
+                "argument 1 of lower() is int, expected str",
+            "{name: x, bits: 8, condition: \"len(body) == 'x'\"}":
+                "'==' compares int with str",
+            "{name: x, bits: 8, condition: \"startswith(tag, 'a') + 1 == 2\"}":
+                "the left operand of '+' is bool, expected int",
+            '{name: x, bytes: {size: {expr: "lower(tag)"}}}':
+                "a size is str, expected int: lower(tag)",
+            '{name: x, bits: 8, condition: "to_int(tag)"}':
+                "a condition is int, expected bool: to_int(tag)",
+        }
+        for field, expected in cases.items():
+            with self.subTest(field):
+                findings = [m for m in self._check(field)
+                            if not m.startswith("not supported yet")]
+                self.assertEqual(len(findings), 1, findings)
+                self.assertIn(expected, findings[0])
+
+    def test_no_derive_is_asked_of_a_converted_length(self) -> None:
+        """`to_int(tag)` is HTTP's Content-Length; no `size_of` can answer it."""
+        messages = self._check('{name: x, bytes: {size: {expr: "to_int(tag)"}}}')
+        self.assertEqual(len(messages), 1, messages)
+        self.assertTrue(messages[0].startswith("not supported yet: kober's function"))
+
+    def test_compile_spec_refuses_one_unchecked(self) -> None:
+        from packeteer.protospec import compile_spec, loads
+        spec = loads('name: t\nversion: "1"\nentry: m\nunits:\n  m:\n    fields:\n'
+                     "      - {name: body, bytes: 4}\n"
+                     '      - {name: x, bits: 8, condition: "len(body) == 4"}\n', fmt="yaml")
+        with self.assertRaises(SpecError) as ctx:
+            compile_spec(spec)
+        self.assertIn("not supported yet: kober's function len()", str(ctx.exception))
 
 
 class TestTransformAndConcat(unittest.TestCase):

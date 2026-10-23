@@ -8,6 +8,12 @@ verbatim from [kober](https://github.com/adamkjonsson/zipline-kober)
 `examples/packbits/packbits.yaml`; the other two sit at the top of
 `examples/`.
 
+`expressions.md` is kober's `docs/format/expressions.md`, from the same tag,
+for one table: its *Functions* list, which `test_kober_dialect.py` holds
+`packeteer.protospec.expr.KOBER_FUNCTIONS` to (#211).  It is a copy of a
+document rather than of code for the same reason the specs are: the test
+cannot import kober.
+
 Refreshed from 0.2.0 in packeteer 0.17.0, when `http.yaml` gained the four
 constructs the test names, and from 0.5.0 in 0.19.0, when the two tunnel
 examples were added.  `dns.yaml` and `http.yaml` did not change in kober
@@ -34,10 +40,11 @@ reported as *not supported yet*, rather than merely that they load.  A test
 that asserts why `http.yaml` is refused fails when the reason changes, which is
 the drift detector the copies would otherwise lack.
 
-To refresh, copy every file again from the tag (`git show vX.Y.Z:examples/…`),
-run the suite, and read whatever it says has changed before adjusting the
-expectations — a diff here is a dialect change in one project or the other,
-and worth understanding rather than absorbing.
+To refresh, copy every file again from the tag (`git show vX.Y.Z:examples/…`,
+and `git show vX.Y.Z:docs/format/expressions.md`), run the suite, and read
+whatever it says has changed before adjusting the expectations — a diff here
+is a dialect change in one project or the other, and worth understanding
+rather than absorbing.
 
 ## Do not edit
 

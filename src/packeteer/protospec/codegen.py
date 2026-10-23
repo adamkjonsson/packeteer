@@ -41,6 +41,7 @@ from packeteer.protospec.expr import (
     BoolLiteral,
     BoolOp,
     BytesLiteral,
+    Call,
     Expr,
     Index,
     IntLiteral,
@@ -900,6 +901,11 @@ class _Generator:
             # `check` declines every one; a spec compiled unchecked meets it here.
             raise SpecError(
                 f"not supported yet: an entry of map parameter {expr.table!r}", loc,
+            )
+        if isinstance(expr, Call):
+            # Likewise: `check` declines every call (#211).
+            raise SpecError(
+                f"not supported yet: kober's function {expr.name}()", loc,
             )
         if isinstance(expr, UnaryOp):
             op = "not " if expr.op == "not" else expr.op

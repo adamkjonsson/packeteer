@@ -48,6 +48,7 @@ __all__ = [
     "BoolLiteral",
     "BoolOp",
     "BytesLiteral",
+    "Call",
     "Compare",
     "Expr",
     "ExprType",
@@ -56,6 +57,7 @@ __all__ = [
     "Ref",
     "StrLiteral",
     "UnaryOp",
+    "calls",
     "indexes",
     "parse",
     "references",
@@ -68,19 +70,6 @@ SCOPE_WORDS: frozenset[str] = frozenset({"this", "parent", "root"})
 
 #: How this language spells booleans — YAML's way, not Python's.
 _BOOL_WORDS: dict[str, bool] = {"true": True, "false": False}
-
-#: kober's functions, and how many arguments each takes, fewest and most.
-#: Copied from kober 0.6.0's ``kober.expr.BUILTINS``; it is the one table here
-#: that drifts when kober adds a function.  A call to one is declined, and a
-#: call to anything else refused, as kober refuses it (#210).
-KOBER_FUNCTIONS: dict[str, tuple[int, int]] = {
-    "endswith": (2, 2),
-    "len": (1, 1),
-    "lower": (1, 1),
-    "startswith": (2, 2),
-    "to_int": (1, 2),
-    "trim": (1, 1),
-}
 
 #: Largest shift a spec may ask for.  A shift is the one arithmetic operator
 #: that turns a small expression into an arbitrarily large integer, so a
@@ -103,6 +92,37 @@ class ExprType(Enum):
     BYTES = "bytes"
     BOOL = "bool"
     UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class KoberFunction:
+    """One of kober's functions: what it takes, and what it gives.
+
+    Attributes:
+        params: Each parameter's type, in order.
+        required: How many of them a call must pass; the rest are optional.
+        returns: The type of the call.
+
+    """
+
+    params: tuple[ExprType, ...]
+    required: int
+    returns: ExprType
+
+
+#: kober's functions, by name.  Copied from kober 0.6.0's
+#: ``kober.expr.BUILTINS``; it is the one table here that drifts when kober
+#: adds a function, so ``test_kober_dialect.py`` holds it to kober's documented
+#: table.  A call to one is typed by it and then declined (#210, #211); a call
+#: to anything else is refused, as kober refuses it.
+KOBER_FUNCTIONS: dict[str, KoberFunction] = {
+    "endswith": KoberFunction((ExprType.STR, ExprType.STR), 2, ExprType.BOOL),
+    "len": KoberFunction((ExprType.BYTES,), 1, ExprType.INT),
+    "lower": KoberFunction((ExprType.STR,), 1, ExprType.STR),
+    "startswith": KoberFunction((ExprType.STR, ExprType.STR), 2, ExprType.BOOL),
+    "to_int": KoberFunction((ExprType.STR, ExprType.INT), 1, ExprType.INT),
+    "trim": KoberFunction((ExprType.STR,), 1, ExprType.STR),
+}
 
 
 # ── the tree ──────────────────────────────────────────────────────────────────
@@ -253,9 +273,27 @@ class Index:
     key: Expr
 
 
+@dataclass(frozen=True)
+class Call:
+    """A call to one of kober's functions: ``len(sealed)``.
+
+    Only one of :data:`KOBER_FUNCTIONS` parses as a call, with an argument
+    count it accepts.  It is typed by that table and then declined by the
+    checker, since this version has no functions (#211).
+
+    Attributes:
+        name: The function.
+        args: Its arguments, in order.
+
+    """
+
+    name: str
+    args: tuple[Expr, ...]
+
+
 Expr = Union[
     IntLiteral, StrLiteral, BytesLiteral, BoolLiteral,
-    Ref, UnaryOp, BinOp, BoolOp, Compare, Index,
+    Ref, UnaryOp, BinOp, BoolOp, Compare, Index, Call,
 ]
 
 
@@ -355,7 +393,7 @@ def _convert(node: ast.expr, loc: Location) -> Expr:
     if isinstance(node, ast.Subscript):
         return _index(node, loc)
     if isinstance(node, ast.Call):
-        _call(node, loc)
+        return _call(node, loc)
     raise SpecError(
         f"{type(node).__name__} is not allowed in an expression", loc,
     )
@@ -486,14 +524,13 @@ def _op_name(op: ast.AST) -> str:
     }.get(type(op).__name__, f"'{type(op).__name__}'")
 
 
-def _call(node: ast.Call, loc: Location) -> None:
-    """Decline a call to one of kober's functions, and refuse any other.
+def _call(node: ast.Call, loc: Location) -> Call:
+    """Convert a call to one of kober's functions, and refuse any other.
 
-    A call never returns: this version has no functions, so the best it can
-    say about kober's is *not supported yet*.  What kober refuses when a spec
-    loads is refused here first — a name outside its table, a keyword
-    argument, a wrong number of arguments — so a call reported as declined is
-    one kober would accept.
+    What kober refuses when a spec loads is refused here — a name outside
+    its table, a keyword argument, a wrong number of arguments — so a call
+    that parses is one kober would parse.  Its argument types are the
+    checker's, which then declines it (#210, #211).
     """
     known = ", ".join(f"{name}()" for name in sorted(KOBER_FUNCTIONS))
     if not isinstance(node.func, ast.Name) or node.func.id not in KOBER_FUNCTIONS:
@@ -505,17 +542,14 @@ def _call(node: ast.Call, loc: Location) -> None:
     name = node.func.id
     if node.keywords:
         raise SpecError(f"{name}() takes positional arguments only", loc)
-    fewest, most = KOBER_FUNCTIONS[name]
+    function = KOBER_FUNCTIONS[name]
+    fewest, most = function.required, len(function.params)
     if not fewest <= len(node.args) <= most:
         wanted = str(fewest) if fewest == most else f"{fewest} or {most}"
         raise SpecError(
             f"{name}() takes {wanted} argument(s), got {len(node.args)}", loc,
         )
-    raise SpecError(
-        f"not supported yet: kober's function {name}() — this version has no "
-        f"functions in expressions",
-        loc,
-    )
+    return Call(name=name, args=tuple(_convert(arg, loc) for arg in node.args))
 
 
 # ── walking ───────────────────────────────────────────────────────────────────
@@ -524,7 +558,7 @@ def references(expr: Expr) -> Iterator[Ref]:
     """Yield every reference in *expr*, in source order.
 
     What the checker walks to prove a field only reads fields decoded before
-    it.
+    it.  A map entry's table is a parameter, not a reference; its key is.
 
     Args:
         expr: The expression to walk.
@@ -533,20 +567,7 @@ def references(expr: Expr) -> Iterator[Ref]:
         Each :class:`Ref`, possibly repeated.
 
     """
-    if isinstance(expr, Ref):
-        yield expr
-    elif isinstance(expr, UnaryOp):
-        yield from references(expr.operand)
-    elif isinstance(expr, (BinOp, Compare)):
-        yield from references(expr.left)
-        yield from references(expr.right)
-    elif isinstance(expr, BoolOp):
-        for operand in expr.operands:
-            yield from references(operand)
-    elif isinstance(expr, Index):
-        # The table is a parameter, not a reference; the key is what the
-        # entry is chosen by, and reads fields like any other expression.
-        yield from references(expr.key)
+    return (node for node in _nodes(expr) if isinstance(node, Ref))
 
 
 def indexes(expr: Expr) -> Iterator[Index]:
@@ -561,17 +582,40 @@ def indexes(expr: Expr) -> Iterator[Index]:
         Each :class:`Index`, outermost first.
 
     """
-    if isinstance(expr, Index):
-        yield expr
-        yield from indexes(expr.key)
-    elif isinstance(expr, UnaryOp):
-        yield from indexes(expr.operand)
+    return (node for node in _nodes(expr) if isinstance(node, Index))
+
+
+def calls(expr: Expr) -> Iterator[Call]:
+    """Yield every call in *expr*, in source order.
+
+    What the checker walks to decline each one by name (#211).
+
+    Args:
+        expr: The expression to walk.
+
+    Yields:
+        Each :class:`Call`, outermost first.
+
+    """
+    return (node for node in _nodes(expr) if isinstance(node, Call))
+
+
+def _nodes(expr: Expr) -> Iterator[Expr]:
+    """Yield *expr* and every expression inside it, in source order."""
+    yield expr
+    children: tuple[Expr, ...] = ()
+    if isinstance(expr, UnaryOp):
+        children = (expr.operand,)
     elif isinstance(expr, (BinOp, Compare)):
-        yield from indexes(expr.left)
-        yield from indexes(expr.right)
+        children = (expr.left, expr.right)
     elif isinstance(expr, BoolOp):
-        for operand in expr.operands:
-            yield from indexes(operand)
+        children = expr.operands
+    elif isinstance(expr, Index):
+        children = (expr.key,)
+    elif isinstance(expr, Call):
+        children = expr.args
+    for child in children:
+        yield from _nodes(child)
 
 
 # ── typing ────────────────────────────────────────────────────────────────────
@@ -624,6 +668,8 @@ def type_of(expr: Expr, resolve: Callable[[Ref], ExprType], loc: Location,
 
     if isinstance(expr, Index):
         return _type_index(expr, sub, loc, resolve_map)
+    if isinstance(expr, Call):
+        return _type_call(expr, sub, loc)
     if isinstance(expr, UnaryOp):
         return _type_unary(expr, sub, loc)
     if isinstance(expr, BinOp):
@@ -646,6 +692,18 @@ def _type_index(expr: Index, sub: Callable[[Expr], ExprType], loc: Location,
     table = resolve_map(expr.table)
     _want(sub(expr.key), table.key, f"the key of {expr.table!r}", loc)
     return table.item
+
+
+def _type_call(expr: Call, sub: Callable[[Expr], ExprType],
+               loc: Location) -> ExprType:
+    """Type a call by kober's table: each argument its parameter's type (#211)."""
+    function = KOBER_FUNCTIONS[expr.name]
+    # Not strict: an optional parameter may be left out, and parsing has
+    # already held the count to the table.
+    pairs = zip(expr.args, function.params, strict=False)
+    for position, (arg, param) in enumerate(pairs, 1):
+        _want(sub(arg), param, f"argument {position} of {expr.name}()", loc)
+    return function.returns
 
 
 def _type_unary(expr: UnaryOp, sub: Callable[[Expr], ExprType],
@@ -742,6 +800,9 @@ def _render(expr: Expr, outer: int) -> str:
     if isinstance(expr, Index):
         # An atom: the brackets bind tighter than any operator.
         return f"{expr.table}[{_render(expr.key, 0)}]"
+    if isinstance(expr, Call):
+        # An atom too, for the same reason.
+        return f"{expr.name}({', '.join(_render(arg, 0) for arg in expr.args)})"
     if isinstance(expr, UnaryOp):
         space = " " if expr.op == "not" else ""
         rendered = f"{expr.op}{space}{_render(expr.operand, _UNARY_PRECEDENCE)}"

@@ -1,0 +1,237 @@
+# Expressions
+
+Expressions appear wherever a spec needs a value it cannot know in advance: a
+size, a repeat count, a condition, a switch's dispatch, a unit argument, a
+guard, a select's predicate and projection, a transform's arguments.
+
+```yaml
+size: {expr: "header.length * 4"}
+condition: "flags.qr == 0"
+repeat: {until: "labels.length == 0 or labels.length >= 192"}
+```
+
+They are written as strings and parsed when the spec loads, so
+{func}`kober.check.check` scopes and types every one of them **before any data
+exists**.
+
+## The language
+
+Arithmetic, comparison, boolean operators, references, literals, the
+closed table of [functions](#functions) below, and one entry of a
+[map parameter](#an-entry-of-a-map-parameter). No other calls, no loops, no
+other indexing, no conditional expressions.
+
+| | |
+| --- | --- |
+| Arithmetic | `+` `-` `*` `/` `%` |
+| Bitwise | `&` `\|` `^` `~` `<<` `>>` |
+| Comparison | `==` `!=` `<` `<=` `>` `>=` |
+| Boolean | `and` `or` `not` |
+| Literals | `42`, `0x2a`, `0b101010`, `'text'`, `true`, `false` |
+| Map entry | `keys[receiver]` |
+
+Precedence and associativity are Python's, because the parser is Python's —
+`ast.parse` in expression mode, with a whitelist of node types. That is why "no
+calls, no loops" holds by construction: a construct is refused because it is
+absent from the whitelist, and refused **by name** (`'foo' is not one of the
+expression language's functions; there are only endswith(), len(), lower(),
+startswith(), to_int(), trim()`) rather than by an AST class.
+
+### Four types, and no coercion
+
+`int`, `str`, `bytes`, `bool`. There is no numeric tower and no truthiness.
+
+- Arithmetic and ordering (`<`, `>=`, …) are **integer only**.
+- Equality requires both sides to be the same type.
+- `and`, `or`, and `not` require booleans. `qdcount and ...` is an error, not a
+  test for non-zero — write `qdcount != 0 and ...`.
+
+### `/` is integer division
+
+There is no floating-point type, so `/` and `//` are the same operator and both
+floor. For the non-negative values that come off a wire, floor and truncation
+agree; they differ only on a negative operand, and floor is the documented
+answer there.
+
+A float literal is a parse error rather than a silently truncated integer.
+
+### `and` and `or` short-circuit
+
+This matters more than it usually would. The language has no conditional
+expression, so short-circuiting is the **only** way to guard a division:
+
+```yaml
+condition: "n != 0 and total / n > 5"
+```
+
+Without the guard, `n == 0` makes the expression unanswerable and the field
+becomes `undecodable`.
+
+## Scoping
+
+Follows Kaitai. A bare name is shorthand for `this`.
+
+| Prefix | Resolves against |
+| --- | --- |
+| *(none)* or `this.` | The containing unit |
+| `parent.` | The unit that referenced this one |
+| `root.` | The entry unit |
+
+Unit parameters are in scope by name, and so are the document's
+[`params`](document.md#params), in every unit. A dotted path descends into a
+nested unit: `header.length` reads the `length` field of the `header` field's
+unit.
+
+A [`transform`](types.md#transform)'s field is its output: bytes, or the unit
+its `type` names, into which a dotted path descends as into any other. A
+value read that way cites the transform's range, since the output's offsets
+name no input byte.
+
+### A field may only reference fields declared before it
+
+Because a later field has not been decoded when the expression runs. This is
+checked when the spec loads, not when it fails:
+
+```
+error: dns.yaml:24: dns.message.body: size: 'length' is declared later in
+  unit 'message'; a field may only reference fields decoded before it
+```
+
+`parent` obeys the same rule from the referencing site's position, and is
+checked against **every** site that references the unit — a unit reachable from
+two parents cannot rely on a field only one of them has.
+
+`root` is the exception: it has no ordering rule, because how much of the entry
+unit has been decoded at arbitrary depth is not knowable before running. It is
+a power tool, and misusing it is a decode-time surprise the checker cannot take
+back.
+
+### What cannot be referenced
+
+- **Anonymous fields** — they have no name, which is what makes them safe for
+  padding.
+- **Repeated fields**, except inside their own `until`, or inside the `where`
+  and `value` of a `select` that names them — in all three the name means one
+  element rather than the list. The language has no list type, and those
+  bindings do not add one: nothing can hold a list, pass one, or return one.
+- **Switch fields**, whose type depends on the value dispatched on, so they
+  have no single type to give.
+- **A map parameter, whole.** Only one entry of it is a value:
+  `keys[receiver]`, never `keys`.
+
+## Functions
+
+The language has exactly six, and they are the whole of what it can call:
+
+| Call | Result | Meaning |
+| --- | --- | --- |
+| `to_int(s)` | int | Read text as a base-10 integer. |
+| `to_int(s, base)` | int | The same, in `base` — 2 to 36. |
+| `lower(s)` | str | Lower-case text, for a case-insensitive comparison. |
+| `trim(s)` | str | Text without leading or trailing whitespace. |
+| `startswith(s, prefix)` | bool | Whether `s` begins with `prefix`, case and all. |
+| `endswith(s, suffix)` | bool | Whether `s` ends with `suffix`, case and all. |
+| `len(b)` | int | How many bytes a bytes value holds. |
+
+```yaml
+size: {expr: "to_int(length_header)"}          # Content-Length: 1234
+size: {expr: "to_int(chunk_size, 16)"}         # a chunked-encoding chunk header
+condition: "trim(lower(transfer_encoding)) == 'chunked'"
+confirm: "startswith(start_line, 'HTTP/') or endswith(start_line, ' HTTP/1.1')"
+```
+
+They exist because real HTTP framing needs them and nothing else did: a
+`Content-Length` is a decimal string, a chunk size is a hexadecimal one, and
+whether chunked framing applies depends on matching a header value whose case
+varies and which carries whatever whitespace followed the colon. A prefix and
+a suffix say what a start line looks like, which is how a spec refuses a guess
+after a gap, and that `chunked` is the *last* transfer coding in a list such
+as `gzip, chunked`. Both compare exactly; for a case-insensitive test, lower
+the text first. A length came from WireGuard: a keepalive is a message
+sealing nothing, told from a packet by its size, `len(sealed) == 16`, before it
+is opened. Those needs are the table, and it is meant to stay that size.
+
+**`to_int` is stricter than most languages' equivalent.** Surrounding
+whitespace is allowed, because an HTTP field value carries optional whitespace
+by rule. A digit separator (`1_000`), a radix prefix (`0x10`), and anything
+else that is not a sign followed by digits of the base is refused — reading a
+malformed wire length as a plausible number is worse than failing.
+
+**`to_int`'s whitespace is a convenience, not a substitute for `trim`.** It
+helps only where a value is *converted*. The moment one is **compared** —
+`== 'chunked'` — nothing strips the space the sender was allowed to put there,
+and the comparison quietly answers false. That is not hypothetical: it is how
+this project's own HTTP example read every real chunked response as unframed,
+while still accounting for every byte.
+
+Text that is not a number does not raise. It makes the field `undecodable`, on
+the same path as any other size expression that cannot be evaluated.
+
+**The table is closed.** An unknown name is a load-time error naming what does
+exist, and a spec cannot add to it. That is what keeps "a spec cannot run
+code" true now that calls parse at all.
+
+## An entry of a map parameter
+
+```yaml
+params:
+  keys: {type: {map: [int, bytes]}, secret: true}
+...
+args: {key: "keys[receiver]", nonce: nonce}
+```
+
+A document parameter declared as a [map](document.md#params) is read one entry
+at a time, chosen by an expression: the value `keys` holds for the key
+`receiver`. It is how a spec chooses a key per message when the message says
+which: a WireGuard receiver index, an ESP SPI, a TLS key log's client random.
+One table holds both directions of a tunnel, every rekey and every peer.
+
+- **Only a map parameter is indexed**, by its bare name. A field, a unit
+  parameter or a scalar document parameter is refused by `check`, and so is a
+  slice or a key of several parts when the spec loads.
+- **The key must be the map's key type**, and the entry has its value type:
+  `keys[receiver]` above is `bytes`, and `receiver` must be an `int`.
+- **A key with no entry makes the expression unanswerable**, as a division by
+  zero does. In a transform's `args` that fails the
+  [transform](types.md#transform), and the message goes on; anywhere else the
+  field is `undecodable`. The failure says `'keys' has no entry for 9`. It
+  names the key, which came off the wire, and never a value, which may be a
+  secret.
+- **The key is cited.** An entry read for a transform's `args` makes the
+  output cite the fields its key reads, so a receiver field read only to
+  choose the key is spoken for, not `skipped`.
+
+There is still no collection type: no expression evaluates to a map, so one
+cannot be compared, passed to a unit, iterated, or built from the input. A map
+comes whole from whoever runs the spec.
+
+## What the language deliberately cannot do
+
+It cannot move the read cursor. That is the invariant the whole coverage
+guarantee rests on, and it is why the language being small is a choice about
+cost rather than a safety measure — no amount of arithmetic here threatens
+anything.
+
+It cannot call anything outside the table above: no author-supplied function,
+no method on a value, no import. It has no substring, no search, and no loop.
+
+**A byte transform is not a candidate for the table.** Decompression and
+decryption map bytes to bytes and feed a sub-decode with its own offset space,
+where a function here maps one value to another. They have a field type of
+their own, [`transform`](types.md#transform), whose names a registry binds
+when a decoder is built. As a row here they would have cost `check` its
+static answer, since a spec's validity would then depend on what a caller had
+registered.
+
+## Decode-time failure
+
+What a total, side-effect-free language still cannot rule out statically, each
+of which makes the affected region `undecodable` rather than raising:
+
+- **Division or modulo by zero**, where the divisor came off the wire.
+- **A shift count that is negative or absurd.** `1 << n` with `n` from the wire
+  is a memory-exhaustion vector, so counts above
+  {data}`kober.expr.MAX_SHIFT` are refused rather than computed.
+- **Text that is not a number**, handed to `to_int`.
+- **A field that holds nothing**: one its `condition` left absent (`'a' has not
+  been decoded`), or a transform that failed (`'doc' failed:` and why).

@@ -9,12 +9,14 @@ from packeteer.protospec.expr import (
     BinOp,
     BoolLiteral,
     BytesLiteral,
+    Call,
     Compare,
     ExprType,
     Index,
     IntLiteral,
     Ref,
     StrLiteral,
+    calls,
     indexes,
     parse,
     references,
@@ -160,18 +162,18 @@ class TestRefusedConstructs(unittest.TestCase):
                     _parse(source)
                 self.assertIn(expected, str(ctx.exception))
 
-    def test_a_call_is_not_supported_yet_rather_than_invalid(self) -> None:
-        """A spec written for kober may use one of its six functions (#210)."""
+    def test_a_call_to_one_of_kobers_functions_parses(self) -> None:
+        """A spec written for kober may use one of its six (#210).
+
+        It parses, to be typed and then declined by the checker (#211).
+        """
         for source, name in (("to_int(v)", "to_int"), ("to_int(v, 16)", "to_int"),
                              ("trim(v)", "trim"), ("lower(v)", "lower"),
                              ("startswith(v, 'GET')", "startswith"),
                              ("endswith(v, 'chunked')", "endswith"),
                              ("len(sealed) == 16", "len")):
             with self.subTest(expr=source):
-                with self.assertRaises(SpecError) as ctx:
-                    _parse(source)
-                self.assertIn(f"not supported yet: kober's function {name}()",
-                              str(ctx.exception))
+                self.assertEqual([c.name for c in calls(_parse(source))], [name])
 
     def test_a_call_kober_refuses_is_refused(self) -> None:
         """Only a call kober would accept is declined (#210).
@@ -415,5 +417,68 @@ class TestMapEntries(unittest.TestCase):
     def test_it_unparses_as_written(self) -> None:
         for source in ("keys[receiver]", "keys[rx + 1] == x", "-keys[a]",
                        "keys[a or b]", "root.n + keys[parent.rx] * 2"):
+            with self.subTest(expr=source):
+                self.assertEqual(unparse(_parse(source)), source)
+
+
+class TestCallsAreTyped(unittest.TestCase):
+    """A call to one of kober's functions is typed by kober's table (#211).
+
+    The decline is the checker's; here, each argument is held to its
+    parameter and the call has its function's type, as kober's `check` types
+    it.  Found by kober's review of 0.19.0.dev1: an untyped call let a wrong
+    argument or a misused result through.
+    """
+
+    _FIELDS = {"kind": "int", "tag": "str", "body": "bytes", "base": "int"}
+
+    def _typed(self, source: str) -> ExprType:
+        return _typed(source, **self._FIELDS)
+
+    def test_it_parses_as_a_call(self) -> None:
+        self.assertEqual(_parse("to_int(tag, 16)"),
+                         Call(name="to_int", args=(Ref(scope="this", path=("tag",)),
+                                                   IntLiteral(value=16))))
+
+    def test_each_has_its_functions_type(self) -> None:
+        cases = {"len(body)": ExprType.INT, "lower(tag)": ExprType.STR,
+                 "trim(tag)": ExprType.STR, "to_int(tag)": ExprType.INT,
+                 "to_int(tag, base)": ExprType.INT,
+                 "startswith(tag, 'a')": ExprType.BOOL,
+                 "endswith(trim(lower(tag)), 'chunked')": ExprType.BOOL,
+                 "len(body) == 4": ExprType.BOOL}
+        for source, expected in cases.items():
+            with self.subTest(expr=source):
+                self.assertEqual(self._typed(source), expected)
+
+    def test_kobers_review_cases_are_refused(self) -> None:
+        """The issue's seven, each a fault kober's `check` reports too."""
+        cases = {
+            "len(tag) == 3": "argument 1 of len() is str, expected bytes",
+            "len(kind) == 1": "argument 1 of len() is int, expected bytes",
+            "lower(kind) == 'a'": "argument 1 of lower() is int, expected str",
+            "len(body) == 'x'": "'==' compares int with str",
+            "startswith(tag, 'a') + 1 == 2": "the left operand of '+' is bool, "
+                                             "expected int",
+            "to_int(tag, 'x')": "argument 2 of to_int() is str, expected int",
+            "trim(lower(body))": "argument 1 of lower() is bytes, expected str",
+        }
+        for source, expected in cases.items():
+            with self.subTest(expr=source), self.assertRaises(SpecError) as ctx:
+                self._typed(source)
+            self.assertIn(expected, str(ctx.exception))
+
+    def test_its_arguments_are_references(self) -> None:
+        refs = list(references(_parse("to_int(tag, base) == kind")))
+        self.assertEqual([r.path for r in refs], [("tag",), ("base",), ("kind",)])
+
+    def test_every_call_is_found(self) -> None:
+        found = [c.name for c in calls(_parse("trim(lower(tag)) == 'a' or len(body) > 1"))]
+        self.assertEqual(found, ["trim", "lower", "len"])
+
+    def test_it_unparses_as_written(self) -> None:
+        for source in ("len(sealed) == 16", "to_int(tag, 16) * 2",
+                       "endswith(trim(lower(te)), 'chunked')", "-len(b)",
+                       "len(keys[rx]) + 1"):
             with self.subTest(expr=source):
                 self.assertEqual(unparse(_parse(source)), source)
