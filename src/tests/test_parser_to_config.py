@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import random
 import unittest
 
 from packeteer.generate import PacketBuilder
@@ -278,6 +279,27 @@ class TestUpdateConfigPayload(unittest.TestCase):
         # empty bytes are not "printable", so hex encoding is used
         cfg = update_config({}, b"")
         self.assertNotIn("encoding", cfg["payload"])
+
+    def test_every_byte_value_alone(self):
+        # Text is exactly 0x20-0x7E: space through tilde, nothing else.
+        for value in range(256):
+            with self.subTest(value=value):
+                cfg = update_config({}, bytes([value]))
+                self.assertEqual("encoding" in cfg["payload"], 0x20 <= value <= 0x7E)
+
+    def test_one_non_printable_byte_anywhere_makes_it_hex(self):
+        # #214: the test is done in C, and must still see a single bad byte at
+        # either end or in the middle of a long text payload.
+        rng = random.Random(214)
+        text = bytes(rng.randrange(0x20, 0x7F) for _ in range(1400))
+        self.assertEqual(update_config({}, text)["payload"]["encoding"], "utf8")
+        for bad in (0x00, 0x09, 0x0A, 0x1F, 0x7F, 0x80, 0xFF):
+            for at in (0, 700, 1399):
+                data = text[:at] + bytes([bad]) + text[at + 1:]
+                with self.subTest(bad=bad, at=at):
+                    cfg = update_config({}, data)
+                    self.assertNotIn("encoding", cfg["payload"])
+                    self.assertEqual(cfg["payload"]["data"], data.hex())
 
 
 class TestUpdateConfigTypeError(unittest.TestCase):

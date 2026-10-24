@@ -34,6 +34,9 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   of full-size TCP segments.  Building is faster too.  Every checksum is
   unchanged.  `crc32c`, used only by SCTP, still loops in Python: a
   slicing-by-8 table measured only 1.1× faster.
+- Writing a payload to a packet spec checks whether it is printable text in
+  C rather than one byte at a time, about 28× faster for a 1,400-byte text
+  payload (#214).  Which payloads are written as text is unchanged.
 
 ---
 

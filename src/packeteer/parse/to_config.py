@@ -736,8 +736,15 @@ def _apply_pseudowire(
     config["pseudowire"] = inner
 
 
+#: The bytes a payload may hold and still be written as text: printable ASCII.
+_PRINTABLE_ASCII: bytes = bytes(range(0x20, 0x7F))
+
+
 def _is_printable_ascii(data: bytes) -> bool:
-    return bool(data) and all(0x20 <= b <= 0x7E for b in data)
+    # Deleting every printable byte in C and seeing whether anything is left
+    # replaces a Python loop over each byte, which cost as much as the
+    # checksum on a full-size text payload (#214).
+    return bool(data) and not data.translate(None, _PRINTABLE_ASCII)
 
 
 def _apply_payload(config: dict[str, Any], payload: bytes) -> None:
