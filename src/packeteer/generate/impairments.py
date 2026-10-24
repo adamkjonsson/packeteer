@@ -735,7 +735,15 @@ def _apply_server_rst(
     k = rng.randint(0, len(data_idx) - 2)
     acks = _ack_positions(packets)
     split_pkt = packets[data_idx[k]]
-    ack_k = packets[acks[data_idx[k]]] if data_idx[k] in acks else None
+    split_at = data_idx[k]
+    ack_at = acks.get(split_at)
+    # Both emit paths send a segment's ACK before any further data.  An ACK
+    # found by sequence number with data emitted in between is a duplicate,
+    # from after a loss, that happens to name the same byte.  Cutting at it
+    # would keep every ACK up to it, some sent long after the reset (#218).
+    if ack_at is not None and any(_is_data(p) for p in packets[split_at + 1:ack_at]):
+        ack_at = None
+    ack_k = packets[ack_at] if ack_at is not None else None
 
     # Everything the connection acknowledges after the split point goes: the
     # server stops answering there, and the teardown never happens.  The cut is
@@ -750,20 +758,6 @@ def _apply_server_rst(
         return not (_is_bare_ack(pkt) and _pkt_usec(pkt) > cutoff_usec)
 
     packets = [p for p in packets if _keep(p)]
-
-    # Reconstruct the server's sequence state from the last ACK it sent, or
-    # from the SYN-ACK when the split falls before any ACK survives.
-    ref = ack_k or next(
-        p for p in packets if p.flags & TCP_SYN and p.flags & TCP_ACK
-    )
-    rst_src = _TCPEndpoint(
-        ip=flow.server_ip, port=flow.server_port, mac=flow.server_mac,
-        seq=ref.seq, ack=ref.ack, window=flow.window,
-    )
-    rst_dst = _TCPEndpoint(
-        ip=flow.client_ip, port=flow.client_port, mac=flow.client_mac,
-        seq=0, ack=0, window=flow.window,
-    )
 
     # The RST goes out when the next segment would have; the client only
     # learns of it after the propagation delay.
@@ -783,6 +777,30 @@ def _apply_server_rst(
         )
     ]
 
+    # The RST carries the server's state at the moment it is sent: SND.NXT,
+    # the furthest it has numbered, and RCV.NXT, the end of what it has
+    # received from the client in order (#218).  Taken from the ACK of the
+    # split segment instead, it missed any data the server sent after that
+    # ACK — a whole HTTP response — and a receiver checking the RST against
+    # RCV.NXT (RFC 5961 §3) would ignore it.  Server data still in flight is
+    # gone by now, so every server segment left was sent by the RST's moment.
+    # A server segment lost on the wire with nothing after it is not in the
+    # capture, and so not counted: the RST then numbers from the end of what
+    # the client can have received.
+    server_syn = next(p for p in packets if p.direction == "s2c" and p.flags & TCP_SYN)
+    rst_seq = _snd_nxt(packets, "s2c")
+    rst_ack = _rcv_nxt_at(packets, "s2c", rst_send_usec - 1)
+    if rst_ack is None:
+        rst_ack = server_syn.ack
+    rst_src = _TCPEndpoint(
+        ip=flow.server_ip, port=flow.server_port, mac=flow.server_mac,
+        seq=rst_seq, ack=rst_ack, window=flow.window,
+    )
+    rst_dst = _TCPEndpoint(
+        ip=flow.client_ip, port=flow.client_port, mac=flow.client_mac,
+        seq=0, ack=0, window=flow.window,
+    )
+
     used_ts = {_pkt_usec(p) for p in packets}
     rst_sec, rst_usec = divmod(_alloc_usec(rst_send_usec, used_ts), 1_000_000)
     packets.append(make(
@@ -792,12 +810,27 @@ def _apply_server_rst(
         ts_usec=rst_usec,
         direction="s2c",
         flags=TCP_RST | TCP_ACK,
-        seq=ref.seq,
-        ack=ref.ack,
+        seq=rst_seq,
+        ack=rst_ack,
         payload_len=0,
         label="RST",
     ))
     return packets
+
+
+def _snd_nxt(packets: list["TCPStreamPacket"], direction: str) -> int:
+    """Return *direction*'s ``SND.NXT``: the end of the furthest segment it sent.
+
+    Furthest in serial arithmetic (RFC 1982), so a stream whose numbering
+    wraps past 2**32 still ends where it should.  Every direction has sent
+    its SYN, so there is always at least one segment.
+    """
+    ends = [(p.seq + _seq_len(p)) % _WRAP for p in packets if p.direction == direction]
+    furthest = ends[0]
+    for end in ends[1:]:
+        if _after(end, furthest):
+            furthest = end
+    return furthest
 
 
 def _next_data_after(

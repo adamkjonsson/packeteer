@@ -51,6 +51,27 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   a time, by the Ethernet, ARP and Linux cooked-capture parsers and by
   `sanitise` (#215).  The strings are unchanged.
 
+### Fixed
+
+- **A server RST carries the server's real sequence and acknowledgement
+  numbers** (#218).  It numbers from `SND.NXT`, the end of everything the
+  server sent, and acknowledges the client's bytes the server holds in order.
+  It used to copy the server's ACK of the segment the connection was cut at,
+  which goes wrong in two ways:
+  - with `--payload http` the server's response after that ACK was not
+    counted, so every RST numbered from before it;
+  - after a loss, with `--packet-loss`, a later duplicate ACK naming the
+    same byte was taken for that ACK. The cut then kept ACKs sent after
+    the reset, among them the server's own and teardown ACKs whose FIN was
+    gone. When no ACK was found, the RST numbered from the server's initial
+    sequence number, one short of anything it could send, and acknowledged
+    nothing the client had sent.
+
+  A receiver checking an RST against its own `RCV.NXT` (RFC 5961 §3) would
+  have ignored these.  For the same seed, `--server-rst` output changes in
+  the RST, and after a loss in the ACKs the cut now removes.  A plain stream
+  without loss is unchanged.
+
 ### Documentation
 
 - The parsing guide's *Whole-file parsing* section describes `indent=None`,
