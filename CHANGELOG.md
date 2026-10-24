@@ -71,6 +71,14 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   have ignored these.  For the same seed, `--server-rst` output changes in
   the RST, and after a loss in the ACKs the cut now removes.  A plain stream
   without loss is unchanged.
+- **A stray segment is forged from the side whose segment it copies**
+  (#219).  `--stray-packets` copies a real data segment's sequence and
+  acknowledgement numbers, but always sent the copy from the client, so one
+  copying server data carried the server's numbers from the client's
+  address.  With `--payload http`, where the server sends responses, about
+  half of all strays were forged that way.  A stray copying
+  server data now goes server → client, and its `packet_metadata.direction`
+  says so.  A plain stream, where only the client sends data, is unchanged.
 
 ### Documentation
 

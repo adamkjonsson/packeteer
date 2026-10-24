@@ -1158,7 +1158,11 @@ class TestStrayPackets(unittest.TestCase):
         self.assertEqual(labels, {f"STRAY[{i}]" for i in range(n)})
 
     def test_direction_c2s(self):
-        """All stray packets are client→server."""
+        """On a plain stream every data segment is the client's, so every stray is too.
+
+        A stray is forged from the side whose segment it copies (#219);
+        ``test_stray_direction.py`` covers server data.
+        """
         stream = self._make_stream(stray_packet_count=5)
         for p in stream.packets:
             if p.label.startswith("STRAY["):

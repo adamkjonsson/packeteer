@@ -91,7 +91,7 @@ class ImpairmentConfig:
             is still on the wire.
         stray_packet_count: Number of forged TCP-hijacking packets to inject,
             each stealing the sequence and acknowledgement numbers of a real
-            data segment.
+            data segment, and sent from that segment's side.
         stray_timing_window: When set, constrains stray packet timestamps to
             within *N* positions of the stolen reference packet in the
             timestamp-sorted stream.  ``None`` uses the full data-transfer
@@ -169,8 +169,9 @@ class ImpairmentConfig:
 class FlowEndpoints:
     """The two ends of one connection, as the passes need to forge packets.
 
-    A RST comes from the server and a stray packet from the client, so both
-    passes have to assemble packets that the original generator never emitted.
+    A RST comes from the server, and a stray packet from whichever side sent
+    the segment it copies, so both passes have to assemble packets that the
+    original generator never emitted.
 
     Attributes:
         client_ip: Client IP address.
@@ -1101,14 +1102,10 @@ def _apply_stray(
     strays: list["TCPStreamPacket"] = []
     for n in range(config.stray_packet_count):
         ref = rng.choice(data_pkts)
-        stray_src = _TCPEndpoint(
-            ip=flow.client_ip, port=flow.client_port, mac=flow.client_mac,
-            seq=ref.seq, ack=ref.ack, window=flow.window,
-        )
-        stray_dst = _TCPEndpoint(
-            ip=flow.server_ip, port=flow.server_port, mac=flow.server_mac,
-            seq=0, ack=0, window=flow.window,
-        )
+        # Forged from the side whose segment it copies: a stray carrying the
+        # server's sequence numbers comes from the server's address, as an
+        # injected segment colliding with server data would (#219).
+        stray_src, stray_dst = _endpoints_for(ref.direction, ref, flow)
 
         if config.stray_timing_window is not None:
             ref_idx = ts_index[_pkt_usec(ref)]
@@ -1128,7 +1125,7 @@ def _apply_stray(
                               flow.include_ethernet, flow.ip_ttl, None, flow.encap),
             ts_sec=ts_sec,
             ts_usec=ts_usec,
-            direction="c2s",
+            direction=ref.direction,
             flags=TCP_ACK | TCP_PSH,
             seq=ref.seq,
             ack=ref.ack,
