@@ -435,5 +435,78 @@ class TestTheIssuesAcceptance(unittest.TestCase):
         self.assertEqual(sides, {"c2s", "s2c"})
 
 
+def _parsed_packet(src_port: int, dst_port: int, **sections: object) -> dict:
+    """Return a packet as `packeteer parse` writes it; .1 is the server."""
+    src, dst = ("10.0.0.2", "10.0.0.1") if dst_port in (53, 443) else ("10.0.0.1", "10.0.0.2")
+    return {"network": {"src": src, "dst": dst, "protocol": "tcp"},
+            "transport": {"src_port": src_port, "dst_port": dst_port}, **sections}
+
+
+class TestAMessageParseCouldNotDecodeIsRefused(unittest.TestCase):
+    """#220: a message split over segments was dropped, and the list cycled."""
+
+    _QUERY = {"id": 1, "questions": [{"name": "www.example.com.", "qtype": 1, "qclass": 1}]}
+
+    def _dns(self) -> object:
+        from packeteer import protocols
+        return protocols.for_section("dns")
+
+    def test_the_issues_reproduction(self) -> None:
+        # A 3,234-byte response, generated, parsed and replayed.  parse
+        # writes it as three payload-only segments from port 53.
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(__import__("shutil").rmtree, tmp, True)
+        q = "076170696461746111676f6f676c6575736572636f6e74656e7403636f6d0000010001"
+        bulk = "0462756c6b076578616d706c6503636f6d0000010001"
+        given = [
+            {"dns": {"raw": "0b0a01000001000000000000" + q}},
+            {"dns": {"raw": "22228180000100c800000000" + bulk + "".join(
+                f"c00c000100010000003c00040a0000{i:02x}" for i in range(200))},
+             "direction": "s2c"},
+        ]
+        (tmp / "given.json").write_text(json.dumps(given))
+        common = ("--protocol", "tcp", "--payload", "dns", "--server-port", "53",
+                  "--client-ip", "10.0.0.2", "--server-ip", "10.0.0.1",
+                  "--packets", "2", "--seed", "5")
+        done = _packeteer("stream", *common, "--protocol-messages", str(tmp / "given.json"),
+                          "--pcap", str(tmp / "a.pcap"))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        done = _packeteer("parse", str(tmp / "a.pcap"), "--output", str(tmp / "a.json"))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        done = _packeteer("stream", *common, "--protocol-messages", str(tmp / "a.json"),
+                          "--json", str(tmp / "c.json"))
+        self.assertEqual(done.returncode, 1)
+        # The message, 3,234 bytes, plus DNS over TCP's 2-byte length prefix.
+        self.assertIn("3 packet(s) on the dns flow", done.stderr)
+        self.assertIn("carry 3236 bytes of payload but no 'dns' section", done.stderr)
+        self.assertIn("(s2c, 1448 bytes)", done.stderr)
+        self.assertFalse((tmp / "c.json").exists())
+
+    def test_every_reader_refuses(self) -> None:
+        from packeteer.app import protocol_conversation, protocol_messages, protocol_payload_fn
+        given = [_parsed_packet(54321, 53, dns=self._QUERY),
+                 _parsed_packet(53, 54321, payload={"data": "00" * 40})]
+        for reader in (protocol_conversation, protocol_payload_fn, protocol_messages):
+            with self.subTest(reader=reader.__name__), self.assertRaises(ValueError) as caught:
+                reader(self._dns(), given, "tcp")
+            self.assertIn("at index 1 (s2c, 40 bytes)", str(caught.exception))
+
+    def test_undecodable_on_udp_too(self) -> None:
+        from packeteer.app import protocol_conversation
+        given = [_parsed_packet(54321, 53, dns=self._QUERY),
+                 _parsed_packet(54321, 53, payload={"data": "not dns", "encoding": "utf8"})]
+        with self.assertRaises(ValueError) as caught:
+            protocol_conversation(self._dns(), given, "udp")
+        self.assertIn("at index 1 (c2s, 7 bytes)", str(caught.exception))
+
+    def test_another_flow_and_packets_with_no_payload_are_skipped(self) -> None:
+        from packeteer.app import protocol_conversation
+        given = [_parsed_packet(54321, 53),                                  # an ACK
+                 _parsed_packet(40000, 443, payload={"data": "16030100"}),   # TLS beside it
+                 _parsed_packet(54321, 53, dns=self._QUERY)]
+        messages = protocol_conversation(self._dns(), given, "tcp")
+        self.assertEqual([m.direction for m in messages], ["c2s"])
+
+
 if __name__ == "__main__":
     unittest.main()

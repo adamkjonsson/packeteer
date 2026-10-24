@@ -193,7 +193,10 @@ def _directed_sections_in(
     name, whole packet specs, or a ``packeteer parse`` document (an object
     with a ``"packets"`` list).  A packet that carries no *proto* section —
     an ACK, the handshake — is not a message and is skipped; anything else
-    is handed on as a section for the protocol to accept or refuse.
+    is handed on as a section for the protocol to accept or refuse.  A
+    packet on the protocol's flow that carries a payload and no section is
+    a message ``parse`` could not decode, such as one split over TCP
+    segments, and is refused rather than skipped (#220).
 
     The direction is a packet's ``packet_metadata.direction``, or inferred
     from its addresses when it has none (:func:`_inferred_direction`); a
@@ -226,6 +229,7 @@ def _directed_sections_in(
                 clients.setdefault(frozenset(ends), ends[0])
 
     out: list[tuple[dict[str, Any], str]] = []
+    undecoded: list[tuple[int, str, int]] = []
     for index, element in enumerate(messages):
         if not isinstance(element, dict):
             raise ValueError(
@@ -243,6 +247,11 @@ def _directed_sections_in(
                     f"direction goes in packet_metadata.direction"
                 )
             if not isinstance(inner, dict):
+                carried = _undecoded_bytes(proto, element)
+                if carried:
+                    undecoded.append(
+                        (index, _inferred_direction(proto, element, clients), carried),
+                    )
                 continue
             meta = element.get("packet_metadata")
             stated = meta.get(_DIRECTION_KEY) if isinstance(meta, dict) else None
@@ -282,7 +291,55 @@ def _directed_sections_in(
                     f'{{"{proto.name}": {{...}}, "{_DIRECTION_KEY}": "{shown}"}}'
                 )
             out.append((element, "c2s"))
+    if undecoded:
+        _refuse_undecoded(proto, undecoded)
     return out
+
+
+def _undecoded_bytes(proto: AppProtocol, packet: dict[str, Any]) -> int:
+    """Return how many payload bytes *packet* carries on *proto*'s flow.
+
+    Zero for a packet with no payload, such as an ACK, and for one on
+    another flow, neither end on one of the protocol's ports: a capture
+    holding other traffic beside the protocol's replays as before.
+    """
+    payload = packet.get("payload")
+    ends = _endpoints(packet)
+    if not isinstance(payload, dict) or ends is None:
+        return 0
+    if not ({ends[0][1], ends[1][1]} & proto.ports):
+        return 0
+    data = payload.get("data")
+    if not isinstance(data, str) or not data:
+        return 0
+    if payload.get("encoding") == "utf8":
+        return len(data.encode())
+    return len(data) // 2
+
+
+def _refuse_undecoded(proto: AppProtocol, undecoded: list[tuple[int, str, int]]) -> None:
+    """Refuse packets on *proto*'s flow that carry a payload and no section (#220).
+
+    ``packeteer parse`` decodes a message only when one packet holds all of
+    it, so a DNS message split over TCP segments is written as payload-only
+    packets.  Skipped, the message vanished and the list cycled in its place,
+    with nothing said.  Every such packet is named at once, with how many
+    bytes, so the whole loss is visible in one error.
+    """
+    total = sum(size for _, _, size in undecoded)
+    listed = ", ".join(f"{index} ({direction}, {size} bytes)"
+                       for index, direction, size in undecoded)
+    ports = ", ".join(str(port) for port in sorted(proto.ports))
+    plural = "s" if len(proto.ports) > 1 else ""
+    raise ValueError(
+        f"{len(undecoded)} packet(s) on the {proto.name} flow (port{plural} "
+        f"{ports}) carry {total} bytes of payload but no {proto.name!r} "
+        f"section, at index {listed}.  'packeteer parse' decodes a message only when one "
+        f"packet holds all of it, so a message split over TCP segments is "
+        f"written this way; skipping them would drop it, and the list would "
+        f"cycle in its place.  Write the message as a wrapped section "
+        f'instead, such as {{"{proto.name}": {{...}}, "direction": "s2c"}}'
+    )
 
 
 def _built(

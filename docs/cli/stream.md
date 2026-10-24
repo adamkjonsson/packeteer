@@ -208,6 +208,14 @@ packeteer stream --load-protocol ./sensor.py \
     --packets 100 --packet-loss 0.05 --seed 5 --pcap impaired.pcap
 ```
 
+A packet on the protocol's port that carries a **payload** and no section is
+refused instead of passed over, naming every such packet and its bytes
+(#220).  `parse` decodes a message only when one packet holds all of it, so
+a DNS response split over TCP segments is written that way, and skipping it
+would drop the response in silence.  Write that message as a wrapped section
+instead, for DNS `{"dns": {"raw": "…"}, "direction": "s2c"}`.  A payload on
+another port, such as TLS beside DNS, is still passed over.
+
 **Each message travels its own way.**  A request/response protocol needs
 its replies to leave from the server, so on `--protocol udp` (#195) and
 `--protocol tcp` (#198) each message is sent in its own direction.  An `s2c`

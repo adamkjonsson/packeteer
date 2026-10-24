@@ -65,6 +65,16 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   `{"dns": {...}, "direction": "s2c"}`.  Beside a whole packet's sections
   it was ignored too, and the ports decided.  Put it in
   `packet_metadata.direction`.
+- **Breaking: a message `parse` could not decode is refused, not skipped**,
+  in a `--protocol-messages` packet spec (#220).  A packet on the
+  protocol's port with a payload and no section for it used to be passed
+  over like an ACK, and the list cycled in its place.  `parse` writes a DNS
+  response split over TCP segments exactly that way, so replaying a parsed
+  DNS-over-TCP capture dropped its large responses, and sent queries where
+  they had been, with exit status 0.  Every such packet is now named, with
+  its direction and bytes.  Write the message as a wrapped section instead,
+  such as `{"dns": {"raw": "…"}, "direction": "s2c"}`.  Payloads on other
+  ports are still skipped.
 - **The internet checksum is computed in C, not one 16-bit word at a time
   in Python** (#213).  `ones_complement_checksum` is about 15× faster for a
   full-size frame.  Parsing rebuilds every TCP, UDP, ICMP and ICMPv6 header
