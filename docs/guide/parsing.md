@@ -82,6 +82,16 @@ The returned string is valid JSON with a top-level `"packets"` array and a
 `"metadata"` block — file type, timestamp precision, and link type are all
 auto-detected from the file header.
 
+The JSON is indented by two spaces. Pass `indent=None` for compact JSON on
+one line, when nothing will read it by eye. On Python 3.10–3.13 this is
+also faster for a large capture: any indent makes the standard library use
+its pure-Python encoder, which can take a third of the parse time. On 3.14
+the two cost the same.
+
+```python
+json_str = parse_pcap_file(path="capture.pcap", indent=None)
+```
+
 Fragments are **not** reassembled here, unlike `iter_packets`.  A spec is the
 round-trip format: a fragmented capture parses and rebuilds byte-for-byte as
 it is — including a first fragment, whose transport header describes the whole

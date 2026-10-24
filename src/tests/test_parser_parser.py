@@ -801,6 +801,27 @@ class TestParsePcapFile(unittest.TestCase):
         parsed = json.loads(parse_pcap_file(file_object=buf))
         self.assertIn("packets", parsed)
 
+    def test_indent_none_is_compact_and_the_same_spec(self):
+        # #216: compact JSON, for the pure-Python encoder an indent forces on
+        # Python 3.10-3.13.  Same spec, one line.
+        import json
+        packets = [(_tcp(), 0, 0), (_udp(), 1, 0), (_icmp(), 2, 0)]
+        pretty = parse_pcap_file(file_object=self._make_buf(packets))
+        compact = parse_pcap_file(file_object=self._make_buf(packets), indent=None)
+        self.assertNotIn("\n", compact)
+        self.assertEqual(json.loads(compact), json.loads(pretty))
+        self.assertEqual(compact, json.dumps(json.loads(pretty)))
+
+    def test_default_indent_is_two(self):
+        import json
+        packets = [(_tcp(), 0, 0)]
+        default = parse_pcap_file(file_object=self._make_buf(packets))
+        self.assertEqual(default, parse_pcap_file(file_object=self._make_buf(packets), indent=2))
+        self.assertEqual(default, json.dumps(json.loads(default), indent=2))
+        four = parse_pcap_file(file_object=self._make_buf(packets), indent=4)
+        self.assertEqual(json.loads(four), json.loads(default))
+        self.assertIn('\n    "', four)
+
     def test_packet_count(self):
         import json
         buf = self._make_buf([(_tcp(), 0, 0), (_udp(), 1, 0), (_icmp(), 2, 0)])

@@ -1155,13 +1155,14 @@ def to_packet_spec(
     return cfg
 
 
-def to_json_string(config: dict[str, Any], *, indent: int = 2) -> str:
+def to_json_string(config: dict[str, Any], *, indent: int | None = 2) -> str:
     """Serialise a packet spec dict to a JSON string.
 
     Args:
         config: Dict produced by :func:`to_packet_spec` or a single packet
             dict produced by :func:`update_config`.
-        indent: Indentation width for pretty-printing (default: ``2``).
+        indent: Indentation width for pretty-printing (default: ``2``), or
+            ``None`` for compact JSON on one line.
 
     Returns:
         A UTF-8 JSON string.

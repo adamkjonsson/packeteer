@@ -25,6 +25,16 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
+### Added
+
+- **`parse_pcap_file(indent=…)`**, passed to `to_json_string`, whose
+  `indent` now accepts `None` as well (#216).  The default, `2`, is
+  unchanged.  `indent=None` gives compact JSON on one line.  On Python
+  3.10–3.13 any indent makes the standard library fall back to its
+  pure-Python encoder, which took a third of the time `parse` spent on a
+  2,070-packet capture.  On 3.14 it makes no difference.
+- Python 3.14 is listed in the package classifiers and tested in CI.
+
 ### Changed
 
 - **The internet checksum is computed in C, not one 16-bit word at a time
@@ -40,6 +50,11 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 - MAC addresses are formatted with `bytes.hex(":")` rather than one byte at
   a time, by the Ethernet, ARP and Linux cooked-capture parsers and by
   `sanitise` (#215).  The strings are unchanged.
+
+### Documentation
+
+- The parsing guide's *Whole-file parsing* section describes `indent=None`,
+  and when it is worth passing (#216).
 
 ---
 
