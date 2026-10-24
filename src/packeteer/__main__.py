@@ -1762,9 +1762,11 @@ def _set_protocol_payload(
 
     The messages come from ``--protocol-messages``: a protocol describes what
     a message *looks like*, not what conversation to have, so the two are
-    separate on purpose and neither belongs in the spec grammar.  On UDP each
-    is sent in its own direction (#195); on TCP every message is sent from
-    the client, and a reply is refused until #198.
+    separate on purpose and neither belongs in the spec grammar.  On UDP
+    (#195) and TCP (#198) each is sent in its own direction.  A protocol runs
+    over neither SCTP nor anything else, so the ``payload_fn`` branch below is
+    only what an SCTP config would get, and ``proto.carries`` refuses that
+    first.
 
     Deliberately the ordinary generator rather than a path of its own: #83
     was ``--payload http`` emitting labels the impairment passes did not
@@ -1804,7 +1806,7 @@ def _set_protocol_payload(
     sections = _read_protocol_messages(path, name)
 
     try:
-        if isinstance(config, UDPStreamConfig):
+        if isinstance(config, (TCPStreamConfig, UDPStreamConfig)):
             config.messages = app.protocol_conversation(proto, sections, protocol)
         else:
             config.payload_fn = app.protocol_payload_fn(proto, sections, protocol)

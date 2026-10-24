@@ -122,12 +122,16 @@ class TestWhereADirectionComesFrom(unittest.TestCase):
 
 class TestAPayloadFnRefusesAReply(unittest.TestCase):
 
-    def test_a_reply_is_refused_naming_the_issue(self) -> None:
+    def test_a_reply_is_refused_naming_what_sends_it(self) -> None:
+        # A payload_fn still sends everything from the client, over any
+        # transport.  Since #198 both stream configs' messages send a reply
+        # the right way, and the refusal says so.
         given = [{"dns": _QUERY}, {"dns": _RESPONSE, "direction": "s2c"}]
         with self.assertRaises(ValueError) as caught:
             protocol_payload_fn(_dns(), given, "tcp")
         self.assertIn("message 1 travels server to client", str(caught.exception))
-        self.assertIn("issues/198", str(caught.exception))
+        self.assertIn("TCPStreamConfig.messages", str(caught.exception))
+        self.assertIn("UDPStreamConfig.messages", str(caught.exception))
 
     def test_client_messages_are_unchanged(self) -> None:
         fn = protocol_payload_fn(_dns(), [_QUERY, _RESPONSE], "udp")
@@ -219,13 +223,20 @@ class TestTheIssuesAcceptance(unittest.TestCase):
                 self.assertEqual(p["network"]["src"], "10.0.0.1")
                 self.assertEqual(p["transport"]["src_port"], 53)
 
-    def test_the_same_capture_over_tcp_is_refused(self) -> None:
+    def test_the_same_capture_over_tcp_replays_both_ways(self) -> None:
+        # Refused until #198; test_tcp_directions.py covers TCP in full.
+        out = self.dir / "tcp.json"
         done = _packeteer("stream", "--protocol", "tcp", "--payload", "dns",
                           "--protocol-messages", str(self.parsed), *self._COMMON,
-                          "--json", str(self.dir / "tcp.json"))
-        self.assertEqual(done.returncode, 1)
-        self.assertIn("message 1 travels server to client", done.stderr)
-        self.assertIn("issues/198", done.stderr)
+                          "--json", str(out))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        data = [p for p in json.loads(out.read_text())["packets"] if "dns" in p]
+        self.assertEqual([p["packet_metadata"]["direction"] for p in data],
+                         ["c2s", "s2c"] * 3)
+        for p in data:
+            if p["packet_metadata"]["direction"] == "s2c":
+                self.assertEqual(p["network"]["src"], "10.0.0.1")
+                self.assertEqual(p["transport"]["src_port"], 53)
 
 
 if __name__ == "__main__":

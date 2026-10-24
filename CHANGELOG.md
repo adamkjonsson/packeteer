@@ -27,6 +27,17 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ### Added
 
+- **A TCP stream carries data both ways: `TCPStreamConfig.messages`**
+  (#198).  Each message is sent from its own side and acknowledged by the
+  other, with sequence and acknowledgement numbers, loss and recovery,
+  retransmission, corruption, the server RST and stray segments worked out
+  for the direction they hit.  A message longer than the receiver's MSS
+  (less the Timestamps option when negotiated) is split into segments,
+  `DATA[i] [k/n]`, each acknowledged, with PSH only ever on the last.  The
+  list cycles to make up `num_data_packets`, as `UDPStreamConfig.messages`
+  does, and `packeteer.app.protocol_conversation` builds it.  It may not be
+  combined with `payload_fn`, and an empty message is refused, since a TCP
+  stack sends nothing for an empty write.
 - **`parse_pcap_file(indent=…)`**, passed to `to_json_string`, whose
   `indent` now accepts `None` as well (#216).  The default, `2`, is
   unchanged.  `indent=None` gives compact JSON on one line.  On Python
@@ -37,6 +48,15 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ### Changed
 
+- **`stream --protocol tcp --payload <protocol> --protocol-messages` sends
+  each message from its own side** (#198), as `--protocol udp` has since
+  #195, instead of refusing a message that travels `s2c`.  Replaying a
+  parsed DNS-over-TCP capture puts each response in the server's byte
+  stream.  Not breaking: input that used to be refused now works, and a
+  conversation with no replies gives the same bytes as before, impaired or
+  not.  `protocol_payload_fn`, which still sends everything from the client,
+  refuses a reply as before, and its message now points to
+  `TCPStreamConfig.messages` and `UDPStreamConfig.messages` instead of #198.
 - **The internet checksum is computed in C, not one 16-bit word at a time
   in Python** (#213).  `ones_complement_checksum` is about 15× faster for a
   full-size frame.  Parsing rebuilds every TCP, UDP, ICMP and ICMPv6 header
@@ -84,6 +104,9 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 - The parsing guide's *Whole-file parsing* section describes `indent=None`,
   and when it is worth passing (#216).
+- Two-way TCP (#198) in `stream.md`'s *Payloads from your own protocol*, the
+  generating guide (with an example), and the stream generators' internals;
+  the sentence refusing a reply on TCP is gone.
 
 ---
 

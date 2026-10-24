@@ -1,0 +1,439 @@
+"""A TCP stream sends each message from its own side (#198).
+
+`generate_tcp_stream` sent all its data from the client, so a DNS-over-TCP
+stream replayed from queries and responses put the responses in the
+client's byte stream, and the CLI refused such input rather than send it
+wrong.  ``TCPStreamConfig.messages`` sends each message from its own side,
+acknowledged by the other, split at the peer's MSS when it is longer.
+
+The checks here are made on the packets as a reader of the capture would
+make them, not on the generator's state: every acknowledgement is held to
+what the peer had delivered by then, and each direction's bytes, put back
+together by sequence number, are that side's messages in order.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+from packeteer.generate.payloads.base import AppMessage
+from packeteer.generate.session_mix import generate_session_mix
+from packeteer.generate.tcp import DEFAULT_MSS, TCP_FIN, TCP_PSH, TCP_RST, TCP_SYN, TCPOptions
+from packeteer.generate.tcp_stream import TCPStreamConfig, generate_tcp_stream
+from packeteer.parse import parse_packet
+
+_WRAP = 2 ** 32
+_CLIENT = ("10.0.0.2", 54321, "00:00:00:00:00:01")
+_SERVER = ("10.0.0.1", 53, "00:00:00:00:00:02")
+_SEEDS = range(30)
+
+#: SHA-256 of a seeded, lossy, recovered stream without messages, computed
+#: on b6f16df before #198.
+_PLAIN_SEED_7 = "e0f957ae8604edfc8ff3cd8049345804ea939000ae32d9958b212d7766aea478"
+
+#: Impairments under which every byte still arrives: lost segments are
+#: retransmitted, corrupted ones resent clean, and copies are copies.
+_COMPLETE = {
+    "clean": {},
+    "loss, recovered": {"packet_loss_probability": 0.3, "retransmit_lost": True},
+    "spurious retransmission": {"retransmission_probability": 0.3},
+    "corruption": {"payload_corruption_probability": 0.3},
+    "duplication": {"duplicate_probability": 0.3},
+    "all of them": {"packet_loss_probability": 0.2, "retransmit_lost": True,
+                    "retransmission_probability": 0.2,
+                    "payload_corruption_probability": 0.2,
+                    "duplicate_probability": 0.2},
+}
+#: And the ones that leave holes or end the connection early.
+_PARTIAL = {
+    "loss": {"packet_loss_probability": 0.3},
+    "server RST": {"server_rst_probability": 1.0},
+    "strays": {"stray_packet_count": 2},
+}
+
+
+def _message(direction: str, index: int, size: int) -> AppMessage:
+    """Return a message whose bytes say which one it is, to the byte."""
+    head = f"{direction}:{index:04d}|".encode()
+    return AppMessage(direction, (head * (size // len(head) + 1))[:size], f"m[{index}]")
+
+
+#: A conversation with replies, one of them longer than any segment.
+_CONVERSATION = [
+    _message("c2s", 0, 40), _message("s2c", 1, 300),
+    _message("c2s", 2, 120), _message("s2c", 3, 4000),
+    _message("s2c", 4, 90), _message("c2s", 5, 60),
+]
+
+
+def _stream(seed: int, **config: object) -> list:
+    return generate_tcp_stream(
+        client_ip=_CLIENT[0], server_ip=_SERVER[0], server_port=_SERVER[1],
+        num_data_packets=len(_CONVERSATION),
+        config=TCPStreamConfig(seed=seed, base_time=1e9, messages=_CONVERSATION,
+                               **config),
+    ).packets
+
+
+def _usec(pkt: object) -> int:
+    return pkt.ts_sec * 1_000_000 + pkt.ts_usec
+
+
+def _seq_len(pkt: object) -> int:
+    return pkt.payload_len + bool(pkt.flags & TCP_SYN) + bool(pkt.flags & TCP_FIN)
+
+
+def _later(a: int, b: int) -> bool:
+    return 0 < (a - b) % _WRAP < _WRAP // 2
+
+
+def _forged(pkt: object) -> bool:
+    """Whether *pkt* never reached the stack it was sent to as sent.
+
+    A stray, or a corrupted copy, which fails its checksum and is dropped.
+    The capture point's duplicate of either, ``DUP[CORRUPT[...]]``, is no
+    better.
+    """
+    return "STRAY[" in pkt.label or "CORRUPT[" in pkt.label
+
+
+def _mirrored(pkt: object) -> bool:
+    """Whether *pkt* is the capture point's copy of a packet already seen.
+
+    It carries its original's acknowledgement, from the original's moment,
+    so it is checked as the original is, not against what arrived in the
+    microsecond between them.
+    """
+    return pkt.label.startswith("DUP[")
+
+
+def _rcv_nxt(packets: list, peer: str, before: int) -> int:
+    """Return the end of *peer*'s bytes delivered in order before *before*."""
+    syn = next(p for p in packets if p.direction == peer and p.flags & TCP_SYN)
+    edge = (syn.seq + 1) % _WRAP
+    ranges = [(p.seq, (p.seq + _seq_len(p)) % _WRAP) for p in packets
+              if p.direction == peer and _seq_len(p) and p is not syn
+              and not _forged(p) and _usec(p) < before]
+    moved = True
+    while moved:
+        moved = False
+        for begin, end in ranges:
+            if not _later(begin, edge) and _later(end, edge):
+                edge, moved = end, True
+    return edge
+
+
+#: The inter-packet gap the streams here use, in microseconds.
+_GAP_USEC = 1000
+
+
+def _acceptable(packets: list, peer: str, at: int) -> set[int]:
+    """Return the ACK values a packet captured at *at* may carry.
+
+    What *peer* had delivered in order at some moment in the last gap: at
+    least everything before ``at - gap``, at most everything before *at*.
+    """
+    moments = {at, at - _GAP_USEC}
+    moments |= {_usec(p) + 1 for p in packets
+                if p.direction == peer and at - _GAP_USEC <= _usec(p) < at}
+    return {_rcv_nxt(packets, peer, moment) for moment in moments}
+
+
+def _payload(pkt: object) -> bytes:
+    data = parse_packet(pkt.raw)
+    return data.payload if data.payload else b""
+
+
+def _reassembled(packets: list, direction: str) -> bytes:
+    """One direction's bytes, put back together by sequence number."""
+    syn = next(p for p in packets if p.direction == direction and p.flags & TCP_SYN)
+    start = (syn.seq + 1) % _WRAP
+    pieces = {}
+    for p in packets:
+        if p.direction == direction and p.payload_len and not _forged(p):
+            pieces[(p.seq - start) % _WRAP] = _payload(p)
+    out = bytearray()
+    for offset in sorted(pieces):
+        piece = pieces[offset]
+        if offset > len(out):
+            break
+        out[offset:offset + len(piece)] = piece
+    return bytes(out)
+
+
+class TestEachMessageFromItsOwnSide(unittest.TestCase):
+
+    def test_a_reply_is_sent_by_the_server_and_acknowledged_by_the_client(self) -> None:
+        packets = _stream(1)
+        data = [p for p in packets if p.payload_len]
+        self.assertEqual({p.direction for p in data}, {"c2s", "s2c"})
+        for p in packets:
+            with self.subTest(label=p.label):
+                pkt = parse_packet(p.raw)
+                src, dst = (_CLIENT, _SERVER) if p.direction == "c2s" else (_SERVER, _CLIENT)
+                self.assertEqual((pkt.ip.src, pkt.transport.src_port, pkt.ethernet.src_mac), src)
+                self.assertEqual((pkt.ip.dst, pkt.transport.dst_port, pkt.ethernet.dst_mac), dst)
+        for p in data:
+            with self.subTest(segment=p.label):
+                ack = next(q for q in packets if q.label == p.label.replace("DATA", "ACK", 1))
+                self.assertNotEqual(ack.direction, p.direction)
+                self.assertEqual(ack.ack, (p.seq + p.payload_len) % _WRAP)
+
+    def test_each_direction_carries_its_own_messages_in_order(self) -> None:
+        packets = _stream(1)
+        for direction in ("c2s", "s2c"):
+            expected = b"".join(m.data for m in _CONVERSATION if m.direction == direction)
+            self.assertEqual(_reassembled(packets, direction), expected)
+
+    def test_messages_cycle_to_make_up_the_count(self) -> None:
+        packets = generate_tcp_stream(
+            client_ip=_CLIENT[0], server_ip=_SERVER[0], num_data_packets=5,
+            config=TCPStreamConfig(seed=1, base_time=1e9, messages=[
+                _message("c2s", 0, 20), _message("s2c", 1, 30)]),
+        ).packets
+        data = [p for p in packets if p.payload_len]
+        self.assertEqual([p.direction for p in data], ["c2s", "s2c"] * 2 + ["c2s"])
+        self.assertEqual([p.label for p in data], [f"DATA[{i}]" for i in range(5)])
+
+
+class TestSegmenting(unittest.TestCase):
+
+    def _segments(self, size: int, **config: object) -> list:
+        packets = generate_tcp_stream(
+            client_ip=_CLIENT[0], server_ip=_SERVER[0], num_data_packets=1,
+            config=TCPStreamConfig(seed=1, base_time=1e9, psh_probability=1.0,
+                                   messages=[_message("s2c", 0, size)], **config),
+        ).packets
+        return [p for p in packets if p.payload_len]
+
+    def test_a_long_message_is_split_at_the_peers_mss_less_timestamps(self) -> None:
+        # The default options negotiate timestamps, which take 12 bytes of
+        # every segment.
+        segments = self._segments(4000)
+        limit = DEFAULT_MSS - 12
+        self.assertEqual([p.payload_len for p in segments], [limit, limit, 4000 - 2 * limit])
+        self.assertEqual([p.label for p in segments],
+                         ["DATA[0] [1/3]", "DATA[0] [2/3]", "DATA[0] [3/3]"])
+
+    def test_the_receivers_mss_is_what_counts(self) -> None:
+        # A server message goes to the client, so the client's MSS limits it.
+        segments = self._segments(
+            1000, client_options=TCPOptions(mss=400), server_options=TCPOptions(mss=1460),
+        )
+        self.assertEqual([p.payload_len for p in segments], [400, 400, 200])
+
+    def test_without_options_the_default_mss_and_no_timestamps(self) -> None:
+        segments = self._segments(3000, client_options=None, server_options=None)
+        self.assertEqual([p.payload_len for p in segments],
+                         [DEFAULT_MSS, DEFAULT_MSS, 3000 - 2 * DEFAULT_MSS])
+
+    def test_psh_is_only_ever_on_the_last_segment(self) -> None:
+        segments = self._segments(4000)
+        self.assertEqual([bool(p.flags & TCP_PSH) for p in segments], [False, False, True])
+        packets = generate_tcp_stream(
+            client_ip=_CLIENT[0], server_ip=_SERVER[0], num_data_packets=1,
+            config=TCPStreamConfig(seed=1, base_time=1e9, psh_probability=0.0,
+                                   messages=[_message("s2c", 0, 4000)]),
+        ).packets
+        self.assertFalse(any(p.flags & TCP_PSH for p in packets))
+
+    def test_a_message_that_fits_is_one_segment(self) -> None:
+        segments = self._segments(DEFAULT_MSS - 12)
+        self.assertEqual([p.label for p in segments], ["DATA[0]"])
+
+
+class TestEveryImpairmentBothWays(unittest.TestCase):
+
+    def _streams(self, impairments: dict) -> list:
+        return [(f"{name}, seed {seed}", _stream(seed, **config))
+                for name, config in impairments.items() for seed in _SEEDS]
+
+    def test_every_acknowledgement_is_what_the_peer_had_delivered(self) -> None:
+        # What the peer had delivered in order when it was captured, give or
+        # take a segment crossing the ACK in flight: during recovery, the
+        # ACK of one retransmission can be captured just after the next
+        # retransmission, which its sender had not yet received.  So an ACK
+        # may lag what arrived in the last inter-packet gap, and must count
+        # everything before it.  A capture-point copy is checked as its
+        # original, and a forged or corrupted segment delivers nothing.
+        for name, packets in self._streams({**_COMPLETE, **_PARTIAL}):
+            for p in packets:
+                if (p.flags & (TCP_SYN | TCP_RST) or _forged(p) or _mirrored(p)
+                        or not p.flags & 0x10):
+                    continue
+                peer = "s2c" if p.direction == "c2s" else "c2s"
+                with self.subTest(stream=name, packet=p.label):
+                    self.assertIn(p.ack, _acceptable(packets, peer, _usec(p)))
+
+    def test_every_byte_arrives_once_on_its_own_side(self) -> None:
+        for name, packets in self._streams(_COMPLETE):
+            for direction in ("c2s", "s2c"):
+                with self.subTest(stream=name, direction=direction):
+                    expected = b"".join(m.data for m in _CONVERSATION
+                                        if m.direction == direction)
+                    self.assertEqual(_reassembled(packets, direction), expected)
+
+    def test_a_lost_server_segment_draws_duplicate_acks_from_the_client(self) -> None:
+        found = False
+        for _, packets in self._streams({"loss": _PARTIAL["loss"]}):
+            client_acks = [p.ack for p in packets
+                           if p.direction == "c2s" and p.flags == 0x10 and not p.payload_len]
+            if len(client_acks) != len(set(client_acks)):
+                found = True
+                break
+        self.assertTrue(found, "no seed lost a server segment")
+
+    def test_strays_and_rst_come_from_the_right_side(self) -> None:
+        for name, packets in self._streams({k: _PARTIAL[k] for k in ("server RST", "strays")}):
+            for p in packets:
+                if p.label.startswith("STRAY[") or p.flags & TCP_RST:
+                    with self.subTest(stream=name, packet=p.label):
+                        src = parse_packet(p.raw).ip.src
+                        self.assertEqual(src, _CLIENT[0] if p.direction == "c2s" else _SERVER[0])
+                        if p.flags & TCP_RST:
+                            self.assertEqual(p.direction, "s2c")
+
+
+class TestTheConfig(unittest.TestCase):
+
+    def test_messages_with_payload_fn_is_refused(self) -> None:
+        with self.assertRaisesRegex(ValueError, "payload_fn or messages, not both"):
+            generate_tcp_stream(client_ip="10.0.0.1", server_ip="10.0.0.2", config=TCPStreamConfig(
+                messages=[_message("c2s", 0, 10)], payload_fn=lambda i, d: b"x"))
+
+    def test_empty_messages_are_refused(self) -> None:
+        with self.assertRaisesRegex(ValueError, "empty: nothing to send"):
+            generate_tcp_stream(client_ip="10.0.0.1", server_ip="10.0.0.2",
+                                config=TCPStreamConfig(messages=[]))
+        with self.assertRaisesRegex(ValueError, r"messages\[1\] is empty"):
+            generate_tcp_stream(client_ip="10.0.0.1", server_ip="10.0.0.2",
+                                config=TCPStreamConfig(messages=[
+                                    _message("c2s", 0, 10), AppMessage("s2c", b"", "x")]))
+
+    def test_a_bad_direction_is_refused(self) -> None:
+        with self.assertRaisesRegex(ValueError, r"messages\[0\]: direction must be"):
+            generate_tcp_stream(client_ip="10.0.0.1", server_ip="10.0.0.2",
+                                config=TCPStreamConfig(messages=[AppMessage("up", b"x", "x")]))
+
+    def test_payload_sizes_are_ignored_beside_messages(self) -> None:
+        sized = _stream(3, payload_sizes=[1] * len(_CONVERSATION))
+        self.assertEqual([p.raw for p in sized], [p.raw for p in _stream(3)])
+
+    def test_client_only_messages_are_what_a_payload_fn_sends(self) -> None:
+        # The CLI moved from payload_fn to messages on TCP, so a conversation
+        # with no replies must give the same bytes, impaired or not.
+        given = [_message("c2s", i, 50 + 30 * i) for i in range(4)]
+        for extra in ({}, {"packet_loss_probability": 0.3, "retransmit_lost": True,
+                           "payload_corruption_probability": 0.2, "gap_jitter": 0.002}):
+            with self.subTest(impairments=sorted(extra)):
+                streams = [generate_tcp_stream(
+                    client_ip="10.0.0.1", server_ip="10.0.0.2", num_data_packets=7,
+                    config=TCPStreamConfig(seed=9, base_time=1e9, **extra, **source),
+                ).packets for source in (
+                    {"messages": given},
+                    {"payload_fn": lambda i, _d: given[i % len(given)].data},
+                )]
+                self.assertEqual([p.raw for p in streams[0]], [p.raw for p in streams[1]])
+
+    def test_a_stream_without_messages_is_unchanged(self) -> None:
+        # Computed on b6f16df, before #198.
+        stream = generate_tcp_stream(
+            client_ip="10.0.0.1", server_ip="10.0.0.2", num_data_packets=8,
+            config=TCPStreamConfig(seed=7, base_time=1e9, packet_loss_probability=0.2,
+                                   retransmit_lost=True),
+        )
+        digest = hashlib.sha256(b"".join(p.raw for p in stream.packets)).hexdigest()
+        self.assertEqual(digest, _PLAIN_SEED_7)
+
+    def test_sessions_carry_the_messages(self) -> None:
+        # generate_session_mix replaces the config per session, so messages
+        # ride along to every one, as #194 found impairments do.
+        mix = generate_session_mix(
+            sessions=3, client_ip=_CLIENT[0], server_ip="10.0.1.1", server_port=53,
+            num_data_packets=len(_CONVERSATION),
+            config=TCPStreamConfig(seed=2, base_time=1e9, messages=_CONVERSATION),
+        )
+        replies = {parse_packet(p.raw).ip.src for p in mix.packets
+                   if p.payload_len and p.direction == "s2c"}
+        self.assertEqual(replies, {"10.0.1.1", "10.0.1.2", "10.0.1.3"})
+
+
+def _packeteer(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, "-m", "packeteer", *args],
+                          capture_output=True, text=True, check=False)
+
+
+class TestTheIssuesAcceptance(unittest.TestCase):
+    """A parsed DNS-over-TCP capture with queries and responses replays both ways."""
+
+    _COMMON = ("--protocol", "tcp", "--payload", "dns",
+               "--client-ip", "10.0.0.2", "--server-ip", "10.0.0.1",
+               "--server-port", "53", "--seed", "5", "--packets", "6")
+
+    def setUp(self) -> None:
+        self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(__import__("shutil").rmtree, self.dir, True)
+        query = {"id": 1, "questions": [{"name": "www.example.com.", "qtype": 1, "qclass": 1}]}
+        response = {**query, "flags": {"qr": True},
+                    "answers": [{"name": "www.example.com.", "rtype": 1, "rclass": 1,
+                                 "ttl": 60, "rdata": {"address": "192.0.2.7"}}]}
+        given = self.dir / "given.json"
+        given.write_text(json.dumps([{"dns": query}, {"dns": response, "direction": "s2c"}]))
+        capture = self.dir / "capture.pcap"
+        done = _packeteer("stream", *self._COMMON, "--protocol-messages", str(given),
+                          "--pcap", str(capture))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        # Replayed from what parse writes, which carries no direction: it is
+        # read from the addresses, port 53 being the server's.
+        self.parsed = self.dir / "parsed.json"
+        done = _packeteer("parse", str(capture), "--output", str(self.parsed))
+        self.assertEqual(done.returncode, 0, done.stderr)
+
+    def _replay(self, *extra: str) -> list:
+        out = self.dir / "replay.json"
+        done = _packeteer("stream", *self._COMMON, "--protocol-messages", str(self.parsed),
+                          *extra, "--json", str(out))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(out.read_text())["packets"]
+
+    def test_each_response_is_in_the_servers_byte_stream(self) -> None:
+        packets = self._replay()
+        dns = [p for p in packets if "dns" in p]
+        self.assertEqual([p["packet_metadata"]["direction"] for p in dns], ["c2s", "s2c"] * 3)
+        for p in dns:
+            query = p["packet_metadata"]["direction"] == "c2s"
+            self.assertEqual(p["network"]["src"], "10.0.0.2" if query else "10.0.0.1")
+            self.assertEqual(bool(p["dns"].get("flags", {}).get("qr")), not query)
+
+    def test_parse_of_the_result_gives_back_the_directions(self) -> None:
+        pcap = self.dir / "both.pcap"
+        done = _packeteer("stream", *self._COMMON, "--protocol-messages", str(self.parsed),
+                          "--pcap", str(pcap))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        reparsed = self.dir / "reparsed.json"
+        done = _packeteer("parse", str(pcap), "--output", str(reparsed))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        dns = [p for p in json.loads(reparsed.read_text())["packets"] if "dns" in p]
+        self.assertEqual([p["network"]["src"] for p in dns], ["10.0.0.2", "10.0.0.1"] * 3)
+
+    def test_with_loss_both_sides_draw_duplicate_acks(self) -> None:
+        sides = set()
+        for seed in range(12):
+            packets = self._replay("--packet-loss", "0.3", "--seed", str(seed))
+            for direction in ("c2s", "s2c"):
+                acks = [p["transport"]["ack"] for p in packets
+                        if p["packet_metadata"]["direction"] == direction
+                        and "dns" not in p and "payload" not in p
+                        and p["transport"].get("flags") == 0x10]
+                if len(acks) != len(set(acks)):
+                    sides.add(direction)
+        self.assertEqual(sides, {"c2s", "s2c"})
+
+
+if __name__ == "__main__":
+    unittest.main()

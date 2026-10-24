@@ -137,10 +137,6 @@ _DIRECTIONS: tuple[str, ...] = ("c2s", "s2c")
 #: The key beside a wrapped section that says which way it travels (#195).
 _DIRECTION_KEY = "direction"
 
-#: Where #198 is tracked, for the refusal of a reply that only a UDP stream
-#: can send the right way today.
-_TCP_DIRECTIONS_ISSUE = "https://github.com/adamkjonsson/packeteer/issues/198"
-
 
 def _checked_direction(value: object, index: int, where: str) -> str:
     """Return *value* if it is a direction, or refuse it naming *where*."""
@@ -360,11 +356,13 @@ def protocol_conversation(
 ) -> list[AppMessage]:
     """Return *messages* encoded by *proto*, each with the way it travels.
 
-    The API behind ``packeteer stream --protocol udp --payload <protocol>
-    --protocol-messages FILE``, whose result goes to
+    The API behind ``packeteer stream --protocol udp|tcp --payload
+    <protocol> --protocol-messages FILE``, whose result goes to
     :attr:`UDPStreamConfig.messages
-    <packeteer.generate.udp_stream.UDPStreamConfig.messages>` so that a
-    reply leaves from the server (#195).  It takes every shape
+    <packeteer.generate.udp_stream.UDPStreamConfig.messages>` (#195) or
+    :attr:`TCPStreamConfig.messages
+    <packeteer.generate.tcp_stream.TCPStreamConfig.messages>` (#198) so
+    that a reply leaves from the server.  It takes every shape
     :func:`protocol_payload_fn` does.  The direction of each message comes
     from, in order:
 
@@ -462,8 +460,9 @@ def protocol_payload_fn(
             protocol's own reason.  Also if a message travels server to
             client, as :func:`protocol_conversation` reads directions: a
             ``payload_fn`` sends every message from the client, and sending
-            a reply that way would be wrong in silence.  Over UDP,
-            :func:`protocol_conversation` sends it the right way.
+            a reply that way would be wrong in silence.  Over UDP and TCP,
+            :func:`protocol_conversation` and the stream config's
+            ``messages`` send it the right way.
 
     Example::
 
@@ -480,10 +479,11 @@ def protocol_payload_fn(
         if message.direction != "c2s":
             raise ValueError(
                 f"message {index} travels server to client, and a payload_fn "
-                f"sends every message from the client.  Over UDP, "
-                f"protocol_conversation and UDPStreamConfig.messages send it "
-                f"the right way (stream --protocol udp does); over TCP that "
-                f"is not supported yet: {_TCP_DIRECTIONS_ISSUE}"
+                f"sends every message from the client.  Pass "
+                f"protocol_conversation's messages to "
+                f"TCPStreamConfig.messages or UDPStreamConfig.messages "
+                f"instead, which send it the right way, as stream "
+                f"--protocol tcp and udp do"
             )
     encoded = [message.data for message in conversation]
 

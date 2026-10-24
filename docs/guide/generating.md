@@ -337,6 +337,30 @@ stream = generate_udp_stream(
 )
 ```
 
+A TCP stream of given messages sends each from its own side too (#198), and
+the other side acknowledges it. A message longer than the receiver's MSS is
+split into segments, `DATA[i] [k/n]`, with PSH only ever on the last, as a
+stack splits one write. Loss, recovery, retransmission, corruption, the
+server RST and stray segments all work out their sequence and
+acknowledgement numbers for the direction they hit:
+
+```python
+from packeteer.generate import TCPStreamConfig, generate_tcp_stream
+
+messages = protocol_conversation(
+    protocols.for_section("dns"),
+    [{"dns": query}, {"dns": reply, "direction": "s2c"}], "tcp",
+)
+stream = generate_tcp_stream(
+    client_ip="10.0.0.2", server_ip="10.0.0.1", server_port=53,
+    num_data_packets=20,
+    config=TCPStreamConfig(
+        messages=messages, seed=7, base_time=1_700_000_000.0,
+        packet_loss_probability=0.05, retransmit_lost=True,
+    ),
+)
+```
+
 To carry a stream through a tunnel your own code seals, see
 {doc}`tunnelling`.
 

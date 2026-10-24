@@ -27,9 +27,10 @@ Typical usage::
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from random import Random
+from typing import TYPE_CHECKING
 
 from ._stream_common import (
     TCP_TIMESTAMPS_OVERHEAD,
@@ -65,6 +66,9 @@ from .tcp import (
     TCPOptions,
     default_syn_options,
 )
+
+if TYPE_CHECKING:  # pragma: no cover - payloads.base imports this module
+    from .payloads.base import AppMessage
 
 _WRAP = 2 ** 32
 
@@ -232,7 +236,25 @@ class TCPStreamConfig:
                 def payload_fn(packet_index: int, direction: str) -> bytes
 
             When provided, *min_payload*, *max_payload*, *payload_distribution*,
-            and *payload_sizes* are all ignored.
+            and *payload_sizes* are all ignored.  Every payload is sent from
+            the client; for data in both directions, use *messages*.
+        messages: The application messages to send, each from its own side:
+            message *i* is ``messages[i % len(messages)]``, so a short list
+            repeats to make up *num_data_packets*, as every ``--payload``
+            does.  An ``"s2c"`` message is sent by the server and
+            acknowledged by the client, with sequence and acknowledgement
+            numbers, loss, recovery and every impairment worked out for that
+            direction (#198).  A message longer than the peer's MSS (less
+            the Timestamps option when the connection negotiated it) is
+            split into segments, as a stack splits one ``send``: labelled
+            ``DATA[i] [k/n]``, each acknowledged, with PSH only ever on the
+            last.  A message that fits is one segment, ``DATA[i]``.  Each
+            :class:`~packeteer.generate.payloads.base.AppMessage` supplies
+            its direction and bytes, and its label is not used, as on UDP.
+            :func:`packeteer.app.protocol_conversation` builds the list from
+            packet-spec sections.  Overrides the size-based generation, and
+            may not be combined with *payload_fn*; *payload_sizes* is
+            ignored.
 
     """
 
@@ -256,6 +278,7 @@ class TCPStreamConfig:
     retransmit_lost: bool = False
     packet_hooks: list[Callable[[TCPStreamPacket, int], TCPStreamPacket | None]] | None = None
     payload_fn: Callable[[int, str], bytes] | None = None
+    messages: Sequence[AppMessage] | None = None
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -330,6 +353,42 @@ def _data_chunks(
     return result
 
 
+def _check_messages(
+    messages: Sequence[AppMessage],
+    payload_fn: Callable[[int, str], bytes] | None,
+) -> None:
+    """Refuse a :attr:`TCPStreamConfig.messages` that cannot be sent as given."""
+    if payload_fn is not None:
+        raise ValueError(
+            "TCPStreamConfig takes payload_fn or messages, not both: "
+            "each says what every data segment carries"
+        )
+    if not messages:
+        raise ValueError("TCPStreamConfig.messages is empty: nothing to send")
+    for index, message in enumerate(messages):
+        if message.direction not in ("c2s", "s2c"):
+            raise ValueError(
+                f"TCPStreamConfig.messages[{index}]: direction must be "
+                f"'c2s' or 's2c', not {message.direction!r}"
+            )
+        if not message.data:
+            raise ValueError(
+                f"TCPStreamConfig.messages[{index}] is empty: a TCP stack "
+                f"sends nothing for an empty write"
+            )
+
+
+def _segment_limit(receiver_options: TCPOptions | None, negotiated: bool) -> int:
+    """Return the largest payload a segment may carry towards a receiver.
+
+    The receiver's advertised MSS, or :data:`DEFAULT_MSS` when its SYN
+    carried none, less the twelve bytes of the Timestamps option on every
+    segment when the connection negotiated them.
+    """
+    mss = (receiver_options.mss if receiver_options is not None else None) or DEFAULT_MSS
+    return mss - (TCP_TIMESTAMPS_OVERHEAD if negotiated else 0)
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def generate_tcp_stream(
@@ -360,10 +419,13 @@ def generate_tcp_stream(
     1. Three-way handshake: SYN → SYN-ACK → ACK
     2. Data transfer: *num_data_packets* ACK segments (client→server, PSH set
        with probability *psh_probability*), each immediately acknowledged by
-       the server
+       the server.  With ``config.messages``, *num_data_packets* messages
+       instead, each sent from its own side and acknowledged by the other,
+       a long one in several segments.
     3. Four-way teardown: FIN-ACK → ACK → FIN-ACK → ACK
 
-    The baseline packet count is ``2 * num_data_packets + 7``.  Anomaly
+    The baseline packet count is ``2 * num_data_packets + 7``, or twice the
+    number of segments plus seven with ``config.messages``.  Anomaly
     parameters (RST, corruption, retransmissions, packet loss) may add or
     remove packets from the final list.
 
@@ -376,7 +438,8 @@ def generate_tcp_stream(
             ``False``.
         server_mac: Server MAC address.  Ignored when *include_ethernet* is
             ``False``.
-        num_data_packets: Number of PSH+ACK data segments sent by the client.
+        num_data_packets: Number of PSH+ACK data segments sent by the client,
+            or of messages sent when ``config.messages`` is set.
         min_payload: Minimum data payload in bytes.  Defaults to ``40``.
         max_payload: Maximum data payload in bytes.  Defaults to ``1460``
             (typical Ethernet MSS for IPv4).
@@ -439,7 +502,10 @@ def generate_tcp_stream(
 
     Raises:
         ValueError: If *payload_sizes* (from *config*) length does not match
-            *num_data_packets*, or *payload_distribution* is unknown.
+            *num_data_packets*, or *payload_distribution* is unknown; or if
+            *config* sets both ``payload_fn`` and ``messages``, or
+            ``messages`` is empty, holds an empty message, or a direction
+            other than ``"c2s"`` or ``"s2c"``.
         OSError: If an IP address string is invalid.
 
     Example::
@@ -481,7 +547,10 @@ def generate_tcp_stream(
     retransmit_lost = config.retransmit_lost
     packet_hooks = config.packet_hooks
     payload_fn = config.payload_fn
+    messages = config.messages
     base_time = config.base_time if config.base_time is not None else time.time()
+    if messages is not None:
+        _check_messages(messages, payload_fn)
 
     gap_usec = int(inter_packet_gap * 1_000_000)
     jitter_usec = int(gap_jitter * 1_000_000)
@@ -621,18 +690,43 @@ def generate_tcp_stream(
     emit(server, client, TCP_SYN | TCP_ACK, b"", "s2c", "SYN-ACK", options=server_options)
     emit(client, server, TCP_ACK,           b"", "c2s", "ACK")
 
-    # ── Data transfer (client → server, server ACKs each packet) ────────────
-    for i, chunk in enumerate(_data_chunks(
-        payload_fn, num_data_packets, min_payload, max_payload,
-        payload_distribution, payload_sizes, rng,
-    )):
-        flags = TCP_ACK | (TCP_PSH if rng.random() < psh_probability else 0)
-        # A segment that never arrived triggers no acknowledgement: there is
-        # nothing at the far end to answer.  The next segment that does arrive
-        # is answered with the stale acknowledgement number, which is what a
-        # duplicate ACK is.
-        if emit(client, server, flags, chunk, "c2s", f"DATA[{i}]"):
-            emit(server, client, TCP_ACK, b"", "s2c", f"ACK[{i}]")
+    # ── Data transfer ─────────────────────────────────────────────────────────
+    # A segment that never arrived triggers no acknowledgement: there is
+    # nothing at the far end to answer.  The next segment that does arrive is
+    # answered with the stale acknowledgement number, which is what a
+    # duplicate ACK is.  The rule is the same in either direction.
+    if messages is None:
+        # Client → server, the server ACKing each segment.
+        for i, chunk in enumerate(_data_chunks(
+            payload_fn, num_data_packets, min_payload, max_payload,
+            payload_distribution, payload_sizes, rng,
+        )):
+            flags = TCP_ACK | (TCP_PSH if rng.random() < psh_probability else 0)
+            if emit(client, server, flags, chunk, "c2s", f"DATA[{i}]"):
+                emit(server, client, TCP_ACK, b"", "s2c", f"ACK[{i}]")
+    else:
+        # Each message from its own side, the other side ACKing each segment
+        # (#198).  One PSH draw per message, as a segment-per-message stream
+        # makes, so a message that fits in a segment is sent exactly as a
+        # payload_fn would send it; PSH only ever goes on the last segment.
+        for i in range(num_data_packets):
+            message = messages[i % len(messages)]
+            if message.direction == "c2s":
+                sender, receiver, reply = client, server, "s2c"
+                limit = _segment_limit(server_options, negotiated)
+            else:
+                sender, receiver, reply = server, client, "c2s"
+                limit = _segment_limit(client_options, negotiated)
+            push = rng.random() < psh_probability
+            data = message.data
+            segments = [data[at:at + limit] for at in range(0, len(data), limit)]
+            for k, chunk in enumerate(segments):
+                last = k == len(segments) - 1
+                flags = TCP_ACK | (TCP_PSH if push and last else 0)
+                part = "" if len(segments) == 1 else f" [{k + 1}/{len(segments)}]"
+                if emit(sender, receiver, flags, chunk, message.direction,
+                        f"DATA[{i}]{part}"):
+                    emit(receiver, sender, TCP_ACK, b"", reply, f"ACK[{i}]{part}")
 
     # ── Four-way teardown ─────────────────────────────────────────────────────
     emit(client, server, TCP_FIN | TCP_ACK, b"", "c2s", "FIN-ACK")

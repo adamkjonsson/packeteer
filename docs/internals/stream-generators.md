@@ -85,6 +85,13 @@ and the inner IP header by `_apply_encap()`.
 2. **Data transfer loop**: for each of *n* data packets:
    - `DATA[i]` (client→server, PSH set with probability `config.psh_probability`)
    - `ACK[i]` (server→client)
+
+   With `config.messages`, for each of *n* messages instead, from the
+   message's own side (#198):
+   - `DATA[i]`, or `DATA[i] [k/n]` for each segment when the message is
+     longer than the receiver's MSS (less 12 bytes of Timestamps option when
+     negotiated). One PSH draw per message, applied to its last segment.
+   - `ACK[i]`, or `ACK[i] [k/n]`, from the other side.
 3. **Teardown**: FIN-ACK (client), ACK (server), FIN-ACK (server), ACK (client).
 
 ### Anomaly injection
