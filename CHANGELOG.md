@@ -25,6 +25,16 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
+### Changed
+
+- **The internet checksum is computed in C, not one 16-bit word at a time
+  in Python** (#213).  `ones_complement_checksum` is about 15× faster for a
+  full-size frame.  Parsing rebuilds every TCP, UDP, ICMP and ICMPv6 header
+  to derive its checksum (#68), so `parse` is about 40% faster on a capture
+  of full-size TCP segments.  Building is faster too.  Every checksum is
+  unchanged.  `crc32c`, used only by SCTP, still loops in Python: a
+  slicing-by-8 table measured only 1.1× faster.
+
 ---
 
 ## [0.19.0] - 2026-10-23

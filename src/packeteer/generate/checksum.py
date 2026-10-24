@@ -8,8 +8,6 @@ This module provides:
 """
 from __future__ import annotations
 
-import struct
-
 
 def _make_crc32c_table() -> list[int]:
     """Build the 256-entry lookup table for CRC-32c (Castagnoli polynomial)."""
@@ -80,9 +78,13 @@ def ones_complement_checksum(data: bytes) -> int:
     """
     if len(data) % 2:
         data += b'\x00'
-    total = 0
-    for i in range(0, len(data), 2):
-        total += struct.unpack_from('!H', data, i)[0]
-    while total >> 16:
-        total = (total & 0xFFFF) + (total >> 16)
-    return ~total & 0xFFFF
+    # The whole buffer as one big-endian integer is congruent, modulo 0xFFFF,
+    # to the sum of its 16-bit words, since 2**16 == 1 (mod 0xFFFF).  So one
+    # C-level conversion and one modulo replace a Python loop per word (#213).
+    value = int.from_bytes(data, 'big')
+    if not value:
+        return 0xFFFF           # all zero: the folded sum is 0, complemented
+    folded = value % 0xFFFF
+    # A non-zero multiple of 0xFFFF folds to 0xFFFF (one's-complement "-0"),
+    # not to 0, and its complement is 0.
+    return ~folded & 0xFFFF if folded else 0
