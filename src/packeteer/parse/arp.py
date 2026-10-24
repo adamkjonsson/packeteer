@@ -34,9 +34,9 @@ def packet_parser(data: bytes) -> tuple[int, None, ARPHeader | None]:
     htype, ptype, hlen, plen, operation = _HEADER.unpack_from(data, 0)
     if hlen != 6 or plen != 4:
         return (0, None, None)
-    sha = ":".join(f"{b:02x}" for b in data[8:14])
+    sha = data[8:14].hex(":")
     spa = socket.inet_ntoa(data[14:18])
-    tha = ":".join(f"{b:02x}" for b in data[18:24])
+    tha = data[18:24].hex(":")
     tpa = socket.inet_ntoa(data[24:28])
     hdr = ARPHeader(
         operation=operation,

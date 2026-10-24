@@ -37,6 +37,9 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 - Writing a payload to a packet spec checks whether it is printable text in
   C rather than one byte at a time, about 28× faster for a 1,400-byte text
   payload (#214).  Which payloads are written as text is unchanged.
+- MAC addresses are formatted with `bytes.hex(":")` rather than one byte at
+  a time, by the Ethernet, ARP and Linux cooked-capture parsers and by
+  `sanitise` (#215).  The strings are unchanged.
 
 ---
 

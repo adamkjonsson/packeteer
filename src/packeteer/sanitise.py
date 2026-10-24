@@ -605,7 +605,7 @@ def _sanitise_dhcp_client_id(opt: dict, r: _Replacer,
         # It is a MAC, so `macs` governs it exactly as it governs `chaddr` —
         # zeroing it here when `macs` is off would contradict that.
         if opts.macs:
-            mac = ":".join(f"{b:02x}" for b in raw[1:])
+            mac = raw[1:].hex(":")
             opt["data"] = f"{raw[0]:02x}" + r.mac(mac).replace(":", "")
         return
     if opts.ips:
@@ -790,7 +790,7 @@ def _replace_mac(buf: bytearray, offset: int, r: _Replacer) -> None:
     """
     if offset + 6 > len(buf):
         return
-    original = ":".join(f"{b:02x}" for b in buf[offset:offset + 6])
+    original = buf[offset:offset + 6].hex(":")
     buf[offset:offset + 6] = bytes.fromhex(r.mac(original).replace(":", ""))
 
 
