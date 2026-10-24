@@ -217,7 +217,9 @@ and acknowledgement numbers, loss, recovery and every impairment worked out
 for that direction. A message longer than the receiver's MSS is split into
 segments `DATA[i] [k/n]`, as a stack splits one write. The direction is:
 
-- a packet's `packet_metadata.direction`, as `stream --json` writes it;
+- a packet's `packet_metadata.direction`, as `stream --json` writes it.
+  A `"direction"` key beside the packet's sections is refused, naming
+  `packet_metadata`, since nothing would read it;
 - for a packet without one, as `packeteer parse` writes it, read from its
   addresses.  The side on one of the protocol's ports, such as 53 for DNS,
   is the server.  When neither side is, or both are, the first sender in the
@@ -225,7 +227,11 @@ segments `DATA[i] [k/n]`, as a stack splits one write. The direction is:
 - for a section wrapped under the protocol's name, a `"direction"` key
   beside it.  Nothing else may be beside it, so a misspelt key is refused
   rather than ignored;
-- `c2s` for a bare section.
+- `c2s` for a bare section.  A bare section with a `"direction"` key is
+  refused, saying to wrap it: the protocol reads only its own keys, so the
+  direction would otherwise be dropped in silence (#221).  A protocol with
+  a `direction` field of its own writes it inside the wrapper, where the
+  outer key is still the message's.
 
 ```json
 [

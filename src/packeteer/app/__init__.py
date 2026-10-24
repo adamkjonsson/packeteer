@@ -202,7 +202,9 @@ def _directed_sections_in(
     read by nothing is a misspelling accepted in silence (#137).  With
     *directed* false the caller takes each message's direction from the
     message itself, so a ``"direction"`` key, which would be ignored, is
-    refused instead.
+    refused instead.  A ``"direction"`` key anywhere else is refused for the
+    same reason (#221): on a bare section, which is always ``c2s``, and
+    beside a whole packet's sections, where ``packet_metadata`` holds it.
     """
     if isinstance(messages, dict):
         packets = messages.get("packets")
@@ -232,6 +234,14 @@ def _directed_sections_in(
             )
         inner = element.get(proto.name)
         if _is_packet(element):
+            if _DIRECTION_KEY in element:
+                # Read by nothing: a packet's direction is its metadata's, and
+                # without this the ports decide, in silence (#221).
+                raise ValueError(
+                    f"message {index} has {_DIRECTION_KEY!r} beside the "
+                    f"packet's sections, where nothing reads it; a packet's "
+                    f"direction goes in packet_metadata.direction"
+                )
             if not isinstance(inner, dict):
                 continue
             meta = element.get("packet_metadata")
@@ -258,6 +268,19 @@ def _directed_sections_in(
             )
             out.append((inner, direction))
         else:
+            if _DIRECTION_KEY in element:
+                # A bare section is c2s, and the protocol reads only its own
+                # keys, so the direction would be dropped in silence (#221).
+                # Refused rather than honoured: in a protocol with a field of
+                # that name, the key would mean two things.  Wrapped, the
+                # inner key is the protocol's and the outer the message's.
+                given = element[_DIRECTION_KEY]
+                shown = given if given in _DIRECTIONS else "s2c"
+                raise ValueError(
+                    f"message {index} has {_DIRECTION_KEY!r} but is a bare "
+                    f"section, which is always sent c2s; write "
+                    f'{{"{proto.name}": {{...}}, "{_DIRECTION_KEY}": "{shown}"}}'
+                )
             out.append((element, "c2s"))
     return out
 

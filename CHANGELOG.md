@@ -57,6 +57,14 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   not.  `protocol_payload_fn`, which still sends everything from the client,
   refuses a reply as before, and its message now points to
   `TCPStreamConfig.messages` and `UDPStreamConfig.messages` instead of #198.
+- **Breaking: a `"direction"` key is refused where nothing reads it** in
+  `--protocol-messages` and the `packeteer.app` functions that read it
+  (#221).  On a bare section, which is always sent `c2s`, the key used to be
+  ignored, so a reply written as `{"raw": …, "direction": "s2c"}` went out
+  from the client with exit status 0.  Wrap it instead:
+  `{"dns": {...}, "direction": "s2c"}`.  Beside a whole packet's sections
+  it was ignored too, and the ports decided.  Put it in
+  `packet_metadata.direction`.
 - **The internet checksum is computed in C, not one 16-bit word at a time
   in Python** (#213).  `ones_complement_checksum` is about 15× faster for a
   full-size frame.  Parsing rebuilds every TCP, UDP, ICMP and ICMPv6 header

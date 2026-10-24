@@ -114,6 +114,51 @@ class TestWhereADirectionComesFrom(unittest.TestCase):
             protocol_messages(_dns(), [{"dns": _QUERY, "direction": "c2s"}], "udp")
         self.assertIn("unknown key 'direction'", str(caught.exception))
 
+    def test_a_bare_section_with_a_direction_is_refused(self) -> None:
+        """#221: it was sent c2s, and the key was read by nothing."""
+        given = [{**_QUERY, "direction": "c2s"}, {**_RESPONSE, "direction": "s2c"}]
+        for transport in ("udp", "tcp"):
+            with self.subTest(transport=transport), self.assertRaises(ValueError) as caught:
+                protocol_conversation(_dns(), given, transport)
+            self.assertIn("message 0 has 'direction' but is a bare section",
+                          str(caught.exception))
+            self.assertIn('write {"dns": {...}, "direction": "c2s"}', str(caught.exception))
+        with self.assertRaises(ValueError) as caught:
+            protocol_conversation(_dns(), [_QUERY, {**_RESPONSE, "direction": "s2c"}], "udp")
+        self.assertIn('message 1 has', str(caught.exception))
+        self.assertIn('"direction": "s2c"', str(caught.exception))
+
+    def test_a_bare_section_with_a_direction_is_refused_for_messages_too(self) -> None:
+        with self.assertRaises(ValueError) as caught:
+            protocol_messages(_dns(), [{**_QUERY, "direction": "s2c"}], "udp")
+        self.assertIn("message 0 has 'direction' but is a bare section", str(caught.exception))
+
+    def test_a_packet_with_a_direction_beside_its_sections_is_refused(self) -> None:
+        """#221: the ports decided, in silence; the metadata is the place."""
+        packet = _packet(_RESPONSE, ("10.0.0.2", 54321), ("10.0.0.1", 53))
+        packet["direction"] = "s2c"
+        with self.assertRaises(ValueError) as caught:
+            _directions([packet])
+        self.assertIn("message 0 has 'direction' beside the packet's sections",
+                      str(caught.exception))
+        self.assertIn("packet_metadata.direction", str(caught.exception))
+
+    def test_a_protocols_own_direction_field_goes_inside_the_wrapper(self) -> None:
+        """Wrapped, the inner key is the protocol's and the outer the message's."""
+        signal = protocols.AppProtocol(
+            name="signal", over="udp", ports=frozenset({7000}), messages=(dict,),
+            decode=lambda b, t: {"direction": b.decode()},
+            encode=lambda m, t: m["direction"].encode(),
+            to_spec=dict, from_spec=lambda s: {"direction": s["direction"]},
+        )
+        given = [{"signal": {"direction": "north"}, "direction": "s2c"},
+                 {"signal": {"direction": "south"}}]
+        messages = protocol_conversation(signal, given, "udp")
+        self.assertEqual([(m.direction, m.data) for m in messages],
+                         [("s2c", b"north"), ("c2s", b"south")])
+        with self.assertRaises(ValueError):
+            protocol_conversation(signal, [{"direction": "north"}], "udp")
+
     def test_the_conversation_is_encoded_and_labelled(self) -> None:
         messages = protocol_conversation(_dns(), [_QUERY], "udp")
         self.assertEqual(messages[0].label, "dns[0]")
