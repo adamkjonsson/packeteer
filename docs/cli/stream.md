@@ -221,8 +221,12 @@ that message as a wrapped section instead, for DNS
 without the 2-byte length field DNS over TCP puts in front of it: the builder
 adds that field.  The payloads `parse` wrote do include it, so the error says
 when the packets it names are together one whole message, and gives that
-message's size beside the payload's (#222).  A payload on another port, such
-as TLS beside DNS, is still passed over.
+message's size beside the payload's (#222).  Both go by how each packet was
+captured, its `network.protocol`, and not by the replay's `--protocol`: a
+DNS-over-TCP capture replayed with `--protocol udp` still starts each payload
+with the length field, and over UDP none is sent, so it has to come off all
+the same (#224).  A payload on another port, such as TLS beside DNS, is still
+passed over.
 
 **Each message travels its own way.**  A request/response protocol needs
 its replies to leave from the server, so on `--protocol udp` (#195) and

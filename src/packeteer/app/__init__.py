@@ -229,7 +229,7 @@ def _directed_sections_in(
                 clients.setdefault(frozenset(ends), ends[0])
 
     out: list[tuple[dict[str, Any], str]] = []
-    undecoded: list[tuple[int, str, int]] = []
+    undecoded: list[tuple[int, str, str, bytes]] = []
     for index, element in enumerate(messages):
         if not isinstance(element, dict):
             raise ValueError(
@@ -249,9 +249,10 @@ def _directed_sections_in(
             if not isinstance(inner, dict):
                 carried = _undecoded_payload(proto, element)
                 if carried:
-                    undecoded.append(
-                        (index, _inferred_direction(proto, element, clients), carried),
-                    )
+                    undecoded.append((
+                        index, _inferred_direction(proto, element, clients),
+                        _captured_over(element, transport), carried,
+                    ))
                 continue
             meta = element.get("packet_metadata")
             stated = meta.get(_DIRECTION_KEY) if isinstance(meta, dict) else None
@@ -322,8 +323,21 @@ def _undecoded_payload(proto: AppProtocol, packet: dict[str, Any]) -> bytes:
         return bytes(len(data) // 2)
 
 
+def _captured_over(packet: dict[str, Any], replay: str) -> str:
+    """Return the transport *packet* was captured over, or *replay* if it does not say.
+
+    ``packeteer parse`` writes it as ``network.protocol``.  It is what
+    decides whether a payload can be part of a message split over segments,
+    and whether it starts with a length field, whatever transport the
+    replay will use (#224).
+    """
+    network = packet.get("network")
+    captured = network.get("protocol") if isinstance(network, dict) else None
+    return captured if captured in ("tcp", "udp") else replay
+
+
 def _refuse_undecoded(
-    proto: AppProtocol, undecoded: list[tuple[int, str, bytes]], transport: str,
+    proto: AppProtocol, undecoded: list[tuple[int, str, str, bytes]], transport: str,
 ) -> None:
     """Refuse packets on *proto*'s flow that carry a payload and no section (#220).
 
@@ -333,11 +347,14 @@ def _refuse_undecoded(
     or truncated.  Skipped, the message vanished and the list cycled in its
     place, with nothing said.  Every such packet is named at once, with how
     many bytes, so the whole loss is visible in one error.  The cause is
-    given for *transport*: only TCP splits a message (#223).
+    given for how the packets were captured, since only TCP splits a message
+    (#223); *transport*, the replay's, decides only what the builder does
+    with a ``raw`` section (#224).
     """
-    total = sum(len(carried) for _, _, carried in undecoded)
+    total = sum(len(carried) for *_, carried in undecoded)
     listed = ", ".join(f"{index} ({direction}, {len(carried)} bytes)"
-                       for index, direction, carried in undecoded)
+                       for index, direction, _, carried in undecoded)
+    captured = "tcp" if any(over == "tcp" for _, _, over, _ in undecoded) else "udp"
     ports = ", ".join(str(port) for port in sorted(proto.ports))
     plural = "s" if len(proto.ports) > 1 else ""
     raise ValueError(
@@ -345,7 +362,7 @@ def _refuse_undecoded(
         f"{ports}) carry {total} bytes of payload but no {proto.name!r} "
         f"section, at index {listed}.  'packeteer parse' writes a payload "
         f"with no section when it could not decode it as a {proto.name} "
-        f"message{_undecoded_causes(proto, transport)}.  Skipping them would "
+        f"message{_undecoded_causes(proto, captured)}.  Skipping them would "
         f"drop it, and the list would cycle in its place.  Write the message "
         f"as a wrapped section "
         f'instead, such as {{"{proto.name}": {{...}}, "direction": "s2c"}}'
@@ -354,7 +371,7 @@ def _refuse_undecoded(
 
 
 def _whole_messages(
-    proto: AppProtocol, undecoded: list[tuple[int, str, bytes]], transport: str,
+    proto: AppProtocol, undecoded: list[tuple[int, str, str, bytes]], transport: str,
 ) -> str:
     """Say which runs of *undecoded* are one whole message, and its size (#222).
 
@@ -367,18 +384,25 @@ def _whole_messages(
     the payload's.  The frame is what encoding for TCP adds over encoding
     for UDP, from the protocol itself.  Nothing is said of a run that does
     not decode as one message, or of a protocol that runs over TCP only.
+
+    A run is looked at when it was **captured** over TCP, whatever the
+    replay's *transport*: a DNS-over-TCP capture replayed over UDP is where
+    the field has to come off (#224).  *transport* only decides the last
+    clause, since it is what the builder does with ``raw``.
     """
-    if transport != "tcp":
-        return ""
-    runs: list[list[tuple[int, str, bytes]]] = []
+    runs: list[list[tuple[int, str, str, bytes]]] = []
     for entry in undecoded:
-        if runs and runs[-1][-1][1] == entry[1]:
+        if runs and runs[-1][-1][1:3] == entry[1:3]:
             runs[-1].append(entry)
         else:
             runs.append([entry])
+    added = ("which the builder adds back" if transport == "tcp"
+             else f"and over {transport.upper()} none is sent")
     notes: list[str] = []
     for run in runs:
-        joined = b"".join(carried for _, _, carried in run)
+        if run[0][2] != "tcp":
+            continue
+        joined = b"".join(carried for *_, carried in run)
         try:
             message = proto.decode(joined, "tcp")
             framed = len(proto.encode(message, "tcp"))
@@ -387,14 +411,13 @@ def _whole_messages(
             continue
         if framed != len(joined):
             continue        # several messages, or one with bytes after it
-        indexes = ", ".join(str(index) for index, _, _ in run)
+        indexes = ", ".join(str(index) for index, *_ in run)
         what = f"The packets at index {indexes} ({run[0][1]}) are together one"
         if bare < framed:
             notes.append(
                 f"{what} {bare}-byte {proto.name} message, after the "
                 f"{framed - bare}-byte length field TCP adds; in a wrapped "
-                f"section, 'raw' is the message without that field, which the "
-                f"builder adds back"
+                f"section, 'raw' is the message without that field, {added}"
             )
         else:
             notes.append(f"{what} {framed}-byte {proto.name} message")

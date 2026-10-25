@@ -78,8 +78,10 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   `{"dns": {"raw": "…"}, "direction": "s2c"}`.  When the named packets are
   together one whole message, the error says so and gives its size without
   the length field the transport adds, and says `raw` leaves that field out,
-  since the builder adds it (#222).  Payloads on other ports are still
-  skipped.
+  since the builder adds it (#222).  The cause and the size go by how each
+  packet was captured, so a DNS-over-TCP capture replayed over UDP gets
+  both, and is told no length field is sent there (#224).  Payloads on
+  other ports are still skipped.
 - **The internet checksum is computed in C, not one 16-bit word at a time
   in Python** (#213).  `ones_complement_checksum` is about 15× faster for a
   full-size frame.  Parsing rebuilds every TCP, UDP, ICMP and ICMPv6 header

@@ -446,10 +446,11 @@ def _server_stream(pcap: Path) -> bytes:
     return out
 
 
-def _parsed_packet(src_port: int, dst_port: int, **sections: object) -> dict:
+def _parsed_packet(src_port: int, dst_port: int, *, protocol: str = "tcp",
+                   **sections: object) -> dict:
     """Return a packet as `packeteer parse` writes it; .1 is the server."""
     src, dst = ("10.0.0.2", "10.0.0.1") if dst_port in (53, 443) else ("10.0.0.1", "10.0.0.2")
-    return {"network": {"src": src, "dst": dst, "protocol": "tcp"},
+    return {"network": {"src": src, "dst": dst, "protocol": protocol},
             "transport": {"src_port": src_port, "dst_port": dst_port}, **sections}
 
 
@@ -527,8 +528,9 @@ class TestAMessageParseCouldNotDecodeIsRefused(unittest.TestCase):
 
     def test_undecodable_on_udp_too(self) -> None:
         from packeteer.app import protocol_conversation
-        given = [_parsed_packet(54321, 53, dns=self._QUERY),
-                 _parsed_packet(54321, 53, payload={"data": "not dns", "encoding": "utf8"})]
+        given = [_parsed_packet(54321, 53, protocol="udp", dns=self._QUERY),
+                 _parsed_packet(54321, 53, protocol="udp",
+                                payload={"data": "not dns", "encoding": "utf8"})]
         with self.assertRaises(ValueError) as caught:
             protocol_conversation(self._dns(), given, "udp")
         self.assertIn("at index 1 (c2s, 7 bytes)", str(caught.exception))
@@ -543,10 +545,14 @@ class TestAMessageParseCouldNotDecodeIsRefused(unittest.TestCase):
         dns = self._dns()
         return dns.encode(dns.from_spec(section), "tcp")
 
-    def _refusal(self, payloads: list[bytes], transport: str = "tcp") -> str:
+    def _refusal(self, payloads: list[bytes], transport: str = "tcp",
+                 captured: str | None = None) -> str:
+        """Replay over *transport* payloads captured over *captured* (default: the same)."""
         from packeteer.app import protocol_conversation
-        given = [_parsed_packet(54321, 53, dns=self._QUERY)]
-        given += [_parsed_packet(53, 54321, payload={"data": b.hex()}) for b in payloads]
+        over = captured or transport
+        given = [_parsed_packet(54321, 53, protocol=over, dns=self._QUERY)]
+        given += [_parsed_packet(53, 54321, protocol=over, payload={"data": b.hex()})
+                  for b in payloads]
         with self.assertRaises(ValueError) as caught:
             protocol_conversation(self._dns(), given, transport)
         return str(caught.exception)
@@ -567,6 +573,82 @@ class TestAMessageParseCouldNotDecodeIsRefused(unittest.TestCase):
         message = self._refusal([self._framed(self._QUERY)[2:12]], transport="udp")
         self.assertNotIn("length field", message)
         self.assertNotIn("are together one", message)
+
+    def test_a_tcp_capture_replayed_over_udp_keeps_the_size_note(self) -> None:
+        # #224: the note goes by how the packets were captured.  Over UDP
+        # the builder sends no length field, and the note says so.
+        whole = self._framed(self._QUERY)
+        message = self._refusal([whole[:10], whole[10:]], transport="udp", captured="tcp")
+        self.assertIn("split over TCP segments", message)
+        self.assertIn("after the 2-byte length field TCP adds", message)
+        self.assertIn("'raw' is the message without that field, and over UDP none is sent",
+                      message)
+        self.assertNotIn("adds back", message)
+
+    def test_a_udp_capture_replayed_over_tcp_gets_the_udp_cause(self) -> None:
+        message = self._refusal([b"not dns at all"], transport="tcp", captured="udp")
+        self.assertIn("malformed, truncated, or not dns at all", message)
+        self.assertNotIn("TCP", message)
+
+    def test_a_packet_that_does_not_say_takes_the_replays_transport(self) -> None:
+        from packeteer.app import protocol_conversation
+        whole = self._framed(self._QUERY)
+        given = [_parsed_packet(54321, 53, dns=self._QUERY),
+                 _parsed_packet(53, 54321, payload={"data": whole.hex()})]
+        for packet in given:
+            del packet["network"]["protocol"]
+        for transport, expected in (("tcp", "which the builder adds back"),
+                                    ("udp", "not dns at all.  Skipping")):
+            with self.subTest(transport=transport), self.assertRaises(ValueError) as caught:
+                protocol_conversation(self._dns(), given, transport)
+            self.assertIn(expected, str(caught.exception))
+
+    def test_kobers_tcp_capture_over_udp(self) -> None:
+        """#224's reproduction: following the note gives a datagram that decodes."""
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(__import__("shutil").rmtree, tmp, True)
+        bulk = "0462756c6b076578616d706c6503636f6d0000010001"
+        query = "222201000001000000000000" + bulk
+        response = "22228180000100c800000000" + bulk + "".join(
+            f"c00c000100010000003c00040a0000{i:02x}" for i in range(200))
+        (tmp / "given.json").write_text(json.dumps([
+            {"dns": {"raw": query}}, {"dns": {"raw": response}, "direction": "s2c"}]))
+        ends = ("--payload", "dns", "--server-port", "53", "--client-ip", "10.0.0.2",
+                "--server-ip", "10.0.0.1", "--packets", "2", "--seed", "3")
+        done = _packeteer("stream", "--protocol", "tcp", *ends,
+                          "--protocol-messages", str(tmp / "given.json"),
+                          "--pcap", str(tmp / "a.pcap"))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        done = _packeteer("parse", str(tmp / "a.pcap"), "--output", str(tmp / "a.json"))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        done = _packeteer("stream", "--protocol", "udp", *ends,
+                          "--protocol-messages", str(tmp / "a.json"), "--json", str(tmp / "x.json"))
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("split over TCP segments", done.stderr)
+        self.assertIn("one 3234-byte dns message, after the 2-byte length field TCP adds",
+                      done.stderr)
+        self.assertIn("and over UDP none is sent", done.stderr)
+
+        # Followed, raw without the field decodes over UDP; with it, as the
+        # payloads were counted, it does not (the issue's table).
+        parsed = json.loads((tmp / "a.json").read_text())["packets"]
+        joined = b"".join(bytes.fromhex(p["payload"]["data"]) for p in parsed
+                          if "payload" in p and "dns" not in p)
+        for raw, decodes in ((joined[2:], True), (joined, False)):
+            fixed = [p for p in parsed if "dns" in p]
+            fixed.append({"dns": {"raw": raw.hex()}, "direction": "s2c"})
+            (tmp / "fixed.json").write_text(json.dumps(fixed))
+            with self.subTest(raw_bytes=len(raw)):
+                done = _packeteer("stream", "--protocol", "udp", *ends,
+                                  "--protocol-messages", str(tmp / "fixed.json"),
+                                  "--pcap", str(tmp / "u.pcap"))
+                self.assertEqual(done.returncode, 0, done.stderr)
+                done = _packeteer("parse", str(tmp / "u.pcap"), "--output", str(tmp / "u.json"))
+                self.assertEqual(done.returncode, 0, done.stderr)
+                reply = [p for p in json.loads((tmp / "u.json").read_text())["packets"]
+                         if p["transport"]["src_port"] == 53]
+                self.assertEqual(len(reply), 1)
+                self.assertEqual("dns" in reply[0], decodes)
 
     def test_kobers_udp_reproduction(self) -> None:
         """#223: a truncated response datagram, generated, parsed and replayed."""
