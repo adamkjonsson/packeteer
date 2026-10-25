@@ -435,6 +435,17 @@ class TestTheIssuesAcceptance(unittest.TestCase):
         self.assertEqual(sides, {"c2s", "s2c"})
 
 
+def _server_stream(pcap: Path) -> bytes:
+    """Return the payload bytes port 53 sent in *pcap*, in capture order."""
+    from packeteer.pcap import read_pcap
+    out = b""
+    for record in read_pcap(path=pcap).packets:
+        pkt = parse_packet(record.data, decode_app=False)
+        if pkt.transport is not None and pkt.transport.src_port == 53:
+            out += pkt.payload
+    return out
+
+
 def _parsed_packet(src_port: int, dst_port: int, **sections: object) -> dict:
     """Return a packet as `packeteer parse` writes it; .1 is the server."""
     src, dst = ("10.0.0.2", "10.0.0.1") if dst_port in (53, 443) else ("10.0.0.1", "10.0.0.2")
@@ -484,6 +495,26 @@ class TestAMessageParseCouldNotDecodeIsRefused(unittest.TestCase):
         self.assertIn("on its own: split over TCP segments, which parse does not join, "
                       "or malformed, truncated, or not dns at all", done.stderr)
         self.assertFalse((tmp / "c.json").exists())
+        # #222: the payload counts the length field; the error also gives
+        # the message's own size, and says raw leaves the field out.
+        self.assertIn("The packets at index 5, 7, 9 (s2c) are together one "
+                      "3234-byte dns message, after the 2-byte length field TCP adds",
+                      done.stderr)
+        self.assertIn("'raw' is the message without that field", done.stderr)
+
+        # Following the error as written: the joined payloads, less the
+        # 2 bytes it names, as a wrapped raw section.  The server's byte
+        # stream comes out as the original's, not double-prefixed.
+        parsed = json.loads((tmp / "a.json").read_text())["packets"]
+        joined = b"".join(bytes.fromhex(p["payload"]["data"]) for p in parsed
+                          if "payload" in p and "dns" not in p)
+        fixed = [p for p in parsed if "dns" in p]
+        fixed.append({"dns": {"raw": joined[2:].hex()}, "direction": "s2c"})
+        (tmp / "fixed.json").write_text(json.dumps(fixed))
+        done = _packeteer("stream", *common, "--protocol-messages", str(tmp / "fixed.json"),
+                          "--pcap", str(tmp / "f.pcap"))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(_server_stream(tmp / "f.pcap"), _server_stream(tmp / "a.pcap"))
 
     def test_every_reader_refuses(self) -> None:
         from packeteer.app import protocol_conversation, protocol_messages, protocol_payload_fn
@@ -506,6 +537,36 @@ class TestAMessageParseCouldNotDecodeIsRefused(unittest.TestCase):
                       "or not dns at all", str(caught.exception))
         self.assertNotIn("TCP", str(caught.exception))
         self.assertNotIn("segment", str(caught.exception))
+
+    def _framed(self, section: dict) -> bytes:
+        """Return *section* as DNS over TCP sends it, length field first."""
+        dns = self._dns()
+        return dns.encode(dns.from_spec(section), "tcp")
+
+    def _refusal(self, payloads: list[bytes], transport: str = "tcp") -> str:
+        from packeteer.app import protocol_conversation
+        given = [_parsed_packet(54321, 53, dns=self._QUERY)]
+        given += [_parsed_packet(53, 54321, payload={"data": b.hex()}) for b in payloads]
+        with self.assertRaises(ValueError) as caught:
+            protocol_conversation(self._dns(), given, transport)
+        return str(caught.exception)
+
+    def test_a_partial_message_gets_no_size(self) -> None:
+        # #222: only a run that is exactly one message is sized.
+        whole = self._framed(self._QUERY)
+        self.assertNotIn("are together one", self._refusal([whole[:10], whole[10:-3]]))
+        self.assertIn("are together one", self._refusal([whole[:10], whole[10:]]))
+
+    def test_two_messages_in_one_run_get_no_size(self) -> None:
+        whole = self._framed(self._QUERY)
+        both = whole + whole
+        self.assertNotIn("are together one", self._refusal([both[:20], both[20:]]))
+
+    def test_udp_has_no_length_field_to_explain(self) -> None:
+        # Kober's truncated datagram again: on UDP nothing is framed.
+        message = self._refusal([self._framed(self._QUERY)[2:12]], transport="udp")
+        self.assertNotIn("length field", message)
+        self.assertNotIn("are together one", message)
 
     def test_kobers_udp_reproduction(self) -> None:
         """#223: a truncated response datagram, generated, parsed and replayed."""

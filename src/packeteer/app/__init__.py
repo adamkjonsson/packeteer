@@ -247,7 +247,7 @@ def _directed_sections_in(
                     f"direction goes in packet_metadata.direction"
                 )
             if not isinstance(inner, dict):
-                carried = _undecoded_bytes(proto, element)
+                carried = _undecoded_payload(proto, element)
                 if carried:
                     undecoded.append(
                         (index, _inferred_direction(proto, element, clients), carried),
@@ -296,29 +296,34 @@ def _directed_sections_in(
     return out
 
 
-def _undecoded_bytes(proto: AppProtocol, packet: dict[str, Any]) -> int:
-    """Return how many payload bytes *packet* carries on *proto*'s flow.
+def _undecoded_payload(proto: AppProtocol, packet: dict[str, Any]) -> bytes:
+    """Return the payload *packet* carries on *proto*'s flow.
 
-    Zero for a packet with no payload, such as an ACK, and for one on
+    Empty for a packet with no payload, such as an ACK, and for one on
     another flow, neither end on one of the protocol's ports: a capture
-    holding other traffic beside the protocol's replays as before.
+    holding other traffic beside the protocol's replays as before.  Hex that
+    does not parse stands as that many zero bytes: it is still counted and
+    refused, and simply never decodes as a message.
     """
     payload = packet.get("payload")
     ends = _endpoints(packet)
     if not isinstance(payload, dict) or ends is None:
-        return 0
+        return b""
     if not ({ends[0][1], ends[1][1]} & proto.ports):
-        return 0
+        return b""
     data = payload.get("data")
     if not isinstance(data, str) or not data:
-        return 0
+        return b""
     if payload.get("encoding") == "utf8":
-        return len(data.encode())
-    return len(data) // 2
+        return data.encode()
+    try:
+        return bytes.fromhex(data)
+    except ValueError:
+        return bytes(len(data) // 2)
 
 
 def _refuse_undecoded(
-    proto: AppProtocol, undecoded: list[tuple[int, str, int]], transport: str,
+    proto: AppProtocol, undecoded: list[tuple[int, str, bytes]], transport: str,
 ) -> None:
     """Refuse packets on *proto*'s flow that carry a payload and no section (#220).
 
@@ -330,9 +335,9 @@ def _refuse_undecoded(
     many bytes, so the whole loss is visible in one error.  The cause is
     given for *transport*: only TCP splits a message (#223).
     """
-    total = sum(size for _, _, size in undecoded)
-    listed = ", ".join(f"{index} ({direction}, {size} bytes)"
-                       for index, direction, size in undecoded)
+    total = sum(len(carried) for _, _, carried in undecoded)
+    listed = ", ".join(f"{index} ({direction}, {len(carried)} bytes)"
+                       for index, direction, carried in undecoded)
     ports = ", ".join(str(port) for port in sorted(proto.ports))
     plural = "s" if len(proto.ports) > 1 else ""
     raise ValueError(
@@ -344,7 +349,56 @@ def _refuse_undecoded(
         f"drop it, and the list would cycle in its place.  Write the message "
         f"as a wrapped section "
         f'instead, such as {{"{proto.name}": {{...}}, "direction": "s2c"}}'
+        f"{_whole_messages(proto, undecoded, transport)}"
     )
+
+
+def _whole_messages(
+    proto: AppProtocol, undecoded: list[tuple[int, str, bytes]], transport: str,
+) -> str:
+    """Say which runs of *undecoded* are one whole message, and its size (#222).
+
+    The sizes the error lists are payload as captured.  Over TCP, for a
+    protocol that frames its messages, that includes the frame (DNS's 2-byte
+    length field), which a wrapped ``raw`` must leave out, since the builder
+    adds it.  Joining the payloads into ``raw`` as counted sends the frame
+    twice.  So each run of packets going one way is joined and decoded; when
+    it is exactly one message, its size without the frame is given beside
+    the payload's.  The frame is what encoding for TCP adds over encoding
+    for UDP, from the protocol itself.  Nothing is said of a run that does
+    not decode as one message, or of a protocol that runs over TCP only.
+    """
+    if transport != "tcp":
+        return ""
+    runs: list[list[tuple[int, str, bytes]]] = []
+    for entry in undecoded:
+        if runs and runs[-1][-1][1] == entry[1]:
+            runs[-1].append(entry)
+        else:
+            runs.append([entry])
+    notes: list[str] = []
+    for run in runs:
+        joined = b"".join(carried for _, _, carried in run)
+        try:
+            message = proto.decode(joined, "tcp")
+            framed = len(proto.encode(message, "tcp"))
+            bare = len(proto.encode(message, "udp")) if proto.carries("udp") else framed
+        except _SECTION_ERRORS:
+            continue
+        if framed != len(joined):
+            continue        # several messages, or one with bytes after it
+        indexes = ", ".join(str(index) for index, _, _ in run)
+        what = f"The packets at index {indexes} ({run[0][1]}) are together one"
+        if bare < framed:
+            notes.append(
+                f"{what} {bare}-byte {proto.name} message, after the "
+                f"{framed - bare}-byte length field TCP adds; in a wrapped "
+                f"section, 'raw' is the message without that field, which the "
+                f"builder adds back"
+            )
+        else:
+            notes.append(f"{what} {framed}-byte {proto.name} message")
+    return "".join(f".  {note}" for note in notes)
 
 
 def _undecoded_causes(proto: AppProtocol, transport: str) -> str:

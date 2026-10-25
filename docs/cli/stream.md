@@ -215,9 +215,14 @@ it as a message.  On TCP that can be one split over segments, since `parse`
 decodes a message only when one packet holds all of it, such as a large DNS
 response.  On UDP and TCP alike it can be a malformed or truncated one, which
 is what `packeteer fuzz` makes.  The error says which applies to the
-transport (#223).  Skipping it would drop the message in silence.  Write that message as a wrapped section
-instead, for DNS `{"dns": {"raw": "…"}, "direction": "s2c"}`.  A payload on
-another port, such as TLS beside DNS, is still passed over.
+transport (#223).  Skipping it would drop the message in silence.  Write
+that message as a wrapped section instead, for DNS
+`{"dns": {"raw": "…"}, "direction": "s2c"}`.  `raw` is the message itself,
+without the 2-byte length field DNS over TCP puts in front of it: the builder
+adds that field.  The payloads `parse` wrote do include it, so the error says
+when the packets it names are together one whole message, and gives that
+message's size beside the payload's (#222).  A payload on another port, such
+as TLS beside DNS, is still passed over.
 
 **Each message travels its own way.**  A request/response protocol needs
 its replies to leave from the server, so on `--protocol udp` (#195) and

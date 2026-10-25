@@ -75,8 +75,11 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   its direction and bytes, and the cause for the transport (#223): on TCP
   a message split over segments or one that does not decode, and on UDP
   only the latter.  Write the message as a wrapped section instead, such as
-  `{"dns": {"raw": "…"}, "direction": "s2c"}`.  Payloads on other ports are
-  still skipped.
+  `{"dns": {"raw": "…"}, "direction": "s2c"}`.  When the named packets are
+  together one whole message, the error says so and gives its size without
+  the length field the transport adds, and says `raw` leaves that field out,
+  since the builder adds it (#222).  Payloads on other ports are still
+  skipped.
 - **The internet checksum is computed in C, not one 16-bit word at a time
   in Python** (#213).  `ones_complement_checksum` is about 15× faster for a
   full-size frame.  Parsing rebuilds every TCP, UDP, ICMP and ICMPv6 header
