@@ -480,6 +480,9 @@ class TestAMessageParseCouldNotDecodeIsRefused(unittest.TestCase):
         self.assertIn("3 packet(s) on the dns flow", done.stderr)
         self.assertIn("carry 3236 bytes of payload but no 'dns' section", done.stderr)
         self.assertIn("(s2c, 1448 bytes)", done.stderr)
+        # #223: on TCP both causes are given, the split one first.
+        self.assertIn("on its own: split over TCP segments, which parse does not join, "
+                      "or malformed, truncated, or not dns at all", done.stderr)
         self.assertFalse((tmp / "c.json").exists())
 
     def test_every_reader_refuses(self) -> None:
@@ -498,6 +501,36 @@ class TestAMessageParseCouldNotDecodeIsRefused(unittest.TestCase):
         with self.assertRaises(ValueError) as caught:
             protocol_conversation(self._dns(), given, "udp")
         self.assertIn("at index 1 (c2s, 7 bytes)", str(caught.exception))
+        # #223: nothing is split on UDP, and the error does not say it is.
+        self.assertIn("could not decode it as a dns message: malformed, truncated, "
+                      "or not dns at all", str(caught.exception))
+        self.assertNotIn("TCP", str(caught.exception))
+        self.assertNotIn("segment", str(caught.exception))
+
+    def test_kobers_udp_reproduction(self) -> None:
+        """#223: a truncated response datagram, generated, parsed and replayed."""
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(__import__("shutil").rmtree, tmp, True)
+        q = "076170696461746111676f6f676c6575736572636f6e74656e7403636f6d0000010001"
+        query, response = "0b0a01000001000000000000" + q, "0b0a81800001000000000000" + q
+        (tmp / "given.json").write_text(json.dumps([
+            {"dns": {"raw": query}}, {"dns": {"raw": response}, "direction": "s2c"},
+            {"dns": {"raw": response[:20]}, "direction": "s2c"},
+        ]))
+        common = ("--protocol", "udp", "--payload", "dns", "--server-port", "53",
+                  "--client-ip", "10.0.0.2", "--server-ip", "10.0.0.1",
+                  "--packets", "3", "--seed", "1")
+        done = _packeteer("stream", *common, "--protocol-messages", str(tmp / "given.json"),
+                          "--pcap", str(tmp / "u.pcap"))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        done = _packeteer("parse", str(tmp / "u.pcap"), "--output", str(tmp / "u.json"))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        done = _packeteer("stream", *common, "--protocol-messages", str(tmp / "u.json"),
+                          "--pcap", str(tmp / "u2.pcap"))
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("at index 2 (s2c, 10 bytes)", done.stderr)
+        self.assertIn("malformed, truncated, or not dns at all", done.stderr)
+        self.assertNotIn("TCP", done.stderr)
 
     def test_another_flow_and_packets_with_no_payload_are_skipped(self) -> None:
         from packeteer.app import protocol_conversation

@@ -185,7 +185,7 @@ def _inferred_direction(
 
 def _directed_sections_in(
     proto: AppProtocol, messages: Sequence[dict[str, Any]] | dict[str, Any],
-    *, directed: bool = True,
+    *, transport: str, directed: bool = True,
 ) -> list[tuple[dict[str, Any], str]]:
     """Return the *proto* sections in *messages*, each with the way it travels.
 
@@ -292,7 +292,7 @@ def _directed_sections_in(
                 )
             out.append((element, "c2s"))
     if undecoded:
-        _refuse_undecoded(proto, undecoded)
+        _refuse_undecoded(proto, undecoded, transport)
     return out
 
 
@@ -317,14 +317,18 @@ def _undecoded_bytes(proto: AppProtocol, packet: dict[str, Any]) -> int:
     return len(data) // 2
 
 
-def _refuse_undecoded(proto: AppProtocol, undecoded: list[tuple[int, str, int]]) -> None:
+def _refuse_undecoded(
+    proto: AppProtocol, undecoded: list[tuple[int, str, int]], transport: str,
+) -> None:
     """Refuse packets on *proto*'s flow that carry a payload and no section (#220).
 
-    ``packeteer parse`` decodes a message only when one packet holds all of
-    it, so a DNS message split over TCP segments is written as payload-only
-    packets.  Skipped, the message vanished and the list cycled in its place,
-    with nothing said.  Every such packet is named at once, with how many
-    bytes, so the whole loss is visible in one error.
+    ``packeteer parse`` writes a payload without a section when it could not
+    decode one: a message split over TCP segments, since it decodes a
+    message only when one packet holds all of it, or one that is malformed
+    or truncated.  Skipped, the message vanished and the list cycled in its
+    place, with nothing said.  Every such packet is named at once, with how
+    many bytes, so the whole loss is visible in one error.  The cause is
+    given for *transport*: only TCP splits a message (#223).
     """
     total = sum(size for _, _, size in undecoded)
     listed = ", ".join(f"{index} ({direction}, {size} bytes)"
@@ -334,12 +338,28 @@ def _refuse_undecoded(proto: AppProtocol, undecoded: list[tuple[int, str, int]])
     raise ValueError(
         f"{len(undecoded)} packet(s) on the {proto.name} flow (port{plural} "
         f"{ports}) carry {total} bytes of payload but no {proto.name!r} "
-        f"section, at index {listed}.  'packeteer parse' decodes a message only when one "
-        f"packet holds all of it, so a message split over TCP segments is "
-        f"written this way; skipping them would drop it, and the list would "
-        f"cycle in its place.  Write the message as a wrapped section "
+        f"section, at index {listed}.  'packeteer parse' writes a payload "
+        f"with no section when it could not decode it as a {proto.name} "
+        f"message{_undecoded_causes(proto, transport)}.  Skipping them would "
+        f"drop it, and the list would cycle in its place.  Write the message "
+        f"as a wrapped section "
         f'instead, such as {{"{proto.name}": {{...}}, "direction": "s2c"}}'
     )
+
+
+def _undecoded_causes(proto: AppProtocol, transport: str) -> str:
+    """Return why ``parse`` left a payload undecoded, for *transport*.
+
+    Over TCP a message can be split across segments, which ``parse`` does
+    not join.  Over UDP it cannot: a datagram that does not decode is
+    malformed, truncated, or not the protocol at all, which is what
+    ``packeteer fuzz`` makes.
+    """
+    bad = f"malformed, truncated, or not {proto.name} at all"
+    if transport == "tcp":
+        return (f" on its own: split over TCP segments, which parse does "
+                f"not join, or {bad}")
+    return f": {bad}"
 
 
 def _built(
@@ -425,7 +445,7 @@ def protocol_messages(
         )
 
     """
-    sections = _directed_sections_in(proto, messages, directed=False)
+    sections = _directed_sections_in(proto, messages, transport=transport, directed=False)
     return _built(proto, [section for section, _ in sections], transport)
 
 
@@ -488,7 +508,7 @@ def protocol_conversation(
     """
     from packeteer.generate.payloads.base import AppMessage
 
-    directed = _directed_sections_in(proto, messages)
+    directed = _directed_sections_in(proto, messages, transport=transport)
     built = _built(proto, [section for section, _ in directed], transport)
     return [
         AppMessage(cast("Direction", direction), data, f"{proto.name}[{index}]")

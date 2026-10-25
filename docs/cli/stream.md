@@ -210,9 +210,12 @@ packeteer stream --load-protocol ./sensor.py \
 
 A packet on the protocol's port that carries a **payload** and no section is
 refused instead of passed over, naming every such packet and its bytes
-(#220).  `parse` decodes a message only when one packet holds all of it, so
-a DNS response split over TCP segments is written that way, and skipping it
-would drop the response in silence.  Write that message as a wrapped section
+(#220).  `parse` writes a payload with no section when it could not decode
+it as a message.  On TCP that can be one split over segments, since `parse`
+decodes a message only when one packet holds all of it, such as a large DNS
+response.  On UDP and TCP alike it can be a malformed or truncated one, which
+is what `packeteer fuzz` makes.  The error says which applies to the
+transport (#223).  Skipping it would drop the message in silence.  Write that message as a wrapped section
 instead, for DNS `{"dns": {"raw": "…"}, "direction": "s2c"}`.  A payload on
 another port, such as TLS beside DNS, is still passed over.
 
