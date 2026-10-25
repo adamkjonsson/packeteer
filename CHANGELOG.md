@@ -132,6 +132,8 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 - Two-way TCP (#198) in `stream.md`'s *Payloads from your own protocol*, the
   generating guide (with an example), and the stream generators' internals;
   the sentence refusing a reply on TCP is gone.
+- `stream --help` says how `--protocol-messages` gives each message its
+  direction on TCP and UDP, which it never said.
 
 ---
 

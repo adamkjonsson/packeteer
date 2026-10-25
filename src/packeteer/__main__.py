@@ -2806,9 +2806,12 @@ def main() -> None:
             "JSON array of packet-spec sections for --payload <protocol>, sent "
             "in order and cycled when the stream is longer than the list.  A "
             "protocol says what a message looks like; this says which messages "
-            "to send.  For --payload http a request goes client to server and "
-            "a response server to client, and the list repeats to make up "
-            "--requests transactions."
+            "to send.  On --protocol tcp and udp each is sent in its own "
+            "direction: a packet's packet_metadata.direction, or its ports "
+            "for one 'packeteer parse' wrote, or a wrapped section's "
+            "'direction' key, else c2s.  For --payload http a request goes "
+            "client to server and a response server to client, and the list "
+            "repeats to make up --requests transactions."
         ),
     )
     stream_parser.add_argument(

@@ -493,7 +493,7 @@ def protocol_messages(
     conversation keeps its two directions and its segmentation (#169).
 
     *messages* takes every shape :func:`protocol_payload_fn` does, and a
-    packet with no section of *proto* is skipped the same way.
+    packet with no section of *proto* is skipped, or refused, the same way.
 
     Args:
         proto: The protocol to build with.
@@ -613,7 +613,10 @@ def protocol_payload_fn(
     ``packeteer parse`` document, whose ``"packets"`` are read.  So a parsed
     capture's messages can be replayed through an impaired stream without
     editing the file (#137).  A packet carrying no section of *proto* — an
-    ACK, a handshake segment — is not a message and is skipped; an element
+    ACK, a handshake segment — is not a message and is skipped.  One that
+    carries a payload on the protocol's port is a message ``parse`` could
+    not decode, such as one split over TCP segments, and is refused, naming
+    every such packet (#220).  An element
     that is neither a packet nor a section is refused by the protocol's
     ``from_spec`` rather than built into a default message, which is the
     outcome this function exists to prevent: a stream of empty messages is

@@ -1,8 +1,10 @@
 """TCP stream generation.
 
 This module generates a realistic sequence of packets representing a complete
-TCP connection: three-way handshake, data transfer (client→server), and
-four-way teardown.
+TCP connection: three-way handshake, data transfer, and four-way teardown.
+Generated payloads all travel client to server; given messages
+(:attr:`TCPStreamConfig.messages`) each travel from their own side, so a
+reply is sent by the server and acknowledged by the client (#198).
 
 Sequence and acknowledgement numbers are tracked correctly across both sides,
 including 32-bit wrap-around, and so are TCP timestamps (RFC 7323) once the
