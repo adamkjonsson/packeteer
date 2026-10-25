@@ -36,7 +36,7 @@ Exactly one output flag is required; they are mutually exclusive.
 | `--sessions N` | `1` | Number of independent sessions (IP pairs) to generate (see below) |
 | `--session-stagger SECONDS` | `1.0` | Window over which session start times are spread when `--sessions > 1` |
 | `--payload NAME` | off | Application-layer payload to generate instead of random bytes: `http`, `vpn`, or any registered protocol's name (see below) |
-| `--protocol-messages FILE` | — | JSON array of packet-spec sections for `--payload <protocol>`, sent in order and cycled; the packets `packeteer parse` writes are accepted as they are.  On UDP each is sent in its own direction (see [Payloads from your own protocol](#payloads-from-your-own-protocol)).  With `--payload http`, the messages to send instead of generated ones (see [Given messages](#given-messages)) |
+| `--protocol-messages FILE` | — | JSON array of packet-spec sections for `--payload <protocol>`, sent in order and cycled; the packets `packeteer parse` writes are accepted as they are.  On UDP and TCP each is sent in its own direction (see [Payloads from your own protocol](#payloads-from-your-own-protocol)).  With `--payload http`, the messages to send instead of generated ones (see [Given messages](#given-messages)) |
 | `--requests N` | `10` | HTTP only: total request/response transactions |
 | `--requests-per-connection K` | all | HTTP only: transactions per connection (`1` = a new connection per request) |
 | `--error-rate P` | `0.1` | HTTP only: probability a response is a 4xx/5xx error |
@@ -208,12 +208,38 @@ packeteer stream --load-protocol ./sensor.py \
     --packets 100 --packet-loss 0.05 --seed 5 --pcap impaired.pcap
 ```
 
-**Each message travels its own way on UDP.**  A request/response protocol
-needs its replies to leave from the server, so on `--protocol udp` each
-message is sent in its own direction (#195).  An `s2c` message goes from the
-server's address, port and MAC to the client's.  The direction is:
+A packet on the protocol's port that carries a **payload** and no section is
+refused instead of passed over, naming every such packet and its bytes
+(#220).  `parse` writes a payload with no section when it could not decode
+it as a message.  On TCP that can be one split over segments, since `parse`
+decodes a message only when one packet holds all of it, such as a large DNS
+response.  On UDP and TCP alike it can be a malformed or truncated one, which
+is what `packeteer fuzz` makes.  The error says which applies to the
+transport (#223).  Skipping it would drop the message in silence.  Write
+that message as a wrapped section instead, for DNS
+`{"dns": {"raw": "…"}, "direction": "s2c"}`.  `raw` is the message itself,
+without the 2-byte length field DNS over TCP puts in front of it: the builder
+adds that field.  The payloads `parse` wrote do include it, so the error says
+when the packets it names are together one whole message, and gives that
+message's size beside the payload's (#222).  Both go by how each packet was
+captured, its `network.protocol`, and not by the replay's `--protocol`: a
+DNS-over-TCP capture replayed with `--protocol udp` still starts each payload
+with the length field, and over UDP none is sent, so it has to come off all
+the same (#224).  A payload on another port, such as TLS beside DNS, is still
+passed over.
 
-- a packet's `packet_metadata.direction`, as `stream --json` writes it;
+**Each message travels its own way.**  A request/response protocol needs
+its replies to leave from the server, so on `--protocol udp` (#195) and
+`--protocol tcp` (#198) each message is sent in its own direction.  An `s2c`
+message goes from the server's address, port and MAC to the client's.  On
+TCP it is sent by the server and acknowledged by the client, with sequence
+and acknowledgement numbers, loss, recovery and every impairment worked out
+for that direction. A message longer than the receiver's MSS is split into
+segments `DATA[i] [k/n]`, as a stack splits one write. The direction is:
+
+- a packet's `packet_metadata.direction`, as `stream --json` writes it.
+  A `"direction"` key beside the packet's sections is refused, naming
+  `packet_metadata`, since nothing would read it;
 - for a packet without one, as `packeteer parse` writes it, read from its
   addresses.  The side on one of the protocol's ports, such as 53 for DNS,
   is the server.  When neither side is, or both are, the first sender in the
@@ -221,7 +247,11 @@ server's address, port and MAC to the client's.  The direction is:
 - for a section wrapped under the protocol's name, a `"direction"` key
   beside it.  Nothing else may be beside it, so a misspelt key is refused
   rather than ignored;
-- `c2s` for a bare section.
+- `c2s` for a bare section.  A bare section with a `"direction"` key is
+  refused, saying to wrap it: the protocol reads only its own keys, so the
+  direction would otherwise be dropped in silence (#221).  A protocol with
+  a `direction` field of its own writes it inside the wrapper, where the
+  outer key is still the message's.
 
 ```json
 [
@@ -235,11 +265,6 @@ server's address, port and MAC to the client's.  The direction is:
 ]
 ```
 
-On `--protocol tcp`, every message is still sent from the client, and a
-message that travels `s2c` is **refused**: sending a reply from the client
-would be wrong in silence.  A TCP stream that carries data both ways is
-[#198](https://github.com/adamkjonsson/packeteer/issues/198).
-
 An element that is none of these — an object with no key the protocol reads
 — is refused, naming its index and the keys a section has.  It used to build
 a default message in silence, which for DNS is a bare 12-byte header: a
@@ -247,7 +272,8 @@ stream of those converts cleanly and a decoder run over it reports every
 message decoded, so the failure was indistinguishable from success (#137).
 The same is available from Python as
 {func}`packeteer.app.protocol_conversation`, which returns each message
-encoded with its direction for `UDPStreamConfig.messages`;
+encoded with its direction for `UDPStreamConfig.messages` and
+`TCPStreamConfig.messages`;
 {func}`packeteer.app.protocol_payload_fn`, which returns the `payload_fn` the
 stream generators take, and sends everything from the client; and
 {func}`packeteer.app.protocol_messages`, which returns the messages

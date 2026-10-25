@@ -114,6 +114,51 @@ class TestWhereADirectionComesFrom(unittest.TestCase):
             protocol_messages(_dns(), [{"dns": _QUERY, "direction": "c2s"}], "udp")
         self.assertIn("unknown key 'direction'", str(caught.exception))
 
+    def test_a_bare_section_with_a_direction_is_refused(self) -> None:
+        """#221: it was sent c2s, and the key was read by nothing."""
+        given = [{**_QUERY, "direction": "c2s"}, {**_RESPONSE, "direction": "s2c"}]
+        for transport in ("udp", "tcp"):
+            with self.subTest(transport=transport), self.assertRaises(ValueError) as caught:
+                protocol_conversation(_dns(), given, transport)
+            self.assertIn("message 0 has 'direction' but is a bare section",
+                          str(caught.exception))
+            self.assertIn('write {"dns": {...}, "direction": "c2s"}', str(caught.exception))
+        with self.assertRaises(ValueError) as caught:
+            protocol_conversation(_dns(), [_QUERY, {**_RESPONSE, "direction": "s2c"}], "udp")
+        self.assertIn('message 1 has', str(caught.exception))
+        self.assertIn('"direction": "s2c"', str(caught.exception))
+
+    def test_a_bare_section_with_a_direction_is_refused_for_messages_too(self) -> None:
+        with self.assertRaises(ValueError) as caught:
+            protocol_messages(_dns(), [{**_QUERY, "direction": "s2c"}], "udp")
+        self.assertIn("message 0 has 'direction' but is a bare section", str(caught.exception))
+
+    def test_a_packet_with_a_direction_beside_its_sections_is_refused(self) -> None:
+        """#221: the ports decided, in silence; the metadata is the place."""
+        packet = _packet(_RESPONSE, ("10.0.0.2", 54321), ("10.0.0.1", 53))
+        packet["direction"] = "s2c"
+        with self.assertRaises(ValueError) as caught:
+            _directions([packet])
+        self.assertIn("message 0 has 'direction' beside the packet's sections",
+                      str(caught.exception))
+        self.assertIn("packet_metadata.direction", str(caught.exception))
+
+    def test_a_protocols_own_direction_field_goes_inside_the_wrapper(self) -> None:
+        """Wrapped, the inner key is the protocol's and the outer the message's."""
+        signal = protocols.AppProtocol(
+            name="signal", over="udp", ports=frozenset({7000}), messages=(dict,),
+            decode=lambda b, t: {"direction": b.decode()},
+            encode=lambda m, t: m["direction"].encode(),
+            to_spec=dict, from_spec=lambda s: {"direction": s["direction"]},
+        )
+        given = [{"signal": {"direction": "north"}, "direction": "s2c"},
+                 {"signal": {"direction": "south"}}]
+        messages = protocol_conversation(signal, given, "udp")
+        self.assertEqual([(m.direction, m.data) for m in messages],
+                         [("s2c", b"north"), ("c2s", b"south")])
+        with self.assertRaises(ValueError):
+            protocol_conversation(signal, [{"direction": "north"}], "udp")
+
     def test_the_conversation_is_encoded_and_labelled(self) -> None:
         messages = protocol_conversation(_dns(), [_QUERY], "udp")
         self.assertEqual(messages[0].label, "dns[0]")
@@ -122,12 +167,16 @@ class TestWhereADirectionComesFrom(unittest.TestCase):
 
 class TestAPayloadFnRefusesAReply(unittest.TestCase):
 
-    def test_a_reply_is_refused_naming_the_issue(self) -> None:
+    def test_a_reply_is_refused_naming_what_sends_it(self) -> None:
+        # A payload_fn still sends everything from the client, over any
+        # transport.  Since #198 both stream configs' messages send a reply
+        # the right way, and the refusal says so.
         given = [{"dns": _QUERY}, {"dns": _RESPONSE, "direction": "s2c"}]
         with self.assertRaises(ValueError) as caught:
             protocol_payload_fn(_dns(), given, "tcp")
         self.assertIn("message 1 travels server to client", str(caught.exception))
-        self.assertIn("issues/198", str(caught.exception))
+        self.assertIn("TCPStreamConfig.messages", str(caught.exception))
+        self.assertIn("UDPStreamConfig.messages", str(caught.exception))
 
     def test_client_messages_are_unchanged(self) -> None:
         fn = protocol_payload_fn(_dns(), [_QUERY, _RESPONSE], "udp")
@@ -219,13 +268,20 @@ class TestTheIssuesAcceptance(unittest.TestCase):
                 self.assertEqual(p["network"]["src"], "10.0.0.1")
                 self.assertEqual(p["transport"]["src_port"], 53)
 
-    def test_the_same_capture_over_tcp_is_refused(self) -> None:
+    def test_the_same_capture_over_tcp_replays_both_ways(self) -> None:
+        # Refused until #198; test_tcp_directions.py covers TCP in full.
+        out = self.dir / "tcp.json"
         done = _packeteer("stream", "--protocol", "tcp", "--payload", "dns",
                           "--protocol-messages", str(self.parsed), *self._COMMON,
-                          "--json", str(self.dir / "tcp.json"))
-        self.assertEqual(done.returncode, 1)
-        self.assertIn("message 1 travels server to client", done.stderr)
-        self.assertIn("issues/198", done.stderr)
+                          "--json", str(out))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        data = [p for p in json.loads(out.read_text())["packets"] if "dns" in p]
+        self.assertEqual([p["packet_metadata"]["direction"] for p in data],
+                         ["c2s", "s2c"] * 3)
+        for p in data:
+            if p["packet_metadata"]["direction"] == "s2c":
+                self.assertEqual(p["network"]["src"], "10.0.0.1")
+                self.assertEqual(p["transport"]["src_port"], 53)
 
 
 if __name__ == "__main__":

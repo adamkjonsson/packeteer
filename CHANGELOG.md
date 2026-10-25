@@ -27,6 +27,138 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ---
 
+## [0.20.0] - 2026-10-25
+
+**TCP in both directions, and a faster parse.**  A TCP stream carries data
+both ways: given messages are each sent from their own side and acknowledged
+by the other, split at the receiver's MSS, with loss, recovery and every
+impairment worked out for the direction they hit (#198), so a parsed
+DNS-over-TCP capture replays with its responses from the server.  Two
+impairments that went wrong once a server sent data are fixed with it: a
+server RST carries the server's real sequence state (#218), and a stray is
+forged from the side it copies (#219).  Replaying parsed messages no longer
+loses one in silence: a message `parse` could not decode, such as a response
+split over segments, is refused and named, with its size and the cause for
+how it was captured (#220, #222–#224), and a `direction` key nothing reads
+is refused (#221).  Parsing is about 45% faster: the internet checksum, the
+printable-text test and MAC formatting each moved a per-byte Python loop
+into C (#213–#215), with byte-identical output, and `parse_pcap_file` can
+write compact JSON (#216).  Python 3.14 is supported.  **Breaking:** two,
+under *Changed*, both refusing `--protocol-messages` input that used to be
+accepted and sent wrong (#220, #221); each says what to write instead.
+
+### Added
+
+- **A TCP stream carries data both ways: `TCPStreamConfig.messages`**
+  (#198).  Each message is sent from its own side and acknowledged by the
+  other, with sequence and acknowledgement numbers, loss and recovery,
+  retransmission, corruption, the server RST and stray segments worked out
+  for the direction they hit.  A message longer than the receiver's MSS
+  (less the Timestamps option when negotiated) is split into segments,
+  `DATA[i] [k/n]`, each acknowledged, with PSH only ever on the last.  The
+  list cycles to make up `num_data_packets`, as `UDPStreamConfig.messages`
+  does, and `packeteer.app.protocol_conversation` builds it.  It may not be
+  combined with `payload_fn`, and an empty message is refused, since a TCP
+  stack sends nothing for an empty write.
+- **`parse_pcap_file(indent=…)`**, passed to `to_json_string`, whose
+  `indent` now accepts `None` as well (#216).  The default, `2`, is
+  unchanged.  `indent=None` gives compact JSON on one line.  On Python
+  3.10–3.13 any indent makes the standard library fall back to its
+  pure-Python encoder, which took a third of the time `parse` spent on a
+  2,070-packet capture.  On 3.14 it makes no difference.
+- Python 3.14 is listed in the package classifiers and tested in CI.
+
+### Changed
+
+- **`stream --protocol tcp --payload <protocol> --protocol-messages` sends
+  each message from its own side** (#198), as `--protocol udp` has since
+  #195, instead of refusing a message that travels `s2c`.  Replaying a
+  parsed DNS-over-TCP capture puts each response in the server's byte
+  stream.  Not breaking: input that used to be refused now works, and a
+  conversation with no replies gives the same bytes as before, impaired or
+  not.  `protocol_payload_fn`, which still sends everything from the client,
+  refuses a reply as before, and its message now points to
+  `TCPStreamConfig.messages` and `UDPStreamConfig.messages` instead of #198.
+- **Breaking: a `"direction"` key is refused where nothing reads it** in
+  `--protocol-messages` and the `packeteer.app` functions that read it
+  (#221).  On a bare section, which is always sent `c2s`, the key used to be
+  ignored, so a reply written as `{"raw": …, "direction": "s2c"}` went out
+  from the client with exit status 0.  Wrap it instead:
+  `{"dns": {...}, "direction": "s2c"}`.  Beside a whole packet's sections
+  it was ignored too, and the ports decided.  Put it in
+  `packet_metadata.direction`.
+- **Breaking: a message `parse` could not decode is refused, not skipped**,
+  in a `--protocol-messages` packet spec (#220).  A packet on the
+  protocol's port with a payload and no section for it used to be passed
+  over like an ACK, and the list cycled in its place.  `parse` writes a DNS
+  response split over TCP segments exactly that way, so replaying a parsed
+  DNS-over-TCP capture dropped its large responses, and sent queries where
+  they had been, with exit status 0.  Every such packet is now named, with
+  its direction and bytes, and the cause for the transport (#223): on TCP
+  a message split over segments or one that does not decode, and on UDP
+  only the latter.  Write the message as a wrapped section instead, such as
+  `{"dns": {"raw": "…"}, "direction": "s2c"}`.  When the named packets are
+  together one whole message, the error says so and gives its size without
+  the length field the transport adds, and says `raw` leaves that field out,
+  since the builder adds it (#222).  The cause and the size go by how each
+  packet was captured, so a DNS-over-TCP capture replayed over UDP gets
+  both, and is told no length field is sent there (#224).  Payloads on
+  other ports are still skipped.
+- **The internet checksum is computed in C, not one 16-bit word at a time
+  in Python** (#213).  `ones_complement_checksum` is about 15× faster for a
+  full-size frame.  Parsing rebuilds every TCP, UDP, ICMP and ICMPv6 header
+  to derive its checksum (#68), so `parse` is about 40% faster on a capture
+  of full-size TCP segments.  Building is faster too.  Every checksum is
+  unchanged.  `crc32c`, used only by SCTP, still loops in Python: a
+  slicing-by-8 table measured only 1.1× faster.
+- Writing a payload to a packet spec checks whether it is printable text in
+  C rather than one byte at a time, about 28× faster for a 1,400-byte text
+  payload (#214).  Which payloads are written as text is unchanged.
+- MAC addresses are formatted with `bytes.hex(":")` rather than one byte at
+  a time, by the Ethernet, ARP and Linux cooked-capture parsers and by
+  `sanitise` (#215).  The strings are unchanged.
+
+### Fixed
+
+- **A server RST carries the server's real sequence and acknowledgement
+  numbers** (#218).  It numbers from `SND.NXT`, the end of everything the
+  server sent, and acknowledges the client's bytes the server holds in order.
+  It used to copy the server's ACK of the segment the connection was cut at,
+  which goes wrong in two ways:
+  - with `--payload http` the server's response after that ACK was not
+    counted, so every RST numbered from before it;
+  - after a loss, with `--packet-loss`, a later duplicate ACK naming the
+    same byte was taken for that ACK. The cut then kept ACKs sent after
+    the reset, among them the server's own and teardown ACKs whose FIN was
+    gone. When no ACK was found, the RST numbered from the server's initial
+    sequence number, one short of anything it could send, and acknowledged
+    nothing the client had sent.
+
+  A receiver checking an RST against its own `RCV.NXT` (RFC 5961 §3) would
+  have ignored these.  For the same seed, `--server-rst` output changes in
+  the RST, and after a loss in the ACKs the cut now removes.  A plain stream
+  without loss is unchanged.
+- **A stray segment is forged from the side whose segment it copies**
+  (#219).  `--stray-packets` copies a real data segment's sequence and
+  acknowledgement numbers, but always sent the copy from the client, so one
+  copying server data carried the server's numbers from the client's
+  address.  With `--payload http`, where the server sends responses, about
+  half of all strays were forged that way.  A stray copying
+  server data now goes server → client, and its `packet_metadata.direction`
+  says so.  A plain stream, where only the client sends data, is unchanged.
+
+### Documentation
+
+- The parsing guide's *Whole-file parsing* section describes `indent=None`,
+  and when it is worth passing (#216).
+- Two-way TCP (#198) in `stream.md`'s *Payloads from your own protocol*, the
+  generating guide (with an example), and the stream generators' internals;
+  the sentence refusing a reply on TCP is gone.
+- `stream --help` says how `--protocol-messages` gives each message its
+  direction on TCP and UDP, which it never said.
+
+---
+
 ## [0.19.0] - 2026-10-23
 
 **kober 0.6.0's dialect, and three left from 0.18.0.**  kober 0.6.0 added map
@@ -4059,7 +4191,8 @@ the exhaustive API reference.
      tagged with names that predate this convention, so only the entries below
      carry compare links. -->
 
-[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/adamkjonsson/packeteer/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/adamkjonsson/packeteer/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/adamkjonsson/packeteer/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/adamkjonsson/packeteer/compare/v0.16.0...v0.17.0

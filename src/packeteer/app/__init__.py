@@ -137,10 +137,6 @@ _DIRECTIONS: tuple[str, ...] = ("c2s", "s2c")
 #: The key beside a wrapped section that says which way it travels (#195).
 _DIRECTION_KEY = "direction"
 
-#: Where #198 is tracked, for the refusal of a reply that only a UDP stream
-#: can send the right way today.
-_TCP_DIRECTIONS_ISSUE = "https://github.com/adamkjonsson/packeteer/issues/198"
-
 
 def _checked_direction(value: object, index: int, where: str) -> str:
     """Return *value* if it is a direction, or refuse it naming *where*."""
@@ -189,7 +185,7 @@ def _inferred_direction(
 
 def _directed_sections_in(
     proto: AppProtocol, messages: Sequence[dict[str, Any]] | dict[str, Any],
-    *, directed: bool = True,
+    *, transport: str, directed: bool = True,
 ) -> list[tuple[dict[str, Any], str]]:
     """Return the *proto* sections in *messages*, each with the way it travels.
 
@@ -197,7 +193,10 @@ def _directed_sections_in(
     name, whole packet specs, or a ``packeteer parse`` document (an object
     with a ``"packets"`` list).  A packet that carries no *proto* section —
     an ACK, the handshake — is not a message and is skipped; anything else
-    is handed on as a section for the protocol to accept or refuse.
+    is handed on as a section for the protocol to accept or refuse.  A
+    packet on the protocol's flow that carries a payload and no section is
+    a message ``parse`` could not decode, such as one split over TCP
+    segments, and is refused rather than skipped (#220).
 
     The direction is a packet's ``packet_metadata.direction``, or inferred
     from its addresses when it has none (:func:`_inferred_direction`); a
@@ -206,7 +205,9 @@ def _directed_sections_in(
     read by nothing is a misspelling accepted in silence (#137).  With
     *directed* false the caller takes each message's direction from the
     message itself, so a ``"direction"`` key, which would be ignored, is
-    refused instead.
+    refused instead.  A ``"direction"`` key anywhere else is refused for the
+    same reason (#221): on a bare section, which is always ``c2s``, and
+    beside a whole packet's sections, where ``packet_metadata`` holds it.
     """
     if isinstance(messages, dict):
         packets = messages.get("packets")
@@ -228,6 +229,7 @@ def _directed_sections_in(
                 clients.setdefault(frozenset(ends), ends[0])
 
     out: list[tuple[dict[str, Any], str]] = []
+    undecoded: list[tuple[int, str, str, bytes]] = []
     for index, element in enumerate(messages):
         if not isinstance(element, dict):
             raise ValueError(
@@ -236,7 +238,21 @@ def _directed_sections_in(
             )
         inner = element.get(proto.name)
         if _is_packet(element):
+            if _DIRECTION_KEY in element:
+                # Read by nothing: a packet's direction is its metadata's, and
+                # without this the ports decide, in silence (#221).
+                raise ValueError(
+                    f"message {index} has {_DIRECTION_KEY!r} beside the "
+                    f"packet's sections, where nothing reads it; a packet's "
+                    f"direction goes in packet_metadata.direction"
+                )
             if not isinstance(inner, dict):
+                carried = _undecoded_payload(proto, element)
+                if carried:
+                    undecoded.append((
+                        index, _inferred_direction(proto, element, clients),
+                        _captured_over(element, transport), carried,
+                    ))
                 continue
             meta = element.get("packet_metadata")
             stated = meta.get(_DIRECTION_KEY) if isinstance(meta, dict) else None
@@ -262,8 +278,165 @@ def _directed_sections_in(
             )
             out.append((inner, direction))
         else:
+            if _DIRECTION_KEY in element:
+                # A bare section is c2s, and the protocol reads only its own
+                # keys, so the direction would be dropped in silence (#221).
+                # Refused rather than honoured: in a protocol with a field of
+                # that name, the key would mean two things.  Wrapped, the
+                # inner key is the protocol's and the outer the message's.
+                given = element[_DIRECTION_KEY]
+                shown = given if given in _DIRECTIONS else "s2c"
+                raise ValueError(
+                    f"message {index} has {_DIRECTION_KEY!r} but is a bare "
+                    f"section, which is always sent c2s; write "
+                    f'{{"{proto.name}": {{...}}, "{_DIRECTION_KEY}": "{shown}"}}'
+                )
             out.append((element, "c2s"))
+    if undecoded:
+        _refuse_undecoded(proto, undecoded, transport)
     return out
+
+
+def _undecoded_payload(proto: AppProtocol, packet: dict[str, Any]) -> bytes:
+    """Return the payload *packet* carries on *proto*'s flow.
+
+    Empty for a packet with no payload, such as an ACK, and for one on
+    another flow, neither end on one of the protocol's ports: a capture
+    holding other traffic beside the protocol's replays as before.  Hex that
+    does not parse stands as that many zero bytes: it is still counted and
+    refused, and simply never decodes as a message.
+    """
+    payload = packet.get("payload")
+    ends = _endpoints(packet)
+    if not isinstance(payload, dict) or ends is None:
+        return b""
+    if not ({ends[0][1], ends[1][1]} & proto.ports):
+        return b""
+    data = payload.get("data")
+    if not isinstance(data, str) or not data:
+        return b""
+    if payload.get("encoding") == "utf8":
+        return data.encode()
+    try:
+        return bytes.fromhex(data)
+    except ValueError:
+        return bytes(len(data) // 2)
+
+
+def _captured_over(packet: dict[str, Any], replay: str) -> str:
+    """Return the transport *packet* was captured over, or *replay* if it does not say.
+
+    ``packeteer parse`` writes it as ``network.protocol``.  It is what
+    decides whether a payload can be part of a message split over segments,
+    and whether it starts with a length field, whatever transport the
+    replay will use (#224).
+    """
+    network = packet.get("network")
+    captured = network.get("protocol") if isinstance(network, dict) else None
+    return captured if captured in ("tcp", "udp") else replay
+
+
+def _refuse_undecoded(
+    proto: AppProtocol, undecoded: list[tuple[int, str, str, bytes]], transport: str,
+) -> None:
+    """Refuse packets on *proto*'s flow that carry a payload and no section (#220).
+
+    ``packeteer parse`` writes a payload without a section when it could not
+    decode one: a message split over TCP segments, since it decodes a
+    message only when one packet holds all of it, or one that is malformed
+    or truncated.  Skipped, the message vanished and the list cycled in its
+    place, with nothing said.  Every such packet is named at once, with how
+    many bytes, so the whole loss is visible in one error.  The cause is
+    given for how the packets were captured, since only TCP splits a message
+    (#223); *transport*, the replay's, decides only what the builder does
+    with a ``raw`` section (#224).
+    """
+    total = sum(len(carried) for *_, carried in undecoded)
+    listed = ", ".join(f"{index} ({direction}, {len(carried)} bytes)"
+                       for index, direction, _, carried in undecoded)
+    captured = "tcp" if any(over == "tcp" for _, _, over, _ in undecoded) else "udp"
+    ports = ", ".join(str(port) for port in sorted(proto.ports))
+    plural = "s" if len(proto.ports) > 1 else ""
+    raise ValueError(
+        f"{len(undecoded)} packet(s) on the {proto.name} flow (port{plural} "
+        f"{ports}) carry {total} bytes of payload but no {proto.name!r} "
+        f"section, at index {listed}.  'packeteer parse' writes a payload "
+        f"with no section when it could not decode it as a {proto.name} "
+        f"message{_undecoded_causes(proto, captured)}.  Skipping them would "
+        f"drop it, and the list would cycle in its place.  Write the message "
+        f"as a wrapped section "
+        f'instead, such as {{"{proto.name}": {{...}}, "direction": "s2c"}}'
+        f"{_whole_messages(proto, undecoded, transport)}"
+    )
+
+
+def _whole_messages(
+    proto: AppProtocol, undecoded: list[tuple[int, str, str, bytes]], transport: str,
+) -> str:
+    """Say which runs of *undecoded* are one whole message, and its size (#222).
+
+    The sizes the error lists are payload as captured.  Over TCP, for a
+    protocol that frames its messages, that includes the frame (DNS's 2-byte
+    length field), which a wrapped ``raw`` must leave out, since the builder
+    adds it.  Joining the payloads into ``raw`` as counted sends the frame
+    twice.  So each run of packets going one way is joined and decoded; when
+    it is exactly one message, its size without the frame is given beside
+    the payload's.  The frame is what encoding for TCP adds over encoding
+    for UDP, from the protocol itself.  Nothing is said of a run that does
+    not decode as one message, or of a protocol that runs over TCP only.
+
+    A run is looked at when it was **captured** over TCP, whatever the
+    replay's *transport*: a DNS-over-TCP capture replayed over UDP is where
+    the field has to come off (#224).  *transport* only decides the last
+    clause, since it is what the builder does with ``raw``.
+    """
+    runs: list[list[tuple[int, str, str, bytes]]] = []
+    for entry in undecoded:
+        if runs and runs[-1][-1][1:3] == entry[1:3]:
+            runs[-1].append(entry)
+        else:
+            runs.append([entry])
+    added = ("which the builder adds back" if transport == "tcp"
+             else f"and over {transport.upper()} none is sent")
+    notes: list[str] = []
+    for run in runs:
+        if run[0][2] != "tcp":
+            continue
+        joined = b"".join(carried for *_, carried in run)
+        try:
+            message = proto.decode(joined, "tcp")
+            framed = len(proto.encode(message, "tcp"))
+            bare = len(proto.encode(message, "udp")) if proto.carries("udp") else framed
+        except _SECTION_ERRORS:
+            continue
+        if framed != len(joined):
+            continue        # several messages, or one with bytes after it
+        indexes = ", ".join(str(index) for index, *_ in run)
+        what = f"The packets at index {indexes} ({run[0][1]}) are together one"
+        if bare < framed:
+            notes.append(
+                f"{what} {bare}-byte {proto.name} message, after the "
+                f"{framed - bare}-byte length field TCP adds; in a wrapped "
+                f"section, 'raw' is the message without that field, {added}"
+            )
+        else:
+            notes.append(f"{what} {framed}-byte {proto.name} message")
+    return "".join(f".  {note}" for note in notes)
+
+
+def _undecoded_causes(proto: AppProtocol, transport: str) -> str:
+    """Return why ``parse`` left a payload undecoded, for *transport*.
+
+    Over TCP a message can be split across segments, which ``parse`` does
+    not join.  Over UDP it cannot: a datagram that does not decode is
+    malformed, truncated, or not the protocol at all, which is what
+    ``packeteer fuzz`` makes.
+    """
+    bad = f"malformed, truncated, or not {proto.name} at all"
+    if transport == "tcp":
+        return (f" on its own: split over TCP segments, which parse does "
+                f"not join, or {bad}")
+    return f": {bad}"
 
 
 def _built(
@@ -320,7 +493,7 @@ def protocol_messages(
     conversation keeps its two directions and its segmentation (#169).
 
     *messages* takes every shape :func:`protocol_payload_fn` does, and a
-    packet with no section of *proto* is skipped the same way.
+    packet with no section of *proto* is skipped, or refused, the same way.
 
     Args:
         proto: The protocol to build with.
@@ -349,7 +522,7 @@ def protocol_messages(
         )
 
     """
-    sections = _directed_sections_in(proto, messages, directed=False)
+    sections = _directed_sections_in(proto, messages, transport=transport, directed=False)
     return _built(proto, [section for section, _ in sections], transport)
 
 
@@ -360,11 +533,13 @@ def protocol_conversation(
 ) -> list[AppMessage]:
     """Return *messages* encoded by *proto*, each with the way it travels.
 
-    The API behind ``packeteer stream --protocol udp --payload <protocol>
-    --protocol-messages FILE``, whose result goes to
+    The API behind ``packeteer stream --protocol udp|tcp --payload
+    <protocol> --protocol-messages FILE``, whose result goes to
     :attr:`UDPStreamConfig.messages
-    <packeteer.generate.udp_stream.UDPStreamConfig.messages>` so that a
-    reply leaves from the server (#195).  It takes every shape
+    <packeteer.generate.udp_stream.UDPStreamConfig.messages>` (#195) or
+    :attr:`TCPStreamConfig.messages
+    <packeteer.generate.tcp_stream.TCPStreamConfig.messages>` (#198) so
+    that a reply leaves from the server.  It takes every shape
     :func:`protocol_payload_fn` does.  The direction of each message comes
     from, in order:
 
@@ -410,7 +585,7 @@ def protocol_conversation(
     """
     from packeteer.generate.payloads.base import AppMessage
 
-    directed = _directed_sections_in(proto, messages)
+    directed = _directed_sections_in(proto, messages, transport=transport)
     built = _built(proto, [section for section, _ in directed], transport)
     return [
         AppMessage(cast("Direction", direction), data, f"{proto.name}[{index}]")
@@ -438,7 +613,10 @@ def protocol_payload_fn(
     ``packeteer parse`` document, whose ``"packets"`` are read.  So a parsed
     capture's messages can be replayed through an impaired stream without
     editing the file (#137).  A packet carrying no section of *proto* — an
-    ACK, a handshake segment — is not a message and is skipped; an element
+    ACK, a handshake segment — is not a message and is skipped.  One that
+    carries a payload on the protocol's port is a message ``parse`` could
+    not decode, such as one split over TCP segments, and is refused, naming
+    every such packet (#220).  An element
     that is neither a packet nor a section is refused by the protocol's
     ``from_spec`` rather than built into a default message, which is the
     outcome this function exists to prevent: a stream of empty messages is
@@ -462,8 +640,9 @@ def protocol_payload_fn(
             protocol's own reason.  Also if a message travels server to
             client, as :func:`protocol_conversation` reads directions: a
             ``payload_fn`` sends every message from the client, and sending
-            a reply that way would be wrong in silence.  Over UDP,
-            :func:`protocol_conversation` sends it the right way.
+            a reply that way would be wrong in silence.  Over UDP and TCP,
+            :func:`protocol_conversation` and the stream config's
+            ``messages`` send it the right way.
 
     Example::
 
@@ -480,10 +659,11 @@ def protocol_payload_fn(
         if message.direction != "c2s":
             raise ValueError(
                 f"message {index} travels server to client, and a payload_fn "
-                f"sends every message from the client.  Over UDP, "
-                f"protocol_conversation and UDPStreamConfig.messages send it "
-                f"the right way (stream --protocol udp does); over TCP that "
-                f"is not supported yet: {_TCP_DIRECTIONS_ISSUE}"
+                f"sends every message from the client.  Pass "
+                f"protocol_conversation's messages to "
+                f"TCPStreamConfig.messages or UDPStreamConfig.messages "
+                f"instead, which send it the right way, as stream "
+                f"--protocol tcp and udp do"
             )
     encoded = [message.data for message in conversation]
 

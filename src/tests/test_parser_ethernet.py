@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 import unittest
 
 from packeteer.generate.ethernet import (
@@ -194,6 +195,20 @@ class TestParsorGeneratorRoundtrip(unittest.TestCase):
         self.assertEqual(hdr.vlan_tag.vid, tag.vid)
         self.assertEqual(hdr.vlan_tag.pcp, tag.pcp)
         self.assertEqual(hdr.vlan_tag.dei, tag.dei)
+
+
+class TestMACFormatting(unittest.TestCase):
+    """A MAC is formatted with ``bytes.hex(":")`` (#215), as the join was."""
+
+    def test_random_addresses_format_as_the_join_did(self):
+        rng = random.Random(215)
+        values = [bytes(6), b"\xff" * 6, b"\x00\x0a\xa0\x0f\xf0\x01"]
+        values += [rng.randbytes(6) for _ in range(500)]
+        for dst, src in zip(values, reversed(values), strict=True):
+            with self.subTest(dst=dst.hex(), src=src.hex()):
+                _, _, hdr = packet_parser(dst + src + b"\x08\x00")
+                self.assertEqual(hdr.dst_mac, ":".join(f"{b:02x}" for b in dst))
+                self.assertEqual(hdr.src_mac, ":".join(f"{b:02x}" for b in src))
 
 
 if __name__ == "__main__":

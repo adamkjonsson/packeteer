@@ -19,7 +19,7 @@ def _format_address(arphrd: int, addr: bytes, addr_len: int) -> str:
     """Format the link-layer address: a MAC string for 6-byte Ethernet, else hex."""
     valid = addr[:max(0, min(addr_len, 8))]
     if arphrd == ARPHRD_ETHER and addr_len == 6:
-        return ":".join(f"{b:02x}" for b in valid)
+        return valid.hex(":")
     return valid.hex()
 
 

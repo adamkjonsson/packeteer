@@ -44,8 +44,8 @@ def packet_parser(data: bytes) -> tuple[int, int | None, EthernetHeader | None]:
         src_bytes = data[6:12]
         ethertype = struct.unpack("!H", data[12:14])[0]
 
-        dst_mac = ":".join(f"{b:02x}" for b in dst_bytes)
-        src_mac = ":".join(f"{b:02x}" for b in src_bytes)
+        dst_mac = dst_bytes.hex(":")
+        src_mac = src_bytes.hex(":")
 
         if ethertype == ETHERTYPE_8021Q:
             if len(data) < 18:

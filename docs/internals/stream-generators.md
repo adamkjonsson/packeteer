@@ -85,6 +85,13 @@ and the inner IP header by `_apply_encap()`.
 2. **Data transfer loop**: for each of *n* data packets:
    - `DATA[i]` (client→server, PSH set with probability `config.psh_probability`)
    - `ACK[i]` (server→client)
+
+   With `config.messages`, for each of *n* messages instead, from the
+   message's own side (#198):
+   - `DATA[i]`, or `DATA[i] [k/n]` for each segment when the message is
+     longer than the receiver's MSS (less 12 bytes of Timestamps option when
+     negotiated). One PSH draw per message, applied to its last segment.
+   - `ACK[i]`, or `ACK[i] [k/n]`, from the other side.
 3. **Teardown**: FIN-ACK (client), ACK (server), FIN-ACK (server), ACK (client).
 
 ### Anomaly injection
@@ -109,7 +116,7 @@ retransmission.
 | `retransmission_probability` | A copy of each data packet (same seq, flags, payload) is appended at `original_ts + retransmission_timeout`, carrying the clock and the sender's acknowledgement number as of *that* moment — a resend after the peer's FIN acknowledges it (#164).  Without timestamps, and with nothing from the peer in between, the copy is verbatim. |
 | `server_rst_probability` | Picks a random split point *k*; replaces the tail of the data exchange with a RST from the server and any extra unACKed data from the client, then drops the four-way teardown. |
 | `payload_corruption_probability` | XOR-flips the last byte of the payload, invalidating the TCP checksum, and appends a clean retransmission an RTO later.  The receiver treats the corrupted segment as **lost**: until the retransmission lands, every acknowledgement it sends repeats the segment's start and echoes the last in-order TSval; the ACK that answered the original moves behind the retransmission as `ACK-RECOVER`, jumping over everything held meanwhile and echoing the retransmission (#163).  Done by `_reacknowledge`, a receiver run over the finished timeline — the same rules `emit()` applies to a lost segment as it goes. |
-| `stray_packet_count` | Injects forged client→server packets with stolen seq/ack values and random `'x'`-filled payloads.  Timestamps are scattered across the data-transfer window (or within `stray_timing_window` of their reference packet). |
+| `stray_packet_count` | Injects forged packets with seq/ack values stolen from a real data segment, sent from that segment's side, and random `'x'`-filled payloads.  Timestamps are scattered across the data-transfer window (or within `stray_timing_window` of their reference packet). |
 | `duplicate_probability` | Emits the packet a second time, `raw` verbatim — same seq, same checksum, same **TSval** — one microsecond later.  What a capture point sees twice, not what the sender sent twice. |
 
 ### Timestamps and uniqueness — `_alloc_usec`

@@ -1425,6 +1425,7 @@ def parse_pcap_file(
     decode_app: bool = True,
     defragment: bool = False,
     protocol_modules: Sequence[str] | None = None,
+    indent: int | None = 2,
 ) -> str:
     """Parse every packet in a pcap file and return a packet spec string.
 
@@ -1473,6 +1474,12 @@ def parse_pcap_file(
             longer round-trips.  Datagrams whose fragments never all arrive
             are dropped.  For analysis rather than round-tripping, prefer
             :func:`iter_packets`, where reassembly is the default.
+        indent: Indentation width of the JSON, passed to
+            :func:`~packeteer.parse.to_config.to_json_string`.  Defaults to
+            ``2``.  Pass ``None`` for compact JSON on one line: on Python
+            3.10–3.13 any indent makes the standard library fall back to its
+            pure-Python encoder, about 3× slower for a large spec.  On 3.14
+            the two cost the same.
 
     Returns:
         A JSON string whose top-level structure matches the format accepted by
@@ -1579,7 +1586,7 @@ def parse_pcap_file(
 
     return to_json_string(to_packet_spec(
         packet_configs, metadata=global_output, protocols=protocol_modules,
-    ))
+    ), indent=indent)
 
 
 class PacketReader:
