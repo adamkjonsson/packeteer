@@ -25,6 +25,28 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
+---
+
+## [0.20.0] - 2026-10-25
+
+**TCP in both directions, and a faster parse.**  A TCP stream carries data
+both ways: given messages are each sent from their own side and acknowledged
+by the other, split at the receiver's MSS, with loss, recovery and every
+impairment worked out for the direction they hit (#198), so a parsed
+DNS-over-TCP capture replays with its responses from the server.  Two
+impairments that went wrong once a server sent data are fixed with it: a
+server RST carries the server's real sequence state (#218), and a stray is
+forged from the side it copies (#219).  Replaying parsed messages no longer
+loses one in silence: a message `parse` could not decode, such as a response
+split over segments, is refused and named, with its size and the cause for
+how it was captured (#220, #222–#224), and a `direction` key nothing reads
+is refused (#221).  Parsing is about 45% faster: the internet checksum, the
+printable-text test and MAC formatting each moved a per-byte Python loop
+into C (#213–#215), with byte-identical output, and `parse_pcap_file` can
+write compact JSON (#216).  Python 3.14 is supported.  **Breaking:** two,
+under *Changed*, both refusing `--protocol-messages` input that used to be
+accepted and sent wrong (#220, #221); each says what to write instead.
+
 ### Added
 
 - **A TCP stream carries data both ways: `TCPStreamConfig.messages`**
@@ -4169,7 +4191,8 @@ the exhaustive API reference.
      tagged with names that predate this convention, so only the entries below
      carry compare links. -->
 
-[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/adamkjonsson/packeteer/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/adamkjonsson/packeteer/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/adamkjonsson/packeteer/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/adamkjonsson/packeteer/compare/v0.16.0...v0.17.0
