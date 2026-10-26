@@ -31,6 +31,7 @@ from random import Random
 from typing import TYPE_CHECKING, Callable, TypeVar
 
 from ._stream_common import (
+    TCP_TIMESTAMPS_OVERHEAD,
     _alloc_usec,
     _build_packet,
     _clocks_from,
@@ -98,6 +99,17 @@ class ImpairmentConfig:
             window.
         stray_payload_range: ``(min, max)`` payload size for injected stray
             packets.
+        stray_timestamps: Whether a stray carries a Timestamps option, on a
+            connection that negotiated one (#228).  Its TSval is the
+            impersonated side's clock at the moment the stray is sent, and
+            its TSecr what that side would echo then, so neither RFC 7323
+            §3.2 (drop a segment lacking the option) nor PAWS (§5, drop a
+            stale TSval) gives it away.  The option's 12 bytes come off
+            the payload, so each frame is as large as it would be without
+            the option (down to a 1-byte payload).  A connection that did not negotiate timestamps
+            gets no option, since one it never agreed to is a giveaway of
+            its own.  Defaults to ``False``: a stray without the option,
+            which such a receiver drops.
         duplicate_probability: Probability (0.0–1.0) that each packet is seen
             **twice by the capture point** — a SPAN port mirroring both
             directions of a trunk, a capture on two interfaces the packet
@@ -148,6 +160,7 @@ class ImpairmentConfig:
     stray_packet_count: int = 0
     stray_timing_window: int | None = None
     stray_payload_range: tuple[int, int] = (40, 1460)
+    stray_timestamps: bool = False
     duplicate_probability: float = 0.0
     retransmit_lost: bool = False
     reorder_probability: float = 0.0
@@ -1035,6 +1048,12 @@ def _apply_corruption(
     while the hole is open the receiver repeats its start and echoes the last
     in-order TSval, and once the retransmission lands it jumps over everything
     it was holding and echoes the retransmission (#163).
+
+    The byte is flipped last, after the re-acknowledgement.  With losses in
+    both directions a corrupted segment's own acknowledgement is rewritten,
+    and that rebuilds its frame — with a checksum computed over whatever
+    payload it then held.  Flipped first, the damage was rebuilt into a
+    valid segment (#227).
     """
     rto_usec = int(config.retransmission_timeout * 1_000_000)
     ip_start = _encap_ip_start(flow.encap, flow.include_ethernet)
@@ -1048,10 +1067,7 @@ def _apply_corruption(
         pkt = packets[i]
         corrupted.add(i)
 
-        packets[i] = replace(
-            pkt, raw=_corrupted(pkt.raw, ip_start),
-            label=_derive_label("CORRUPT", pkt.label),
-        )
+        packets[i] = replace(pkt, label=_derive_label("CORRUPT", pkt.label))
 
         delay_usec = rng.randint(0, jitter_usec) if jitter_usec else 0
         rt_usec = _alloc_usec(_pkt_usec(pkt) + rto_usec + delay_usec, used_ts)
@@ -1069,7 +1085,10 @@ def _apply_corruption(
             )
     if not corrupted:
         return packets
-    return _reacknowledge(packets + additions, not_arrived=corrupted, flow=flow)
+    out = _reacknowledge(packets + additions, not_arrived=corrupted, flow=flow)
+    for i in corrupted:
+        out[i] = replace(out[i], raw=_corrupted(out[i].raw, ip_start))
+    return out
 
 
 def _apply_stray(
@@ -1079,11 +1098,20 @@ def _apply_stray(
     config: ImpairmentConfig,
     flow: FlowEndpoints,
     make: Callable[..., "TCPStreamPacket"],
+    clocks: Clocks,
 ) -> list["TCPStreamPacket"]:
-    """Inject forged packets that steal a real segment's sequence numbers."""
+    """Inject forged packets that steal a real segment's sequence numbers.
+
+    With *stray_timestamps* on a connection that negotiated them, each one
+    is stamped as its impersonated side would have stamped a segment at that
+    moment (#228).  That draws nothing, so the strays are where they would
+    be without it, and their frames as long: the option's bytes come off
+    the payload.
+    """
     data_pkts = [packets[i] for i in data_idx]
     if not data_pkts:
         return packets
+    stamped = config.stray_timestamps and clocks is not None
 
     used_ts = {_pkt_usec(p) for p in packets}
 
@@ -1116,13 +1144,23 @@ def _apply_stray(
         else:
             ts_lo, ts_hi = default_ts_lo, default_ts_hi
 
-        payload = b"x" * rng.randint(min_payload, max_payload)
-        ts_sec, ts_usec = divmod(
-            _alloc_usec(rng.randint(ts_lo, ts_hi), used_ts), 1_000_000,
+        size = rng.randint(min_payload, max_payload)
+        if stamped:
+            # A real segment on this connection gives the option's bytes up
+            # from its payload; a stray that did not would be the one frame
+            # too large.  Taken off the drawn size rather than the range, so
+            # the draws, and every stray after this one, stay as they were.
+            size = max(1, size - TCP_TIMESTAMPS_OVERHEAD)
+        payload = b"x" * size
+        usec = _alloc_usec(rng.randint(ts_lo, ts_hi), used_ts)
+        ts_sec, ts_usec = divmod(usec, 1_000_000)
+        options, timestamps = (
+            _options_for(ref.direction, usec, clocks=clocks, among=packets)
+            if stamped else (None, None)
         )
         strays.append(make(
             raw=_build_packet(stray_src, stray_dst, TCP_ACK | TCP_PSH, payload,
-                              flow.include_ethernet, flow.ip_ttl, None, flow.encap),
+                              flow.include_ethernet, flow.ip_ttl, options, flow.encap),
             ts_sec=ts_sec,
             ts_usec=ts_usec,
             direction=ref.direction,
@@ -1131,6 +1169,7 @@ def _apply_stray(
             ack=ref.ack,
             payload_len=len(payload),
             label=f"STRAY[{n}]",
+            timestamps=timestamps,
         ))
     return packets + strays
 
@@ -1196,7 +1235,7 @@ def apply_impairments(
         )
 
     if config.stray_packet_count:
-        packets = _apply_stray(packets, data_idx, rng, config, flow, make)
+        packets = _apply_stray(packets, data_idx, rng, config, flow, make, clocks)
 
     # Last, and deliberately: duplication is what the *capture point* saw, so
     # it happens after everything the sender and the wire did.  A

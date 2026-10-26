@@ -219,6 +219,13 @@ class TCPStreamConfig:
             within *N* positions of the stolen reference packet in the
             timestamp-sorted stream.  ``None`` uses the full data-transfer
             window.
+        stray_timestamps: Whether a stray carries a Timestamps option when
+            the connection negotiated one, stamped as its impersonated side
+            would stamp a segment at that moment, so an RFC 7323 §3.2 or
+            PAWS receiver does not drop it for that.  The option's 12 bytes
+            come off the payload, so the frame keeps its size.  Defaults to
+            ``False``.
+            See :class:`~packeteer.generate.impairments.ImpairmentConfig`.
         duplicate_probability: Probability (0.0–1.0) that each packet is seen
             **twice by the capture point** — a SPAN port, a two-interface
             capture, a veth pair.  The copy is the same transmission, so its
@@ -276,6 +283,7 @@ class TCPStreamConfig:
     rst_propagation_delay: float = 0.0
     stray_packet_count: int = 0
     stray_timing_window: int | None = None
+    stray_timestamps: bool = False
     duplicate_probability: float = 0.0
     retransmit_lost: bool = False
     packet_hooks: list[Callable[[TCPStreamPacket, int], TCPStreamPacket | None]] | None = None
@@ -545,6 +553,7 @@ def generate_tcp_stream(
     rst_propagation_delay = config.rst_propagation_delay
     stray_packet_count = config.stray_packet_count
     stray_timing_window = config.stray_timing_window
+    stray_timestamps = config.stray_timestamps
     duplicate_probability = config.duplicate_probability
     retransmit_lost = config.retransmit_lost
     packet_hooks = config.packet_hooks
@@ -771,6 +780,7 @@ def generate_tcp_stream(
             stray_packet_count=stray_packet_count,
             stray_timing_window=stray_timing_window,
             stray_payload_range=(min_payload, max_payload),
+            stray_timestamps=stray_timestamps,
             duplicate_probability=duplicate_probability,
         ),
         flow=FlowEndpoints(

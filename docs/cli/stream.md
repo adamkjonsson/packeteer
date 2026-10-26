@@ -90,6 +90,7 @@ none yet.
 | `--rst-propagation-delay SECONDS` | `0.0` | yes | — | Seconds for the RST to reach the client |
 | `--stray-packets N` | `0` | yes | refused | Number of forged TCP hijack packets to inject |
 | `--stray-timing-window N` | off | yes | — | Constrain stray timestamps to within N packets of target |
+| `--stray-timestamps` | off | yes | — | Give each stray a Timestamps option, stamped as the side it impersonates would, when the connection negotiated timestamps.  The option's 12 bytes come off the payload |
 | `--duplicate PROB` | `0.0` | yes | yes | Probability a packet is captured twice: identical bytes, 1 µs later, labelled `DUP[…]` |
 | `--reorder PROB` | `0.0` | refused | yes | Probability a datagram is held back and delivered after the next *K* going the same way, labelled `REORDER[…]` (see below) |
 | `--reorder-depth K` | `3` | — | — | The most datagrams a reordered one is overtaken by: *K* is drawn from `1..K` |

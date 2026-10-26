@@ -307,6 +307,13 @@ draw duplicate ACKs.  Nothing retransmits unless you ask —
 retransmission timeout, and the acknowledgement that follows jumps forward over
 everything the receiver had been holding.
 
+A stray is forged without TCP options by default, and on a connection that
+negotiated timestamps a receiver applying RFC 7323 §3.2 drops it for that
+alone.  To test a consumer past that rule, set
+`ImpairmentConfig(stray_timestamps=True)` (`--stray-timestamps`): each stray
+then carries the option, stamped as the side it impersonates would have
+stamped a segment at that moment, so only the bytes give it away.
+
 On UDP, loss, corruption, reordering and duplication apply; the rest describe
 TCP connection behaviour and are ignored rather than approximated (the CLI
 refuses them).  A UDP stream of given messages sends each in its own

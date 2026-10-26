@@ -27,6 +27,56 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 
 ---
 
+## [0.21.0] - 2026-10-26
+
+**What a reassembly-fidelity tool found.**  python-zipline-wire scores its
+reassembly against what packeteer says it sent, and two things in
+packeteer's impairments made that score wrong.  A corrupted segment could
+carry a valid checksum when data went both ways, so a consumer saw an
+undetectable substitution instead of a corruption; every `CORRUPT[…]`
+segment now fails its checksum (#227).  And a stray was always forged
+without a Timestamps option, so a receiver applying RFC 7323 §3.2 dropped
+every one; `stray_timestamps` (`--stray-timestamps`) stamps each as the
+side it impersonates would, which leaves only content-based defences
+(#228).  Nothing is breaking.  For the same seed, output changes only in
+the corrupted segments that used to verify.
+
+### Added
+
+- **A stray can carry a Timestamps option: `stray_timestamps`** (#228), on
+  `ImpairmentConfig` and `TCPStreamConfig`, as `--stray-timestamps` and as
+  the config key `stray_timestamps`.  A stray used to be forged with no TCP
+  options, so on a connection that negotiated timestamps a receiver
+  applying RFC 7323 §3.2 dropped every one and was never tested by them.
+  With the flag, each stray's TSval is the impersonated side's clock at the
+  moment it is sent and its TSecr what that side would echo then, which
+  passes §3.2 and PAWS alike.  The option's 12 bytes come off the stray's
+  payload, so every frame keeps its size and the seed's draws are
+  unchanged.  It does nothing on a connection without timestamps.  Off by
+  default, and output is unchanged when it is off.
+
+### Fixed
+
+- **A corrupted segment could carry a valid checksum** (#227).  With data in
+  both directions (`TCPStreamConfig.messages`, `--protocol-messages`,
+  `--payload http`) and `payload_corruption_probability`, a corruption in
+  one direction rewrites the acknowledgements travelling the other way, and
+  when one of those was itself a corrupted segment, its frame was rebuilt
+  with a fresh checksum over the already-damaged payload.  The segment was
+  labelled `CORRUPT[…]` but verified, so a consumer saw an undetectable
+  payload substitution instead of a corruption.  The byte is now flipped
+  after the acknowledgements are rewritten, and every `CORRUPT[…]` segment
+  fails its transport checksum.  For the same seed, output changes in those
+  segments' bytes only; a stream whose data all goes one way is unchanged.
+
+### Documentation
+
+- The config template `packeteer stream --write-config` writes said a stray is sent
+  client → server.  Since #219 (0.20.0) it is sent from the side whose
+  segment it copies, and the template now says so.
+
+---
+
 ## [0.20.0] - 2026-10-25
 
 **TCP in both directions, and a faster parse.**  A TCP stream carries data
@@ -4191,7 +4241,8 @@ the exhaustive API reference.
      tagged with names that predate this convention, so only the entries below
      carry compare links. -->
 
-[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/adamkjonsson/packeteer/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/adamkjonsson/packeteer/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/adamkjonsson/packeteer/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/adamkjonsson/packeteer/compare/v0.17.0...v0.18.0
