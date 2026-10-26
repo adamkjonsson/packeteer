@@ -1431,6 +1431,7 @@ _STREAM_PARAMS: dict[str, tuple[str, object, object]] = {
     "mtu":      ("mtu",                   int,   None),
     "stray_packet_count": ("stray_packet_count",              int,   0),
     "stray_timing_window":("stray_timing_window",             int,   None),
+    "stray_timestamps":   ("stray_timestamps",                bool,  False),
     "retransmit_lost":    ("retransmit_lost",                  bool,  False),
     "duplicate":          ("duplicate_probability",           float, 0.0),
     "reorder":            ("reorder_probability",             float, 0.0),
@@ -1851,6 +1852,7 @@ def _build_stream_config(
             rst_propagation_delay=args.rst_propagation_delay,
             stray_packet_count=args.stray_packet_count,
             stray_timing_window=args.stray_timing_window,
+            stray_timestamps=args.stray_timestamps,
             duplicate_probability=args.duplicate_probability,
             retransmit_lost=args.retransmit_lost,
             seed=args.seed,
@@ -1955,6 +1957,7 @@ def _impairments_from_args(args: argparse.Namespace) -> ImpairmentConfig | None:
         stray_packet_count=args.stray_packet_count,
         stray_timing_window=args.stray_timing_window,
         stray_payload_range=(args.min_payload, args.max_payload),
+        stray_timestamps=args.stray_timestamps,
         retransmit_lost=args.retransmit_lost,
         duplicate_probability=args.duplicate_probability,
         reorder_probability=args.reorder_probability,
@@ -3021,6 +3024,15 @@ def main() -> None:
         help=(
             "Constrain each stray packet timestamp to within N packets of its"
             " reference DATA packet (default: full data-transfer window)"
+        ),
+    )
+    stream_parser.add_argument(
+        "--stray-timestamps", action="store_true", default=None,
+        help=(
+            "Give each stray packet a Timestamps option, stamped as the side it"
+            " impersonates would stamp it, on a connection that negotiated"
+            " timestamps, so an RFC 7323 receiver does not drop it for lacking"
+            " one (default: off)"
         ),
     )
     stream_parser.add_argument(

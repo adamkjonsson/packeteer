@@ -331,10 +331,10 @@ retransmission_timeout = 0.2
 
 # stray_packet_count  (default: 0)  [TCP only]
 #   Number of forged packets to inject, simulating a TCP hijacking attempt by a
-#   passive attacker who has been sniffing the connection.  Each stray packet is
-#   sent client→server with the same IP/port endpoints as the real stream but
+#   passive attacker who has been sniffing the connection.  Each stray packet
 #   carries an all-'x' payload of random size and a seq/ack pair stolen from a
-#   randomly chosen data packet.  Timestamps are scattered uniformly across the
+#   randomly chosen data packet, and is sent from that packet's side with the
+#   real stream's IP/port endpoints.  Timestamps are scattered uniformly across the
 #   data-transfer window so stray packets may arrive before or after the real
 #   segments they overlap with.  Labelled STRAY[n] in the output.
 # stray_packet_count = 3
@@ -345,6 +345,15 @@ retransmission_timeout = 0.2
 #   by the timestamps of the N-th packet before and after the reference.
 #   Simulates an attacker who injects close in time to the segment they target.
 # stray_timing_window = 3
+
+# stray_timestamps  (default: false)  [TCP only]
+#   Give each stray packet a Timestamps option, on a connection that negotiated
+#   timestamps, stamped as the side it impersonates would stamp a segment at
+#   that moment.  Without it, a receiver applying RFC 7323 §3.2 drops every
+#   stray for lacking the option; with it, only content-based defences remain.
+#   The option's 12 bytes come off the stray's payload, so frame sizes and the
+#   seed's draws are unchanged.  Ignored when timestamps were not negotiated.
+# stray_timestamps = true
 
 # duplicate  (default: 0.0)  [TCP and UDP]
 #   Probability (0.0–1.0) that each packet is captured twice: a copy with

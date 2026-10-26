@@ -25,6 +25,20 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
+### Added
+
+- **A stray can carry a Timestamps option: `stray_timestamps`** (#228), on
+  `ImpairmentConfig` and `TCPStreamConfig`, as `--stray-timestamps` and as
+  the config key `stray_timestamps`.  A stray used to be forged with no TCP
+  options, so on a connection that negotiated timestamps a receiver
+  applying RFC 7323 §3.2 dropped every one and was never tested by them.
+  With the flag, each stray's TSval is the impersonated side's clock at the
+  moment it is sent and its TSecr what that side would echo then, which
+  passes §3.2 and PAWS alike.  The option's 12 bytes come off the stray's
+  payload, so every frame keeps its size and the seed's draws are
+  unchanged.  It does nothing on a connection without timestamps.  Off by
+  default, and output is unchanged when it is off.
+
 ### Fixed
 
 - **A corrupted segment could carry a valid checksum** (#227).  With data in
@@ -38,6 +52,12 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
   after the acknowledgements are rewritten, and every `CORRUPT[…]` segment
   fails its transport checksum.  For the same seed, output changes in those
   segments' bytes only; a stream whose data all goes one way is unchanged.
+
+### Documentation
+
+- The config template `packeteer stream --write-config` writes said a stray is sent
+  client → server.  Since #219 (0.20.0) it is sent from the side whose
+  segment it copies, and the template now says so.
 
 ---
 
