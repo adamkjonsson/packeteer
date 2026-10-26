@@ -25,6 +25,22 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
+---
+
+## [0.21.0] - 2026-10-26
+
+**What a reassembly-fidelity tool found.**  python-zipline-wire scores its
+reassembly against what packeteer says it sent, and two things in
+packeteer's impairments made that score wrong.  A corrupted segment could
+carry a valid checksum when data went both ways, so a consumer saw an
+undetectable substitution instead of a corruption; every `CORRUPT[…]`
+segment now fails its checksum (#227).  And a stray was always forged
+without a Timestamps option, so a receiver applying RFC 7323 §3.2 dropped
+every one; `stray_timestamps` (`--stray-timestamps`) stamps each as the
+side it impersonates would, which leaves only content-based defences
+(#228).  Nothing is breaking.  For the same seed, output changes only in
+the corrupted segments that used to verify.
+
 ### Added
 
 - **A stray can carry a Timestamps option: `stray_timestamps`** (#228), on
@@ -4225,7 +4241,8 @@ the exhaustive API reference.
      tagged with names that predate this convention, so only the entries below
      carry compare links. -->
 
-[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/adamkjonsson/packeteer/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/adamkjonsson/packeteer/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/adamkjonsson/packeteer/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/adamkjonsson/packeteer/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/adamkjonsson/packeteer/compare/v0.17.0...v0.18.0
