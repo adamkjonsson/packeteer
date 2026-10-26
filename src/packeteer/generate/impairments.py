@@ -1035,6 +1035,12 @@ def _apply_corruption(
     while the hole is open the receiver repeats its start and echoes the last
     in-order TSval, and once the retransmission lands it jumps over everything
     it was holding and echoes the retransmission (#163).
+
+    The byte is flipped last, after the re-acknowledgement.  With losses in
+    both directions a corrupted segment's own acknowledgement is rewritten,
+    and that rebuilds its frame — with a checksum computed over whatever
+    payload it then held.  Flipped first, the damage was rebuilt into a
+    valid segment (#227).
     """
     rto_usec = int(config.retransmission_timeout * 1_000_000)
     ip_start = _encap_ip_start(flow.encap, flow.include_ethernet)
@@ -1048,10 +1054,7 @@ def _apply_corruption(
         pkt = packets[i]
         corrupted.add(i)
 
-        packets[i] = replace(
-            pkt, raw=_corrupted(pkt.raw, ip_start),
-            label=_derive_label("CORRUPT", pkt.label),
-        )
+        packets[i] = replace(pkt, label=_derive_label("CORRUPT", pkt.label))
 
         delay_usec = rng.randint(0, jitter_usec) if jitter_usec else 0
         rt_usec = _alloc_usec(_pkt_usec(pkt) + rto_usec + delay_usec, used_ts)
@@ -1069,7 +1072,10 @@ def _apply_corruption(
             )
     if not corrupted:
         return packets
-    return _reacknowledge(packets + additions, not_arrived=corrupted, flow=flow)
+    out = _reacknowledge(packets + additions, not_arrived=corrupted, flow=flow)
+    for i in corrupted:
+        out[i] = replace(out[i], raw=_corrupted(out[i].raw, ip_start))
+    return out
 
 
 def _apply_stray(

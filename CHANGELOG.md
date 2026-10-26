@@ -25,6 +25,20 @@ pyproject.toml, update the link definitions at the bottom of this file, tag
 `vX.Y.Z`, and close the release's issues and milestone.
 -->
 
+### Fixed
+
+- **A corrupted segment could carry a valid checksum** (#227).  With data in
+  both directions (`TCPStreamConfig.messages`, `--protocol-messages`,
+  `--payload http`) and `payload_corruption_probability`, a corruption in
+  one direction rewrites the acknowledgements travelling the other way, and
+  when one of those was itself a corrupted segment, its frame was rebuilt
+  with a fresh checksum over the already-damaged payload.  The segment was
+  labelled `CORRUPT[…]` but verified, so a consumer saw an undetectable
+  payload substitution instead of a corruption.  The byte is now flipped
+  after the acknowledgements are rewritten, and every `CORRUPT[…]` segment
+  fails its transport checksum.  For the same seed, output changes in those
+  segments' bytes only; a stream whose data all goes one way is unchanged.
+
 ---
 
 ## [0.20.0] - 2026-10-25

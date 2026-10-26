@@ -14,15 +14,17 @@ stream.
 """
 from __future__ import annotations
 
+import hashlib
 import io
 import unittest
 import warnings
 
 from packeteer.generate.impairments import ImpairmentConfig
+from packeteer.generate.payloads.base import AppMessage
 from packeteer.generate.payloads.http import HTTPRestConfig, generate_http_stream
 from packeteer.generate.tcp import TCP_ACK, TCP_FIN, TCP_SYN
 from packeteer.generate.tcp_stream import TCPStreamConfig, generate_tcp_stream
-from packeteer.parse import iter_packets
+from packeteer.parse import iter_packets, parse_packet
 from packeteer.pcap import write_pcap
 
 from . import test_real_corpus as corpus
@@ -196,6 +198,79 @@ class TestACorruptedSegmentIsLostToTheReceiver(unittest.TestCase):
                            and p.payload_len]
                 self.assertTrue(all(p.label.startswith("CORRUPT[") for p in at_edge),
                                 "what starts at the ack number is not yet received")
+
+
+#: #227's conversation: data both ways, so each direction's acknowledgements
+#: are rewritten after a corruption in the other.
+_TWO_WAY = [
+    AppMessage("c2s", bytes(range(256)) * 12, "req0"),
+    AppMessage("s2c", bytes(range(256)) * 36, "resp0"),
+    AppMessage("c2s", bytes(range(256)) * 4, "req1"),
+    AppMessage("s2c", bytes(range(256)) * 20, "resp1"),
+]
+
+
+def _checksum_fails(pkt: object) -> bool:
+    """Whether *pkt*'s transport checksum fails, as the parser reports it.
+
+    A recorded ``transport.checksum`` is one that was wrong on the wire.
+    """
+    return parse_packet(pkt.raw, decode_app=False).transport.checksum is not None
+
+
+class TestACorruptedSegmentFailsItsChecksum(unittest.TestCase):
+    """Every ``CORRUPT[…]`` segment is damaged on the wire (#227).
+
+    With data both ways, a corrupted segment's own acknowledgement is
+    rewritten after a corruption in the other direction, which rebuilt its
+    frame and gave it a valid checksum.
+    """
+
+    def _assert_all_fail(self, packets: list, name: str) -> int:
+        corrupt = [p for p in packets if p.label.startswith("CORRUPT[")]
+        for pkt in corrupt:
+            with self.subTest(stream=name, label=pkt.label, direction=pkt.direction):
+                self.assertTrue(_checksum_fails(pkt), "the corrupted copy verifies")
+        return len(corrupt)
+
+    def test_with_messages_both_ways(self) -> None:
+        both = 0
+        for seed in range(60):
+            for extra in ({}, {"packet_loss_probability": 0.1, "retransmit_lost": True}):
+                packets = _stream(seed=seed, messages=_TWO_WAY,
+                                  num_data_packets=len(_TWO_WAY),
+                                  payload_corruption_probability=0.2, **extra)
+                self._assert_all_fail(packets, f"seed {seed} {extra}")
+                directions = {p.direction for p in packets if p.label.startswith("CORRUPT[")}
+                both += directions == {"c2s", "s2c"}
+        self.assertTrue(both, "no stream corrupted segments in both directions")
+
+    def test_on_the_http_generator(self) -> None:
+        self.assertTrue(self._assert_all_fail(_http(payload_corruption_probability=0.3), "http"))
+
+    def test_the_issues_example(self) -> None:
+        """Seed 3: one c2s and two s2c corruptions, the s2c ones valid on 0.20.0."""
+        stream = generate_tcp_stream(
+            client_ip="10.0.0.1", server_ip="10.0.0.2", num_data_packets=len(_TWO_WAY),
+            config=TCPStreamConfig(seed=3, messages=_TWO_WAY,
+                                   payload_corruption_probability=0.2),
+        )
+        corrupt = [p for p in stream.packets if p.label.startswith("CORRUPT[")]
+        self.assertEqual([(p.direction, p.label) for p in corrupt], [
+            ("c2s", "CORRUPT[0] [2/3]"),
+            ("s2c", "CORRUPT[1] [5/7]"),
+            ("s2c", "CORRUPT[3] [1/4]"),
+        ])
+        self.assertTrue(all(_checksum_fails(p) for p in corrupt))
+
+    def test_a_one_way_stream_is_unchanged(self) -> None:
+        """Only a rebuilt segment moved: one-way output is 0.20.0's, byte for byte."""
+        packets = _stream(payload_corruption_probability=0.2,
+                          packet_loss_probability=0.1, retransmit_lost=True)
+        digest = hashlib.sha256(b"".join(p.raw for p in packets)).hexdigest()
+        self.assertEqual(
+            digest, "0ba3dbff7490b34c51a06d4453ada62ad5ed2e6a8269cc0347ad530c3e289659",
+        )
 
 
 class TestAcknowledgementsNeverGoBackwards(unittest.TestCase):
